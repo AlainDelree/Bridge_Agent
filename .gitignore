@@ -1,0 +1,5 @@
+watcher.log
+logs/
+configs/*.conf
+__pycache__/
+*.pyc
