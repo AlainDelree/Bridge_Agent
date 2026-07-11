@@ -591,12 +591,11 @@ button.danger-plein:hover{background:#8f2626}
          Firefox refuse de faire sur les <option>. Navigation par clic direct. -->
     <div id="liste-issues" class="liste-issues"></div>
 
-    <!-- Barre : bouton rafraîchir (vide le cache et recharge depuis GitHub,
-         issue #56) + indicateur discret affiché pendant le fetch d'arrière-plan
-         quand la liste est déjà rendue depuis le cache localStorage (issue #52). -->
+    <!-- Barre : indicateur discret affiché pendant le fetch d'arrière-plan
+         quand la liste est déjà rendue depuis le cache localStorage (issue #52).
+         Le bouton rafraîchir (issue #56) a été déplacé dans la ligne de filtres,
+         juste après « Tous » (issue #57). -->
     <div class="barre-maj">
-      <button id="btn-rafraichir" class="btn-rafraichir" onclick="rafraichirResultats()"
-              title="Rafraîchir depuis GitHub">↻</button>
       <div id="maj-indicateur" class="maj-indicateur" style="display:none">Mise à jour…</div>
     </div>
 
@@ -1104,6 +1103,15 @@ function construireBoutonsFiltre(noms) {
   tous.textContent = 'Tous';
   tous.onclick = reactiverTousLesFiltres;
   zone.appendChild(tous);
+  // Bouton rafraîchir déplacé ici, juste après « Tous » (issue #57). Recréé à
+  // chaque reconstruction de la ligne car zone.innerHTML est vidé au début.
+  const rafr = document.createElement('button');
+  rafr.id = 'btn-rafraichir';
+  rafr.className = 'btn-rafraichir';
+  rafr.title = 'Rafraîchir depuis GitHub';
+  rafr.textContent = '↻';
+  rafr.onclick = rafraichirResultats;
+  zone.appendChild(rafr);
 }
 
 // Active/désactive un projet dans le filtre puis masque/affiche les lignes
