@@ -527,15 +527,6 @@ button.danger-plein:hover{background:#8f2626}
   <!-- ─── Onglet 3 : configuration ────────────────────────────────────── -->
   <div id="panneau-config" class="panneau">
 
-    <div class="champ" style="margin-bottom:14px">
-      <label>Projet</label>
-      <select id="config-projet" onchange="chargerConfig()">
-        {% for p in projets %}
-        <option value="{{ p.nom }}">{{ p.nom }}</option>
-        {% endfor %}
-      </select>
-    </div>
-
     <div class="titre-section">Identité — modification manuelle dans le .conf uniquement</div>
     <div id="config-readonly" style="background:#f8f8f5;border:1px solid #e0dfda;
          border-radius:6px;padding:10px 14px;font-size:12px;font-family:monospace;
@@ -687,6 +678,11 @@ function onProjetChange() {
   verifierStatut();
   mettreAJourInfoProjet();
   chargerListeIssues();
+  // Si l'onglet Configuration est actif, recharger sa config pour le
+  // nouveau projet (l'onglet lit désormais le sélecteur global #projet).
+  if (document.getElementById('panneau-config').classList.contains('actif')) {
+    chargerConfig();
+  }
 }
 
 async function mettreAJourInfoProjet() {
@@ -710,7 +706,7 @@ async function mettreAJourInfoProjet() {
 }
 
 async function chargerConfig() {
-  const nom = document.getElementById('config-projet').value;
+  const nom = document.getElementById('projet').value;
   try {
     const rep = await fetch('/config/' + encodeURIComponent(nom));
     const cfg = await rep.json();
@@ -739,7 +735,7 @@ async function chargerConfig() {
 }
 
 async function sauvegarderConfig(relancer) {
-  const nom = document.getElementById('config-projet').value;
+  const nom = document.getElementById('projet').value;
   const data = {
     TOPIC_NTFY:        document.getElementById('conf-TOPIC_NTFY').value,
     LABEL:             document.getElementById('conf-LABEL').value,
