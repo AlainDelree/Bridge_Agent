@@ -223,6 +223,12 @@ body{font-family:system-ui,sans-serif;font-size:14px;background:#f0efe9;color:#1
 .entete{padding:14px 20px;border-bottom:1px solid #eee;display:flex;align-items:center;gap:9px}
 .entete h1{font-size:15px;font-weight:500}
 .entete .statut{margin-left:auto;font-size:12px;color:#888}
+.bandeau-projet{display:flex;align-items:center;gap:12px;flex-wrap:wrap;
+  padding:12px 20px;border-bottom:1px solid #eee;background:#faf9f6}
+.bandeau-projet>label{font-size:13px;color:#555;font-weight:500;white-space:nowrap}
+.bandeau-projet select{padding:7px 10px;border:1px solid #ddd;border-radius:6px;
+  font-size:13px;background:#fff;color:#1a1a18;min-width:220px}
+.bandeau-projet select:focus{outline:none;border-color:#888}
 .onglets{display:flex;border-bottom:1px solid #eee;padding:0 20px}
 .onglet{padding:10px 16px;font-size:13px;color:#777;cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-1px;user-select:none}
 .onglet.actif{color:#1a1a18;font-weight:500;border-bottom-color:#1a1a18}
@@ -282,34 +288,41 @@ button.danger:hover{background:#f8d7da}
     <span class="statut">{{ projets|length }} projet(s) disponible(s)</span>
   </div>
 
+  <!-- ─── Bandeau global : sélecteur de projet (pilote tous les onglets sauf Watchers) ─ -->
+  <div class="bandeau-projet">
+    <label for="projet">Projet :</label>
+    <select id="projet" onchange="onProjetChange()">
+      {% for p in projets %}
+      <option value="{{ p.nom }}">{{ p.nom }} — {{ p.depot }}</option>
+      {% endfor %}
+    </select>
+
+    <div id="info-projet" style="font-size:12px;color:#888;padding:0 2px">
+      <span id="info-rep-travail"></span>
+      <span id="info-perimetre"></span>
+    </div>
+
+    <div id="bandeau-statut" style="display:flex;align-items:center;gap:10px;
+         margin-left:auto;padding:6px 12px;background:#f8f8f5;
+         border:1px solid #e0dfda;border-radius:6px;font-size:13px">
+      <span id="dot-statut" style="width:8px;height:8px;border-radius:50%;
+            background:#ccc;flex-shrink:0"></span>
+      <span id="texte-statut" style="color:#888">Vérification…</span>
+      <button id="btn-watcher" onclick="lancerWatcher()">Lancer le watcher</button>
+    </div>
+  </div>
+
   <div class="onglets">
     <div class="onglet actif" onclick="basculerOnglet('creation')">Nouvelle issue</div>
     <div class="onglet" onclick="basculerOnglet('journal')">Journal watcher</div>
-    <div class="onglet" onclick="basculerOnglet('watchers')">Watchers</div>
     <div class="onglet" onclick="basculerOnglet('config')">Configuration</div>
+    <div class="onglet" onclick="basculerOnglet('watchers')">Watchers</div>
   </div>
 
   <!-- ─── Onglet 1 : création d'issue ──────────────────────────────────── -->
   <div id="panneau-creation" class="panneau actif">
 
-    <div id="bandeau-statut" style="display:flex;align-items:center;gap:10px;
-         margin-bottom:14px;padding:8px 12px;background:#f8f8f5;
-         border:1px solid #e0dfda;border-radius:6px;font-size:13px">
-      <span id="dot-statut" style="width:8px;height:8px;border-radius:50%;
-            background:#ccc;flex-shrink:0"></span>
-      <span id="texte-statut" style="color:#888;flex:1">Vérification…</span>
-      <button id="btn-watcher" onclick="lancerWatcher()">Lancer le watcher</button>
-    </div>
-
     <div class="rangee">
-      <div class="champ">
-        <label>Projet</label>
-        <select id="projet" onchange="onProjetChange()">
-          {% for p in projets %}
-          <option value="{{ p.nom }}">{{ p.nom }} — {{ p.depot }}</option>
-          {% endfor %}
-        </select>
-      </div>
       <div class="champ" style="max-width:150px">
         <label>Priorité</label>
         <select id="priorite">
@@ -322,11 +335,6 @@ button.danger:hover{background:#f8d7da}
         <label>Timeout (s)</label>
         <input type="number" id="timeout" value="300" min="30" step="30">
       </div>
-    </div>
-
-    <div id="info-projet" style="font-size:12px;color:#888;margin:-6px 0 14px;padding:0 2px">
-      <span id="info-rep-travail"></span>
-      <span id="info-perimetre"></span>
     </div>
 
     <div class="champ" style="margin-bottom:14px">
@@ -492,7 +500,7 @@ let sourceSSE = null;
 let intervalWatchers = null;
 
 function basculerOnglet(nom) {
-  const noms = ['creation', 'journal', 'watchers', 'config'];
+  const noms = ['creation', 'journal', 'config', 'watchers'];
   document.querySelectorAll('.onglet').forEach((o, i) =>
     o.classList.toggle('actif', noms[i] === nom));
   noms.forEach(n =>
