@@ -33,6 +33,61 @@ app = Flask(__name__)
 app.config["SECRET_KEY"] = "bridge-agent-local"
 
 
+# Clés modifiables via l'interface (les autres : NOM, DEPOT, REP_TRAVAIL,
+# PERIMETRE, CMD_BACKUP se changent à la main dans le .conf).
+CLES_EDITABLES = {
+    "TOPIC_NTFY", "LABEL", "INTERVALLE", "MAX_ESSAIS",
+    "TIMEOUT_CLAUDE", "SCRIPT_BIP", "LOG_TAILLE_MAX_MO", "LOG_ARCHIVES",
+    "MODELE_CCL",
+}
+
+
+def sauvegarder_conf(nom_projet: str, nouvelles_valeurs: dict) -> tuple[bool, str]:
+    """Met à jour les clés éditables du .conf en préservant commentaires et
+    structure. Les lignes commentées correspondant à une clé éditée sont
+    décommentées au passage. Les clés absentes du fichier sont ajoutées à la fin."""
+    chemin = DOSSIER_SCRIPT / "configs" / f"{nom_projet}.conf"
+    if not chemin.exists():
+        return False, f"Fichier introuvable : {chemin.name}"
+
+    a_ecrire = {k.upper(): v for k, v in nouvelles_valeurs.items()
+                if k.upper() in CLES_EDITABLES}
+
+    lignes          = chemin.read_text(encoding="utf-8").splitlines()
+    nouvelles_lignes = []
+    mises_a_jour    = set()
+
+    for ligne in lignes:
+        stripped = ligne.strip()
+        # Ligne commentée : on regarde si elle cache une clé éditable.
+        if stripped.startswith("#"):
+            reste = stripped[1:].strip()
+            cle, sep, _ = reste.partition("=")
+            cle_norm = cle.strip().upper()
+            if sep and cle_norm in a_ecrire:
+                nouvelles_lignes.append(f"{cle.strip()} = {a_ecrire[cle_norm]}")
+                mises_a_jour.add(cle_norm)
+                continue
+        elif stripped:
+            cle, sep, _ = ligne.partition("=")
+            cle_norm = cle.strip().upper()
+            if sep and cle_norm in a_ecrire:
+                nouvelles_lignes.append(f"{cle.strip()} = {a_ecrire[cle_norm]}")
+                mises_a_jour.add(cle_norm)
+                continue
+        nouvelles_lignes.append(ligne)
+
+    # Clés absentes du fichier → on les ajoute à la fin.
+    manquantes = set(a_ecrire.keys()) - mises_a_jour
+    if manquantes:
+        nouvelles_lignes.append("")
+        for cle in sorted(manquantes):
+            nouvelles_lignes.append(f"{cle} = {a_ecrire[cle]}")
+
+    chemin.write_text("\n".join(nouvelles_lignes) + "\n", encoding="utf-8")
+    return True, "Configuration enregistrée."
+
+
 # ─── Projets ──────────────────────────────────────────────────────────────────
 
 def lister_projets() -> list[Config]:
@@ -119,12 +174,13 @@ def arreter_watcher(cfg: Config) -> tuple[bool, str]:
 
 def construire_body(data: dict) -> str:
     """Construit le body markdown depuis les champs du formulaire."""
-    mode     = "ÉCRITURE" if data.get("mode") == "ecriture" else "lecture seule"
-    priorite = data.get("priorite", "normale")
-    timeout  = data.get("timeout", "300")
-    corps    = data.get("corps", "").strip()
+    mode            = "ÉCRITURE" if data.get("mode") == "ecriture" else "lecture seule"
+    priorite        = data.get("priorite", "normale")
+    timeout         = data.get("timeout", "300")
+    modele_ponctuel = data.get("modele_ponctuel", "").strip()
+    corps           = data.get("corps", "").strip()
 
-    entete = "\n".join([
+    lignes = [
         "## En-tête\n",
         "| Champ    | Valeur |",
         "|----------|--------|",
@@ -134,8 +190,11 @@ def construire_body(data: dict) -> str:
         f"| MODE     | {mode} |",
         f"| PRIORITE | {priorite} |",
         f"| TIMEOUT  | {timeout}s |",
-    ])
-    return f"{entete}\n\n{corps}"
+    ]
+    if modele_ponctuel:
+        lignes.append(f"| MODELE   | {modele_ponctuel} |")
+
+    return "\n".join(lignes) + f"\n\n{corps}"
 
 
 def construire_labels(data: dict) -> str:
@@ -225,8 +284,9 @@ button.danger:hover{background:#f8d7da}
 
   <div class="onglets">
     <div class="onglet actif" onclick="basculerOnglet('creation')">Nouvelle issue</div>
-    <div class="onglet" onclick="basculerOnglet('watchers')">Watchers</div>
     <div class="onglet" onclick="basculerOnglet('journal')">Journal watcher</div>
+    <div class="onglet" onclick="basculerOnglet('watchers')">Watchers</div>
+    <div class="onglet" onclick="basculerOnglet('config')">Configuration</div>
   </div>
 
   <!-- ─── Onglet 1 : création d'issue ──────────────────────────────────── -->
@@ -244,7 +304,7 @@ button.danger:hover{background:#f8d7da}
     <div class="rangee">
       <div class="champ">
         <label>Projet</label>
-        <select id="projet" onchange="verifierStatut()">
+        <select id="projet" onchange="onProjetChange()">
           {% for p in projets %}
           <option value="{{ p.nom }}">{{ p.nom }} — {{ p.depot }}</option>
           {% endfor %}
@@ -264,6 +324,11 @@ button.danger:hover{background:#f8d7da}
       </div>
     </div>
 
+    <div id="info-projet" style="font-size:12px;color:#888;margin:-6px 0 14px;padding:0 2px">
+      <span id="info-rep-travail"></span>
+      <span id="info-perimetre"></span>
+    </div>
+
     <div class="champ" style="margin-bottom:14px">
       <label>Titre</label>
       <input type="text" id="titre" placeholder="Résumé court et actionnable">
@@ -271,8 +336,10 @@ button.danger:hover{background:#f8d7da}
 
     <div class="titre-section">Mode</div>
     <div class="radio-groupe">
-      <label><input type="radio" name="mode" value="lecture" checked> Lecture seule</label>
-      <label><input type="radio" name="mode" value="ecriture">
+      <label><input type="radio" name="mode" value="lecture" checked
+                    onchange="mettreAJourBoutonEnvoi()"> Lecture seule</label>
+      <label><input type="radio" name="mode" value="ecriture"
+                    onchange="mettreAJourBoutonEnvoi()">
         Écriture <span class="badge-alerte">⚠ mode_write</span>
       </label>
     </div>
@@ -291,6 +358,15 @@ button.danger:hover{background:#f8d7da}
     <div id="message" class="message"></div>
 
     <div class="barre-envoi">
+      <select id="modele-ponctuel" title="Modèle CCL pour cette issue uniquement"
+              style="font-size:13px;padding:6px 10px;border:1px solid #ddd;
+                     border-radius:6px;color:#555;background:#fff">
+        <option value="">(modèle par défaut)</option>
+        <option value="claude-opus-4-5">claude-opus-4-5</option>
+        <option value="claude-sonnet-4-5">claude-sonnet-4-5</option>
+        <option value="claude-haiku-4-5">claude-haiku-4-5</option>
+      </select>
+      <div style="flex:1"></div>
       <button class="danger" onclick="viderFormulaire()">Vider</button>
       <button onclick="afficherApercu()">Aperçu de la commande</button>
       <button class="primaire" id="btn-envoyer" onclick="envoyerIssue()">Envoyer l'issue</button>
@@ -325,7 +401,81 @@ button.danger:hover{background:#f8d7da}
     </div>
   </div>
 
-  <!-- ─── Onglet 3 : journal watcher ───────────────────────────────────── -->
+  <!-- ─── Onglet 3 : configuration ────────────────────────────────────── -->
+  <div id="panneau-config" class="panneau">
+
+    <div class="champ" style="margin-bottom:14px">
+      <label>Projet</label>
+      <select id="config-projet" onchange="chargerConfig()">
+        {% for p in projets %}
+        <option value="{{ p.nom }}">{{ p.nom }}</option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <div class="titre-section">Identité — modification manuelle dans le .conf uniquement</div>
+    <div id="config-readonly" style="background:#f8f8f5;border:1px solid #e0dfda;
+         border-radius:6px;padding:10px 14px;font-size:12px;font-family:monospace;
+         color:#666;line-height:2;margin-bottom:14px"></div>
+
+    <div class="titre-section">Paramètres éditables</div>
+
+    <div class="rangee">
+      <div class="champ">
+        <label>Topic ntfy</label>
+        <input type="text" id="conf-TOPIC_NTFY">
+      </div>
+      <div class="champ" style="max-width:140px">
+        <label>Label</label>
+        <input type="text" id="conf-LABEL">
+      </div>
+    </div>
+
+    <div class="rangee">
+      <div class="champ" style="max-width:140px">
+        <label>Intervalle (s)</label>
+        <input type="number" id="conf-INTERVALLE" min="5" step="5">
+      </div>
+      <div class="champ" style="max-width:140px">
+        <label>Max essais</label>
+        <input type="number" id="conf-MAX_ESSAIS" min="1" step="1">
+      </div>
+      <div class="champ" style="max-width:160px">
+        <label>Timeout Claude (s)</label>
+        <input type="number" id="conf-TIMEOUT_CLAUDE" min="30" step="30">
+      </div>
+    </div>
+
+    <div class="champ" style="margin-bottom:14px">
+      <label>Script bip</label>
+      <input type="text" id="conf-SCRIPT_BIP">
+    </div>
+
+    <div class="champ" style="margin-bottom:14px">
+      <label>Modèle Claude Code (vide = défaut)</label>
+      <input type="text" id="conf-MODELE_CCL" placeholder="ex: claude-opus-4-5">
+    </div>
+
+    <div class="rangee">
+      <div class="champ" style="max-width:180px">
+        <label>Taille max journal (Mo)</label>
+        <input type="number" id="conf-LOG_TAILLE_MAX_MO" min="1" step="1">
+      </div>
+      <div class="champ" style="max-width:140px">
+        <label>Archives journal</label>
+        <input type="number" id="conf-LOG_ARCHIVES" min="1" step="1">
+      </div>
+    </div>
+
+    <div id="msg-config" class="message"></div>
+
+    <div class="barre-envoi">
+      <button onclick="sauvegarderConfig(false)">Enregistrer</button>
+      <button class="primaire" onclick="sauvegarderConfig(true)">Enregistrer et relancer</button>
+    </div>
+  </div>
+
+  <!-- ─── Onglet 4 : journal watcher ───────────────────────────────────── -->
   <div id="panneau-journal" class="panneau">
     <div class="terminal" id="terminal"></div>
     <div class="barre-journal">
@@ -342,7 +492,7 @@ let sourceSSE = null;
 let intervalWatchers = null;
 
 function basculerOnglet(nom) {
-  const noms = ['creation', 'watchers', 'journal'];
+  const noms = ['creation', 'journal', 'watchers', 'config'];
   document.querySelectorAll('.onglet').forEach((o, i) =>
     o.classList.toggle('actif', noms[i] === nom));
   noms.forEach(n =>
@@ -353,6 +503,90 @@ function basculerOnglet(nom) {
     intervalWatchers = setInterval(chargerWatchers, 5000);
   } else {
     clearInterval(intervalWatchers);
+  }
+  if (nom === 'config') chargerConfig();
+}
+
+function onProjetChange() {
+  verifierStatut();
+  mettreAJourInfoProjet();
+}
+
+async function mettreAJourInfoProjet() {
+  const nom = document.getElementById('projet').value;
+  try {
+    const rep = await fetch('/config/' + encodeURIComponent(nom));
+    const cfg = await rep.json();
+    const repEl = document.getElementById('info-rep-travail');
+    const perEl = document.getElementById('info-perimetre');
+    repEl.textContent = '📁 ' + cfg.rep_travail;
+    if (cfg.perimetre) {
+      perEl.textContent = ' · 🔒 ' + cfg.perimetre;
+    } else {
+      perEl.textContent = '';
+    }
+  } catch(e) {}
+}
+
+async function chargerConfig() {
+  const nom = document.getElementById('config-projet').value;
+  try {
+    const rep = await fetch('/config/' + encodeURIComponent(nom));
+    const cfg = await rep.json();
+
+    document.getElementById('config-readonly').innerHTML =
+      `NOM = ${cfg.nom}<br>DEPOT = ${cfg.depot}<br>` +
+      `REP_TRAVAIL = ${cfg.rep_travail}<br>` +
+      (cfg.perimetre  ? `PERIMETRE = ${cfg.perimetre}<br>` : '') +
+      (cfg.cmd_backup ? `CMD_BACKUP = ${cfg.cmd_backup}` : '');
+
+    document.getElementById('conf-TOPIC_NTFY').value        = cfg.topic_ntfy        || '';
+    document.getElementById('conf-LABEL').value             = cfg.label             || 'for-linux';
+    document.getElementById('conf-INTERVALLE').value        = cfg.intervalle        || 10;
+    document.getElementById('conf-MAX_ESSAIS').value        = cfg.max_essais        || 3;
+    document.getElementById('conf-TIMEOUT_CLAUDE').value    = cfg.timeout_claude    || 300;
+    document.getElementById('conf-SCRIPT_BIP').value        = cfg.script_bip        || '';
+    document.getElementById('conf-MODELE_CCL').value        = cfg.modele_ccl        || '';
+    document.getElementById('conf-LOG_TAILLE_MAX_MO').value = cfg.log_taille_max_mo || 1;
+    document.getElementById('conf-LOG_ARCHIVES').value      = cfg.log_archives      || 5;
+    document.getElementById('msg-config').style.display = 'none';
+  } catch(e) {
+    const msg = document.getElementById('msg-config');
+    msg.textContent = 'Erreur de chargement : ' + e.message;
+    msg.className = 'message erreur'; msg.style.display = 'block';
+  }
+}
+
+async function sauvegarderConfig(relancer) {
+  const nom = document.getElementById('config-projet').value;
+  const data = {
+    TOPIC_NTFY:        document.getElementById('conf-TOPIC_NTFY').value,
+    LABEL:             document.getElementById('conf-LABEL').value,
+    INTERVALLE:        document.getElementById('conf-INTERVALLE').value,
+    MAX_ESSAIS:        document.getElementById('conf-MAX_ESSAIS').value,
+    TIMEOUT_CLAUDE:    document.getElementById('conf-TIMEOUT_CLAUDE').value,
+    SCRIPT_BIP:        document.getElementById('conf-SCRIPT_BIP').value,
+    MODELE_CCL:        document.getElementById('conf-MODELE_CCL').value,
+    LOG_TAILLE_MAX_MO: document.getElementById('conf-LOG_TAILLE_MAX_MO').value,
+    LOG_ARCHIVES:      document.getElementById('conf-LOG_ARCHIVES').value,
+  };
+  const rep  = await fetch('/config/' + encodeURIComponent(nom), {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(data)
+  });
+  const json = await rep.json();
+  const msg  = document.getElementById('msg-config');
+  msg.textContent = json.message;
+  msg.className   = 'message ' + (json.succes ? 'succes' : 'erreur');
+  msg.style.display = 'block';
+  if (json.succes && relancer) {
+    await fetch('/lancer-watcher', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({projet: nom, relancer: true})
+    });
+    msg.textContent += ' Watcher relancé.';
   }
 }
 
@@ -389,13 +623,14 @@ function viderTerminal() {
 function collecterFormulaire() {
   const notifs = [...document.querySelectorAll('input[name=notifs]:checked')].map(c => c.value);
   return {
-    projet:   document.getElementById('projet').value,
-    titre:    document.getElementById('titre').value.trim(),
-    priorite: document.getElementById('priorite').value,
-    timeout:  document.getElementById('timeout').value,
-    mode:     document.querySelector('input[name=mode]:checked').value,
-    notifs:   notifs,
-    corps:    document.getElementById('corps').value.trim(),
+    projet:          document.getElementById('projet').value,
+    titre:           document.getElementById('titre').value.trim(),
+    priorite:        document.getElementById('priorite').value,
+    timeout:         document.getElementById('timeout').value,
+    mode:            document.querySelector('input[name=mode]:checked').value,
+    notifs:          notifs,
+    corps:           document.getElementById('corps').value.trim(),
+    modele_ponctuel: document.getElementById('modele-ponctuel').value,
   };
 }
 
@@ -518,6 +753,13 @@ async function actionWatchers(action) {
   await verifierStatut();
 }
 
+function mettreAJourBoutonEnvoi() {
+  const ecriture = document.querySelector('input[name=mode]:checked').value === 'ecriture';
+  const btn = document.getElementById('btn-envoyer');
+  btn.style.background    = ecriture ? '#a32d2d' : '#1a1a18';
+  btn.style.borderColor   = ecriture ? '#a32d2d' : '#1a1a18';
+}
+
 async function verifierStatut() {
   const nom = document.getElementById('projet').value;
   try {
@@ -560,6 +802,7 @@ async function lancerWatcher() {
 
 // Sonde le statut au chargement puis toutes les 5 secondes.
 verifierStatut();
+mettreAJourInfoProjet();
 setInterval(verifierStatut, 5000);
 
 function viderFormulaire(cacherMsg=true) {
@@ -569,7 +812,9 @@ function viderFormulaire(cacherMsg=true) {
   document.getElementById('priorite').value = 'normale';
   document.getElementById('timeout').value = '300';
   document.querySelector('input[name=mode][value=lecture]').checked = true;
+  mettreAJourBoutonEnvoi();
   document.querySelectorAll('input[name=notifs]').forEach(c => c.checked = false);
+  document.getElementById('modele-ponctuel').value = '';
 }
 </script>
 </body>
@@ -691,6 +936,38 @@ def journal(nom_projet):
         mimetype="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+@app.route("/config/<nom_projet>")
+def get_config(nom_projet):
+    """Retourne les valeurs actuelles du .conf (champs lus + défauts)."""
+    cfg = projet_par_nom(nom_projet)
+    if not cfg:
+        return jsonify(erreur="Projet introuvable."), 404
+    return jsonify(
+        nom            = cfg.nom,
+        depot          = cfg.depot,
+        rep_travail    = str(cfg.rep_travail),
+        perimetre      = cfg.perimetre,
+        cmd_backup     = cfg.cmd_backup,
+        topic_ntfy     = cfg.topic_ntfy,
+        label          = cfg.label,
+        intervalle     = cfg.intervalle,
+        max_essais     = cfg.max_essais,
+        timeout_claude = cfg.timeout_claude,
+        script_bip     = str(cfg.script_bip),
+        log_taille_max_mo = cfg.log_taille_max_mo,
+        log_archives   = cfg.log_archives,
+        modele_ccl     = cfg.modele_ccl,
+    )
+
+
+@app.route("/config/<nom_projet>", methods=["POST"])
+def post_config(nom_projet):
+    """Enregistre les clés éditables dans le .conf."""
+    data = request.json or {}
+    ok, msg = sauvegarder_conf(nom_projet, data)
+    return jsonify(succes=ok, message=msg)
 
 
 @app.route("/watchers")

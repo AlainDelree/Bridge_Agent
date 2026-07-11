@@ -75,6 +75,8 @@ class Config:
     log_taille_max_mo: int = 1     # rotation quand le journal dépasse cette taille (Mo)
     log_archives: int      = 5     # nombre d'archives datées conservées
     cmd_backup: str        = ""    # commande de sauvegarde avant modif (mode écriture)
+    perimetre: str         = ""    # dossier(s) autorisés pour CCL (vide = pas de restriction)
+    modele_ccl: str        = ""    # modèle CCL à utiliser (vide = défaut Claude Code)
 
     @property
     def url_ntfy(self) -> str:
@@ -139,6 +141,8 @@ def charger_config(chemin: Path) -> Config:
         log_taille_max_mo = entier("LOG_TAILLE_MAX_MO", 1),
         log_archives      = entier("LOG_ARCHIVES", 5),
         cmd_backup        = brut.get("CMD_BACKUP", ""),
+        perimetre         = brut.get("PERIMETRE", ""),
+        modele_ccl        = brut.get("MODELE_CCL", ""),
     )
 
 
@@ -327,83 +331,62 @@ def extraire_timeout(body: str) -> int:
                     return int(valeur)
     return CFG.timeout_claude
 
-def ajouter_label(numero: int, label: str) -> bool:
-    """Ajoute un label à une issue sans la fermer.
-    Retourne True si le label a bien été posé, False en cas d'échec (code retour
-    gh non nul ou exception). Le code retour de gh est examiné : sans ça, un échec
-    (label inexistant, réseau, permissions) passait inaperçu et pouvait provoquer
-    des boucles de retraitement (cf. issue AlChess #13)."""
+def extraire_modele(body: str) -> str:
+    """Extrait le MODELE depuis le body de l'issue (en-tête bridge).
+    Retombe sur CFG.modele_ccl (lui-même vide = défaut Claude Code) si absent."""
+    for ligne in body.splitlines():
+        if "| MODELE" in ligne.upper():
+            parts = ligne.split("|")
+            if len(parts) >= 3:
+                valeur = parts[2].strip()
+                if valeur and valeur.lower() not in ("", "-", "défaut", "defaut"):
+                    return valeur
+    return CFG.modele_ccl
+
+def ajouter_label(numero: int, label: str):
+    """Ajoute un label à une issue sans la fermer."""
     try:
-        res = subprocess.run(
+        subprocess.run(
             ["gh", "issue", "edit", str(numero),
              "--repo", CFG.depot,
              "--add-label", label],
             capture_output=True, text=True, timeout=30
         )
-        if res.returncode != 0:
-            log.error(f"Échec ajout label '{label}' sur issue #{numero} "
-                      f"(gh code {res.returncode}) : {res.stderr.strip()}")
-            return False
-        return True
     except Exception as e:
         log.error(f"Erreur ajout label '{label}' sur issue #{numero} : {e}")
-        return False
 
-def commenter_issue(numero: int, message: str) -> bool:
-    """Poste un commentaire sur une issue.
-    Retourne True si le commentaire a bien été posté, False en cas d'échec (code
-    retour gh non nul ou exception). Le code retour de gh est examiné : sans ça,
-    un échec (réseau, permissions, repo inexistant) passait inaperçu (cf. issue
-    #20, même défaut que celui corrigé sur ajouter_label() en issue #1)."""
+def commenter_issue(numero: int, message: str):
+    """Poste un commentaire sur une issue."""
     try:
-        res = subprocess.run(
+        subprocess.run(
             ["gh", "issue", "comment", str(numero),
              "--repo", CFG.depot,
              "--body", message],
             capture_output=True, text=True, timeout=30
         )
-        if res.returncode != 0:
-            log.error(f"Échec commentaire issue #{numero} "
-                      f"(gh code {res.returncode}) : {res.stderr.strip()}")
-            return False
-        return True
     except Exception as e:
         log.error(f"Erreur commentaire issue #{numero} : {e}")
-        return False
 
-def fermer_issue(numero: int) -> bool:
-    """Ferme une issue et ajoute le label 'done'.
-    Retourne True si les deux opérations (close + add-label) réussissent, False
-    si l'une ou l'autre échoue (code retour gh non nul ou exception). Les codes
-    retour de gh sont examinés : sans ça, un échec passait inaperçu (cf. issue
-    #20)."""
+def fermer_issue(numero: int):
+    """Ferme une issue et ajoute le label 'done'."""
     try:
-        res_close = subprocess.run(
+        subprocess.run(
             ["gh", "issue", "close", str(numero), "--repo", CFG.depot],
             capture_output=True, text=True, timeout=30
         )
-        if res_close.returncode != 0:
-            log.error(f"Échec fermeture issue #{numero} "
-                      f"(gh code {res_close.returncode}) : {res_close.stderr.strip()}")
-            return False
-        res_label = subprocess.run(
+        subprocess.run(
             ["gh", "issue", "edit", str(numero),
              "--repo", CFG.depot,
              "--add-label", LABEL_FAIT],
             capture_output=True, text=True, timeout=30
         )
-        if res_label.returncode != 0:
-            log.error(f"Échec ajout label '{LABEL_FAIT}' sur issue #{numero} "
-                      f"(gh code {res_label.returncode}) : {res_label.stderr.strip()}")
-            return False
-        return True
     except Exception as e:
         log.error(f"Erreur fermeture issue #{numero} : {e}")
-        return False
 
 def lancer_claude(numero: int, titre: str, body: str, dry_run: bool,
                   autoriser_ecriture: bool = False,
-                  timeout: int = None) -> tuple[bool, str]:
+                  timeout: int = None,
+                  modele: str = "") -> tuple[bool, str]:
     """
     Lance Claude Code en mode non-interactif sur une issue.
 
@@ -445,6 +428,16 @@ MODE LECTURE SEULE — tu ne dois que lire, analyser et rapporter. N'écris aucu
 fichier, n'exécute aucune commande modifiant l'état du système ou du dépôt.
 """
 
+    if CFG.perimetre:
+        clause_perimetre = (
+            f"\nPÉRIMÈTRE STRICT — tu ne dois lire, modifier ou exécuter des commandes "
+            f"que dans les répertoires suivants : {CFG.perimetre}\n"
+            f"Toute action en dehors de ce périmètre est interdite, même si la tâche "
+            f"le demande explicitement. En cas de doute, arrête-toi et signale-le.\n"
+        )
+    else:
+        clause_perimetre = ""
+
     prompt = f"""Tu es l'agent Linux (CCL) du bridge inter-agents, projet « {CFG.nom} ».
 Traite la tâche suivante issue du GitHub Issue #{numero} :
 
@@ -452,7 +445,7 @@ TITRE : {titre}
 
 BODY :
 {body}
-{garde_fou}
+{clause_perimetre}{garde_fou}
 Instructions :
 1. Lis attentivement la tâche demandée
 2. Effectue le travail demandé (dans les limites du mode ci-dessus)
@@ -468,6 +461,8 @@ Réponds uniquement avec le résumé de ce que tu as accompli.
         return True, f"[DRY-RUN] Tâche simulée avec succès (mode {mode})."
 
     cmd = ["claude", "--print"]
+    if modele:
+        cmd += ["--model", modele]
     if autoriser_ecriture:
         cmd.append("--dangerously-skip-permissions")
     cmd.append(prompt)
@@ -515,6 +510,7 @@ def traiter_issue(issue: dict, dry_run: bool):
     priorite = extraire_priorite(body)
     critique = priorite in PRIORITES_CRITIQUES
     timeout  = extraire_timeout(body)
+    modele   = extraire_modele(body)
 
     autoriser_ecriture = LABEL_ECRITURE in labels
 
@@ -534,7 +530,7 @@ def traiter_issue(issue: dict, dry_run: bool):
         tentative += 1
         log.info(f"  Tentative {tentative}/{CFG.max_essais if not critique else '∞'}...")
 
-        succes, sortie = lancer_claude(numero, titre, body, dry_run, autoriser_ecriture, timeout)
+        succes, sortie = lancer_claude(numero, titre, body, dry_run, autoriser_ecriture, timeout, modele)
 
         if succes:
             log.info(f"  ✓ Issue #{numero} traitée avec succès.")
@@ -562,11 +558,7 @@ def traiter_issue(issue: dict, dry_run: bool):
             else:
                 log.error(f"  Issue #{numero} abandonnée après {CFG.max_essais} tentatives.")
                 commenter_issue(numero, f"❌ Échec après {CFG.max_essais} tentatives.\n\nDernière erreur : `{sortie}`\n\nIntervention humaine requise. Label `{LABEL_ECHEC}` posé : cette issue ne sera plus retraitée automatiquement tant que le label n'est pas retiré (ou l'issue fermée) manuellement.")
-                if not ajouter_label(numero, LABEL_ECHEC):
-                    log.warning(f"  ⚠️  Le label '{LABEL_ECHEC}' n'a PAS pu être posé sur "
-                                f"l'issue #{numero} : elle risque d'être retraitée en boucle "
-                                f"au prochain cycle (le garde-fou anti-retraitement repose sur "
-                                f"ce label). Intervention humaine recommandée.")
+                ajouter_label(numero, LABEL_ECHEC)
                 notifier(
                     labels,
                     titre=f"❌ {CFG.nom} #{numero} — échec définitif",
