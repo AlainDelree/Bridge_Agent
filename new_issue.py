@@ -96,23 +96,6 @@ def login_requis(vue):
     return enveloppe
 
 
-# Plages RFC 1918 (réseau local) + loopback autorisées pour le mode écriture.
-def ip_locale(ip: str) -> bool:
-    """True si l'IP source est le loopback ou appartient à une plage privée
-    RFC 1918 (192.168.x.x, 10.x.x.x, 172.16-31.x.x)."""
-    if not ip:
-        return False
-    if ip in ("127.0.0.1", "::1"):
-        return True
-    if ip.startswith("192.168.") or ip.startswith("10."):
-        return True
-    if ip.startswith("172."):
-        parties = ip.split(".")
-        if len(parties) >= 2 and parties[1].isdigit():
-            return 16 <= int(parties[1]) <= 31
-    return False
-
-
 def sauvegarder_conf(nom_projet: str, nouvelles_valeurs: dict) -> tuple[bool, str]:
     """Met à jour les clés éditables du .conf en préservant commentaires et
     structure. Les lignes commentées correspondant à une clé éditée sont
@@ -1585,12 +1568,6 @@ def apercu():
 @app.route("/envoyer", methods=["POST"])
 @login_requis
 def envoyer():
-    # Le mode écriture (création d'issue) est interdit depuis une IP externe :
-    # seul le réseau local (loopback + RFC 1918) peut déclencher gh issue create.
-    if not ip_locale(request.remote_addr):
-        return jsonify(succes=False,
-                       erreur="Mode écriture interdit depuis une IP externe. "
-                              "Connectez-vous depuis le réseau local.")
     data = request.json or {}
     cfg  = projet_par_nom(data.get("projet", ""))
     if not cfg:
