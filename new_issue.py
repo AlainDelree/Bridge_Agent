@@ -1351,7 +1351,27 @@ async function detecterIncoherenceProjet(data) {
     return gardees.join('\n');
   };
 
-  const corps = nettoyerCorps(data.corps || '').toLowerCase();
+  // Le ## Contexte peut légitimement citer d'autres projets pour expliquer la
+  // situation : seul le texte narratif de la section « ## Tâche demandée »
+  // (jusqu'à la prochaine ligne « ## » ou la fin) est réellement suspect. On
+  // isole cette section avant nettoyage ; si elle est absente, on retombe sur
+  // l'analyse du corps entier (comportement historique).
+  const extraireTacheDemandee = (brut) => {
+    const lignes = brut.split('\n');
+    let debut = -1;
+    for (let i = 0; i < lignes.length; i++) {
+      if (/^\s*##\s+t[âa]che\s+demand[ée]e/i.test(lignes[i])) { debut = i; break; }
+    }
+    if (debut === -1) return brut;                        // section absente : repli
+    const gardees = [];
+    for (let i = debut + 1; i < lignes.length; i++) {
+      if (/^\s*##\s/.test(lignes[i])) break;              // prochaine section ##
+      gardees.push(lignes[i]);
+    }
+    return gardees.join('\n');
+  };
+
+  const corps = nettoyerCorps(extraireTacheDemandee(data.corps || '')).toLowerCase();
   if (!corps.trim()) return null;
 
   // Tokens caractéristiques d'un projet : son nom, son dépôt complet
