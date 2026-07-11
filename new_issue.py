@@ -979,15 +979,19 @@ function construireBoutonsFiltre(noms) {
   const zone = document.getElementById('filtres-projets');
   zone.innerHTML = '';
   for (const nom of noms) {
-    const actif = projetsFiltresActifs.has(nom);
     const btn = document.createElement('span');
-    btn.className = 'filtre-projet' + (actif ? '' : ' inactif');
+    btn.className = 'filtre-projet';
     btn.dataset.projet = nom;
+    // La couleur du projet est stockée en attribut data ; appliqueCouleurBouton
+    // la reporte en texte + bordure quand le bouton est actif (indicateur
+    // visible de projet, cohérent avec la pastille et le badge de détail).
+    btn.dataset.couleur = couleurProjetResultats(nom);
     btn.onclick = () => basculerFiltreProjet(nom);
     btn.innerHTML = '<span class="pastille" style="background:'
       + couleurProjetResultats(nom) + '"></span>' + escapeHtml(nom);
     zone.appendChild(btn);
   }
+  majClassesBoutonsFiltre();
   const tous = document.createElement('span');
   tous.className = 'filtre-projet tous';
   tous.textContent = 'Tous';
@@ -1012,8 +1016,15 @@ function reactiverTousLesFiltres() {
 
 function majClassesBoutonsFiltre() {
   document.querySelectorAll('#filtres-projets .filtre-projet[data-projet]')
-    .forEach(btn =>
-      btn.classList.toggle('inactif', !projetsFiltresActifs.has(btn.dataset.projet)));
+    .forEach(btn => {
+      const actif = projetsFiltresActifs.has(btn.dataset.projet);
+      btn.classList.toggle('inactif', !actif);
+      // Actif : texte + bordure à la couleur du projet (bien visible).
+      // Inactif : on efface le style inline pour laisser la classe .inactif
+      // (grisé) reprendre la main.
+      btn.style.color       = actif ? btn.dataset.couleur : '';
+      btn.style.borderColor = actif ? btn.dataset.couleur : '';
+    });
 }
 
 // (Re)peuple la combobox à partir de listeIssuesResultats, en ne gardant que
@@ -1036,9 +1047,12 @@ function rendreListeIssues(reset) {
     opt.value = it.projet + '/' + it.number;
     opt.dataset.projet = it.projet;
     opt.dataset.numero = it.number;
-    // Le texte de l'option est teinté de la couleur du projet : le carré ●
-    // apparaît ainsi coloré (on ne peut styler qu'une option entière).
-    opt.style.color = couleurProjetResultats(it.projet);
+    // La couleur du projet est portée par un attribut data (data-couleur) :
+    // Firefox & la plupart des navigateurs ignorent color/style sur <option>,
+    // donc on n'y met AUCUN style. La couleur est appliquée sur le <select>
+    // lui-même (élément affiché) via majCouleurSelectIssue() ; pour la liste
+    // dépliée, les boutons de filtre colorés servent d'indicateur de projet.
+    opt.dataset.couleur = couleurProjetResultats(it.projet);
     // ✅ ● bridge_agent #31 — Titre [fermée]
     opt.textContent = `${prefixeIssue(it.labels)} ● ${it.projet} #${it.number} — ${it.title} [${etat}]`;
     select.appendChild(opt);
@@ -1047,6 +1061,21 @@ function rendreListeIssues(reset) {
     select.selectedIndex = 0;
     afficherIssue();
   }
+  majCouleurSelectIssue();
+}
+
+// Applique la couleur du projet de l'option sélectionnée sur le <select>
+// lui-même (le seul élément dont color est respecté par tous les navigateurs).
+// Ainsi l'item affiché prend la couleur de son projet ; la liste dépliée, elle,
+// reste neutre et c'est la rangée de boutons de filtre (colorés) qui indique
+// le projet de chaque item.
+function majCouleurSelectIssue() {
+  const select = document.getElementById('select-issue');
+  if (!select) return;
+  const opt = select.options[select.selectedIndex];
+  const couleur = (opt && opt.dataset.couleur) ? opt.dataset.couleur : '';
+  select.style.color = couleur;
+  select.style.fontWeight = couleur ? '600' : '';
 }
 
 function escapeHtml(t) {
@@ -1058,6 +1087,8 @@ function escapeHtml(t) {
 async function afficherIssue() {
   const sel = document.getElementById('select-issue');
   const opt = sel.options[sel.selectedIndex];
+  // Recolore le <select> à la couleur du projet de l'issue sélectionnée.
+  majCouleurSelectIssue();
   // L'onglet Résultats étant multi-projets, le projet source est porté par
   // l'option sélectionnée (dataset), pas par le sélecteur global.
   const nom = opt ? opt.dataset.projet : '';
