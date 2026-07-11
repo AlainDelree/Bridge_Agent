@@ -1123,6 +1123,7 @@ function rendreListeIssues(reset) {
     // résultat est rendu EN PREMIER via .commentaire.resultat ; on le vise
     // donc explicitement, avec repli sur .commentaire:last-child).
     ligne.onclick = async (event) => {
+      event.preventDefault();
       await afficherIssue(it.projet, numero);
       if (event.ctrlKey) {
         setTimeout(() => {
