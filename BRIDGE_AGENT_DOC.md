@@ -64,6 +64,10 @@ Description précise. Indiquer explicitement si LECTURE SEULE.
 Ce que CCL doit produire ou confirmer.
 ```
 
+> ⚠️ **Claude Chat doit toujours inclure** `| PROJET | <nom> |` dans l'en-tête
+> des issues qu'il génère (nom exact du projet cible : `bridge_agent`,
+> `alchess`, `ff_galerie`). Détaillé au §6 « Champs spéciaux ».
+
 ---
 
 ## 4. Labels disponibles
@@ -106,13 +110,19 @@ Le watcher lit ces champs dans le tableau markdown de l'en-tête :
 | `PRIORITE` | `haute` ou `critique` | Retry infini (au lieu de 3 max) |
 | `TIMEOUT` | ex. `600s` | Surcharge le timeout par défaut (300s) |
 | `MODELE` | ex. `claude-opus-4-5` | Force un modèle CCL spécifique pour cette issue |
+| `PROJET` | ex. `bridge_agent` | Détection d'incohérence dans `new_issue.py` (issue #44). Inséré automatiquement par l'interface. Claude Chat doit l'inclure dans toutes les issues qu'il génère. |
 
 Format dans le corps :
 ```markdown
 | PRIORITE | haute |
 | TIMEOUT  | 600s  |
 | MODELE   | claude-opus-4-5 |
+| PROJET   | bridge_agent |
 ```
+
+> ⚠️ **Claude Chat doit toujours inclure** `| PROJET | <nom> |` dans l'en-tête
+> des issues qu'il génère, avec le nom exact du projet cible
+> (`bridge_agent`, `alchess`, `ff_galerie`).
 
 ---
 
