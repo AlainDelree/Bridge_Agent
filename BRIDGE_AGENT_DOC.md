@@ -197,7 +197,37 @@ Nécessite : cloudflared installé + `~/.cloudflared/config.yml` configuré
 
 ---
 
-## 12. Commandes utiles
+## 12. Règles d'usage
+
+### Règle fondamentale : toujours passer par Claude Chat
+
+Toute modification de Bridge_Agent ou des projets associés doit
+être initiée par Claude Chat (CC) sous forme d'issue, même pour
+les petits changements (une ligne CSS, un label, une couleur).
+
+**Pourquoi :**
+- **Traçabilité** : chaque modif a une issue qui explique le pourquoi,
+  un diff connu de CC, un commit git pour le retour arrière.
+- **Diagnostic** : si une régression apparaît, CC connaît le contexte
+  exact de chaque changement récent.
+- **Cohérence** : CC maintient une vision globale de l'architecture
+  et évite les effets de bord.
+
+**Workflow :**
+1. Alain décrit l'idée à CC dans Claude Chat
+2. CC génère l'issue (titre + corps avec `| PROJET | <nom> |`)
+3. Alain colle dans new_issue.py et envoie
+4. CCL exécute, committe, ne pousse pas
+5. Alain vérifie (`git show`) et pousse
+
+**Exception :** les modifications de `configs/*.conf` (`TOPIC_NTFY`,
+`FICHIER_CONTEXTE`, etc.) peuvent se faire directement via
+l'onglet Configuration de new_issue.py — elles ne touchent
+pas au code et sont gitignorées.
+
+---
+
+## 13. Commandes utiles
 
 ```bash
 # Lancer l'interface web (local)
