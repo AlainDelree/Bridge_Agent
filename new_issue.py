@@ -551,12 +551,6 @@ button.danger-plein:hover{background:#8f2626}
       <label><input type="checkbox" name="notifs" value="notif_tous"> Tous (notif_tous)</label>
     </div>
 
-    <div class="titre-section">Corps de la tâche</div>
-    <textarea id="corps" placeholder="## Contexte&#10;…&#10;&#10;Ou coller directement avec #Titre: mon titre en première ligne."></textarea>
-
-    <div id="zone-apercu" class="apercu"></div>
-    <div id="message" class="message"></div>
-
     <div class="barre-envoi">
       <select id="modele-ponctuel" title="Modèle CCL pour cette issue uniquement"
               style="font-size:13px;padding:6px 10px;border:1px solid #ddd;
@@ -571,6 +565,12 @@ button.danger-plein:hover{background:#8f2626}
       <button onclick="afficherApercu()">Aperçu de la commande</button>
       <button class="primaire" id="btn-envoyer" onclick="envoyerIssue()">Envoyer l'issue</button>
     </div>
+
+    <div class="titre-section">Corps de la tâche</div>
+    <textarea id="corps" placeholder="## Contexte&#10;…&#10;&#10;Ou coller directement avec #Titre: mon titre en première ligne."></textarea>
+
+    <div id="zone-apercu" class="apercu"></div>
+    <div id="message" class="message"></div>
   </div>
 
   <!-- ─── Onglet Résultats : visualisation des issues ──────────────────── -->
