@@ -275,6 +275,31 @@ button.danger:hover{background:#f8d7da}
 .log-err{color:#d9534f}
 .barre-journal{display:flex;justify-content:space-between;align-items:center;margin-top:10px}
 .barre-journal span{font-size:11px;color:#aaa}
+.barre-issue{display:flex;align-items:center;gap:10px;margin-bottom:16px;
+  padding-bottom:14px;border-bottom:1px solid #eee}
+.barre-issue select{flex:1;padding:7px 10px;border:1px solid #ddd;border-radius:6px;
+  font-size:13px;background:#fff;color:#1a1a18;min-width:0}
+.barre-issue select:focus{outline:none;border-color:#888}
+.zone-issue{min-height:120px}
+.issue-vide{color:#aaa;font-size:13px;text-align:center;padding:40px 0}
+.issue-titre{font-size:20px;font-weight:600;line-height:1.3;margin-bottom:10px}
+.issue-badges{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px}
+.badge-etat{font-size:12px;font-weight:500;padding:3px 10px;border-radius:12px}
+.badge-etat.ouvert{background:#d4edda;color:#155724}
+.badge-etat.ferme{background:#e2e3e5;color:#555}
+.badge-label{font-size:11px;padding:3px 9px;border-radius:12px;
+  background:#eef;color:#3b3b8f;border:1px solid #dde}
+.issue-body{background:#f8f8f5;border:1px solid #e0dfda;border-radius:6px;padding:12px;
+  font-family:monospace;font-size:12px;white-space:pre-wrap;word-break:break-word;
+  max-height:200px;overflow-y:auto;line-height:1.6;margin-bottom:16px}
+.issue-sep{font-size:11px;font-weight:500;color:#999;text-transform:uppercase;
+  letter-spacing:.06em;margin:16px 0 10px;padding-bottom:6px;border-bottom:1px solid #f0efe9}
+.commentaire{border:1px solid #e0dfda;border-radius:6px;padding:12px;margin-bottom:10px;
+  background:#fff}
+.commentaire.resultat{border-color:#b7d7c0;background:#f6fbf7}
+.commentaire-auteur{font-size:12px;font-weight:500;color:#555;margin-bottom:6px}
+.commentaire-corps{font-family:monospace;font-size:12px;white-space:pre-wrap;
+  word-break:break-word;line-height:1.6;color:#1a1a18}
 </style>
 </head>
 <body>
@@ -321,6 +346,7 @@ button.danger:hover{background:#f8d7da}
 
   <div class="onglets">
     <div class="onglet actif" onclick="basculerOnglet('creation')">Nouvelle issue</div>
+    <div class="onglet" onclick="basculerOnglet('resultats')">Résultats</div>
     <div class="onglet" onclick="basculerOnglet('journal')">Journal watcher</div>
     <div class="onglet" onclick="basculerOnglet('config')">Configuration</div>
     <div class="onglet" onclick="basculerOnglet('watchers')">Watchers</div>
@@ -385,6 +411,21 @@ button.danger:hover{background:#f8d7da}
       <button class="danger" onclick="viderFormulaire()">Vider</button>
       <button onclick="afficherApercu()">Aperçu de la commande</button>
       <button class="primaire" id="btn-envoyer" onclick="envoyerIssue()">Envoyer l'issue</button>
+    </div>
+  </div>
+
+  <!-- ─── Onglet Résultats : visualisation des issues ──────────────────── -->
+  <div id="panneau-resultats" class="panneau">
+
+    <div class="barre-issue">
+      <select id="select-issue" title="Issues récentes du projet"></select>
+      <button onclick="naviguerIssue(-1)" title="Issue précédente">←</button>
+      <button onclick="naviguerIssue(1)" title="Issue suivante">→</button>
+      <button class="primaire" onclick="afficherIssue()">Afficher</button>
+    </div>
+
+    <div id="zone-issue" class="zone-issue">
+      <div class="issue-vide">Aucune issue à afficher</div>
     </div>
   </div>
 
@@ -507,12 +548,13 @@ let sourceSSE = null;
 let intervalWatchers = null;
 
 function basculerOnglet(nom) {
-  const noms = ['creation', 'journal', 'config', 'watchers'];
+  const noms = ['creation', 'resultats', 'journal', 'config', 'watchers'];
   document.querySelectorAll('.onglet').forEach((o, i) =>
     o.classList.toggle('actif', noms[i] === nom));
   noms.forEach(n =>
     document.getElementById('panneau-' + n).classList.toggle('actif', n === nom));
   if (nom === 'journal')  demarrerJournal();
+  if (nom === 'resultats') chargerListeIssues();
   if (nom === 'watchers') {
     chargerWatchers();
     intervalWatchers = setInterval(chargerWatchers, 5000);
@@ -525,6 +567,7 @@ function basculerOnglet(nom) {
 function onProjetChange() {
   verifierStatut();
   mettreAJourInfoProjet();
+  chargerListeIssues();
 }
 
 async function mettreAJourInfoProjet() {
@@ -637,6 +680,104 @@ function demarrerJournal() {
 
 function viderTerminal() {
   document.getElementById('terminal').innerHTML = '';
+}
+
+// ─── Onglet Résultats : visualisation des issues ──────────────────────────
+async function chargerListeIssues() {
+  const nom = document.getElementById('projet').value;
+  const select = document.getElementById('select-issue');
+  select.innerHTML = '<option value="">(chargement…)</option>';
+  try {
+    const rep = await fetch('/issues-liste/' + encodeURIComponent(nom));
+    const liste = await rep.json();
+    if (!Array.isArray(liste) || !liste.length) {
+      select.innerHTML = '<option value="">(aucune issue)</option>';
+      return;
+    }
+    select.innerHTML = '';
+    for (const it of liste) {
+      const etat = (it.state || '').toUpperCase() === 'CLOSED' ? 'fermé' : 'ouvert';
+      const opt = document.createElement('option');
+      opt.value = it.number;
+      opt.textContent = `#${it.number} — ${it.title} [${etat}]`;
+      select.appendChild(opt);
+    }
+  } catch(e) {
+    select.innerHTML = '<option value="">(erreur de chargement)</option>';
+  }
+}
+
+function escapeHtml(t) {
+  const d = document.createElement('div');
+  d.textContent = t == null ? '' : t;
+  return d.innerHTML;
+}
+
+async function afficherIssue() {
+  const nom = document.getElementById('projet').value;
+  const numero = document.getElementById('select-issue').value;
+  const zone = document.getElementById('zone-issue');
+  if (!numero) {
+    zone.innerHTML = '<div class="issue-vide">Aucune issue à afficher</div>';
+    return;
+  }
+  zone.innerHTML = '<div class="issue-vide">Chargement de l\'issue #' + escapeHtml(numero) + '…</div>';
+  try {
+    const rep = await fetch('/issue/' + encodeURIComponent(nom) + '/' + encodeURIComponent(numero));
+    const it = await rep.json();
+    if (it.erreur) {
+      zone.innerHTML = '<div class="issue-vide">Erreur : ' + escapeHtml(it.erreur) + '</div>';
+      return;
+    }
+    const ferme = (it.state || '').toUpperCase() === 'CLOSED';
+    let html = '';
+    html += '<div class="issue-titre">#' + escapeHtml(it.number) + ' — ' + escapeHtml(it.title) + '</div>';
+
+    html += '<div class="issue-badges">';
+    html += '<span class="badge-etat ' + (ferme ? 'ferme' : 'ouvert') + '">'
+          + (ferme ? 'fermé' : 'ouvert') + '</span>';
+    for (const lab of (it.labels || [])) {
+      html += '<span class="badge-label">' + escapeHtml(lab.name || lab) + '</span>';
+    }
+    html += '</div>';
+
+    html += '<div class="issue-body">' + escapeHtml(it.body || '(pas de description)') + '</div>';
+
+    const comms = it.comments || [];
+    html += '<div class="issue-sep">Commentaires (' + comms.length + ')</div>';
+    if (!comms.length) {
+      html += '<div class="issue-vide">Aucun commentaire</div>';
+    } else {
+      comms.forEach((c, i) => {
+        const auteur = (c.author && c.author.login) ? c.author.login : (c.author || 'inconnu');
+        const resultat = (i === comms.length - 1) ? ' resultat' : '';
+        html += '<div class="commentaire' + resultat + '">'
+              + '<div class="commentaire-auteur">' + escapeHtml(auteur)
+              + (resultat ? ' — résultat CCL' : '') + '</div>'
+              + '<div class="commentaire-corps">' + escapeHtml(c.body || '') + '</div>'
+              + '</div>';
+      });
+    }
+    zone.innerHTML = html;
+  } catch(e) {
+    zone.innerHTML = '<div class="issue-vide">Erreur réseau : ' + escapeHtml(e.message) + '</div>';
+  }
+}
+
+function naviguerIssue(delta) {
+  const select = document.getElementById('select-issue');
+  const courant = parseInt(select.value, 10);
+  if (isNaN(courant)) return;
+  const cible = courant + delta;
+  if (cible < 1) return;
+  // Aligne la combobox sur la cible si elle y figure ; sinon on garde la valeur.
+  const existe = [...select.options].some(o => parseInt(o.value, 10) === cible);
+  if (existe) select.value = String(cible);
+  else {
+    const opt = new Option('#' + cible, String(cible), true, true);
+    select.add(opt);
+  }
+  afficherIssue();
 }
 
 function collecterFormulaire() {
@@ -956,6 +1097,58 @@ def journal(nom_projet):
         mimetype="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+@app.route("/issues-liste/<nom_projet>")
+def issues_liste(nom_projet):
+    """Retourne les 30 dernières issues (tous états) du projet via gh."""
+    cfg = projet_par_nom(nom_projet)
+    if not cfg:
+        return jsonify(erreur="Projet introuvable."), 404
+    try:
+        res = subprocess.run(
+            ["gh", "issue", "list",
+             "--repo",  cfg.depot,
+             "--state", "all",
+             "--limit", "30",
+             "--json",  "number,title,state,labels"],
+            capture_output=True, text=True, timeout=30
+        )
+        if res.returncode != 0:
+            return jsonify(erreur=res.stderr.strip() or "Erreur de gh."), 502
+        return jsonify(json.loads(res.stdout or "[]"))
+    except subprocess.TimeoutExpired:
+        return jsonify(erreur="Timeout (gh n'a pas répondu en 30s)."), 504
+    except FileNotFoundError:
+        return jsonify(erreur="gh introuvable dans le PATH."), 500
+    except Exception as e:
+        return jsonify(erreur=str(e)), 500
+
+
+@app.route("/issue/<nom_projet>/<numero>")
+def issue_detail(nom_projet, numero):
+    """Retourne le détail d'une issue (corps + commentaires) via gh."""
+    cfg = projet_par_nom(nom_projet)
+    if not cfg:
+        return jsonify(erreur="Projet introuvable."), 404
+    if not str(numero).isdigit():
+        return jsonify(erreur="Numéro d'issue invalide."), 400
+    try:
+        res = subprocess.run(
+            ["gh", "issue", "view", str(numero),
+             "--repo", cfg.depot,
+             "--json", "number,title,body,state,labels,comments,createdAt,closedAt"],
+            capture_output=True, text=True, timeout=30
+        )
+        if res.returncode != 0:
+            return jsonify(erreur=res.stderr.strip() or "Erreur de gh."), 502
+        return jsonify(json.loads(res.stdout or "{}"))
+    except subprocess.TimeoutExpired:
+        return jsonify(erreur="Timeout (gh n'a pas répondu en 30s)."), 504
+    except FileNotFoundError:
+        return jsonify(erreur="gh introuvable dans le PATH."), 500
+    except Exception as e:
+        return jsonify(erreur=str(e)), 500
 
 
 @app.route("/config/<nom_projet>")
