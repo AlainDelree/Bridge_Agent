@@ -393,6 +393,7 @@ button.danger:hover{background:#f8d7da}
 .ligne-issue.selectionnee:hover{background:var(--bg-sel)}
 .ligne-issue .ligne-gauche{display:inline-flex;align-items:center;gap:6px;flex-shrink:0}
 .ligne-issue .ligne-badges{font-size:13px;white-space:nowrap}
+.ligne-issue .badge-copie-ccl{cursor:pointer}
 .ligne-issue .pastille-ligne{width:9px;height:9px;border-radius:50%;flex-shrink:0}
 .ligne-issue .ligne-texte{flex:1;min-width:0;overflow:hidden;
   text-overflow:ellipsis;white-space:nowrap}
@@ -1229,11 +1230,24 @@ function rendreListeIssues(reset) {
     };
     // Gauche : badges emoji (✅ ✏️ ⚠️ ○) + pastille ● colorée du projet.
     // Centre : #N — titre [état].
+    // Le badge ✅ des issues FERMÉES portant le label « done » (les seules qui
+    // ont une réponse CCL) devient cliquable : un clic copie directement la
+    // réponse CCL sans ouvrir le détail (issue #62).
+    let badgesHtml = prefixeIssue(it.labels);
+    const nomsLabelsLigne = (it.labels || [])
+      .map(l => ((l && l.name) || l || '').toLowerCase());
+    if (etat === 'fermé' && nomsLabelsLigne.includes('done')
+        && badgesHtml.includes('✅')) {
+      badgesHtml = badgesHtml.replace('✅',
+        '<span class="badge-copie-ccl" title="Copier la réponse CCL"'
+        + ' onclick="copierReponseDepuisBadge(event, \''
+        + escapeHtml(it.projet) + '\', ' + Number(numero) + ')">✅</span>');
+    }
     ligne.innerHTML =
       '<span class="ligne-date" style="font-size:11px;color:#999;'
       + 'min-width:140px;font-family:monospace">' + escapeHtml(dateCreation) + '</span>'
       + '<span class="ligne-gauche">'
-      + '<span class="ligne-badges">' + prefixeIssue(it.labels) + '</span>'
+      + '<span class="ligne-badges">' + badgesHtml + '</span>'
       + '<span class="pastille-ligne" style="background:' + couleur + '"></span>'
       + '</span>'
       + '<span class="ligne-texte">#' + escapeHtml(numero) + ' — '
@@ -1524,6 +1538,72 @@ async function copierReponse(btn) {
     range.selectNodeContents(corps);
     sel.removeAllRanges();
     sel.addRange(range);
+  }
+}
+
+// Extrait le RÉSUMÉ de la réponse CCL (dernier commentaire) d'une donnée issue
+// brute : texte AVANT le bloc <details>, whitespace de fin retiré. Cohérent
+// avec ce que copie le bouton « Copier la réponse » du détail (issue #59).
+function resumeReponseCcl(it) {
+  const comms = (it && it.comments) || [];
+  if (!comms.length) return '';
+  const corpsBrut = comms[comms.length - 1].body || '';
+  const idxDetails = corpsBrut.indexOf('<details>');
+  return (idxDetails >= 0 ? corpsBrut.slice(0, idxDetails) : corpsBrut)
+         .replace(/\s+$/, '');
+}
+
+// Clic sur le badge ✅ d'une issue fermée+done (issue #62) : copie la réponse
+// CCL directement depuis la liste, sans ouvrir le détail. Utilise le cache
+// bridge_cache_detail_<projet>_<numero> s'il est frais (< TTL), sinon fetch le
+// détail (et met le cache à jour). Feedback visuel bref sur le badge lui-même,
+// sans modifier la ligne. stopPropagation() empêche la sélection de la ligne.
+async function copierReponseDepuisBadge(event, nom, numero) {
+  event.stopPropagation();
+  const badge = event.currentTarget;   // capturé avant tout await (nullé ensuite)
+  numero = String(numero);
+  const cleCache = CLE_CACHE_DETAIL + nom + '_' + numero;
+  let texte = null;
+
+  // 1) Cache frais (< TTL) : on évite le fetch.
+  try {
+    const obj = JSON.parse(localStorage.getItem(cleCache) || 'null');
+    if (obj && obj.it && (Date.now() - obj.ts) < TTL_DETAIL_MS) {
+      texte = resumeReponseCcl(obj.it);
+    }
+  } catch(e) {}
+
+  // 2) Pas de cache exploitable : fetch le détail et rafraîchit le cache.
+  if (texte === null) {
+    try {
+      const rep = await fetch('/issue/' + encodeURIComponent(nom)
+                              + '/' + encodeURIComponent(numero));
+      const it = await rep.json();
+      if (!it.erreur) {
+        try { localStorage.setItem(cleCache, JSON.stringify({ts: Date.now(), it: it})); } catch(e) {}
+        texte = resumeReponseCcl(it);
+      }
+    } catch(e) {
+      console.warn('copierReponseDepuisBadge : échec fetch du détail.', e);
+    }
+  }
+  if (texte === null) texte = '';
+
+  // Copie dans le presse-papier (fallback silencieux si indisponible / non-HTTPS).
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    try {
+      await navigator.clipboard.writeText(texte);
+    } catch(e) {
+      console.warn('copierReponseDepuisBadge : échec navigator.clipboard.', e);
+    }
+  } else {
+    console.warn('copierReponseDepuisBadge : navigator.clipboard indisponible (non-HTTPS).');
+  }
+
+  // Feedback visuel : ✅ → ✓ pendant 1,5 s, puis retour à ✅ (ligne inchangée).
+  if (badge) {
+    badge.textContent = '✓';
+    setTimeout(function() { badge.textContent = '✅'; }, 1500);
   }
 }
 
