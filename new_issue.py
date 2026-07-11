@@ -1118,7 +1118,20 @@ function rendreListeIssues(reset) {
     ligne.style.color = couleur;
     ligne.style.setProperty('--bg-hover', avecOpacite(couleur, 0.10));
     ligne.style.setProperty('--bg-sel',   avecOpacite(couleur, 0.20));
-    ligne.onclick = () => afficherIssue(it.projet, numero);
+    // Clic simple : sélectionne et affiche l'issue. Ctrl+clic : idem, puis
+    // défile automatiquement jusqu'au bloc résultat CCL (dans cette UI, le
+    // résultat est rendu EN PREMIER via .commentaire.resultat ; on le vise
+    // donc explicitement, avec repli sur .commentaire:last-child).
+    ligne.onclick = async (event) => {
+      await afficherIssue(it.projet, numero);
+      if (event.ctrlKey) {
+        setTimeout(() => {
+          const cible = document.querySelector('#zone-issue .commentaire.resultat')
+                     || document.querySelector('#zone-issue .commentaire:last-child');
+          if (cible) cible.scrollIntoView({behavior: 'smooth', block: 'start'});
+        }, 100);
+      }
+    };
     // Gauche : badges emoji (✅ ✏️ ⚠️ ○) + pastille ● colorée du projet.
     // Centre : #N — titre [état].
     ligne.innerHTML =
