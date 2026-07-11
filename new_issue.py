@@ -954,18 +954,18 @@ async function chargerListeIssues() {
         const rep = await fetch('/issues-liste/' + encodeURIComponent(nom));
         const liste = await rep.json();
         if (!Array.isArray(liste)) return [];
-        // Les 5 plus récentes (numéro décroissant) de ce projet.
+        // Les 5 plus récentes (date de création décroissante) de ce projet.
         return liste
           .slice()
-          .sort((a, b) => b.number - a.number)
+          .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
           .slice(0, 5)
           .map(it => Object.assign({}, it, {projet: nom}));
       } catch(e) {
         return [];
       }
     }));
-    // Fusion + tri global par numéro décroissant (plus récentes en premier).
-    listeIssuesResultats = listes.flat().sort((a, b) => b.number - a.number);
+    // Fusion + tri global par date de création décroissante (plus récentes en premier).
+    listeIssuesResultats = listes.flat().sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
 
     // État des filtres restauré depuis localStorage (tous actifs par défaut).
     projetsFiltresActifs = restaurerFiltresProjets(noms);
@@ -1963,7 +1963,7 @@ def issues_liste(nom_projet):
              "--repo",  cfg.depot,
              "--state", "all",
              "--limit", "30",
-             "--json",  "number,title,state,labels"],
+             "--json",  "number,title,state,labels,createdAt"],
             capture_output=True, text=True, timeout=30
         )
         if res.returncode != 0:
