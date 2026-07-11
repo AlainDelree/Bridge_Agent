@@ -1631,10 +1631,20 @@ def annuler_issue(nom_projet, numero):
 
 @app.route("/config/<nom_projet>")
 def get_config(nom_projet):
-    """Retourne les valeurs actuelles du .conf (champs lus + défauts)."""
-    cfg = projet_par_nom(nom_projet)
-    if not cfg:
+    """Retourne les valeurs actuelles du .conf, relues depuis le disque à
+    chaque appel (via charger_config) plutôt que depuis l'objet Config en
+    mémoire. Ainsi l'onglet Configuration reflète toujours l'état réel du
+    fichier, même s'il a été modifié à la main après le démarrage."""
+    chemin = DOSSIER_SCRIPT / "configs" / f"{nom_projet}.conf"
+    if not chemin.exists():
         return jsonify(erreur="Projet introuvable."), 404
+    try:
+        cfg = charger_config(chemin)
+    except SystemExit as e:
+        # charger_config quitte (sys.exit) si un champ requis manque ou
+        # qu'un entier est mal formé : on le rattrape pour ne pas tuer
+        # le serveur et renvoyer une erreur exploitable côté onglet.
+        return jsonify(erreur=f"Config invalide : {e}"), 400
     return jsonify(
         nom            = cfg.nom,
         depot          = cfg.depot,
