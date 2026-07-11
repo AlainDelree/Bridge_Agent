@@ -809,6 +809,9 @@ async function mettreAJourInfoProjet() {
     }
     // Le timeout par défaut suit la valeur TIMEOUT_CLAUDE du projet sélectionné.
     document.getElementById('timeout').value = cfg.timeout_claude || 300;
+    // Le libellé du bouton d'envoi affiche le projet cible pour éviter les
+    // envois sur le mauvais projet.
+    document.getElementById('btn-envoyer').textContent = 'Envoyer sur ' + cfg.nom;
   } catch(e) {}
 }
 
@@ -1622,7 +1625,9 @@ async function envoyerIssue() {
   } catch(e) {
     afficherMessage('Erreur réseau : ' + e.message, 'erreur');
   }
-  btn.disabled = false; btn.textContent = "Envoyer l'issue";
+  // Restaure le libellé avec le projet cible plutôt qu'un texte générique.
+  btn.disabled = false;
+  btn.textContent = 'Envoyer sur ' + document.getElementById('projet').value;
 }
 
 async function chargerWatchers() {
