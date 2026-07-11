@@ -1186,8 +1186,31 @@ async function detecterIncoherenceProjet(data) {
   } catch(e) { return null; }
   if (!Array.isArray(projets)) return null;
 
-  const corps = (data.corps || '').toLowerCase();
-  if (!corps) return null;
+  // On écarte de l'analyse les chemins techniques et le code : ils citent
+  // légitimement d'autres projets (« Dans ~/NicLink/bip.py », blocs ```) sans
+  // trahir une erreur de cible. Seul le texte narratif restant est examiné.
+  const nettoyerCorps = (brut) => {
+    const lignes = brut.split('\n');
+    const gardees = [];
+    let dansBloc = false;                                // bloc ``` en cours
+    for (const ligne of lignes) {
+      if (ligne.trim().startsWith('```')) {              // ouverture/fermeture
+        dansBloc = !dansBloc;
+        continue;                                        // la clôture aussi retirée
+      }
+      if (dansBloc) continue;                            // contenu de bloc de code
+      const t = ligne.trim();
+      // Ligne « Dans ~/… » / « dans ~/… » : renvoi vers un fichier.
+      if (/^dans\s+~\//i.test(t)) continue;
+      // Ligne ne contenant qu'un chemin absolu (~/… ou /home/…).
+      if (/^(~\/|\/home\/)\S*$/.test(t)) continue;
+      gardees.push(ligne);
+    }
+    return gardees.join('\n');
+  };
+
+  const corps = nettoyerCorps(data.corps || '').toLowerCase();
+  if (!corps.trim()) return null;
 
   // Tokens caractéristiques d'un projet : son nom, son dépôt complet
   // (owner/repo) et le nom de dépôt seul (repo). L'owner seul est écarté car
