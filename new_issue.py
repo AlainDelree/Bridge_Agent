@@ -224,12 +224,15 @@ body{font-family:system-ui,sans-serif;font-size:14px;background:#f0efe9;color:#1
 .entete h1{font-size:15px;font-weight:500}
 .entete .statut{margin-left:auto;font-size:12px;color:#888}
 .bandeau-projet{display:flex;flex-direction:column;gap:8px;
-  padding:12px 20px;border-bottom:1px solid #eee;background:#faf9f6}
+  padding:14px 20px;border-bottom:1px solid #eee;background:#eef3f8;
+  border-left:4px solid #1a1a18}
 .bandeau-ligne{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
-.bandeau-ligne label{font-size:13px;color:#555;font-weight:500;white-space:nowrap}
-.bandeau-projet select{padding:7px 10px;border:1px solid #ddd;border-radius:6px;
-  font-size:13px;background:#fff;color:#1a1a18;min-width:220px}
+.bandeau-ligne label{font-size:14px;color:#333;font-weight:600;white-space:nowrap}
+.bandeau-projet select{padding:8px 12px;border:1px solid #ccc;border-radius:6px;
+  font-size:15px;font-weight:600;background:#fff;color:#1a1a18;min-width:240px;
+  border-left:4px solid #1a1a18}
 .bandeau-projet select:focus{outline:none;border-color:#888}
+.projet-actif-label{font-size:14px;font-weight:700;color:#1a1a18;padding:0 2px}
 .onglets{display:flex;border-bottom:1px solid #eee;padding:0 20px}
 .onglet{padding:9px 16px;font-size:15px;font-weight:500;color:#777;cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-1px;user-select:none}
 .onglet.actif{color:#1a1a18;font-weight:700;border-bottom-color:#1a1a18}
@@ -365,7 +368,10 @@ button.danger-plein:hover{background:#8f2626}
       </div>
     </div>
 
-    <!-- Ligne 2 : nom du dépôt et du répertoire, sous la combobox et le statut -->
+    <!-- Ligne 2 : « Projet actif : … » en grand, avec la couleur accent du projet -->
+    <div id="projet-actif-label" class="projet-actif-label"></div>
+
+    <!-- Ligne 3 : nom du dépôt et du répertoire, sous la combobox et le statut -->
     <div id="info-projet" style="font-size:12px;color:#888;padding:0 2px">
       <span id="info-depot"></span>
       <span id="info-rep-travail"></span>
@@ -595,6 +601,36 @@ let sourceSSE = null;
 
 let intervalWatchers = null;
 
+// Dernier projet ayant reçu une issue dans CETTE session (onglet ouvert). Sert
+// à déclencher un second avertissement dans envoyerIssue() si l'utilisateur
+// change de projet juste avant l'envoi. Réinitialisé à chaque rechargement.
+let sessionDernierEnvoi = null;
+
+// Couleur d'accent STABLE dérivée du nom du projet (hash simple sur les
+// charCodes → teinte HSL). Même nom ⇒ même couleur à chaque session.
+function couleurProjet(nom) {
+  let h = 0;
+  for (let i = 0; i < nom.length; i++) {
+    h = (h * 31 + nom.charCodeAt(i)) % 360;
+  }
+  return 'hsl(' + ((h + 360) % 360) + ', 60%, 34%)';
+}
+
+// Applique l'accent visuel du projet : bordure gauche du select et du bandeau,
+// et libellé « Projet actif : … » en grand, tous de la même couleur.
+function appliquerAccentProjet(nom) {
+  const couleur = couleurProjet(nom);
+  const select  = document.getElementById('projet');
+  const bandeau = document.querySelector('.bandeau-projet');
+  const label   = document.getElementById('projet-actif-label');
+  if (select)  select.style.borderLeftColor  = couleur;
+  if (bandeau) bandeau.style.borderLeftColor  = couleur;
+  if (label) {
+    label.textContent = 'Projet actif : ' + nom;
+    label.style.color = couleur;
+  }
+}
+
 function basculerOnglet(nom) {
   const noms = ['creation', 'resultats', 'journal', 'config', 'watchers'];
   document.querySelectorAll('.onglet').forEach((o, i) =>
@@ -613,6 +649,10 @@ function basculerOnglet(nom) {
 }
 
 function onProjetChange() {
+  const nom = document.getElementById('projet').value;
+  // Mémorise le projet choisi pour le restaurer à la prochaine ouverture.
+  try { localStorage.setItem('bridge_projet_actif', nom); } catch(e) {}
+  appliquerAccentProjet(nom);
   verifierStatut();
   mettreAJourInfoProjet();
   chargerListeIssues();
@@ -1003,6 +1043,35 @@ function afficherModalConfirmation(issues) {
   });
 }
 
+// Modal de confirmation générique (titre + libellés de boutons personnalisés,
+// sans liste). Réutilise le même overlay ; restaure les libellés d'origine à la
+// fermeture. Résout true (bouton de gauche/oui) ou false (annuler).
+function afficherModalGenerique(titre, texteOui, texteNon) {
+  return new Promise(resolve => {
+    const overlay = document.getElementById('modal-confirmation');
+    const liste   = document.getElementById('modal-liste');
+    const btnOui  = document.getElementById('modal-oui');
+    const btnNon  = document.getElementById('modal-non');
+    const ouiAvant = btnOui.textContent;
+    const nonAvant = btnNon.textContent;
+    document.getElementById('modal-titre').textContent = titre;
+    liste.style.display = 'none';
+    btnOui.textContent  = texteOui;
+    btnNon.textContent  = texteNon;
+    function fermer(reponse) {
+      overlay.classList.remove('actif');
+      btnOui.onclick = null; btnNon.onclick = null;
+      btnOui.textContent = ouiAvant;
+      btnNon.textContent = nonAvant;
+      liste.style.display = '';
+      resolve(reponse);
+    }
+    btnOui.onclick = () => fermer(true);
+    btnNon.onclick = () => fermer(false);
+    overlay.classList.add('actif');
+  });
+}
+
 async function envoyerIssue() {
   cacherRetours();
   const data = collecterFormulaire();
@@ -1021,6 +1090,17 @@ async function envoyerIssue() {
     // La vérification a échoué (réseau, gh…) : on n'empêche pas l'envoi.
   }
 
+  // Second garde-fou : si on a déjà envoyé une issue dans cette session sur un
+  // AUTRE projet, on confirme explicitement la cible avant d'envoyer.
+  if (sessionDernierEnvoi && sessionDernierEnvoi !== data.projet) {
+    const ok = await afficherModalGenerique(
+      'Attention : tu envoies sur ' + data.projet
+        + ' (dernier envoi : ' + sessionDernierEnvoi + '). Confirmer ?',
+      'Oui, envoyer sur ' + data.projet,
+      'Annuler');
+    if (!ok) return;
+  }
+
   const btn = document.getElementById('btn-envoyer');
   btn.disabled = true; btn.textContent = 'Envoi…';
   try {
@@ -1032,6 +1112,7 @@ async function envoyerIssue() {
     const json = await rep.json();
     if (json.succes) {
       afficherMessage('✓ Issue créée : ' + json.url, 'succes');
+      sessionDernierEnvoi = data.projet;   // mémorise la cible du dernier envoi
       viderFormulaire(false);
     } else {
       afficherMessage('Erreur : ' + json.erreur, 'erreur');
@@ -1183,9 +1264,18 @@ async function lancerWatcher() {
   await verifierStatut();
 }
 
-// Sonde le statut au chargement puis toutes les 5 secondes.
-verifierStatut();
-mettreAJourInfoProjet();
+// Au chargement : restaure le dernier projet mémorisé (localStorage) s'il
+// correspond encore à une option existante, puis initialise l'accent visuel, le
+// statut et les infos via onProjetChange(). Sonde ensuite toutes les 5 s.
+(function restaurerProjet() {
+  const select = document.getElementById('projet');
+  let dernier = null;
+  try { dernier = localStorage.getItem('bridge_projet_actif'); } catch(e) {}
+  if (dernier && [...select.options].some(o => o.value === dernier)) {
+    select.value = dernier;
+  }
+  onProjetChange();
+})();
 setInterval(verifierStatut, 5000);
 
 function viderFormulaire(cacherMsg=true) {
