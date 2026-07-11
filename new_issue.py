@@ -15,6 +15,7 @@ import getpass
 import hashlib
 import json
 import os
+import shutil
 import signal
 import subprocess
 import sys
@@ -53,6 +54,11 @@ DELAI_HEARTBEAT_MAX  = 15       # au-delà, l'onglet est considéré fermé
 last_heartbeat = 0.0            # horodatage du dernier heartbeat reçu
 heartbeat_recu = False          # tant qu'aucun heartbeat : pas de surveillance
 arret_demande  = False          # passé à True par le gestionnaire de signal
+
+# Processus du tunnel cloudflared, démarré automatiquement en mode --externe
+# (None en mode local ou tant que le tunnel n'est pas lancé). Arrêté proprement
+# par le gestionnaire de signal et par la route /quitter.
+proc_tunnel = None
 
 
 # Clés modifiables via l'interface (les autres : NOM, DEPOT, REP_TRAVAIL,
@@ -2038,6 +2044,7 @@ def quitter():
 
     def arret_differe():
         time.sleep(2)
+        arreter_tunnel()
         os._exit(0)
 
     Thread(target=arret_differe, daemon=True).start()
@@ -2045,6 +2052,71 @@ def quitter():
 
 
 # ─── Point d'entrée ───────────────────────────────────────────────────────────
+
+
+# ─── Tunnel cloudflared (mode --externe) ─────────────────────────────────────
+# En mode --externe, new_issue.py démarre lui-même le tunnel cloudflared
+# (« cloudflared tunnel run bridge-agent ») au lancement et l'arrête proprement
+# à la fermeture (Ctrl+C / SIGTERM ou bouton « Quitter »). Plus besoin de le
+# lancer à la main dans un terminal séparé.
+URL_TUNNEL = "https://bridge.frederiqueferette.be"
+
+
+def demarrer_tunnel():
+    """Vérifie l'installation de cloudflared et sa config, puis lance le tunnel
+    bridge-agent en arrière-plan (stdout/stderr silencieux sauf erreur). Stocke
+    le processus dans la variable globale proc_tunnel. Termine le programme
+    (exit 1) avec un message clair si un prérequis manque ou si le tunnel meurt
+    immédiatement au démarrage."""
+    global proc_tunnel
+
+    # 1) cloudflared doit être installé.
+    if shutil.which("cloudflared") is None:
+        print("Erreur : cloudflared est introuvable (which cloudflared).")
+        print("Installez cloudflared avant d'utiliser --externe.")
+        sys.exit(1)
+
+    # 2) La configuration du tunnel (~/.cloudflared/config.yml) doit exister.
+    config_tunnel = Path.home() / ".cloudflared" / "config.yml"
+    if not config_tunnel.exists():
+        print(f"Erreur : configuration cloudflared introuvable : {config_tunnel}")
+        print("Configurez le tunnel cloudflared avant d'utiliser --externe.")
+        sys.exit(1)
+
+    # 3) Lancement silencieux (sortie capturée, affichée seulement en cas d'échec).
+    proc_tunnel = subprocess.Popen(
+        ["cloudflared", "tunnel", "run", "bridge-agent"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+
+    # 4) Laisse 2 s au tunnel pour s'établir, puis vérifie qu'il est vivant.
+    time.sleep(2)
+    if proc_tunnel.poll() is not None:
+        try:
+            err = proc_tunnel.stderr.read().decode("utf-8", "replace") if proc_tunnel.stderr else ""
+        except Exception:
+            err = ""
+        print("Erreur : le tunnel cloudflared s'est arrêté immédiatement.")
+        if err.strip():
+            print(err.strip())
+        sys.exit(1)
+
+    print(f"Tunnel cloudflared démarré (pid {proc_tunnel.pid})")
+    print(f"URL : {URL_TUNNEL}")
+
+
+def arreter_tunnel():
+    """Arrête proprement le tunnel cloudflared s'il a été démarré et tourne
+    encore. Sans effet si aucun tunnel n'est actif (mode local ou déjà arrêté)."""
+    global proc_tunnel
+    if proc_tunnel is not None and proc_tunnel.poll() is None:
+        try:
+            proc_tunnel.terminate()
+            proc_tunnel.wait(timeout=3)
+        except Exception:
+            pass
+        print("Tunnel cloudflared arrêté.")
 
 
 def surveiller_heartbeat():
@@ -2136,10 +2208,18 @@ def main():
     def gestionnaire_arret(signum, frame):
         global arret_demande
         arret_demande = True
+        arreter_tunnel()
         Timer(1.5, lambda: os._exit(0)).start()
 
     signal.signal(signal.SIGINT, gestionnaire_arret)
     signal.signal(signal.SIGTERM, gestionnaire_arret)
+
+    # Mode --externe : démarrage automatique du tunnel cloudflared avant
+    # d'exposer le serveur. Vérifie les prérequis (cloudflared + config) et
+    # quitte proprement (exit 1) en cas de problème. L'arrêt est géré par le
+    # gestionnaire de signal ci-dessus et par la route /quitter.
+    if args.externe:
+        demarrer_tunnel()
 
     # Surveillance des heartbeats du navigateur (daemon → ne bloque jamais
     # l'arrêt du processus si le gestionnaire de signal est lent).
