@@ -4,3 +4,4 @@ configs/*.conf
 __pycache__/
 *.pyc
 venv/
+Notes_Perso.md
