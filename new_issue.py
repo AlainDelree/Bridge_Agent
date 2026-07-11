@@ -10,6 +10,8 @@ Usage :
 """
 
 import argparse
+import getpass
+import hashlib
 import json
 import os
 import signal
@@ -18,10 +20,12 @@ import sys
 import tempfile
 import time
 import webbrowser
+from functools import wraps
 from pathlib import Path
 from threading import Thread, Timer
 
-from flask import Flask, Response, jsonify, render_template_string, request
+from flask import (Flask, Response, jsonify, redirect, render_template_string,
+                   request, session, url_for)
 
 # Partage du lecteur de config avec watcher.py (même dossier).
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -30,7 +34,11 @@ from watcher import Config, charger_config  # noqa: E402
 DOSSIER_SCRIPT = Path(__file__).resolve().parent
 
 app = Flask(__name__)
-app.config["SECRET_KEY"] = "bridge-agent-local"
+# Clé de signature des cookies de session régénérée à chaque démarrage : les
+# sessions ne survivent pas à un redémarrage (acceptable) mais la clé n'est
+# jamais figée dans le code source — un cookie session['authentifie'] ne peut
+# donc pas être forgé à partir du dépôt.
+app.config["SECRET_KEY"] = os.urandom(32)
 
 
 # ─── Cycle de vie serveur ↔ onglet navigateur ────────────────────────────────
@@ -51,8 +59,58 @@ arret_demande  = False          # passé à True par le gestionnaire de signal
 CLES_EDITABLES = {
     "TOPIC_NTFY", "LABEL", "INTERVALLE", "MAX_ESSAIS",
     "TIMEOUT_CLAUDE", "SCRIPT_BIP", "LOG_TAILLE_MAX_MO", "LOG_ARCHIVES",
-    "MODELE_CCL",
+    "MODELE_CCL", "MOT_DE_PASSE",
 }
+
+
+# ─── Sécurité : authentification + filtrage IP ────────────────────────────────
+# Le mot de passe d'accès est stocké HASHÉ (sha256) dans configs/bridge_agent.conf
+# sous la clé MOT_DE_PASSE. Vide → interface accessible sans authentification.
+# Générer le hash avec :  python3 new_issue.py --set-password
+MAX_ECHECS_LOGIN = 5   # nombre de tentatives avant blocage de la session
+
+
+def charger_mot_de_passe() -> str:
+    """Hash sha256 du mot de passe d'accès, relu depuis bridge_agent.conf.
+    Chaîne vide → aucune authentification exigée."""
+    chemin = DOSSIER_SCRIPT / "configs" / "bridge_agent.conf"
+    if not chemin.exists():
+        return ""
+    try:
+        return charger_config(chemin).mot_de_passe.strip()
+    except SystemExit:
+        return ""
+
+
+MOT_DE_PASSE = charger_mot_de_passe()
+
+
+def login_requis(vue):
+    """Décorateur : redirige vers /login tant que la session n'est pas
+    authentifiée. Inactif si aucun mot de passe n'est configuré."""
+    @wraps(vue)
+    def enveloppe(*args, **kwargs):
+        if MOT_DE_PASSE and not session.get("authentifie"):
+            return redirect(url_for("login"))
+        return vue(*args, **kwargs)
+    return enveloppe
+
+
+# Plages RFC 1918 (réseau local) + loopback autorisées pour le mode écriture.
+def ip_locale(ip: str) -> bool:
+    """True si l'IP source est le loopback ou appartient à une plage privée
+    RFC 1918 (192.168.x.x, 10.x.x.x, 172.16-31.x.x)."""
+    if not ip:
+        return False
+    if ip in ("127.0.0.1", "::1"):
+        return True
+    if ip.startswith("192.168.") or ip.startswith("10."):
+        return True
+    if ip.startswith("172."):
+        parties = ip.split(".")
+        if len(parties) >= 2 and parties[1].isdigit():
+            return 16 <= int(parties[1]) <= 31
+    return False
 
 
 def sauvegarder_conf(nom_projet: str, nouvelles_valeurs: dict) -> tuple[bool, str]:
@@ -368,6 +426,10 @@ button.danger-plein:hover{background:#8f2626}
     </svg>
     <h1>Bridge Agent</h1>
     <span class="statut">{{ projets|length }} projet(s) disponible(s)</span>
+    {% if auth_active %}
+    <button class="danger" onclick="location.href='/logout'"
+            style="font-size:12px;padding:5px 12px">Déconnexion</button>
+    {% endif %}
     <button id="btn-quitter" class="danger" onclick="quitter()"
             style="font-size:12px;padding:5px 12px">Quitter</button>
   </div>
@@ -1400,14 +1462,106 @@ function viderFormulaire(cacherMsg=true) {
 </html>"""
 
 
+TEMPLATE_LOGIN = """<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bridge Agent — Connexion</title>
+<style>
+body{font-family:system-ui,sans-serif;font-size:14px;background:#f0efe9;color:#1a1a18;
+  min-height:100vh;margin:0;display:flex;align-items:center;justify-content:center;padding:28px 16px}
+.carte{background:#fff;border:1px solid #ddd;border-radius:12px;max-width:360px;width:100%;
+  padding:28px;box-shadow:0 1px 3px rgba(0,0,0,.05)}
+.carte h1{font-size:16px;font-weight:500;margin:0 0 4px;display:flex;align-items:center;gap:9px}
+.carte p.sous{color:#888;font-size:12px;margin:0 0 20px}
+label{display:block;font-size:12px;color:#555;margin-bottom:6px}
+input[type=password]{width:100%;box-sizing:border-box;padding:9px 12px;border:1px solid #ccc;
+  border-radius:6px;font-size:14px;color:#1a1a18}
+input[type=password]:focus{outline:none;border-color:#1a1a18}
+button{width:100%;margin-top:16px;padding:9px 16px;border:1px solid #1a1a18;border-radius:6px;
+  font-size:14px;background:#1a1a18;color:#fff;cursor:pointer}
+button:hover{background:#333}
+button:disabled{background:#999;border-color:#999;cursor:not-allowed}
+.erreur{background:#f8d7da;color:#721c24;border-radius:6px;padding:9px 12px;font-size:12px;
+  margin-bottom:16px}
+</style>
+</head>
+<body>
+  <form class="carte" method="post" action="/login">
+    <h1>
+      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+        <rect x="4" y="11" width="16" height="9" rx="2"/><path d="M8 11V7a4 4 0 018 0v4"/>
+      </svg>
+      Bridge Agent
+    </h1>
+    <p class="sous">Accès protégé — saisissez le mot de passe.</p>
+    {% if erreur %}<div class="erreur">{{ erreur }}</div>{% endif %}
+    <label for="mot_de_passe">Mot de passe</label>
+    <input type="password" id="mot_de_passe" name="mot_de_passe" autofocus
+           {% if bloque %}disabled{% endif %}>
+    <button type="submit" {% if bloque %}disabled{% endif %}>Connexion</button>
+  </form>
+</body>
+</html>"""
+
+
 # ─── Routes Flask ──────────────────────────────────────────────────────────────
 
+@app.route("/login", methods=["GET"])
+def login():
+    """Formulaire de connexion. Redirige vers l'accueil si aucune authentification
+    n'est requise ou si la session est déjà authentifiée."""
+    if not MOT_DE_PASSE or session.get("authentifie"):
+        return redirect(url_for("index"))
+    bloque = session.get("echecs", 0) >= MAX_ECHECS_LOGIN
+    erreur = ("Trop de tentatives échouées. Redémarrez le serveur pour réessayer."
+              if bloque else "")
+    return render_template_string(TEMPLATE_LOGIN, erreur=erreur, bloque=bloque)
+
+
+@app.route("/login", methods=["POST"])
+def login_post():
+    """Vérifie le mot de passe saisi (sha256) contre MOT_DE_PASSE du .conf.
+    Bloque la session après MAX_ECHECS_LOGIN tentatives échouées."""
+    if not MOT_DE_PASSE:
+        return redirect(url_for("index"))
+    if session.get("echecs", 0) >= MAX_ECHECS_LOGIN:
+        return render_template_string(
+            TEMPLATE_LOGIN, bloque=True,
+            erreur="Trop de tentatives échouées. Redémarrez le serveur pour réessayer.")
+
+    saisi = request.form.get("mot_de_passe", "")
+    if hashlib.sha256(saisi.encode("utf-8")).hexdigest() == MOT_DE_PASSE:
+        session["authentifie"] = True
+        session.pop("echecs", None)
+        return redirect(url_for("index"))
+
+    session["echecs"] = session.get("echecs", 0) + 1
+    restantes = MAX_ECHECS_LOGIN - session["echecs"]
+    bloque = restantes <= 0
+    erreur = ("Trop de tentatives échouées. Redémarrez le serveur pour réessayer."
+              if bloque else
+              f"Mot de passe incorrect. {restantes} tentative(s) restante(s).")
+    return render_template_string(TEMPLATE_LOGIN, erreur=erreur, bloque=bloque)
+
+
+@app.route("/logout")
+def logout():
+    """Ferme la session et renvoie vers le formulaire de connexion."""
+    session.clear()
+    return redirect(url_for("login"))
+
+
 @app.route("/")
+@login_requis
 def index():
-    return render_template_string(TEMPLATE, projets=lister_projets())
+    return render_template_string(TEMPLATE, projets=lister_projets(),
+                                  auth_active=bool(MOT_DE_PASSE))
 
 
 @app.route("/apercu", methods=["POST"])
+@login_requis
 def apercu():
     data   = request.json or {}
     cfg    = projet_par_nom(data.get("projet", ""))
@@ -1429,7 +1583,14 @@ def apercu():
 
 
 @app.route("/envoyer", methods=["POST"])
+@login_requis
 def envoyer():
+    # Le mode écriture (création d'issue) est interdit depuis une IP externe :
+    # seul le réseau local (loopback + RFC 1918) peut déclencher gh issue create.
+    if not ip_locale(request.remote_addr):
+        return jsonify(succes=False,
+                       erreur="Mode écriture interdit depuis une IP externe. "
+                              "Connectez-vous depuis le réseau local.")
     data = request.json or {}
     cfg  = projet_par_nom(data.get("projet", ""))
     if not cfg:
@@ -1471,6 +1632,7 @@ def envoyer():
 
 
 @app.route("/journal/<nom_projet>")
+@login_requis
 def journal(nom_projet):
     """Server-Sent Events : streame le journal du watcher en temps réel."""
     cfg = projet_par_nom(nom_projet)
@@ -1518,6 +1680,7 @@ def journal(nom_projet):
 
 
 @app.route("/issues-liste/<nom_projet>")
+@login_requis
 def issues_liste(nom_projet):
     """Retourne les 30 dernières issues (tous états) du projet via gh."""
     cfg = projet_par_nom(nom_projet)
@@ -1544,6 +1707,7 @@ def issues_liste(nom_projet):
 
 
 @app.route("/issue/<nom_projet>/<numero>")
+@login_requis
 def issue_detail(nom_projet, numero):
     """Retourne le détail d'une issue (corps + commentaires) via gh."""
     cfg = projet_par_nom(nom_projet)
@@ -1570,6 +1734,7 @@ def issue_detail(nom_projet, numero):
 
 
 @app.route("/issues-en-attente/<nom_projet>")
+@login_requis
 def issues_en_attente(nom_projet):
     """Retourne les issues ouvertes portant le label for-linux (en attente de
     traitement par le watcher). La liste peut être vide."""
@@ -1597,6 +1762,7 @@ def issues_en_attente(nom_projet):
 
 
 @app.route("/annuler-issue/<nom_projet>/<numero>", methods=["POST"])
+@login_requis
 def annuler_issue(nom_projet, numero):
     """Ferme une issue créée sur GitHub mais pas encore traitée par le watcher."""
     cfg = projet_par_nom(nom_projet)
@@ -1626,6 +1792,7 @@ def annuler_issue(nom_projet, numero):
 
 
 @app.route("/config/<nom_projet>")
+@login_requis
 def get_config(nom_projet):
     """Retourne les valeurs actuelles du .conf, relues depuis le disque à
     chaque appel (via charger_config) plutôt que depuis l'objet Config en
@@ -1660,6 +1827,7 @@ def get_config(nom_projet):
 
 
 @app.route("/config/<nom_projet>", methods=["POST"])
+@login_requis
 def post_config(nom_projet):
     """Enregistre les clés éditables dans le .conf."""
     data = request.json or {}
@@ -1668,6 +1836,7 @@ def post_config(nom_projet):
 
 
 @app.route("/watchers")
+@login_requis
 def watchers():
     """Retourne le statut de tous les projets disponibles."""
     resultat = []
@@ -1683,6 +1852,7 @@ def watchers():
 
 
 @app.route("/lancer-watcher", methods=["POST"])
+@login_requis
 def lancer_watcher():
     """Lance ou relance le watcher du projet.
     relancer=true → redémarre même s'il tourne déjà.
@@ -1700,6 +1870,7 @@ def lancer_watcher():
 
 
 @app.route("/arreter-watcher", methods=["POST"])
+@login_requis
 def arreter_watcher_route():
     """Arrête le watcher du projet."""
     data = request.json or {}
@@ -1711,6 +1882,7 @@ def arreter_watcher_route():
 
 
 @app.route("/statut/<nom_projet>")
+@login_requis
 def statut(nom_projet):
     """Indique si le watcher de ce projet est en cours d'exécution."""
     cfg = projet_par_nom(nom_projet)
@@ -1731,6 +1903,7 @@ def heartbeat():
 
 
 @app.route("/events")
+@login_requis
 def events():
     """SSE dédié au cycle de vie (séparé du journal watcher).
     Envoie un keepalive toutes les 5 s ; dès qu'un signal d'arrêt a été reçu
@@ -1754,6 +1927,7 @@ def events():
 
 
 @app.route("/quitter", methods=["POST"])
+@login_requis
 def quitter():
     """Arrêt volontaire déclenché par le bouton « Quitter » de l'onglet.
     Positionne arret_demande (l'overlay /events sert de filet de sécurité si
@@ -1794,7 +1968,38 @@ def main():
                         help="Port du serveur web (défaut : 5100)")
     parser.add_argument("--no-browser", action="store_true",
                         help="Ne pas ouvrir le navigateur automatiquement")
+    parser.add_argument("--set-password", action="store_true",
+                        help="Génère le hash sha256 d'un mot de passe à copier "
+                             "dans le .conf, puis quitte sans démarrer le serveur")
     args = parser.parse_args()
+
+    # Utilitaire : génération du hash du mot de passe d'accès (ne démarre pas le
+    # serveur). Le mot de passe est demandé deux fois pour confirmation et n'est
+    # jamais affiché ni stocké en clair — seul le hash sha256 est produit.
+    if args.set_password:
+        mp1 = getpass.getpass("Nouveau mot de passe : ")
+        mp2 = getpass.getpass("Confirmez le mot de passe : ")
+        if not mp1:
+            print("Mot de passe vide — abandon.")
+            sys.exit(1)
+        if mp1 != mp2:
+            print("Les deux saisies diffèrent — abandon.")
+            sys.exit(1)
+        hache = hashlib.sha256(mp1.encode("utf-8")).hexdigest()
+        print("\nCopiez cette ligne dans configs/bridge_agent.conf :\n")
+        print(f"MOT_DE_PASSE = {hache}")
+        sys.exit(0)
+
+    # Emplacement du certificat auto-signé (HTTPS). Généré une fois via :
+    #   openssl req -x509 -newkey rsa:4096 -keyout ssl/key.pem \
+    #     -out ssl/cert.pem -days 3650 -nodes -subj "/CN=bridge-agent-local"
+    cert = DOSSIER_SCRIPT / "ssl" / "cert.pem"
+    cle  = DOSSIER_SCRIPT / "ssl" / "key.pem"
+    if not (cert.exists() and cle.exists()):
+        print("Certificat SSL introuvable dans ssl/. Générez-le avec :")
+        print('  openssl req -x509 -newkey rsa:4096 -keyout ssl/key.pem \\')
+        print('    -out ssl/cert.pem -days 3650 -nodes -subj "/CN=bridge-agent-local"')
+        sys.exit(1)
 
     # Ctrl+C (SIGINT) ou SIGTERM : on prévient d'abord l'onglet via /events en
     # positionnant arret_demande, puis on laisse ~1,5 s à la connexion SSE pour
@@ -1812,11 +2017,17 @@ def main():
     Thread(target=surveiller_heartbeat, daemon=True).start()
 
     if not args.no_browser:
-        Timer(1.2, lambda: webbrowser.open(f"http://localhost:{args.port}")).start()
+        Timer(1.2, lambda: webbrowser.open(f"https://localhost:{args.port}")).start()
 
-    print(f"Bridge Agent — interface web sur http://localhost:{args.port}")
+    print(f"Bridge Agent — interface web sur https://localhost:{args.port}")
     print("Ctrl-C pour arrêter.")
-    app.run(host="127.0.0.1", port=args.port, debug=False, threaded=True)
+    app.run(
+        host="0.0.0.0",
+        port=args.port,
+        ssl_context=(str(cert), str(cle)),
+        threaded=True,
+        debug=False,
+    )
 
 
 if __name__ == "__main__":

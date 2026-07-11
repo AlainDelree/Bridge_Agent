@@ -5,3 +5,4 @@ __pycache__/
 *.pyc
 venv/
 Notes_Perso.md
+ssl/

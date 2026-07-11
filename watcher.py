@@ -77,6 +77,7 @@ class Config:
     cmd_backup: str        = ""    # commande de sauvegarde avant modif (mode écriture)
     perimetre: str         = ""    # dossier(s) autorisés pour CCL (vide = pas de restriction)
     modele_ccl: str        = ""    # modèle CCL à utiliser (vide = défaut Claude Code)
+    mot_de_passe: str      = ""    # hash sha256 du mot de passe d'accès web (vide = pas d'authentification)
 
     @property
     def url_ntfy(self) -> str:
@@ -143,6 +144,7 @@ def charger_config(chemin: Path) -> Config:
         cmd_backup        = brut.get("CMD_BACKUP", ""),
         perimetre         = brut.get("PERIMETRE", ""),
         modele_ccl        = brut.get("MODELE_CCL", ""),
+        mot_de_passe      = brut.get("MOT_DE_PASSE", ""),
     )
 
 
