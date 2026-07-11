@@ -476,10 +476,26 @@ BODY :
 Instructions :
 1. Lis attentivement la tâche demandée
 2. Effectue le travail demandé (dans les limites du mode ci-dessus)
-3. Résume ce que tu as fait en quelques lignes (ce sera posté en commentaire sur l'issue)
-4. Si tu dois créer une issue for-windows, utilise : gh issue create --repo {CFG.depot} --label "bridge,for-windows" ...
+3. Si tu dois créer une issue for-windows, utilise : gh issue create --repo {CFG.depot} --label "bridge,for-windows" ...
 
-Réponds uniquement avec le résumé de ce que tu as accompli.
+Réponds avec ce format exact, sans rien ajouter avant ni après :
+
+✅ Tâche terminée — [résumé en une ligne de ce qui a été fait]
+Commits : [hash backup] (backup) + [hash fix] (fix) — ou "aucun" si lecture seule
+py_compile : OK / N/A — push : aucun
+
+<details>
+<summary>Détails complets</summary>
+
+[Ici : description complète de chaque modification, fichiers touchés,
+ lignes ajoutées/supprimées, décisions prises, points d'attention.]
+
+</details>
+
+Le bloc <details> est rendu par GitHub comme un accordéon dépliable —
+les informations sont là mais n'encombrent pas la lecture rapide.
+
+Si la tâche échoue, remplace ✅ par ❌ et explique la cause en une ligne.
 """
 
     if dry_run:
