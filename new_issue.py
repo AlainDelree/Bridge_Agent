@@ -751,9 +751,14 @@ async function afficherIssue() {
     if (!comms.length) {
       html += '<div class="issue-vide">Aucun commentaire</div>';
     } else {
-      comms.forEach((c, i) => {
+      // La réponse de CCL (dernier commentaire) est affichée en premier ;
+      // les autres commentaires suivent dans l'ordre chronologique.
+      const dernier = comms.length - 1;
+      const ordre = [dernier, ...comms.map((_, i) => i).filter(i => i !== dernier)];
+      ordre.forEach(i => {
+        const c = comms[i];
         const auteur = (c.author && c.author.login) ? c.author.login : (c.author || 'inconnu');
-        const resultat = (i === comms.length - 1) ? ' resultat' : '';
+        const resultat = (i === dernier) ? ' resultat' : '';
         html += '<div class="commentaire' + resultat + '">'
               + '<div class="commentaire-auteur">' + escapeHtml(auteur)
               + (resultat ? ' — résultat CCL' : '') + '</div>'
