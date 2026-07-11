@@ -477,10 +477,9 @@ button.danger-plein:hover{background:#8f2626}
   <div id="panneau-resultats" class="panneau">
 
     <div class="barre-issue">
-      <select id="select-issue" title="Issues récentes du projet"></select>
+      <select id="select-issue" title="Issues récentes du projet" onchange="afficherIssue()"></select>
       <button onclick="naviguerIssue(-1)" title="Issue précédente">←</button>
       <button onclick="naviguerIssue(1)" title="Issue suivante">→</button>
-      <button class="primaire" onclick="afficherIssue()">Afficher</button>
     </div>
 
     <div class="legende-resultats">
@@ -848,6 +847,11 @@ async function chargerListeIssues() {
       opt.value = it.number;
       opt.textContent = `${prefixeIssue(it.labels)} #${it.number} — ${it.title} [${etat}]`;
       select.appendChild(opt);
+    }
+    // Sélectionne et affiche automatiquement la première (plus récente) issue.
+    if (select.options.length) {
+      select.selectedIndex = 0;
+      await afficherIssue();
     }
   } catch(e) {
     select.innerHTML = '<option value="">(erreur de chargement)</option>';
