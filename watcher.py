@@ -327,17 +327,27 @@ def extraire_timeout(body: str) -> int:
                     return int(valeur)
     return CFG.timeout_claude
 
-def ajouter_label(numero: int, label: str):
-    """Ajoute un label à une issue sans la fermer."""
+def ajouter_label(numero: int, label: str) -> bool:
+    """Ajoute un label à une issue sans la fermer.
+    Retourne True si le label a bien été posé, False en cas d'échec (code retour
+    gh non nul ou exception). Le code retour de gh est examiné : sans ça, un échec
+    (label inexistant, réseau, permissions) passait inaperçu et pouvait provoquer
+    des boucles de retraitement (cf. issue AlChess #13)."""
     try:
-        subprocess.run(
+        res = subprocess.run(
             ["gh", "issue", "edit", str(numero),
              "--repo", CFG.depot,
              "--add-label", label],
             capture_output=True, text=True, timeout=30
         )
+        if res.returncode != 0:
+            log.error(f"Échec ajout label '{label}' sur issue #{numero} "
+                      f"(gh code {res.returncode}) : {res.stderr.strip()}")
+            return False
+        return True
     except Exception as e:
         log.error(f"Erreur ajout label '{label}' sur issue #{numero} : {e}")
+        return False
 
 def commenter_issue(numero: int, message: str):
     """Poste un commentaire sur une issue."""
@@ -528,7 +538,11 @@ def traiter_issue(issue: dict, dry_run: bool):
             else:
                 log.error(f"  Issue #{numero} abandonnée après {CFG.max_essais} tentatives.")
                 commenter_issue(numero, f"❌ Échec après {CFG.max_essais} tentatives.\n\nDernière erreur : `{sortie}`\n\nIntervention humaine requise. Label `{LABEL_ECHEC}` posé : cette issue ne sera plus retraitée automatiquement tant que le label n'est pas retiré (ou l'issue fermée) manuellement.")
-                ajouter_label(numero, LABEL_ECHEC)
+                if not ajouter_label(numero, LABEL_ECHEC):
+                    log.warning(f"  ⚠️  Le label '{LABEL_ECHEC}' n'a PAS pu être posé sur "
+                                f"l'issue #{numero} : elle risque d'être retraitée en boucle "
+                                f"au prochain cycle (le garde-fou anti-retraitement repose sur "
+                                f"ce label). Intervention humaine recommandée.")
                 notifier(
                     labels,
                     titre=f"❌ {CFG.nom} #{numero} — échec définitif",
