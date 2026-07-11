@@ -223,9 +223,10 @@ body{font-family:system-ui,sans-serif;font-size:14px;background:#f0efe9;color:#1
 .entete{padding:14px 20px;border-bottom:1px solid #eee;display:flex;align-items:center;gap:9px}
 .entete h1{font-size:15px;font-weight:500}
 .entete .statut{margin-left:auto;font-size:12px;color:#888}
-.bandeau-projet{display:flex;align-items:center;gap:12px;flex-wrap:wrap;
+.bandeau-projet{display:flex;flex-direction:column;gap:8px;
   padding:12px 20px;border-bottom:1px solid #eee;background:#faf9f6}
-.bandeau-projet>label{font-size:13px;color:#555;font-weight:500;white-space:nowrap}
+.bandeau-ligne{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.bandeau-ligne label{font-size:13px;color:#555;font-weight:500;white-space:nowrap}
 .bandeau-projet select{padding:7px 10px;border:1px solid #ddd;border-radius:6px;
   font-size:13px;background:#fff;color:#1a1a18;min-width:220px}
 .bandeau-projet select:focus{outline:none;border-color:#888}
@@ -290,25 +291,31 @@ button.danger:hover{background:#f8d7da}
 
   <!-- ─── Bandeau global : sélecteur de projet (pilote tous les onglets sauf Watchers) ─ -->
   <div class="bandeau-projet">
-    <label for="projet">Projet :</label>
-    <select id="projet" onchange="onProjetChange()">
-      {% for p in projets %}
-      <option value="{{ p.nom }}">{{ p.nom }} — {{ p.depot }}</option>
-      {% endfor %}
-    </select>
 
-    <div id="info-projet" style="font-size:12px;color:#888;padding:0 2px">
-      <span id="info-rep-travail"></span>
-      <span id="info-perimetre"></span>
+    <!-- Ligne 1 : combobox Projet + bouton (relancer) à sa droite, statut à droite -->
+    <div class="bandeau-ligne">
+      <label for="projet">Projet :</label>
+      <select id="projet" onchange="onProjetChange()">
+        {% for p in projets %}
+        <option value="{{ p.nom }}">{{ p.nom }} — {{ p.depot }}</option>
+        {% endfor %}
+      </select>
+      <button id="btn-watcher" onclick="lancerWatcher()">Lancer le watcher</button>
+
+      <div id="bandeau-statut" style="display:flex;align-items:center;gap:10px;
+           margin-left:auto;padding:6px 12px;background:#f8f8f5;
+           border:1px solid #e0dfda;border-radius:6px;font-size:13px">
+        <span id="dot-statut" style="width:8px;height:8px;border-radius:50%;
+              background:#ccc;flex-shrink:0"></span>
+        <span id="texte-statut" style="color:#888">Vérification…</span>
+      </div>
     </div>
 
-    <div id="bandeau-statut" style="display:flex;align-items:center;gap:10px;
-         margin-left:auto;padding:6px 12px;background:#f8f8f5;
-         border:1px solid #e0dfda;border-radius:6px;font-size:13px">
-      <span id="dot-statut" style="width:8px;height:8px;border-radius:50%;
-            background:#ccc;flex-shrink:0"></span>
-      <span id="texte-statut" style="color:#888">Vérification…</span>
-      <button id="btn-watcher" onclick="lancerWatcher()">Lancer le watcher</button>
+    <!-- Ligne 2 : nom du dépôt et du répertoire, sous la combobox et le statut -->
+    <div id="info-projet" style="font-size:12px;color:#888;padding:0 2px">
+      <span id="info-depot"></span>
+      <span id="info-rep-travail"></span>
+      <span id="info-perimetre"></span>
     </div>
   </div>
 
@@ -525,9 +532,11 @@ async function mettreAJourInfoProjet() {
   try {
     const rep = await fetch('/config/' + encodeURIComponent(nom));
     const cfg = await rep.json();
+    const depEl = document.getElementById('info-depot');
     const repEl = document.getElementById('info-rep-travail');
     const perEl = document.getElementById('info-perimetre');
-    repEl.textContent = '📁 ' + cfg.rep_travail;
+    depEl.textContent = '📦 ' + cfg.depot;
+    repEl.textContent = ' · 📁 ' + cfg.rep_travail;
     if (cfg.perimetre) {
       perEl.textContent = ' · 🔒 ' + cfg.perimetre;
     } else {
