@@ -542,6 +542,8 @@ async function mettreAJourInfoProjet() {
     } else {
       perEl.textContent = '';
     }
+    // Le timeout par défaut suit la valeur TIMEOUT_CLAUDE du projet sélectionné.
+    document.getElementById('timeout').value = cfg.timeout_claude || 300;
   } catch(e) {}
 }
 
@@ -827,7 +829,8 @@ function viderFormulaire(cacherMsg=true) {
   document.getElementById('titre').value = '';
   document.getElementById('corps').value = '';
   document.getElementById('priorite').value = 'normale';
-  document.getElementById('timeout').value = '300';
+  // Réinitialise le timeout sur la valeur TIMEOUT_CLAUDE du projet courant.
+  mettreAJourInfoProjet();
   document.querySelector('input[name=mode][value=lecture]').checked = true;
   mettreAJourBoutonEnvoi();
   document.querySelectorAll('input[name=notifs]').forEach(c => c.checked = false);
