@@ -354,6 +354,19 @@ button.danger:hover{background:#f8d7da}
 .issue-vide{color:#aaa;font-size:13px;text-align:center;padding:40px 0}
 .issue-titre{font-size:20px;font-weight:600;line-height:1.3;margin-bottom:10px}
 .issue-badges{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px}
+/* Ligne de boutons toggle « filtre par projet » au-dessus de la combobox. */
+.filtres-projets{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px;align-items:center}
+.filtre-projet{display:inline-flex;align-items:center;gap:6px;font-size:12px;
+  font-weight:500;padding:5px 11px;border:1px solid #ccc;border-radius:14px;
+  background:#fff;color:#333;cursor:pointer;user-select:none;transition:opacity .12s}
+.filtre-projet .pastille{width:9px;height:9px;border-radius:50%;flex-shrink:0}
+.filtre-projet.inactif{opacity:.4;background:#f2f2f0;color:#999}
+.filtre-projet.tous{border-style:dashed;color:#555}
+/* Badge du projet source dans l'en-tête du panneau de détail. */
+.badge-projet{display:inline-flex;align-items:center;gap:6px;font-size:12px;
+  font-weight:600;padding:3px 11px;border-radius:12px;color:#fff;margin-bottom:12px}
+.badge-projet .pastille{width:8px;height:8px;border-radius:50%;
+  background:rgba(255,255,255,.85);flex-shrink:0}
 .badge-etat{font-size:12px;font-weight:500;padding:3px 10px;border-radius:12px}
 .badge-etat.ouvert{background:#d4edda;color:#155724}
 .badge-etat.ferme{background:#e2e3e5;color:#555}
@@ -536,8 +549,11 @@ button.danger-plein:hover{background:#8f2626}
   <!-- ─── Onglet Résultats : visualisation des issues ──────────────────── -->
   <div id="panneau-resultats" class="panneau">
 
+    <!-- Boutons toggle : un par projet + « Tous ». Générés dynamiquement. -->
+    <div id="filtres-projets" class="filtres-projets"></div>
+
     <div class="barre-issue">
-      <select id="select-issue" title="Issues récentes du projet" onchange="afficherIssue()"></select>
+      <select id="select-issue" title="Issues récentes de tous les projets" onchange="afficherIssue()"></select>
       <button onclick="naviguerIssue(-1)" title="Issue précédente">←</button>
       <button onclick="naviguerIssue(1)" title="Issue suivante">→</button>
     </div>
@@ -741,7 +757,8 @@ function onProjetChange() {
   appliquerAccentProjet(nom);
   verifierStatut();
   mettreAJourInfoProjet();
-  chargerListeIssues();
+  // L'onglet Résultats est indépendant du sélecteur global (il agrège tous
+  // les projets) : on ne le recharge donc PAS ici.
   // Si l'onglet Configuration est actif, recharger sa config pour le
   // nouveau projet (l'onglet lit désormais le sélecteur global #projet).
   if (document.getElementById('panneau-config').classList.contains('actif')) {
@@ -893,32 +910,142 @@ function badgeLabel(nom) {
   return '<span class="badge-label ' + b.cls + '">' + escapeHtml(b.txt) + '</span>';
 }
 
+// ─── Onglet Résultats : vue consolidée multi-projets ──────────────────────
+// L'onglet Résultats est INDÉPENDANT du sélecteur global : il agrège les
+// issues de TOUS les projets, quel que soit le projet actif en haut.
+
+// Couleur fixe par projet pour l'onglet Résultats (pastilles, badges, boutons
+// de filtre). Valeurs stables imposées ; gris par défaut pour les autres.
+function couleurProjetResultats(nom) {
+  const map = {
+    'bridge_agent': '#185FA5',  // bleu
+    'alchess':      '#3B6D11',  // vert
+    'ff_galerie':   '#BA7517',  // orange
+  };
+  return map[nom] || '#5F5E5A';  // gris
+}
+
+// Liste des noms de projets disponibles (lue depuis le sélecteur global, qui
+// est peuplé côté serveur par lister_projets()).
+function nomsProjetsDisponibles() {
+  return [...document.getElementById('projet').options]
+    .map(o => o.value).filter(Boolean);
+}
+
+// État de l'onglet Résultats : liste fusionnée des issues (chacune porte son
+// projet source) + ensemble des projets actuellement affichés (filtre).
+let listeIssuesResultats = [];
+let projetsFiltresActifs = new Set();
+
 async function chargerListeIssues() {
-  const nom = document.getElementById('projet').value;
   const select = document.getElementById('select-issue');
   select.innerHTML = '<option value="">(chargement…)</option>';
+  const noms = nomsProjetsDisponibles();
+  if (!noms.length) {
+    select.innerHTML = '<option value="">(aucun projet)</option>';
+    return;
+  }
   try {
-    const rep = await fetch('/issues-liste/' + encodeURIComponent(nom));
-    const liste = await rep.json();
-    if (!Array.isArray(liste) || !liste.length) {
-      select.innerHTML = '<option value="">(aucune issue)</option>';
-      return;
-    }
-    select.innerHTML = '';
-    for (const it of liste) {
-      const etat = (it.state || '').toUpperCase() === 'CLOSED' ? 'fermé' : 'ouvert';
-      const opt = document.createElement('option');
-      opt.value = it.number;
-      opt.textContent = `${prefixeIssue(it.labels)} #${it.number} — ${it.title} [${etat}]`;
-      select.appendChild(opt);
-    }
-    // Sélectionne et affiche automatiquement la première (plus récente) issue.
-    if (select.options.length) {
-      select.selectedIndex = 0;
-      await afficherIssue();
-    }
+    // Chargement en parallèle des 5 dernières issues de chaque projet.
+    const listes = await Promise.all(noms.map(async nom => {
+      try {
+        const rep = await fetch('/issues-liste/' + encodeURIComponent(nom));
+        const liste = await rep.json();
+        if (!Array.isArray(liste)) return [];
+        // Les 5 plus récentes (numéro décroissant) de ce projet.
+        return liste
+          .slice()
+          .sort((a, b) => b.number - a.number)
+          .slice(0, 5)
+          .map(it => Object.assign({}, it, {projet: nom}));
+      } catch(e) {
+        return [];
+      }
+    }));
+    // Fusion + tri global par numéro décroissant (plus récentes en premier).
+    listeIssuesResultats = listes.flat().sort((a, b) => b.number - a.number);
+
+    // Par défaut, tous les projets sont actifs (visibles).
+    projetsFiltresActifs = new Set(noms);
+    construireBoutonsFiltre(noms);
+    rendreListeIssues(true);
   } catch(e) {
     select.innerHTML = '<option value="">(erreur de chargement)</option>';
+  }
+}
+
+// (Re)construit la ligne de boutons toggle — un par projet + « Tous ».
+function construireBoutonsFiltre(noms) {
+  const zone = document.getElementById('filtres-projets');
+  zone.innerHTML = '';
+  for (const nom of noms) {
+    const actif = projetsFiltresActifs.has(nom);
+    const btn = document.createElement('span');
+    btn.className = 'filtre-projet' + (actif ? '' : ' inactif');
+    btn.dataset.projet = nom;
+    btn.onclick = () => basculerFiltreProjet(nom);
+    btn.innerHTML = '<span class="pastille" style="background:'
+      + couleurProjetResultats(nom) + '"></span>' + escapeHtml(nom);
+    zone.appendChild(btn);
+  }
+  const tous = document.createElement('span');
+  tous.className = 'filtre-projet tous';
+  tous.textContent = 'Tous';
+  tous.onclick = reactiverTousLesFiltres;
+  zone.appendChild(tous);
+}
+
+// Active/désactive un projet dans le filtre puis rafraîchit la combobox.
+function basculerFiltreProjet(nom) {
+  if (projetsFiltresActifs.has(nom)) projetsFiltresActifs.delete(nom);
+  else projetsFiltresActifs.add(nom);
+  majClassesBoutonsFiltre();
+  rendreListeIssues(true);
+}
+
+// Remet tous les projets à l'état actif.
+function reactiverTousLesFiltres() {
+  projetsFiltresActifs = new Set(nomsProjetsDisponibles());
+  majClassesBoutonsFiltre();
+  rendreListeIssues(true);
+}
+
+function majClassesBoutonsFiltre() {
+  document.querySelectorAll('#filtres-projets .filtre-projet[data-projet]')
+    .forEach(btn =>
+      btn.classList.toggle('inactif', !projetsFiltresActifs.has(btn.dataset.projet)));
+}
+
+// (Re)peuple la combobox à partir de listeIssuesResultats, en ne gardant que
+// les projets actifs. Chaque option porte son projet + numéro (les numéros
+// pouvant se répéter d'un projet à l'autre). Si reset=true, sélectionne et
+// affiche la première issue visible.
+function rendreListeIssues(reset) {
+  const select = document.getElementById('select-issue');
+  const visibles = listeIssuesResultats.filter(it => projetsFiltresActifs.has(it.projet));
+  select.innerHTML = '';
+  if (!visibles.length) {
+    select.innerHTML = '<option value="">(aucune issue)</option>';
+    document.getElementById('zone-issue').innerHTML =
+      '<div class="issue-vide">Aucune issue à afficher</div>';
+    return;
+  }
+  for (const it of visibles) {
+    const etat = (it.state || '').toUpperCase() === 'CLOSED' ? 'fermé' : 'ouvert';
+    const opt = document.createElement('option');
+    opt.value = it.projet + '/' + it.number;
+    opt.dataset.projet = it.projet;
+    opt.dataset.numero = it.number;
+    // Le texte de l'option est teinté de la couleur du projet : le carré ●
+    // apparaît ainsi coloré (on ne peut styler qu'une option entière).
+    opt.style.color = couleurProjetResultats(it.projet);
+    // ✅ ● bridge_agent #31 — Titre [fermée]
+    opt.textContent = `${prefixeIssue(it.labels)} ● ${it.projet} #${it.number} — ${it.title} [${etat}]`;
+    select.appendChild(opt);
+  }
+  if (reset) {
+    select.selectedIndex = 0;
+    afficherIssue();
   }
 }
 
@@ -929,10 +1056,14 @@ function escapeHtml(t) {
 }
 
 async function afficherIssue() {
-  const nom = document.getElementById('projet').value;
-  const numero = document.getElementById('select-issue').value;
+  const sel = document.getElementById('select-issue');
+  const opt = sel.options[sel.selectedIndex];
+  // L'onglet Résultats étant multi-projets, le projet source est porté par
+  // l'option sélectionnée (dataset), pas par le sélecteur global.
+  const nom = opt ? opt.dataset.projet : '';
+  const numero = opt ? opt.dataset.numero : '';
   const zone = document.getElementById('zone-issue');
-  if (!numero) {
+  if (!numero || !nom) {
     zone.innerHTML = '<div class="issue-vide">Aucune issue à afficher</div>';
     return;
   }
@@ -947,6 +1078,11 @@ async function afficherIssue() {
     const ferme = (it.state || '').toUpperCase() === 'CLOSED';
     let html = '';
     html += '<div class="issue-titre">#' + escapeHtml(it.number) + ' — ' + escapeHtml(it.title) + '</div>';
+
+    // Badge coloré du projet source (couleur cohérente avec les filtres).
+    html += '<div><span class="badge-projet" style="background:'
+          + couleurProjetResultats(nom) + '">'
+          + '<span class="pastille"></span>' + escapeHtml(nom) + '</span></div>';
 
     html += '<div class="issue-badges">';
     html += '<span class="badge-etat ' + (ferme ? 'ferme' : 'ouvert') + '">'
@@ -969,7 +1105,8 @@ async function afficherIssue() {
       && comments.length === 0;
     if (annulable) {
       html += '<div class="bloc-annuler">'
-            + '<button class="danger" onclick="annulerIssue(' + Number(it.number) + ')">'
+            + '<button class="danger" onclick="annulerIssue(\'' + nom + '\', '
+            + Number(it.number) + ')">'
             + 'Annuler cette issue</button></div>';
     } else if (!ferme
       && nomsLabels.includes('for-linux')
@@ -1049,8 +1186,7 @@ async function copierReponse(btn) {
 
 // Ferme une issue en attente sur GitHub (pas encore traitée par le watcher),
 // puis rafraîchit l'affichage et la combobox.
-async function annulerIssue(numero) {
-  const nom = document.getElementById('projet').value;
+async function annulerIssue(nom, numero) {
   if (!confirm("Annuler (fermer) l'issue #" + numero + " sur GitHub ?")) return;
   try {
     const rep = await fetch('/annuler-issue/' + encodeURIComponent(nom)
@@ -1065,27 +1201,25 @@ async function annulerIssue(numero) {
     return;
   }
   // Recharge la liste (l'issue devient fermée) puis réaffiche la même issue.
+  const cible = nom + '/' + numero;
   await chargerListeIssues();
   const sel = document.getElementById('select-issue');
-  if ([...sel.options].some(o => o.value === String(numero))) {
-    sel.value = String(numero);
+  if ([...sel.options].some(o => o.value === cible)) {
+    sel.value = cible;
+    await afficherIssue();
   }
-  await afficherIssue();
 }
 
 function naviguerIssue(delta) {
+  // Navigation par position dans la liste consolidée visible (les numéros ne
+  // sont plus contigus puisqu'ils proviennent de plusieurs projets).
   const select = document.getElementById('select-issue');
-  const courant = parseInt(select.value, 10);
-  if (isNaN(courant)) return;
-  const cible = courant + delta;
-  if (cible < 1) return;
-  // Aligne la combobox sur la cible si elle y figure ; sinon on garde la valeur.
-  const existe = [...select.options].some(o => parseInt(o.value, 10) === cible);
-  if (existe) select.value = String(cible);
-  else {
-    const opt = new Option('#' + cible, String(cible), true, true);
-    select.add(opt);
-  }
+  const n = select.options.length;
+  if (!n || !select.options[select.selectedIndex] ||
+      !select.options[select.selectedIndex].dataset.numero) return;
+  let cible = select.selectedIndex + delta;
+  if (cible < 0 || cible >= n) return;
+  select.selectedIndex = cible;
   afficherIssue();
 }
 
