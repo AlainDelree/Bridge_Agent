@@ -70,30 +70,49 @@ def watcher_actif(cfg: Config) -> tuple[bool, int | None]:
         return False, None
 
 
-def demarrer_watcher(cfg: Config) -> int:
-    """Arrête un éventuel watcher existant, en démarre un nouveau.
-    Retourne le PID du nouveau processus."""
-    pid_file = chemin_pid(cfg)
+def demarrer_watcher(cfg: Config, forcer: bool = True) -> tuple[bool, int]:
+    """Lance (ou relance) le watcher du projet.
+    Si forcer=False et qu'un watcher tourne déjà, retourne (False, pid_existant).
+    Si forcer=True, arrête l'existant avant de redémarrer.
+    Retourne (redemarré, pid)."""
     actif, pid_ancien = watcher_actif(cfg)
+    if actif and not forcer:
+        return False, pid_ancien
+
     if actif and pid_ancien:
         try:
             os.kill(pid_ancien, signal.SIGTERM)
-            time.sleep(0.8)   # laisser le temps de s'arrêter proprement
+            time.sleep(0.8)
         except OSError:
             pass
 
+    pid_file = chemin_pid(cfg)
     pid_file.parent.mkdir(parents=True, exist_ok=True)
-    conf_file   = DOSSIER_SCRIPT / "configs" / f"{cfg.nom}.conf"
+    conf_file      = DOSSIER_SCRIPT / "configs" / f"{cfg.nom}.conf"
     watcher_script = DOSSIER_SCRIPT / "watcher.py"
 
     proc = subprocess.Popen(
         [sys.executable, str(watcher_script), "--config", str(conf_file)],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
-        start_new_session=True,   # détaché : survit à la fermeture de Flask
+        start_new_session=True,
     )
     pid_file.write_text(str(proc.pid))
-    return proc.pid
+    return True, proc.pid
+
+
+def arreter_watcher(cfg: Config) -> tuple[bool, str]:
+    """Arrête le watcher du projet via SIGTERM.
+    Retourne (succès, message)."""
+    actif, pid = watcher_actif(cfg)
+    if not actif:
+        return False, "watcher déjà inactif"
+    try:
+        os.kill(pid, signal.SIGTERM)
+        chemin_pid(cfg).unlink(missing_ok=True)
+        return True, f"watcher arrêté (pid {pid})"
+    except OSError as e:
+        return False, str(e)
 
 
 # ─── Construction du body et des labels ───────────────────────────────────────
@@ -206,6 +225,7 @@ button.danger:hover{background:#f8d7da}
 
   <div class="onglets">
     <div class="onglet actif" onclick="basculerOnglet('creation')">Nouvelle issue</div>
+    <div class="onglet" onclick="basculerOnglet('watchers')">Watchers</div>
     <div class="onglet" onclick="basculerOnglet('journal')">Journal watcher</div>
   </div>
 
@@ -277,7 +297,35 @@ button.danger:hover{background:#f8d7da}
     </div>
   </div>
 
-  <!-- ─── Onglet 2 : journal watcher ───────────────────────────────────── -->
+  <!-- ─── Onglet 2 : gestion des watchers ──────────────────────────────── -->
+  <div id="panneau-watchers" class="panneau">
+    <table style="width:100%;border-collapse:collapse" id="tableau-watchers">
+      <thead>
+        <tr style="border-bottom:1px solid #eee">
+          <th style="width:36px;padding:8px 0;text-align:center">
+            <input type="checkbox" id="cb-tous" onchange="selectionnerTous(this)">
+          </th>
+          <th style="width:20px"></th>
+          <th style="text-align:left;font-size:12px;color:#666;font-weight:500;padding:8px 12px">Projet</th>
+          <th style="text-align:left;font-size:12px;color:#666;font-weight:500;padding:8px 12px">Dépôt</th>
+          <th style="text-align:left;font-size:12px;color:#666;font-weight:500;padding:8px 0;width:120px">PID</th>
+        </tr>
+      </thead>
+      <tbody id="corps-watchers"></tbody>
+    </table>
+    <div id="msg-watchers" class="message"></div>
+    <div style="display:flex;align-items:center;gap:10px;margin-top:16px;
+         padding-top:14px;border-top:1px solid #eee">
+      <span style="font-size:12px;color:#aaa" id="compte-selection">0 sélectionné</span>
+      <div style="margin-left:auto;display:flex;gap:10px">
+        <button onclick="actionWatchers('lancer')">Lancer</button>
+        <button onclick="actionWatchers('relancer')">Relancer</button>
+        <button class="danger" onclick="actionWatchers('arreter')">Éteindre</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ─── Onglet 3 : journal watcher ───────────────────────────────────── -->
   <div id="panneau-journal" class="panneau">
     <div class="terminal" id="terminal"></div>
     <div class="barre-journal">
@@ -291,12 +339,21 @@ button.danger:hover{background:#f8d7da}
 <script>
 let sourceSSE = null;
 
+let intervalWatchers = null;
+
 function basculerOnglet(nom) {
+  const noms = ['creation', 'watchers', 'journal'];
   document.querySelectorAll('.onglet').forEach((o, i) =>
-    o.classList.toggle('actif', (i===0&&nom==='creation')||(i===1&&nom==='journal')));
-  document.getElementById('panneau-creation').classList.toggle('actif', nom==='creation');
-  document.getElementById('panneau-journal').classList.toggle('actif', nom==='journal');
-  if (nom === 'journal') demarrerJournal();
+    o.classList.toggle('actif', noms[i] === nom));
+  noms.forEach(n =>
+    document.getElementById('panneau-' + n).classList.toggle('actif', n === nom));
+  if (nom === 'journal')  demarrerJournal();
+  if (nom === 'watchers') {
+    chargerWatchers();
+    intervalWatchers = setInterval(chargerWatchers, 5000);
+  } else {
+    clearInterval(intervalWatchers);
+  }
 }
 
 function demarrerJournal() {
@@ -392,6 +449,73 @@ async function envoyerIssue() {
     afficherMessage('Erreur réseau : ' + e.message, 'erreur');
   }
   btn.disabled = false; btn.textContent = "Envoyer l'issue";
+}
+
+async function chargerWatchers() {
+  const rep  = await fetch('/watchers');
+  const liste = await rep.json();
+  const tbody = document.getElementById('corps-watchers');
+  tbody.innerHTML = '';
+  for (const w of liste) {
+    const tr = document.createElement('tr');
+    tr.style.borderBottom = '1px solid #f0efe9';
+    tr.innerHTML = `
+      <td style="padding:10px 0;text-align:center">
+        <input type="checkbox" class="cb-watcher" value="${w.nom}"
+               onchange="mettreAJourCompte()">
+      </td>
+      <td style="padding:10px 4px">
+        <span style="width:8px;height:8px;border-radius:50%;
+              background:${w.actif ? '#5cb85c' : '#d9534f'};
+              display:inline-block"></span>
+      </td>
+      <td style="padding:10px 12px;font-size:13px">${w.nom}</td>
+      <td style="padding:10px 12px;font-size:13px;color:#888">${w.depot}</td>
+      <td style="padding:10px 0;font-size:12px;color:#aaa">
+        ${w.actif ? 'pid ' + w.pid : '—'}
+      </td>`;
+    tbody.appendChild(tr);
+  }
+  mettreAJourCompte();
+  document.getElementById('cb-tous').checked = false;
+}
+
+function selectionnerTous(cb) {
+  document.querySelectorAll('.cb-watcher').forEach(c => c.checked = cb.checked);
+  mettreAJourCompte();
+}
+
+function mettreAJourCompte() {
+  const n = document.querySelectorAll('.cb-watcher:checked').length;
+  document.getElementById('compte-selection').textContent =
+    n === 0 ? 'Aucun sélectionné' : `${n} sélectionné(s)`;
+}
+
+async function actionWatchers(action) {
+  const selectionnes = [...document.querySelectorAll('.cb-watcher:checked')].map(c => c.value);
+  if (!selectionnes.length) {
+    const msg = document.getElementById('msg-watchers');
+    msg.textContent = 'Sélectionne au moins un projet.';
+    msg.className = 'message erreur'; msg.style.display = 'block';
+    setTimeout(() => msg.style.display = 'none', 3000);
+    return;
+  }
+  document.getElementById('msg-watchers').style.display = 'none';
+
+  const route   = action === 'arreter' ? '/arreter-watcher' : '/lancer-watcher';
+  const payload = action === 'lancer'
+    ? (nom) => ({projet: nom, relancer: false})
+    : (nom) => ({projet: nom, relancer: action === 'relancer'});
+
+  for (const nom of selectionnes) {
+    await fetch(route, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(payload(nom))
+    });
+  }
+  await chargerWatchers();
+  await verifierStatut();
 }
 
 async function verifierStatut() {
@@ -569,6 +693,49 @@ def journal(nom_projet):
     )
 
 
+@app.route("/watchers")
+def watchers():
+    """Retourne le statut de tous les projets disponibles."""
+    resultat = []
+    for cfg in lister_projets():
+        actif, pid = watcher_actif(cfg)
+        resultat.append({
+            "nom":   cfg.nom,
+            "depot": cfg.depot,
+            "actif": actif,
+            "pid":   pid,
+        })
+    return jsonify(resultat)
+
+
+@app.route("/lancer-watcher", methods=["POST"])
+def lancer_watcher():
+    """Lance ou relance le watcher du projet.
+    relancer=true → redémarre même s'il tourne déjà.
+    relancer=false → démarre seulement s'il est inactif."""
+    data    = request.json or {}
+    cfg     = projet_par_nom(data.get("projet", ""))
+    if not cfg:
+        return jsonify(succes=False, erreur="Projet introuvable.")
+    forcer  = data.get("relancer", True)
+    try:
+        redemarré, pid = demarrer_watcher(cfg, forcer=forcer)
+        return jsonify(succes=True, pid=pid, redemarré=redemarré)
+    except Exception as e:
+        return jsonify(succes=False, erreur=str(e))
+
+
+@app.route("/arreter-watcher", methods=["POST"])
+def arreter_watcher_route():
+    """Arrête le watcher du projet."""
+    data = request.json or {}
+    cfg  = projet_par_nom(data.get("projet", ""))
+    if not cfg:
+        return jsonify(succes=False, erreur="Projet introuvable.")
+    ok, msg = arreter_watcher(cfg)
+    return jsonify(succes=ok, message=msg)
+
+
 @app.route("/statut/<nom_projet>")
 def statut(nom_projet):
     """Indique si le watcher de ce projet est en cours d'exécution."""
@@ -577,20 +744,6 @@ def statut(nom_projet):
         return jsonify(actif=False)
     actif, pid = watcher_actif(cfg)
     return jsonify(actif=actif, pid=pid)
-
-
-@app.route("/lancer-watcher", methods=["POST"])
-def lancer_watcher():
-    """Lance (ou relance) le watcher du projet sélectionné."""
-    data = request.json or {}
-    cfg  = projet_par_nom(data.get("projet", ""))
-    if not cfg:
-        return jsonify(succes=False, erreur="Projet introuvable.")
-    try:
-        pid = demarrer_watcher(cfg)
-        return jsonify(succes=True, pid=pid)
-    except Exception as e:
-        return jsonify(succes=False, erreur=str(e))
 
 
 # ─── Point d'entrée ───────────────────────────────────────────────────────────
