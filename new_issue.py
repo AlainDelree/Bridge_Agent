@@ -422,7 +422,7 @@ button.danger-plein:hover{background:#8f2626}
     </div>
 
     <div class="titre-section">Corps de la tâche</div>
-    <textarea id="corps" placeholder="## Contexte&#10;…&#10;&#10;## Tâche demandée&#10;…&#10;&#10;## Résultat attendu&#10;…"></textarea>
+    <textarea id="corps" placeholder="## Contexte&#10;…&#10;&#10;Ou coller directement avec #Titre: mon titre en première ligne."></textarea>
 
     <div id="zone-apercu" class="apercu"></div>
     <div id="message" class="message"></div>
@@ -1115,6 +1115,33 @@ function mettreAJourBoutonEnvoi() {
   btn.style.background    = ecriture ? '#a32d2d' : '#1a1a18';
   btn.style.borderColor   = ecriture ? '#a32d2d' : '#1a1a18';
 }
+
+// Détection de « #Titre: … » en première ligne du corps.
+// Permet de coller titre + corps en un seul copier-coller dans le champ #corps :
+// si la première ligne commence par « #Titre: » (insensible à la casse, espaces
+// tolérés après « : »), on déplace ce qui suit dans #titre et on retire cette
+// ligne du corps. Le champ #titre reste éditable normalement ; taper directement
+// dedans ne déclenche aucun comportement automatique (l'écouteur est sur #corps).
+function detecterTitreDansCorps() {
+  const corpsEl = document.getElementById('corps');
+  const valeur  = corpsEl.value;
+  const finLigne      = valeur.indexOf('\n');
+  const premiereLigne = finLigne === -1 ? valeur : valeur.slice(0, finLigne);
+  const m = premiereLigne.match(/^#titre:\s*(.*)$/i);
+  if (!m) return;
+
+  // Mémorise le mode courant : la détection ne touche pas au mode, mais on
+  // n'appelle mettreAJourBoutonEnvoi() que s'il a effectivement changé.
+  const modeAvant = document.querySelector('input[name=mode]:checked').value;
+
+  document.getElementById('titre').value = m[1].trim();
+  // Supprime la première ligne (et son saut de ligne) du corps.
+  corpsEl.value = finLigne === -1 ? '' : valeur.slice(finLigne + 1);
+
+  const modeApres = document.querySelector('input[name=mode]:checked').value;
+  if (modeApres !== modeAvant) mettreAJourBoutonEnvoi();
+}
+document.getElementById('corps').addEventListener('input', detecterTitreDansCorps);
 
 async function verifierStatut() {
   const nom = document.getElementById('projet').value;
