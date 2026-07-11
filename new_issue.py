@@ -1179,6 +1179,14 @@ function rendreListeIssues(reset) {
     const etat = (it.state || '').toUpperCase() === 'CLOSED' ? 'fermé' : 'ouvert';
     const couleur = couleurProjetResultats(it.projet);
     const numero = String(it.number);
+    // Date de création formatée en heure locale du navigateur (issue #58) :
+    // "DD/MM/YYYY HH:MM:SS" jusqu'à la seconde via toLocaleString('fr-FR').
+    const dateCreation = it.createdAt
+      ? new Date(it.createdAt).toLocaleString('fr-FR', {
+          day: '2-digit', month: '2-digit', year: 'numeric',
+          hour: '2-digit', minute: '2-digit', second: '2-digit'
+        })
+      : '';
     const ligne = document.createElement('div');
     ligne.className = 'ligne-issue';
     ligne.dataset.projet = it.projet;
@@ -1206,7 +1214,9 @@ function rendreListeIssues(reset) {
     // Gauche : badges emoji (✅ ✏️ ⚠️ ○) + pastille ● colorée du projet.
     // Centre : #N — titre [état].
     ligne.innerHTML =
-      '<span class="ligne-gauche">'
+      '<span class="ligne-date" style="font-size:11px;color:#999;'
+      + 'min-width:140px;font-family:monospace">' + escapeHtml(dateCreation) + '</span>'
+      + '<span class="ligne-gauche">'
       + '<span class="ligne-badges">' + prefixeIssue(it.labels) + '</span>'
       + '<span class="pastille-ligne" style="background:' + couleur + '"></span>'
       + '</span>'
