@@ -289,11 +289,11 @@ TEMPLATE = r"""<!DOCTYPE html>
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:system-ui,sans-serif;font-size:14px;background:#f0efe9;color:#1a1a18;min-height:100vh;padding:28px 16px;position:relative}
 .fenetre{max-width:860px;margin:0 auto;background:#fff;border:1px solid #ddd;border-radius:12px;overflow:hidden}
-.entete{padding:14px 20px;border-bottom:1px solid #eee;display:flex;align-items:center;gap:9px}
+.entete{padding:14px 20px;border-bottom:1px solid #dad9d2;display:flex;align-items:center;gap:9px;background:#e7e6e0}
 .entete h1{font-size:15px;font-weight:500}
 .entete .statut{margin-left:auto;font-size:12px;color:#888}
 .bandeau-projet{display:flex;flex-direction:column;gap:8px;
-  padding:14px 20px;border-bottom:1px solid #eee;background:#eef3f8;
+  padding:14px 20px;border-bottom:1px solid #dad9d2;background:#e7e6e0;
   border-left:4px solid #1a1a18}
 .bandeau-ligne{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
 .bandeau-ligne label{font-size:14px;color:#333;font-weight:600;white-space:nowrap}
@@ -302,9 +302,13 @@ body{font-family:system-ui,sans-serif;font-size:14px;background:#f0efe9;color:#1
   border-left:4px solid #1a1a18}
 .bandeau-projet select:focus{outline:none;border-color:#888}
 .projet-actif-label{font-size:14px;font-weight:700;color:#1a1a18;padding:0 2px}
-.onglets{display:flex;border-bottom:1px solid #eee;padding:0 20px}
-.onglet{padding:9px 16px;font-size:15px;font-weight:500;color:#777;cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-1px;user-select:none}
-.onglet.actif{color:#1a1a18;font-weight:700;border-bottom-color:#1a1a18}
+.onglets{display:flex;gap:4px;padding:8px 20px 0;background:#e7e6e0;border-bottom:1px solid #dad9d2;
+  box-shadow:inset 0 6px 8px -8px rgba(0,0,0,.18)}
+.onglet{padding:9px 16px 10px;font-size:15px;font-weight:500;color:#777;cursor:pointer;
+  border:1px solid transparent;border-bottom:none;border-radius:8px 8px 0 0;
+  margin-bottom:-1px;user-select:none;background:transparent}
+.onglet:hover:not(.actif){color:#1a1a18;background:#f0efe9}
+.onglet.actif{color:#1a1a18;font-weight:700;background:#fff;border-color:#dad9d2}
 .panneau{display:none;padding:20px}
 .panneau.actif{display:block}
 .rangee{display:flex;gap:12px;margin-bottom:14px;align-items:flex-end}
