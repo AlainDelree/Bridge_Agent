@@ -4,7 +4,8 @@ new_issue.py — Interface web de création d'issues pour le bridge inter-agents
 Lit les configs configs/*.conf, propose un formulaire pour chaque projet.
 
 Usage :
-    python3 new_issue.py
+    python3 new_issue.py                  # mode local (127.0.0.1, HTTP, sans SSL)
+    python3 new_issue.py --externe        # exposition réseau (0.0.0.0, HTTPS + mdp)
     python3 new_issue.py --port 5100
     python3 new_issue.py --no-browser
 """
@@ -2063,6 +2064,11 @@ def main():
     parser.add_argument("--set-password", action="store_true",
                         help="Génère le hash sha256 d'un mot de passe à copier "
                              "dans le .conf, puis quitte sans démarrer le serveur")
+    parser.add_argument("--externe", action="store_true",
+                        help="Exposition réseau (accès distant via tunnel) : "
+                             "host 0.0.0.0 + HTTPS + mot de passe obligatoire. "
+                             "Sans cette option : mode local (127.0.0.1, HTTP, "
+                             "sans SSL)")
     args = parser.parse_args()
 
     # Utilitaire : génération du hash du mot de passe d'accès (ne démarre pas le
@@ -2082,16 +2088,39 @@ def main():
         print(f"MOT_DE_PASSE = {hache}")
         sys.exit(0)
 
-    # Emplacement du certificat auto-signé (HTTPS). Généré une fois via :
-    #   openssl req -x509 -newkey rsa:4096 -keyout ssl/key.pem \
-    #     -out ssl/cert.pem -days 3650 -nodes -subj "/CN=bridge-agent-local"
-    cert = DOSSIER_SCRIPT / "ssl" / "cert.pem"
-    cle  = DOSSIER_SCRIPT / "ssl" / "key.pem"
-    if not (cert.exists() and cle.exists()):
-        print("Certificat SSL introuvable dans ssl/. Générez-le avec :")
-        print('  openssl req -x509 -newkey rsa:4096 -keyout ssl/key.pem \\')
-        print('    -out ssl/cert.pem -days 3650 -nodes -subj "/CN=bridge-agent-local"')
-        sys.exit(1)
+    # Deux modes de fonctionnement :
+    #   • local (défaut)      : host 127.0.0.1, HTTP simple, sans SSL. Destiné à
+    #     un usage sur place (devant le ThinkPad) — pas d'exposition réseau. Le
+    #     mot de passe n'est PAS requis (mais reste appliqué s'il est configuré,
+    #     via le décorateur @login_requis : aucune régression en mode local).
+    #   • externe (--externe) : host 0.0.0.0, HTTPS + mot de passe OBLIGATOIRES.
+    #     Destiné à l'accès distant (téléphone via tunnel).
+    if args.externe:
+        host   = "0.0.0.0"
+        schema = "https"
+
+        # En mode externe, refuser de démarrer si aucun mot de passe n'est
+        # configuré : l'interface serait exposée au réseau sans authentification.
+        if not MOT_DE_PASSE:
+            print("Erreur : MOT_DE_PASSE non configuré.")
+            print("Lancez d'abord : python3 new_issue.py --set-password")
+            sys.exit(1)
+
+        # Emplacement du certificat auto-signé (HTTPS). Généré une fois via :
+        #   openssl req -x509 -newkey rsa:4096 -keyout ssl/key.pem \
+        #     -out ssl/cert.pem -days 3650 -nodes -subj "/CN=bridge-agent-local"
+        cert = DOSSIER_SCRIPT / "ssl" / "cert.pem"
+        cle  = DOSSIER_SCRIPT / "ssl" / "key.pem"
+        if not (cert.exists() and cle.exists()):
+            print("Certificat SSL introuvable dans ssl/. Générez-le avec :")
+            print('  openssl req -x509 -newkey rsa:4096 -keyout ssl/key.pem \\')
+            print('    -out ssl/cert.pem -days 3650 -nodes -subj "/CN=bridge-agent-local"')
+            sys.exit(1)
+        ssl_context = (str(cert), str(cle))
+    else:
+        host        = "127.0.0.1"
+        schema      = "http"
+        ssl_context = None
 
     # Ctrl+C (SIGINT) ou SIGTERM : on prévient d'abord l'onglet via /events en
     # positionnant arret_demande, puis on laisse ~1,5 s à la connexion SSE pour
@@ -2109,14 +2138,15 @@ def main():
     Thread(target=surveiller_heartbeat, daemon=True).start()
 
     if not args.no_browser:
-        Timer(1.2, lambda: webbrowser.open(f"https://localhost:{args.port}")).start()
+        Timer(1.2, lambda: webbrowser.open(f"{schema}://localhost:{args.port}")).start()
 
-    print(f"Bridge Agent — interface web sur https://localhost:{args.port}")
+    print(f"Bridge Agent — interface web sur {schema}://localhost:{args.port}"
+          f" ({'externe' if args.externe else 'local'})")
     print("Ctrl-C pour arrêter.")
     app.run(
-        host="0.0.0.0",
+        host=host,
         port=args.port,
-        ssl_context=(str(cert), str(cle)),
+        ssl_context=ssl_context,
         threaded=True,
         debug=False,
     )
