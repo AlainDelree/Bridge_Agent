@@ -949,16 +949,27 @@ async function afficherIssue() {
     html += '</div>';
 
     // Bouton « Annuler cette issue » : uniquement si l'issue est ouverte, porte
-    // le label for-linux (donc destinée au watcher) et n'est pas déjà en échec
-    // (needs-human). Autrement dit : créée mais pas encore prise en charge.
+    // le label for-linux (donc destinée au watcher), n'est pas déjà en échec
+    // (needs-human) et n'a encore aucun commentaire. Un commentaire signifie que
+    // le watcher a capté l'issue et posté son ACK : CCL tourne déjà, l'annulation
+    // serait sans effet — on masque le bouton pour ne pas induire en erreur.
     const nomsLabels = (it.labels || []).map(l => ((l.name || l) || '').toLowerCase());
+    const comments = it.comments || [];
     const annulable = !ferme
       && nomsLabels.includes('for-linux')
-      && !nomsLabels.includes('needs-human');
+      && !nomsLabels.includes('needs-human')
+      && comments.length === 0;
     if (annulable) {
       html += '<div class="bloc-annuler">'
             + '<button class="danger" onclick="annulerIssue(' + Number(it.number) + ')">'
             + 'Annuler cette issue</button></div>';
+    } else if (!ferme
+      && nomsLabels.includes('for-linux')
+      && !nomsLabels.includes('needs-human')
+      && comments.length > 0) {
+      html += '<div class="bloc-annuler">'
+            + '<span class="traitement-encours">'
+            + '⏳ En cours de traitement — annulation impossible</span></div>';
     }
 
     html += '<div class="issue-body">' + escapeHtml(it.body || '(pas de description)') + '</div>';
