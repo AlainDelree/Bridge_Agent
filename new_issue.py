@@ -289,6 +289,13 @@ button.danger:hover{background:#f8d7da}
 .badge-etat.ferme{background:#e2e3e5;color:#555}
 .badge-label{font-size:11px;padding:3px 9px;border-radius:12px;
   background:#eef;color:#3b3b8f;border:1px solid #dde}
+.badge-label.succes{background:#d4edda;color:#155724;border-color:#b7d7c0}
+.badge-label.echec{background:#fff3cd;color:#856404;border-color:#f5e0a3}
+.badge-label.ecriture{background:#f8d7da;color:#721c24;border-color:#f5c6cb}
+.badge-label.gris{background:#eee;color:#666;border-color:#ddd}
+.legende-resultats{font-size:12px;color:#888;background:#f8f8f5;
+  border:1px solid #e0dfda;border-radius:6px;padding:8px 12px;
+  margin-bottom:16px;display:flex;flex-direction:column;gap:2px;line-height:1.55}
 .issue-body{background:#f8f8f5;border:1px solid #e0dfda;border-radius:6px;padding:12px;
   font-family:monospace;font-size:12px;white-space:pre-wrap;word-break:break-word;
   max-height:200px;overflow-y:auto;line-height:1.6;margin-bottom:16px}
@@ -422,6 +429,13 @@ button.danger:hover{background:#f8d7da}
       <button onclick="naviguerIssue(-1)" title="Issue précédente">←</button>
       <button onclick="naviguerIssue(1)" title="Issue suivante">→</button>
       <button class="primaire" onclick="afficherIssue()">Afficher</button>
+    </div>
+
+    <div class="legende-resultats">
+      <span>✅ Traitée avec succès (label done)</span>
+      <span>✏️ Lancée en mode écriture (label mode_write)</span>
+      <span>⚠️ Échec — intervention humaine requise (label needs-human)</span>
+      <span>○ Aucun de ces labels</span>
     </div>
 
     <div id="zone-issue" class="zone-issue">
@@ -686,6 +700,32 @@ function viderTerminal() {
 }
 
 // ─── Onglet Résultats : visualisation des issues ──────────────────────────
+
+// Préfixe visuel d'une issue selon ses labels.
+// needs-human prime sur tout ; sinon mode_write (✏️) puis done (✅) se cumulent ;
+// à défaut, ○.
+function prefixeIssue(labels) {
+  const noms = (labels || []).map(l => ((l && l.name) || l || '').toLowerCase());
+  if (noms.includes('needs-human')) return '⚠️';
+  let p = '';
+  if (noms.includes('mode_write')) p += '✏️';
+  if (noms.includes('done'))       p += '✅';
+  return p || '○';
+}
+
+// Badge coloré pour un label dans le panneau de détail.
+function badgeLabel(nom) {
+  const map = {
+    'done':        {cls: 'succes',   txt: '✅ succès'},
+    'needs-human': {cls: 'echec',    txt: '⚠️ échec'},
+    'mode_write':  {cls: 'ecriture', txt: '✏️ écriture'},
+    'bridge':      {cls: 'gris',     txt: 'bridge'},
+    'for-linux':   {cls: 'gris',     txt: 'for-linux'},
+  };
+  const b = map[nom] || {cls: 'gris', txt: nom};
+  return '<span class="badge-label ' + b.cls + '">' + escapeHtml(b.txt) + '</span>';
+}
+
 async function chargerListeIssues() {
   const nom = document.getElementById('projet').value;
   const select = document.getElementById('select-issue');
@@ -702,7 +742,7 @@ async function chargerListeIssues() {
       const etat = (it.state || '').toUpperCase() === 'CLOSED' ? 'fermé' : 'ouvert';
       const opt = document.createElement('option');
       opt.value = it.number;
-      opt.textContent = `#${it.number} — ${it.title} [${etat}]`;
+      opt.textContent = `${prefixeIssue(it.labels)} #${it.number} — ${it.title} [${etat}]`;
       select.appendChild(opt);
     }
   } catch(e) {
@@ -740,7 +780,7 @@ async function afficherIssue() {
     html += '<span class="badge-etat ' + (ferme ? 'ferme' : 'ouvert') + '">'
           + (ferme ? 'fermé' : 'ouvert') + '</span>';
     for (const lab of (it.labels || [])) {
-      html += '<span class="badge-label">' + escapeHtml(lab.name || lab) + '</span>';
+      html += badgeLabel(lab.name || lab);
     }
     html += '</div>';
 
