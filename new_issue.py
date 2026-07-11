@@ -624,6 +624,12 @@ button.danger-plein:hover{background:#8f2626}
     </div>
 
     <div class="champ" style="margin-bottom:14px">
+      <label>Fichier de contexte projet (relatif au rep. de travail)</label>
+      <input type="text" id="conf-FICHIER_CONTEXTE"
+             placeholder="ex: CONTEXTE.md ou BRIDGE_AGENT_DOC.md">
+    </div>
+
+    <div class="champ" style="margin-bottom:14px">
       <label>Modèle Claude Code (vide = défaut)</label>
       <input type="text" id="conf-MODELE_CCL" placeholder="ex: claude-opus-4-5">
     </div>
@@ -781,6 +787,7 @@ async function chargerConfig() {
     document.getElementById('conf-MAX_ESSAIS').value        = cfg.max_essais        || 3;
     document.getElementById('conf-TIMEOUT_CLAUDE').value    = cfg.timeout_claude    || 300;
     document.getElementById('conf-SCRIPT_BIP').value        = cfg.script_bip        || '';
+    document.getElementById('conf-FICHIER_CONTEXTE').value  = cfg.fichier_contexte  || '';
     document.getElementById('conf-MODELE_CCL').value        = cfg.modele_ccl        || '';
     document.getElementById('conf-LOG_TAILLE_MAX_MO').value = cfg.log_taille_max_mo || 1;
     document.getElementById('conf-LOG_ARCHIVES').value      = cfg.log_archives      || 5;
@@ -801,6 +808,7 @@ async function sauvegarderConfig(relancer) {
     MAX_ESSAIS:        document.getElementById('conf-MAX_ESSAIS').value,
     TIMEOUT_CLAUDE:    document.getElementById('conf-TIMEOUT_CLAUDE').value,
     SCRIPT_BIP:        document.getElementById('conf-SCRIPT_BIP').value,
+    FICHIER_CONTEXTE:  document.getElementById('conf-FICHIER_CONTEXTE').value,
     MODELE_CCL:        document.getElementById('conf-MODELE_CCL').value,
     LOG_TAILLE_MAX_MO: document.getElementById('conf-LOG_TAILLE_MAX_MO').value,
     LOG_ARCHIVES:      document.getElementById('conf-LOG_ARCHIVES').value,
@@ -1959,6 +1967,7 @@ def get_config(nom_projet):
         max_essais     = cfg.max_essais,
         timeout_claude = cfg.timeout_claude,
         script_bip     = str(cfg.script_bip),
+        fichier_contexte = cfg.fichier_contexte,
         log_taille_max_mo = cfg.log_taille_max_mo,
         log_archives   = cfg.log_archives,
         modele_ccl     = cfg.modele_ccl,
