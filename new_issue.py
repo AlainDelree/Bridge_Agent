@@ -19,7 +19,7 @@ import tempfile
 import time
 import webbrowser
 from pathlib import Path
-from threading import Timer
+from threading import Thread, Timer
 
 from flask import Flask, Response, jsonify, render_template_string, request
 
@@ -31,6 +31,19 @@ DOSSIER_SCRIPT = Path(__file__).resolve().parent
 
 app = Flask(__name__)
 app.config["SECRET_KEY"] = "bridge-agent-local"
+
+
+# ─── Cycle de vie serveur ↔ onglet navigateur ────────────────────────────────
+# Le navigateur émet un heartbeat (POST /heartbeat) toutes les 5 s. Un thread
+# daemon coupe le serveur si plus rien n'arrive pendant DELAI_HEARTBEAT_MAX s
+# (onglet fermé). Dans l'autre sens, un Ctrl+C (SIGINT/SIGTERM) positionne
+# arret_demande = True : la route SSE /events le détecte et prévient l'onglet.
+INTERVALLE_HEARTBEAT = 5        # période de sonde côté serveur (s)
+DELAI_HEARTBEAT_MAX  = 15       # au-delà, l'onglet est considéré fermé
+
+last_heartbeat = 0.0            # horodatage du dernier heartbeat reçu
+heartbeat_recu = False          # tant qu'aucun heartbeat : pas de surveillance
+arret_demande  = False          # passé à True par le gestionnaire de signal
 
 
 # Clés modifiables via l'interface (les autres : NOM, DEPOT, REP_TRAVAIL,
@@ -332,6 +345,17 @@ button.danger:hover{background:#f8d7da}
 .modal-boutons{display:flex;justify-content:flex-end;gap:10px}
 button.danger-plein{background:#a32d2d;color:#fff;border-color:#a32d2d}
 button.danger-plein:hover{background:#8f2626}
+/* Overlay « serveur arrêté » — flux normal (position:absolute, pas fixed),
+   recouvre tout le body (position:relative). Affiché sur Ctrl+C serveur ou
+   coupure brutale de la connexion SSE /events. */
+.overlay-arret{position:absolute;top:0;left:0;width:100%;min-height:100%;
+  background:rgba(20,20,18,.94);display:none;flex-direction:column;
+  justify-content:center;align-items:center;gap:22px;padding:60px 20px;
+  z-index:2000;text-align:center}
+.overlay-arret.actif{display:flex}
+.overlay-arret .msg{color:#fff;font-size:18px;font-weight:600;line-height:1.5;
+  max-width:520px}
+.overlay-arret button{font-size:15px;padding:11px 24px}
 </style>
 </head>
 <body>
@@ -594,6 +618,12 @@ button.danger-plein:hover{background:#8f2626}
       <button class="danger-plein" id="modal-oui">Envoyer quand même</button>
     </div>
   </div>
+</div>
+
+<!-- ─── Overlay « serveur arrêté » ────────────────────────────────────────── -->
+<div id="overlay-arret" class="overlay-arret">
+  <div class="msg">🔴 Serveur arrêté — relancez new_issue.py puis rechargez</div>
+  <button onclick="window.location.reload()">Recharger</button>
 </div>
 
 <script>
@@ -1278,6 +1308,69 @@ async function lancerWatcher() {
 })();
 setInterval(verifierStatut, 5000);
 
+// ─── Cycle de vie : onglet ↔ serveur ──────────────────────────────────────
+// Deux liens : (1) heartbeat navigateur → serveur, qui laisse le serveur se
+// couper tout seul quand l'onglet est fermé ; (2) canal SSE serveur → onglet,
+// qui affiche un overlay quand le serveur s'arrête (Ctrl+C ou coupure brutale).
+let sourceEvents     = null;
+let timerErreurArret = null;
+
+function afficherOverlayArret() {
+  const ov = document.getElementById('overlay-arret');
+  if (ov) ov.classList.add('actif');
+}
+
+// Heartbeat périodique : signale au serveur que l'onglet est toujours ouvert.
+function envoyerHeartbeat() {
+  fetch('/heartbeat', {method: 'POST'}).catch(() => {});
+}
+
+// Avant tout déchargement (F5, Ctrl+R, navigation, fermeture), on pose un
+// drapeau : au chargement suivant, sa présence révèle un simple rechargement.
+window.addEventListener('beforeunload', function() {
+  try { sessionStorage.setItem('_refresh', '1'); } catch(e) {}
+});
+
+function demarrerCycleVie() {
+  // Distinction refresh / fermeture : si le drapeau est présent, c'était un
+  // rechargement — on le retire et on reprend normalement. S'il est absent,
+  // c'était une vraie fermeture (mais alors le serveur est déjà coupé : le
+  // heartbeat interrompu l'a fait s'arrêter, donc ce code ne s'exécute pas).
+  try {
+    if (sessionStorage.getItem('_refresh')) sessionStorage.removeItem('_refresh');
+  } catch(e) {}
+
+  envoyerHeartbeat();
+  setInterval(envoyerHeartbeat, 5000);
+
+  // Canal serveur → onglet.
+  sourceEvents = new EventSource('/events');
+
+  // Arrêt propre du serveur (Ctrl+C) : event « shutdown » explicite.
+  sourceEvents.addEventListener('shutdown', function() {
+    if (timerErreurArret) { clearTimeout(timerErreurArret); timerErreurArret = null; }
+    sourceEvents.close();
+    afficherOverlayArret();
+  });
+
+  // Connexion (r)établie : annule une éventuelle alerte en attente.
+  sourceEvents.onopen = function() {
+    if (timerErreurArret) { clearTimeout(timerErreurArret); timerErreurArret = null; }
+  };
+
+  // Coupure brutale (serveur tué sans signal) : la connexion SSE tombe en
+  // erreur. Délai de 3 s avant l'overlay pour ne pas réagir à un micro-freeze ;
+  // si la connexion se rétablit entre-temps, onopen annule le timer.
+  sourceEvents.onerror = function() {
+    if (timerErreurArret) return;
+    timerErreurArret = setTimeout(function() {
+      timerErreurArret = null;
+      afficherOverlayArret();
+    }, 3000);
+  };
+}
+demarrerCycleVie();
+
 function viderFormulaire(cacherMsg=true) {
   if (cacherMsg) cacherRetours();
   document.getElementById('titre').value = '';
@@ -1605,7 +1698,53 @@ def statut(nom_projet):
     return jsonify(actif=actif, pid=pid)
 
 
+@app.route("/heartbeat", methods=["POST"])
+def heartbeat():
+    """Le navigateur signale que l'onglet est toujours ouvert. Met à jour
+    l'horodatage surveillé par surveiller_heartbeat()."""
+    global last_heartbeat, heartbeat_recu
+    last_heartbeat = time.time()
+    heartbeat_recu = True
+    return jsonify(ok=True)
+
+
+@app.route("/events")
+def events():
+    """SSE dédié au cycle de vie (séparé du journal watcher).
+    Envoie un keepalive toutes les 5 s ; dès qu'un signal d'arrêt a été reçu
+    (arret_demande), émet un event « shutdown » puis ferme la connexion."""
+    def generer():
+        dernier_ping = time.time()
+        while True:
+            if arret_demande:
+                yield "event: shutdown\ndata: stop\n\n"
+                return
+            time.sleep(0.5)   # sonde fréquente du flag, keepalive espacé
+            if time.time() - dernier_ping >= 5:
+                yield ": ping\n\n"
+                dernier_ping = time.time()
+
+    return Response(
+        generer(),
+        mimetype="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
 # ─── Point d'entrée ───────────────────────────────────────────────────────────
+
+
+def surveiller_heartbeat():
+    """Thread daemon : coupe le serveur (SIGTERM sur son propre PID) si l'onglet
+    navigateur a cessé d'émettre des heartbeats depuis plus de DELAI_HEARTBEAT_MAX
+    secondes. Tant qu'aucun heartbeat n'a jamais été reçu (serveur qui démarre,
+    ou lancé en --no-browser), aucune surveillance : on n'auto-coupe jamais un
+    serveur qui n'a pas encore eu de client."""
+    while True:
+        time.sleep(INTERVALLE_HEARTBEAT)
+        if heartbeat_recu and (time.time() - last_heartbeat) > DELAI_HEARTBEAT_MAX:
+            os.kill(os.getpid(), signal.SIGTERM)
+            return
 
 def main():
     parser = argparse.ArgumentParser(
@@ -1617,12 +1756,27 @@ def main():
                         help="Ne pas ouvrir le navigateur automatiquement")
     args = parser.parse_args()
 
+    # Ctrl+C (SIGINT) ou SIGTERM : on prévient d'abord l'onglet via /events en
+    # positionnant arret_demande, puis on laisse ~1,5 s à la connexion SSE pour
+    # livrer l'event « shutdown » avant de terminer le processus.
+    def gestionnaire_arret(signum, frame):
+        global arret_demande
+        arret_demande = True
+        Timer(1.5, lambda: os._exit(0)).start()
+
+    signal.signal(signal.SIGINT, gestionnaire_arret)
+    signal.signal(signal.SIGTERM, gestionnaire_arret)
+
+    # Surveillance des heartbeats du navigateur (daemon → ne bloque jamais
+    # l'arrêt du processus si le gestionnaire de signal est lent).
+    Thread(target=surveiller_heartbeat, daemon=True).start()
+
     if not args.no_browser:
         Timer(1.2, lambda: webbrowser.open(f"http://localhost:{args.port}")).start()
 
     print(f"Bridge Agent — interface web sur http://localhost:{args.port}")
     print("Ctrl-C pour arrêter.")
-    app.run(host="127.0.0.1", port=args.port, debug=False)
+    app.run(host="127.0.0.1", port=args.port, debug=False, threaded=True)
 
 
 if __name__ == "__main__":
