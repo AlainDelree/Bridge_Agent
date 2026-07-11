@@ -375,9 +375,16 @@ button.danger:hover{background:#f8d7da}
    chaque ligne pour être propres à son projet. */
 .liste-issues{max-height:280px;overflow-y:auto;border:1px solid #e0dfda;
   border-radius:6px;margin-bottom:6px;background:#fff}
+/* Barre « Mise à jour… » : bouton rafraîchir + indicateur (issue #56). */
+.barre-maj{display:flex;align-items:center;gap:10px;margin-bottom:12px}
+/* Bouton rafraîchir discret, même gabarit que les boutons de filtre. */
+.btn-rafraichir{font-size:14px;line-height:1;padding:4px 11px;border:1px solid #ccc;
+  border-radius:14px;background:#fff;color:#555;cursor:pointer;user-select:none;
+  transition:opacity .12s}
+.btn-rafraichir:hover{opacity:.6}
 /* Indicateur discret de rafraîchissement en arrière-plan (cache localStorage). */
 .maj-indicateur{font-size:11px;color:#9a978f;font-style:italic;
-  margin:0 2px 12px;user-select:none}
+  margin:0 2px;user-select:none}
 .ligne-issue{display:flex;align-items:center;gap:9px;padding:7px 11px;cursor:pointer;
   font-size:13px;line-height:1.4;border-bottom:1px solid #f0efea;transition:background .12s}
 .ligne-issue:last-child{border-bottom:none}
@@ -584,9 +591,14 @@ button.danger-plein:hover{background:#8f2626}
          Firefox refuse de faire sur les <option>. Navigation par clic direct. -->
     <div id="liste-issues" class="liste-issues"></div>
 
-    <!-- Indicateur discret affiché pendant le fetch d'arrière-plan quand la
-         liste est déjà rendue depuis le cache localStorage (issue #52). -->
-    <div id="maj-indicateur" class="maj-indicateur" style="display:none">Mise à jour…</div>
+    <!-- Barre : bouton rafraîchir (vide le cache et recharge depuis GitHub,
+         issue #56) + indicateur discret affiché pendant le fetch d'arrière-plan
+         quand la liste est déjà rendue depuis le cache localStorage (issue #52). -->
+    <div class="barre-maj">
+      <button id="btn-rafraichir" class="btn-rafraichir" onclick="rafraichirResultats()"
+              title="Rafraîchir depuis GitHub">↻</button>
+      <div id="maj-indicateur" class="maj-indicateur" style="display:none">Mise à jour…</div>
+    </div>
 
     <div class="legende-resultats">
       <span>✅ Traitée avec succès (label done)</span>
@@ -1227,6 +1239,11 @@ function escapeHtml(t) {
 // avec un TTL court : le détail (commentaires, état) évolue vite, on n'affiche
 // donc le cache que s'il a moins de TTL_DETAIL_MS.
 const CLE_CACHE_DETAIL = 'bridge_cache_detail_';
+
+// Issue actuellement affichée dans #zone-issue (null si aucune). Permet au
+// bouton rafraîchir (issue #56) de la recharger depuis GitHub.
+let projetCourant = null;
+let numeroCourant = null;
 const TTL_DETAIL_MS = 60000;
 // Jeton anti-course : chaque appel à afficherIssue l'incrémente ; un fetch qui
 // revient alors qu'une autre issue a été demandée entre-temps est ignoré.
@@ -1319,9 +1336,14 @@ async function afficherIssue(nom, numero) {
   if (ligneSel) ligneSel.classList.add('selectionnee');
   const zone = document.getElementById('zone-issue');
   if (!numero || !nom) {
+    projetCourant = null;
+    numeroCourant = null;
     zone.innerHTML = '<div class="issue-vide">Aucune issue à afficher</div>';
     return;
   }
+  // Mémorise l'issue affichée pour le bouton rafraîchir (issue #56).
+  projetCourant = nom;
+  numeroCourant = numero;
 
   // 1) Cache frais (< TTL) : affichage immédiat. Passé le TTL, on force le fetch
   //    pour ne montrer que du frais (état/commentaires évoluent vite).
@@ -1359,6 +1381,33 @@ async function afficherIssue(nom, numero) {
     if (seq === afficherIssueSeq && htmlAffiche === null) {
       zone.innerHTML = '<div class="issue-vide">Erreur réseau : ' + escapeHtml(e.message) + '</div>';
     }
+  }
+}
+
+// Bouton rafraîchir (issue #56) : vide le cache localStorage (liste + tous les
+// détails) puis recharge tout depuis GitHub. Contourne le TTL du cache détail,
+// qui peut montrer une issue « ouverte » alors que le watcher l'a fermée.
+async function rafraichirResultats() {
+  // Mémorise l'issue affichée AVANT le rechargement : chargerListeIssues()
+  // réécrit projetCourant/numeroCourant en auto-sélectionnant la première ligne.
+  const projet = projetCourant;
+  const numero = numeroCourant;
+  // 1) Cache de la liste.
+  try { localStorage.removeItem(CLE_CACHE_ISSUES); } catch(e) {}
+  // 2) Toutes les clés de cache détail « bridge_cache_detail_* ».
+  try {
+    const aSupprimer = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const cle = localStorage.key(i);
+      if (cle && cle.indexOf(CLE_CACHE_DETAIL) === 0) aSupprimer.push(cle);
+    }
+    aSupprimer.forEach(cle => localStorage.removeItem(cle));
+  } catch(e) {}
+  // 3) Recharge la liste depuis GitHub.
+  await chargerListeIssues();
+  // 4) Recharge l'issue qui était affichée, si elle l'était.
+  if (projet && numero) {
+    await afficherIssue(projet, numero);
   }
 }
 
