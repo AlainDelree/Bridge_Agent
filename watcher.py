@@ -349,33 +349,57 @@ def ajouter_label(numero: int, label: str) -> bool:
         log.error(f"Erreur ajout label '{label}' sur issue #{numero} : {e}")
         return False
 
-def commenter_issue(numero: int, message: str):
-    """Poste un commentaire sur une issue."""
+def commenter_issue(numero: int, message: str) -> bool:
+    """Poste un commentaire sur une issue.
+    Retourne True si le commentaire a bien été posté, False en cas d'échec (code
+    retour gh non nul ou exception). Le code retour de gh est examiné : sans ça,
+    un échec (réseau, permissions, repo inexistant) passait inaperçu (cf. issue
+    #20, même défaut que celui corrigé sur ajouter_label() en issue #1)."""
     try:
-        subprocess.run(
+        res = subprocess.run(
             ["gh", "issue", "comment", str(numero),
              "--repo", CFG.depot,
              "--body", message],
             capture_output=True, text=True, timeout=30
         )
+        if res.returncode != 0:
+            log.error(f"Échec commentaire issue #{numero} "
+                      f"(gh code {res.returncode}) : {res.stderr.strip()}")
+            return False
+        return True
     except Exception as e:
         log.error(f"Erreur commentaire issue #{numero} : {e}")
+        return False
 
-def fermer_issue(numero: int):
-    """Ferme une issue et ajoute le label 'done'."""
+def fermer_issue(numero: int) -> bool:
+    """Ferme une issue et ajoute le label 'done'.
+    Retourne True si les deux opérations (close + add-label) réussissent, False
+    si l'une ou l'autre échoue (code retour gh non nul ou exception). Les codes
+    retour de gh sont examinés : sans ça, un échec passait inaperçu (cf. issue
+    #20)."""
     try:
-        subprocess.run(
+        res_close = subprocess.run(
             ["gh", "issue", "close", str(numero), "--repo", CFG.depot],
             capture_output=True, text=True, timeout=30
         )
-        subprocess.run(
+        if res_close.returncode != 0:
+            log.error(f"Échec fermeture issue #{numero} "
+                      f"(gh code {res_close.returncode}) : {res_close.stderr.strip()}")
+            return False
+        res_label = subprocess.run(
             ["gh", "issue", "edit", str(numero),
              "--repo", CFG.depot,
              "--add-label", LABEL_FAIT],
             capture_output=True, text=True, timeout=30
         )
+        if res_label.returncode != 0:
+            log.error(f"Échec ajout label '{LABEL_FAIT}' sur issue #{numero} "
+                      f"(gh code {res_label.returncode}) : {res_label.stderr.strip()}")
+            return False
+        return True
     except Exception as e:
         log.error(f"Erreur fermeture issue #{numero} : {e}")
+        return False
 
 def lancer_claude(numero: int, titre: str, body: str, dry_run: bool,
                   autoriser_ecriture: bool = False,
