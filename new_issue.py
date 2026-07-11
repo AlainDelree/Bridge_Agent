@@ -370,7 +370,10 @@ button.danger:hover{background:#f8d7da}
    de survol/sélection sont portées par --bg-hover/--bg-sel, posées en inline sur
    chaque ligne pour être propres à son projet. */
 .liste-issues{max-height:280px;overflow-y:auto;border:1px solid #e0dfda;
-  border-radius:6px;margin-bottom:16px;background:#fff}
+  border-radius:6px;margin-bottom:6px;background:#fff}
+/* Indicateur discret de rafraîchissement en arrière-plan (cache localStorage). */
+.maj-indicateur{font-size:11px;color:#9a978f;font-style:italic;
+  margin:0 2px 12px;user-select:none}
 .ligne-issue{display:flex;align-items:center;gap:9px;padding:7px 11px;cursor:pointer;
   font-size:13px;line-height:1.4;border-bottom:1px solid #f0efea;transition:background .12s}
 .ligne-issue:last-child{border-bottom:none}
@@ -576,6 +579,10 @@ button.danger-plein:hover{background:#8f2626}
          combobox : chaque ligne est coloriée à la couleur de son projet, ce que
          Firefox refuse de faire sur les <option>. Navigation par clic direct. -->
     <div id="liste-issues" class="liste-issues"></div>
+
+    <!-- Indicateur discret affiché pendant le fetch d'arrière-plan quand la
+         liste est déjà rendue depuis le cache localStorage (issue #52). -->
+    <div id="maj-indicateur" class="maj-indicateur" style="display:none">Mise à jour…</div>
 
     <div class="legende-resultats">
       <span>✅ Traitée avec succès (label done)</span>
@@ -956,16 +963,45 @@ function nomsProjetsDisponibles() {
 let listeIssuesResultats = [];
 let projetsFiltresActifs = new Set();
 
+// Clé localStorage du cache de la liste d'issues (issue #52). Affichage
+// instantané depuis le cache, rafraîchi ensuite par un fetch d'arrière-plan.
+const CLE_CACHE_ISSUES = 'bridge_cache_issues';
+
+// Affiche/masque l'indicateur discret « Mise à jour… » sous la liste.
+function majIndicateurListe(actif) {
+  const el = document.getElementById('maj-indicateur');
+  if (el) el.style.display = actif ? '' : 'none';
+}
+
+// Applique une liste d'issues à l'UI : filtres + boutons + rendu.
+function appliquerListeIssues(liste, noms) {
+  listeIssuesResultats = liste;
+  projetsFiltresActifs = restaurerFiltresProjets(noms);
+  construireBoutonsFiltre(noms);
+  rendreListeIssues(true);
+}
+
 async function chargerListeIssues() {
   const zone = document.getElementById('liste-issues');
-  zone.innerHTML = '<div class="issue-vide">Chargement…</div>';
   const noms = nomsProjetsDisponibles();
   if (!noms.length) {
     zone.innerHTML = '<div class="issue-vide">Aucun projet</div>';
     return;
   }
+
+  // 1) Affichage immédiat depuis le cache localStorage, s'il existe.
+  let cache = null;
+  try { cache = JSON.parse(localStorage.getItem(CLE_CACHE_ISSUES) || 'null'); } catch(e) {}
+  const cacheAffiche = Array.isArray(cache) && cache.length > 0;
+  if (cacheAffiche) {
+    appliquerListeIssues(cache, noms);
+  } else {
+    zone.innerHTML = '<div class="issue-vide">Chargement…</div>';
+  }
+
+  // 2) Fetch d'arrière-plan des 5 dernières issues de chaque projet.
+  majIndicateurListe(true);
   try {
-    // Chargement en parallèle des 5 dernières issues de chaque projet.
     const listes = await Promise.all(noms.map(async nom => {
       try {
         const rep = await fetch('/issues-liste/' + encodeURIComponent(nom));
@@ -982,14 +1018,21 @@ async function chargerListeIssues() {
       }
     }));
     // Fusion + tri global par date de création décroissante (plus récentes en premier).
-    listeIssuesResultats = listes.flat().sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+    const nouvelle = listes.flat().sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
 
-    // État des filtres restauré depuis localStorage (tous actifs par défaut).
-    projetsFiltresActifs = restaurerFiltresProjets(noms);
-    construireBoutonsFiltre(noms);
-    rendreListeIssues(true);
+    // Ne re-render que si la liste a réellement changé : évite de perdre la
+    // sélection courante quand le cache était déjà à jour.
+    const inchangee = cacheAffiche && JSON.stringify(nouvelle) === JSON.stringify(cache);
+    if (!inchangee) {
+      appliquerListeIssues(nouvelle, noms);
+    } else {
+      listeIssuesResultats = nouvelle;
+    }
+    try { localStorage.setItem(CLE_CACHE_ISSUES, JSON.stringify(nouvelle)); } catch(e) {}
   } catch(e) {
-    zone.innerHTML = '<div class="issue-vide">Erreur de chargement</div>';
+    if (!cacheAffiche) zone.innerHTML = '<div class="issue-vide">Erreur de chargement</div>';
+  } finally {
+    majIndicateurListe(false);
   }
 }
 
@@ -1173,8 +1216,93 @@ function escapeHtml(t) {
   return d.innerHTML;
 }
 
+// Cache localStorage du détail d'une issue (issue #52). Clé par projet+numéro,
+// avec un TTL court : le détail (commentaires, état) évolue vite, on n'affiche
+// donc le cache que s'il a moins de TTL_DETAIL_MS.
+const CLE_CACHE_DETAIL = 'bridge_cache_detail_';
+const TTL_DETAIL_MS = 60000;
+// Jeton anti-course : chaque appel à afficherIssue l'incrémente ; un fetch qui
+// revient alors qu'une autre issue a été demandée entre-temps est ignoré.
+let afficherIssueSeq = 0;
+
+// Construit le HTML de détail d'une issue à partir de sa donnée brute (`it`).
+// Fonction pure : même sortie depuis le cache et depuis le fetch frais.
+function construireHtmlIssue(it, nom) {
+  const ferme = (it.state || '').toUpperCase() === 'CLOSED';
+  let html = '';
+  html += '<div class="issue-titre">#' + escapeHtml(it.number) + ' — ' + escapeHtml(it.title) + '</div>';
+
+  // Badge coloré du projet source (couleur cohérente avec les filtres).
+  html += '<div><span class="badge-projet" style="background:'
+        + couleurProjetResultats(nom) + '">'
+        + '<span class="pastille"></span>' + escapeHtml(nom) + '</span></div>';
+
+  html += '<div class="issue-badges">';
+  html += '<span class="badge-etat ' + (ferme ? 'ferme' : 'ouvert') + '">'
+        + (ferme ? 'fermé' : 'ouvert') + '</span>';
+  for (const lab of (it.labels || [])) {
+    html += badgeLabel(lab.name || lab);
+  }
+  html += '</div>';
+
+  // Bouton « Annuler cette issue » : uniquement si l'issue est ouverte, porte
+  // le label for-linux (donc destinée au watcher), n'est pas déjà en échec
+  // (needs-human) et n'a encore aucun commentaire. Un commentaire signifie que
+  // le watcher a capté l'issue et posté son ACK : CCL tourne déjà, l'annulation
+  // serait sans effet — on masque le bouton pour ne pas induire en erreur.
+  const nomsLabels = (it.labels || []).map(l => ((l.name || l) || '').toLowerCase());
+  const comments = it.comments || [];
+  const annulable = !ferme
+    && nomsLabels.includes('for-linux')
+    && !nomsLabels.includes('needs-human')
+    && comments.length === 0;
+  if (annulable) {
+    html += '<div class="bloc-annuler">'
+          + '<button class="danger" onclick="annulerIssue(\'' + nom + '\', '
+          + Number(it.number) + ')">'
+          + 'Annuler cette issue</button></div>';
+  } else if (!ferme
+    && nomsLabels.includes('for-linux')
+    && !nomsLabels.includes('needs-human')
+    && comments.length > 0) {
+    html += '<div class="bloc-annuler">'
+          + '<span class="traitement-encours">'
+          + '⏳ En cours de traitement — annulation impossible</span></div>';
+  }
+
+  html += '<div class="issue-body">' + escapeHtml(it.body || '(pas de description)') + '</div>';
+
+  const comms = it.comments || [];
+  html += '<div class="issue-sep">Commentaires (' + comms.length + ')</div>';
+  if (!comms.length) {
+    html += '<div class="issue-vide">Aucun commentaire</div>';
+  } else {
+    // La réponse de CCL (dernier commentaire) est affichée en premier ;
+    // les autres commentaires suivent dans l'ordre chronologique.
+    const dernier = comms.length - 1;
+    const ordre = [dernier, ...comms.map((_, i) => i).filter(i => i !== dernier)];
+    ordre.forEach(i => {
+      const c = comms[i];
+      const auteur = (c.author && c.author.login) ? c.author.login : (c.author || 'inconnu');
+      const resultat = (i === dernier) ? ' resultat' : '';
+      // Le dernier commentaire (réponse de CCL) porte un bouton « Copier ».
+      const boutonCopier = (i === dernier)
+        ? '<button class="btn-copier" onclick="copierReponse(this)">Copier la réponse</button>'
+        : '';
+      html += '<div class="commentaire' + resultat + '">'
+            + boutonCopier
+            + '<div class="commentaire-auteur">' + escapeHtml(auteur)
+            + (resultat ? ' — résultat CCL' : '') + '</div>'
+            + '<div class="commentaire-corps">' + escapeHtml(c.body || '') + '</div>'
+            + '</div>';
+    });
+  }
+  return html;
+}
+
 async function afficherIssue(nom, numero) {
   numero = numero == null ? '' : String(numero);
+  const seq = ++afficherIssueSeq;
   // Met en évidence la ligne sélectionnée (fond coloré persistant) et retire la
   // sélection des autres lignes.
   document.querySelectorAll('#liste-issues .ligne-issue.selectionnee')
@@ -1187,86 +1315,43 @@ async function afficherIssue(nom, numero) {
     zone.innerHTML = '<div class="issue-vide">Aucune issue à afficher</div>';
     return;
   }
-  zone.innerHTML = '<div class="issue-vide">Chargement de l\'issue #' + escapeHtml(numero) + '…</div>';
+
+  // 1) Cache frais (< TTL) : affichage immédiat. Passé le TTL, on force le fetch
+  //    pour ne montrer que du frais (état/commentaires évoluent vite).
+  const cleCache = CLE_CACHE_DETAIL + nom + '_' + numero;
+  let htmlAffiche = null;
+  try {
+    const obj = JSON.parse(localStorage.getItem(cleCache) || 'null');
+    if (obj && obj.it && (Date.now() - obj.ts) < TTL_DETAIL_MS) {
+      htmlAffiche = construireHtmlIssue(obj.it, nom);
+      zone.innerHTML = htmlAffiche;
+    }
+  } catch(e) {}
+  if (htmlAffiche === null) {
+    zone.innerHTML = '<div class="issue-vide">Chargement de l\'issue #' + escapeHtml(numero) + '…</div>';
+  }
+
+  // 2) Fetch d'arrière-plan ; met à jour l'affichage et le cache si différent.
   try {
     const rep = await fetch('/issue/' + encodeURIComponent(nom) + '/' + encodeURIComponent(numero));
     const it = await rep.json();
+    // Une autre issue a été demandée entre-temps : on n'écrase pas son affichage.
+    if (seq !== afficherIssueSeq) return;
     if (it.erreur) {
-      zone.innerHTML = '<div class="issue-vide">Erreur : ' + escapeHtml(it.erreur) + '</div>';
+      if (htmlAffiche === null) {
+        zone.innerHTML = '<div class="issue-vide">Erreur : ' + escapeHtml(it.erreur) + '</div>';
+      }
       return;
     }
-    const ferme = (it.state || '').toUpperCase() === 'CLOSED';
-    let html = '';
-    html += '<div class="issue-titre">#' + escapeHtml(it.number) + ' — ' + escapeHtml(it.title) + '</div>';
-
-    // Badge coloré du projet source (couleur cohérente avec les filtres).
-    html += '<div><span class="badge-projet" style="background:'
-          + couleurProjetResultats(nom) + '">'
-          + '<span class="pastille"></span>' + escapeHtml(nom) + '</span></div>';
-
-    html += '<div class="issue-badges">';
-    html += '<span class="badge-etat ' + (ferme ? 'ferme' : 'ouvert') + '">'
-          + (ferme ? 'fermé' : 'ouvert') + '</span>';
-    for (const lab of (it.labels || [])) {
-      html += badgeLabel(lab.name || lab);
+    try { localStorage.setItem(cleCache, JSON.stringify({ts: Date.now(), it: it})); } catch(e) {}
+    const htmlFrais = construireHtmlIssue(it, nom);
+    if (htmlFrais !== htmlAffiche) {
+      zone.innerHTML = htmlFrais;
     }
-    html += '</div>';
-
-    // Bouton « Annuler cette issue » : uniquement si l'issue est ouverte, porte
-    // le label for-linux (donc destinée au watcher), n'est pas déjà en échec
-    // (needs-human) et n'a encore aucun commentaire. Un commentaire signifie que
-    // le watcher a capté l'issue et posté son ACK : CCL tourne déjà, l'annulation
-    // serait sans effet — on masque le bouton pour ne pas induire en erreur.
-    const nomsLabels = (it.labels || []).map(l => ((l.name || l) || '').toLowerCase());
-    const comments = it.comments || [];
-    const annulable = !ferme
-      && nomsLabels.includes('for-linux')
-      && !nomsLabels.includes('needs-human')
-      && comments.length === 0;
-    if (annulable) {
-      html += '<div class="bloc-annuler">'
-            + '<button class="danger" onclick="annulerIssue(\'' + nom + '\', '
-            + Number(it.number) + ')">'
-            + 'Annuler cette issue</button></div>';
-    } else if (!ferme
-      && nomsLabels.includes('for-linux')
-      && !nomsLabels.includes('needs-human')
-      && comments.length > 0) {
-      html += '<div class="bloc-annuler">'
-            + '<span class="traitement-encours">'
-            + '⏳ En cours de traitement — annulation impossible</span></div>';
-    }
-
-    html += '<div class="issue-body">' + escapeHtml(it.body || '(pas de description)') + '</div>';
-
-    const comms = it.comments || [];
-    html += '<div class="issue-sep">Commentaires (' + comms.length + ')</div>';
-    if (!comms.length) {
-      html += '<div class="issue-vide">Aucun commentaire</div>';
-    } else {
-      // La réponse de CCL (dernier commentaire) est affichée en premier ;
-      // les autres commentaires suivent dans l'ordre chronologique.
-      const dernier = comms.length - 1;
-      const ordre = [dernier, ...comms.map((_, i) => i).filter(i => i !== dernier)];
-      ordre.forEach(i => {
-        const c = comms[i];
-        const auteur = (c.author && c.author.login) ? c.author.login : (c.author || 'inconnu');
-        const resultat = (i === dernier) ? ' resultat' : '';
-        // Le dernier commentaire (réponse de CCL) porte un bouton « Copier ».
-        const boutonCopier = (i === dernier)
-          ? '<button class="btn-copier" onclick="copierReponse(this)">Copier la réponse</button>'
-          : '';
-        html += '<div class="commentaire' + resultat + '">'
-              + boutonCopier
-              + '<div class="commentaire-auteur">' + escapeHtml(auteur)
-              + (resultat ? ' — résultat CCL' : '') + '</div>'
-              + '<div class="commentaire-corps">' + escapeHtml(c.body || '') + '</div>'
-              + '</div>';
-      });
-    }
-    zone.innerHTML = html;
   } catch(e) {
-    zone.innerHTML = '<div class="issue-vide">Erreur réseau : ' + escapeHtml(e.message) + '</div>';
+    if (seq === afficherIssueSeq && htmlAffiche === null) {
+      zone.innerHTML = '<div class="issue-vide">Erreur réseau : ' + escapeHtml(e.message) + '</div>';
+    }
   }
 }
 
