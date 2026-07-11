@@ -1149,6 +1149,103 @@ function afficherModalGenerique(titre, texteOui, texteNon) {
   });
 }
 
+// Détecte une éventuelle incohérence entre le corps de l'issue et le projet
+// sélectionné : on cherche dans le corps une mention explicite (nom, dépôt, ou
+// nom de dépôt) d'UN AUTRE projet connu. Retourne l'objet du projet mentionné
+// (issu de /watchers) ou null si rien de suspect. But : n'avertir que sur une
+// incohérence réelle, sans imposer une modale systématique à chaque envoi.
+async function detecterIncoherenceProjet(data) {
+  let projets;
+  try {
+    const rep = await fetch('/watchers');
+    projets = await rep.json();
+  } catch(e) { return null; }
+  if (!Array.isArray(projets)) return null;
+
+  const corps = (data.corps || '').toLowerCase();
+  if (!corps) return null;
+
+  // Tokens caractéristiques d'un projet : son nom, son dépôt complet
+  // (owner/repo) et le nom de dépôt seul (repo). L'owner seul est écarté car
+  // commun à tous les projets → non discriminant.
+  const tokensProjet = (p) => {
+    const t = [];
+    if (p.nom)   t.push(p.nom.toLowerCase());
+    if (p.depot) {
+      t.push(p.depot.toLowerCase());
+      const repo = p.depot.split('/').pop();
+      if (repo) t.push(repo.toLowerCase());
+    }
+    return t;
+  };
+
+  // Tokens du projet ACTIF : ils ne doivent jamais déclencher l'alerte, et
+  // servent à écarter les tokens d'autres projets qui coïncideraient.
+  const actif = projets.find(p => p.nom === data.projet) || {nom: data.projet};
+  const tokensActif = new Set(tokensProjet(actif));
+
+  // Recherche « mot entier » insensible à la casse : le token ne doit pas être
+  // prolongé par un caractère alphanumérique (évite alchess ⊂ alchessboard),
+  // mais tolère les délimiteurs usuels (« ~/NicLink », « AlainDelree/AlChess »).
+  const estCarMot = (c) => /[a-z0-9_]/.test(c);
+  const mentionne = (token) => {
+    let idx = corps.indexOf(token);
+    while (idx !== -1) {
+      const avant = idx > 0 ? corps[idx - 1] : '';
+      const apres = idx + token.length < corps.length ? corps[idx + token.length] : '';
+      if (!estCarMot(avant) && !estCarMot(apres)) return true;
+      idx = corps.indexOf(token, idx + 1);
+    }
+    return false;
+  };
+
+  for (const p of projets) {
+    if (p.nom === data.projet) continue;               // le projet actif : ignoré
+    for (const token of tokensProjet(p)) {
+      if (!token || tokensActif.has(token)) continue;  // token partagé : ignoré
+      if (token.length < 3) continue;                  // trop court : trop risqué
+      if (mentionne(token)) return p;                  // incohérence détectée
+    }
+  }
+  return null;
+}
+
+// Modal d'alerte d'incohérence projet ⇄ corps. Réutilise l'overlay des issues
+// en attente pour un rendu cohérent ; restaure libellés et liste à la
+// fermeture. Résout true (envoyer quand même) / false (annuler).
+function afficherModalIncoherence(projetMentionne, nomProjetActif, depotProjetActif) {
+  const mention = (projetMentionne.depot
+    ? projetMentionne.depot.split('/').pop()
+    : projetMentionne.nom) || projetMentionne.nom;
+  return new Promise(resolve => {
+    const overlay = document.getElementById('modal-confirmation');
+    const liste   = document.getElementById('modal-liste');
+    const btnOui  = document.getElementById('modal-oui');
+    const btnNon  = document.getElementById('modal-non');
+    const ouiAvant = btnOui.textContent;
+    const nonAvant = btnNon.textContent;
+    document.getElementById('modal-titre').textContent = '⚠️ Incohérence détectée';
+    liste.style.display = '';
+    liste.innerHTML =
+      'Le corps de l\'issue mentionne « <b>' + escapeHtml(mention) + '</b> » '
+      + 'mais tu envoies sur <b>' + escapeHtml(nomProjetActif) + '</b>'
+      + (depotProjetActif ? ' — ' + escapeHtml(depotProjetActif) : '') + '.'
+      + '<br><br>Envoyer quand même sur <b>' + escapeHtml(nomProjetActif) + '</b> ?';
+    btnOui.textContent = 'Envoyer quand même';
+    btnNon.textContent = 'Annuler';
+    function fermer(reponse) {
+      overlay.classList.remove('actif');
+      btnOui.onclick = null; btnNon.onclick = null;
+      btnOui.textContent = ouiAvant;
+      btnNon.textContent = nonAvant;
+      resolve(reponse);
+    }
+    btnOui.onclick = () => fermer(true);
+    btnNon.onclick = () => fermer(false);
+    overlay.classList.add('actif');
+  });
+}
+
 async function envoyerIssue() {
   cacherRetours();
   const data = collecterFormulaire();
@@ -1176,6 +1273,24 @@ async function envoyerIssue() {
       'Oui, envoyer sur ' + data.projet,
       'Annuler');
     if (!ok) return;
+  }
+
+  // Garde-fou ciblé : alerte seulement si le corps mentionne explicitement un
+  // AUTRE projet connu que celui sélectionné (issue partie sur le mauvais dépôt).
+  try {
+    const projetMentionne = await detecterIncoherenceProjet(data);
+    if (projetMentionne) {
+      let depotActif = '';
+      try {
+        const repCfg = await fetch('/config/' + encodeURIComponent(data.projet));
+        const cfg    = await repCfg.json();
+        depotActif   = cfg.depot || '';
+      } catch(e) { /* dépôt non récupéré : on affiche l'alerte sans lui */ }
+      const ok = await afficherModalIncoherence(projetMentionne, data.projet, depotActif);
+      if (!ok) return;   // l'utilisateur a annulé l'envoi
+    }
+  } catch(e) {
+    // La détection a échoué (réseau…) : on n'empêche pas l'envoi.
   }
 
   const btn = document.getElementById('btn-envoyer');
