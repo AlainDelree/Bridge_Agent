@@ -78,6 +78,7 @@ class Config:
     perimetre: str         = ""    # dossier(s) autorisés pour CCL (vide = pas de restriction)
     modele_ccl: str        = ""    # modèle CCL à utiliser (vide = défaut Claude Code)
     mot_de_passe: str      = ""    # hash sha256 du mot de passe d'accès web (vide = pas d'authentification)
+    fichier_contexte: str  = ""    # fichier de contexte projet injecté dans le prompt (chemin relatif au rep_travail ou absolu ; vide = aucun)
 
     @property
     def url_ntfy(self) -> str:
@@ -145,6 +146,7 @@ def charger_config(chemin: Path) -> Config:
         perimetre         = brut.get("PERIMETRE", ""),
         modele_ccl        = brut.get("MODELE_CCL", ""),
         mot_de_passe      = brut.get("MOT_DE_PASSE", ""),
+        fichier_contexte  = brut.get("FICHIER_CONTEXTE", ""),
     )
 
 
@@ -430,6 +432,29 @@ MODE LECTURE SEULE — tu ne dois que lire, analyser et rapporter. N'écris aucu
 fichier, n'exécute aucune commande modifiant l'état du système ou du dépôt.
 """
 
+    # Contexte projet optionnel : fichier décrivant l'architecture, les
+    # conventions, l'historique. Injecté tel quel dans le prompt pour donner à
+    # CCL une connaissance du projet sans alourdir chaque issue.
+    bloc_contexte = ""
+    if CFG.fichier_contexte:
+        chemin_ctx = Path(CFG.fichier_contexte).expanduser()
+        if not chemin_ctx.is_absolute():
+            chemin_ctx = CFG.rep_travail / chemin_ctx
+        if chemin_ctx.exists():
+            try:
+                contenu = chemin_ctx.read_text(encoding="utf-8", errors="replace")
+                LIMITE = 4000
+                if len(contenu) > LIMITE:
+                    contenu = contenu[:LIMITE] + "\n[...contexte tronqué à 4000 caractères...]"
+                bloc_contexte = (
+                    f"\nCONTEXTE DU PROJET (lu depuis {chemin_ctx}) :\n"
+                    f"---\n{contenu}\n---\n"
+                )
+            except Exception as e:
+                log.warning(f"Lecture du fichier de contexte '{chemin_ctx}' impossible : {e}")
+        else:
+            log.warning(f"Fichier de contexte '{chemin_ctx}' introuvable — rien injecté.")
+
     if CFG.perimetre:
         clause_perimetre = (
             f"\nPÉRIMÈTRE STRICT — tu ne dois lire, modifier ou exécuter des commandes "
@@ -447,7 +472,7 @@ TITRE : {titre}
 
 BODY :
 {body}
-{clause_perimetre}{garde_fou}
+{bloc_contexte}{clause_perimetre}{garde_fou}
 Instructions :
 1. Lis attentivement la tâche demandée
 2. Effectue le travail demandé (dans les limites du mode ci-dessus)
@@ -598,6 +623,7 @@ def main():
     log.info(f"Bridge watcher démarré — projet: {CFG.nom} — dépôt: {CFG.depot} — label: {CFG.label}")
     log.info(f"cwd Claude Code: {CFG.rep_travail} — journal: {CFG.fichier_log}")
     log.info(f"Polling toutes les {intervalle}s — dry-run: {args.dry_run}")
+    log.info(f"contexte projet: {CFG.fichier_contexte or 'aucun'}")
     log.info("=" * 60)
 
     if not CFG.rep_travail.is_dir():
