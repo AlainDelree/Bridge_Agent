@@ -218,7 +218,7 @@ TEMPLATE = r"""<!DOCTYPE html>
 <title>Bridge Agent</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
-body{font-family:system-ui,sans-serif;font-size:14px;background:#f0efe9;color:#1a1a18;min-height:100vh;padding:28px 16px}
+body{font-family:system-ui,sans-serif;font-size:14px;background:#f0efe9;color:#1a1a18;min-height:100vh;padding:28px 16px;position:relative}
 .fenetre{max-width:860px;margin:0 auto;background:#fff;border:1px solid #ddd;border-radius:12px;overflow:hidden}
 .entete{padding:14px 20px;border-bottom:1px solid #eee;display:flex;align-items:center;gap:9px}
 .entete h1{font-size:15px;font-weight:500}
@@ -307,6 +307,22 @@ button.danger:hover{background:#f8d7da}
 .commentaire-auteur{font-size:12px;font-weight:500;color:#555;margin-bottom:6px}
 .commentaire-corps{font-family:monospace;font-size:12px;white-space:pre-wrap;
   word-break:break-word;line-height:1.6;color:#1a1a18}
+.bloc-annuler{margin-bottom:16px}
+/* Modal de confirmation — overlay en flux normal (position:absolute, pas fixed).
+   Le body est positionné (position:relative) : l'overlay le recouvre entièrement. */
+.modal-overlay{position:absolute;top:0;left:0;width:100%;min-height:100%;
+  background:rgba(0,0,0,.42);display:none;justify-content:center;
+  align-items:flex-start;padding:70px 16px 40px;z-index:1000}
+.modal-overlay.actif{display:flex}
+.modal-carte{background:#fff;border-radius:12px;max-width:460px;width:100%;
+  padding:22px 24px;box-shadow:0 10px 40px rgba(0,0,0,.28)}
+.modal-titre{font-size:15px;font-weight:600;line-height:1.4;margin-bottom:14px}
+.modal-liste{font-family:monospace;font-size:12px;background:#f8f8f5;
+  border:1px solid #e0dfda;border-radius:6px;padding:10px 12px;margin-bottom:18px;
+  max-height:200px;overflow-y:auto;line-height:1.8;word-break:break-word}
+.modal-boutons{display:flex;justify-content:flex-end;gap:10px}
+button.danger-plein{background:#a32d2d;color:#fff;border-color:#a32d2d}
+button.danger-plein:hover{background:#8f2626}
 </style>
 </head>
 <body>
@@ -556,6 +572,18 @@ button.danger:hover{background:#f8d7da}
 
 </div>
 
+<!-- ─── Modal de confirmation d'envoi (issues en attente) ─────────────────── -->
+<div id="modal-confirmation" class="modal-overlay">
+  <div class="modal-carte">
+    <div class="modal-titre" id="modal-titre"></div>
+    <div class="modal-liste" id="modal-liste"></div>
+    <div class="modal-boutons">
+      <button id="modal-non">Annuler</button>
+      <button class="danger-plein" id="modal-oui">Envoyer quand même</button>
+    </div>
+  </div>
+</div>
+
 <script>
 let sourceSSE = null;
 
@@ -784,6 +812,19 @@ async function afficherIssue() {
     }
     html += '</div>';
 
+    // Bouton « Annuler cette issue » : uniquement si l'issue est ouverte, porte
+    // le label for-linux (donc destinée au watcher) et n'est pas déjà en échec
+    // (needs-human). Autrement dit : créée mais pas encore prise en charge.
+    const nomsLabels = (it.labels || []).map(l => ((l.name || l) || '').toLowerCase());
+    const annulable = !ferme
+      && nomsLabels.includes('for-linux')
+      && !nomsLabels.includes('needs-human');
+    if (annulable) {
+      html += '<div class="bloc-annuler">'
+            + '<button class="danger" onclick="annulerIssue(' + Number(it.number) + ')">'
+            + 'Annuler cette issue</button></div>';
+    }
+
     html += '<div class="issue-body">' + escapeHtml(it.body || '(pas de description)') + '</div>';
 
     const comms = it.comments || [];
@@ -810,6 +851,32 @@ async function afficherIssue() {
   } catch(e) {
     zone.innerHTML = '<div class="issue-vide">Erreur réseau : ' + escapeHtml(e.message) + '</div>';
   }
+}
+
+// Ferme une issue en attente sur GitHub (pas encore traitée par le watcher),
+// puis rafraîchit l'affichage et la combobox.
+async function annulerIssue(numero) {
+  const nom = document.getElementById('projet').value;
+  if (!confirm("Annuler (fermer) l'issue #" + numero + " sur GitHub ?")) return;
+  try {
+    const rep = await fetch('/annuler-issue/' + encodeURIComponent(nom)
+                            + '/' + encodeURIComponent(numero), {method: 'POST'});
+    const json = await rep.json();
+    if (!json.succes) {
+      alert('Erreur : ' + (json.message || 'échec de l\'annulation.'));
+      return;
+    }
+  } catch(e) {
+    alert('Erreur réseau : ' + e.message);
+    return;
+  }
+  // Recharge la liste (l'issue devient fermée) puis réaffiche la même issue.
+  await chargerListeIssues();
+  const sel = document.getElementById('select-issue');
+  if ([...sel.options].some(o => o.value === String(numero))) {
+    sel.value = String(numero);
+  }
+  await afficherIssue();
 }
 
 function naviguerIssue(delta) {
@@ -869,10 +936,46 @@ async function afficherApercu() {
   zone.style.display = 'block';
 }
 
+// Affiche le modal de confirmation et résout true (envoyer) / false (annuler).
+function afficherModalConfirmation(issues) {
+  return new Promise(resolve => {
+    const overlay = document.getElementById('modal-confirmation');
+    document.getElementById('modal-titre').textContent =
+      '⚠️ ' + issues.length + ' issue(s) en attente sur ce projet :';
+    document.getElementById('modal-liste').innerHTML = issues.map(it =>
+      '#' + escapeHtml(String(it.number)) + ' — ' + escapeHtml(it.title || '(sans titre)')
+    ).join('<br>');
+    const btnOui = document.getElementById('modal-oui');
+    const btnNon = document.getElementById('modal-non');
+    function fermer(reponse) {
+      overlay.classList.remove('actif');
+      btnOui.onclick = null; btnNon.onclick = null;
+      resolve(reponse);
+    }
+    btnOui.onclick = () => fermer(true);
+    btnNon.onclick = () => fermer(false);
+    overlay.classList.add('actif');
+  });
+}
+
 async function envoyerIssue() {
   cacherRetours();
   const data = collecterFormulaire();
   if (!data.titre) { afficherMessage('Le titre est obligatoire.', 'erreur'); return; }
+
+  // Avertit si des issues for-linux sont déjà en attente sur ce projet, pour
+  // éviter les conflits quand plusieurs issues mode_write s'enchaînent.
+  try {
+    const repAttente = await fetch('/issues-en-attente/' + encodeURIComponent(data.projet));
+    const enAttente  = await repAttente.json();
+    if (Array.isArray(enAttente) && enAttente.length) {
+      const confirmer = await afficherModalConfirmation(enAttente);
+      if (!confirmer) return;   // l'utilisateur a annulé l'envoi
+    }
+  } catch(e) {
+    // La vérification a échoué (réseau, gh…) : on n'empêche pas l'envoi.
+  }
+
   const btn = document.getElementById('btn-envoyer');
   btn.disabled = true; btn.textContent = 'Envoi…';
   try {
@@ -1197,6 +1300,62 @@ def issue_detail(nom_projet, numero):
         return jsonify(erreur="gh introuvable dans le PATH."), 500
     except Exception as e:
         return jsonify(erreur=str(e)), 500
+
+
+@app.route("/issues-en-attente/<nom_projet>")
+def issues_en_attente(nom_projet):
+    """Retourne les issues ouvertes portant le label for-linux (en attente de
+    traitement par le watcher). La liste peut être vide."""
+    cfg = projet_par_nom(nom_projet)
+    if not cfg:
+        return jsonify(erreur="Projet introuvable."), 404
+    try:
+        res = subprocess.run(
+            ["gh", "issue", "list",
+             "--repo",  cfg.depot,
+             "--label", "for-linux",
+             "--state", "open",
+             "--json",  "number,title,labels"],
+            capture_output=True, text=True, timeout=30
+        )
+        if res.returncode != 0:
+            return jsonify(erreur=res.stderr.strip() or "Erreur de gh."), 502
+        return jsonify(json.loads(res.stdout or "[]"))
+    except subprocess.TimeoutExpired:
+        return jsonify(erreur="Timeout (gh n'a pas répondu en 30s)."), 504
+    except FileNotFoundError:
+        return jsonify(erreur="gh introuvable dans le PATH."), 500
+    except Exception as e:
+        return jsonify(erreur=str(e)), 500
+
+
+@app.route("/annuler-issue/<nom_projet>/<numero>", methods=["POST"])
+def annuler_issue(nom_projet, numero):
+    """Ferme une issue créée sur GitHub mais pas encore traitée par le watcher."""
+    cfg = projet_par_nom(nom_projet)
+    if not cfg:
+        return jsonify(succes=False, message="Projet introuvable."), 404
+    if not str(numero).isdigit():
+        return jsonify(succes=False, message="Numéro d'issue invalide."), 400
+    commentaire = ("Issue annulée manuellement depuis new_issue.py "
+                   "avant traitement par le watcher.")
+    try:
+        res = subprocess.run(
+            ["gh", "issue", "close", str(numero),
+             "--repo",    cfg.depot,
+             "--comment", commentaire],
+            capture_output=True, text=True, timeout=30
+        )
+        if res.returncode == 0:
+            return jsonify(succes=True, message=f"Issue #{numero} annulée.")
+        return jsonify(succes=False,
+                       message=res.stderr.strip() or "Erreur inconnue de gh.")
+    except subprocess.TimeoutExpired:
+        return jsonify(succes=False, message="Timeout (gh n'a pas répondu en 30s).")
+    except FileNotFoundError:
+        return jsonify(succes=False, message="gh introuvable dans le PATH.")
+    except Exception as e:
+        return jsonify(succes=False, message=str(e))
 
 
 @app.route("/config/<nom_projet>")
