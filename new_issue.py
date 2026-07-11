@@ -301,10 +301,16 @@ button.danger:hover{background:#f8d7da}
   max-height:200px;overflow-y:auto;line-height:1.6;margin-bottom:16px}
 .issue-sep{font-size:11px;font-weight:500;color:#999;text-transform:uppercase;
   letter-spacing:.06em;margin:16px 0 10px;padding-bottom:6px;border-bottom:1px solid #f0efe9}
-.commentaire{border:1px solid #e0dfda;border-radius:6px;padding:12px;margin-bottom:10px;
-  background:#fff}
+.commentaire{position:relative;border:1px solid #e0dfda;border-radius:6px;padding:12px;
+  margin-bottom:10px;background:#fff}
 .commentaire.resultat{border-color:#b7d7c0;background:#f6fbf7}
-.commentaire-auteur{font-size:12px;font-weight:500;color:#555;margin-bottom:6px}
+.commentaire-auteur{font-size:12px;font-weight:500;color:#555;margin-bottom:6px;
+  padding-right:130px}
+.btn-copier{position:absolute;top:10px;right:10px;font-size:12px;font-weight:500;
+  padding:4px 10px;border:1px solid #7fb08c;border-radius:5px;background:#eaf5ee;
+  color:#2c6b41;cursor:pointer}
+.btn-copier:hover{background:#dcefe2}
+.btn-copier:disabled{cursor:default;border-color:#9ccbaa;color:#3a7a4f}
 .commentaire-corps{font-family:monospace;font-size:12px;white-space:pre-wrap;
   word-break:break-word;line-height:1.6;color:#1a1a18}
 .bloc-annuler{margin-bottom:16px}
@@ -840,7 +846,12 @@ async function afficherIssue() {
         const c = comms[i];
         const auteur = (c.author && c.author.login) ? c.author.login : (c.author || 'inconnu');
         const resultat = (i === dernier) ? ' resultat' : '';
+        // Le dernier commentaire (réponse de CCL) porte un bouton « Copier ».
+        const boutonCopier = (i === dernier)
+          ? '<button class="btn-copier" onclick="copierReponse(this)">Copier la réponse</button>'
+          : '';
         html += '<div class="commentaire' + resultat + '">'
+              + boutonCopier
               + '<div class="commentaire-auteur">' + escapeHtml(auteur)
               + (resultat ? ' — résultat CCL' : '') + '</div>'
               + '<div class="commentaire-corps">' + escapeHtml(c.body || '') + '</div>'
@@ -850,6 +861,40 @@ async function afficherIssue() {
     zone.innerHTML = html;
   } catch(e) {
     zone.innerHTML = '<div class="issue-vide">Erreur réseau : ' + escapeHtml(e.message) + '</div>';
+  }
+}
+
+// Copie le texte de la réponse CCL (dernier commentaire) dans le presse-papier.
+// Feedback visuel « ✓ Copié ! » pendant 2 s. Fallback silencieux (sélection du
+// texte + warning console) si navigator.clipboard est indisponible (non-HTTPS).
+async function copierReponse(btn) {
+  const bloc = btn.closest('.commentaire');
+  const corps = bloc ? bloc.querySelector('.commentaire-corps') : null;
+  if (!corps) return;
+  const texte = corps.textContent || '';
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    try {
+      await navigator.clipboard.writeText(texte);
+      btn.disabled = true;
+      btn.textContent = '✓ Copié !';
+      setTimeout(function() {
+        btn.textContent = 'Copier la réponse';
+        btn.disabled = false;
+      }, 2000);
+      return;
+    } catch(e) {
+      console.warn('copierReponse : échec navigator.clipboard, fallback sélection.', e);
+    }
+  } else {
+    console.warn('copierReponse : navigator.clipboard indisponible (contexte non-HTTPS), fallback sélection.');
+  }
+  // Fallback : on sélectionne le texte du bloc pour permettre un Ctrl+C manuel.
+  const sel = window.getSelection();
+  if (sel) {
+    const range = document.createRange();
+    range.selectNodeContents(corps);
+    sel.removeAllRanges();
+    sel.addRange(range);
   }
 }
 
