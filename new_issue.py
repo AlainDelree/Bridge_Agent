@@ -231,8 +231,8 @@ body{font-family:system-ui,sans-serif;font-size:14px;background:#f0efe9;color:#1
   font-size:13px;background:#fff;color:#1a1a18;min-width:220px}
 .bandeau-projet select:focus{outline:none;border-color:#888}
 .onglets{display:flex;border-bottom:1px solid #eee;padding:0 20px}
-.onglet{padding:10px 16px;font-size:13px;color:#777;cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-1px;user-select:none}
-.onglet.actif{color:#1a1a18;font-weight:500;border-bottom-color:#1a1a18}
+.onglet{padding:9px 16px;font-size:15px;font-weight:500;color:#777;cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-1px;user-select:none}
+.onglet.actif{color:#1a1a18;font-weight:700;border-bottom-color:#1a1a18}
 .panneau{display:none;padding:20px}
 .panneau.actif{display:block}
 .rangee{display:flex;gap:12px;margin-bottom:14px;align-items:flex-end}
