@@ -433,6 +433,19 @@ button.danger:hover{background:#f8d7da}
 .commentaire-corps{font-family:monospace;font-size:12px;white-space:pre-wrap;
   word-break:break-word;line-height:1.6;color:#1a1a18}
 .commentaire-details{margin-top:10px}
+/* Autres commentaires (ACK, etc.) : bouton « Copier » discret ancré en haut à
+   droite du bloc, comme pour la réponse CCL (issue #61). */
+.commentaire-copiable{position:relative;padding-top:30px}
+/* Bloc <details> de la réponse CCL rendu en HTML restreint : accordéon
+   dépliable (issue #61). Le résumé est cliquable, le contenu conserve la mise
+   en forme monospace/pré-formatée pour la lisibilité du rapport verbeux. */
+.commentaire-html{font-family:monospace;font-size:12px;word-break:break-word;
+  line-height:1.6;color:#1a1a18}
+.commentaire-html summary{cursor:pointer;font-weight:600;color:#2c6b41;
+  padding:2px 0}
+.commentaire-html pre{white-space:pre-wrap;margin:6px 0}
+.commentaire-html code{background:#f0efe9;padding:1px 4px;border-radius:3px}
+.commentaire-html ul,.commentaire-html ol{margin:6px 0;padding-left:22px}
 .bloc-annuler{margin-bottom:16px}
 /* Modal de confirmation — overlay en flux normal (position:absolute, pas fixed).
    Le body est positionné (position:relative) : l'overlay le recouvre entièrement. */
@@ -1256,6 +1269,28 @@ function escapeHtml(t) {
   return d.innerHTML;
 }
 
+// Rendu HTML restreint pour la réponse CCL (issue #61). On échappe TOUT le
+// corps (aucune balise brute ne survit), puis on ré-autorise uniquement une
+// liste blanche de balises sûres SANS attribut. Toute autre balise — ou une
+// balise autorisée mais porteuse d'attributs, ex. <details open> ou
+// <a href> — ne matche pas et reste échappée : elle s'affiche telle quelle
+// plutôt que d'être interprétée. Pas d'injection possible via attributs.
+function rendreHtmlRestreint(t) {
+  // Échappement déterministe (& d'abord) — ne dépend pas de la sérialisation
+  // du navigateur, contrairement à escapeHtml().
+  let s = (t == null ? '' : String(t))
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const balises = ['details','summary','p','br','strong','em','code','pre',
+                   'ul','ol','li','h1','h2','h3','h4','h5','h6'];
+  balises.forEach(function(b) {
+    s = s.split('&lt;' + b + '&gt;').join('<' + b + '>');   // ouvrante <tag>
+    s = s.split('&lt;/' + b + '&gt;').join('</' + b + '>'); // fermante </tag>
+  });
+  // <br> auto-fermant toléré sous ses deux formes courantes.
+  s = s.split('&lt;br/&gt;').join('<br/>').split('&lt;br /&gt;').join('<br/>');
+  return s;
+}
+
 // Cache localStorage du détail d'une issue (issue #52). Clé par projet+numéro,
 // avec un TTL court : le détail (commentaires, état) évolue vite, on n'affiche
 // donc le cache que s'il a moins de TTL_DETAIL_MS.
@@ -1345,12 +1380,18 @@ function construireHtmlIssue(it, nom) {
               + '<div class="commentaire-corps">' + escapeHtml(resume) + '</div>'
               + '</div>';
         if (details) {
-          html += '<div class="commentaire-corps commentaire-details">'
-                + escapeHtml(details) + '</div>';
+          // Le corps contient un bloc <details> : on le rend en HTML restreint
+          // (liste blanche de balises sûres) pour un accordéon dépliable et
+          // interactif au lieu de markdown brut échappé (issue #61).
+          html += '<div class="commentaire-details commentaire-html">'
+                + rendreHtmlRestreint(details) + '</div>';
         }
         html += '</div>';
       } else {
-        html += '<div class="commentaire">'
+        // Autres commentaires (ACK, etc.) : rendu texte échappé (sécurité) +
+        // bouton « Copier » discret en haut à droite, ancré au bloc (issue #61).
+        html += '<div class="commentaire commentaire-copiable">'
+              + '<button class="btn-copier" onclick="copierReponse(this)">Copier</button>'
               + '<div class="commentaire-auteur">' + escapeHtml(auteur) + '</div>'
               + '<div class="commentaire-corps">' + escapeHtml(c.body || '') + '</div>'
               + '</div>';
@@ -1456,6 +1497,9 @@ async function copierReponse(btn) {
   const bloc = btn.closest('.commentaire-resume') || btn.closest('.commentaire');
   const corps = bloc ? bloc.querySelector('.commentaire-corps') : null;
   if (!corps) return;
+  // Libellé d'origine : « Copier la réponse » (CCL) ou « Copier » (autres
+  // commentaires, issue #61) — on le restaure après le retour visuel.
+  const libelle = btn.textContent;
   const texte = corps.textContent || '';
   if (navigator.clipboard && navigator.clipboard.writeText) {
     try {
@@ -1463,7 +1507,7 @@ async function copierReponse(btn) {
       btn.disabled = true;
       btn.textContent = '✓ Copié !';
       setTimeout(function() {
-        btn.textContent = 'Copier la réponse';
+        btn.textContent = libelle;
         btn.disabled = false;
       }, 2000);
       return;
