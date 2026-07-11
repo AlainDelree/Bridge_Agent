@@ -368,6 +368,8 @@ button.danger-plein:hover{background:#8f2626}
     </svg>
     <h1>Bridge Agent</h1>
     <span class="statut">{{ projets|length }} projet(s) disponible(s)</span>
+    <button id="btn-quitter" class="danger" onclick="quitter()"
+            style="font-size:12px;padding:5px 12px">Quitter</button>
   </div>
 
   <!-- ─── Bandeau global : sélecteur de projet (pilote tous les onglets sauf Watchers) ─ -->
@@ -1375,6 +1377,16 @@ function demarrerCycleVie() {
 }
 demarrerCycleVie();
 
+// Arrêt volontaire depuis l'onglet : window.close() est autorisé par le
+// navigateur car déclenché par une action utilisateur (contrairement à Ctrl+C
+// côté serveur, qui ne peut que déclencher l'overlay via /events). On prévient
+// le serveur (/quitter pose arret_demande puis os._exit après 2 s) et on ferme.
+async function quitter() {
+  if (!confirm('Arrêter new_issue.py et fermer l\'onglet ?')) return;
+  await fetch('/quitter', {method: 'POST'});
+  window.close();
+}
+
 function viderFormulaire(cacherMsg=true) {
   if (cacherMsg) cacherRetours();
   document.getElementById('titre').value = '';
@@ -1733,6 +1745,24 @@ def events():
         mimetype="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+@app.route("/quitter", methods=["POST"])
+def quitter():
+    """Arrêt volontaire déclenché par le bouton « Quitter » de l'onglet.
+    Positionne arret_demande (l'overlay /events sert de filet de sécurité si
+    window.close() est bloqué), répond immédiatement, puis coupe le processus
+    après 2 s — le délai laisse le navigateur recevoir la réponse et exécuter
+    window.close() avant que le serveur ne disparaisse."""
+    global arret_demande
+    arret_demande = True
+
+    def arret_differe():
+        time.sleep(2)
+        os._exit(0)
+
+    Thread(target=arret_differe, daemon=True).start()
+    return jsonify(ok=True)
 
 
 # ─── Point d'entrée ───────────────────────────────────────────────────────────
