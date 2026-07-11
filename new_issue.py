@@ -667,14 +667,17 @@ function demarrerJournal() {
     else if (t.includes('✓') || t.includes('succès')) div.className = 'log-ok';
     else                                               div.className = 'log-info';
     div.textContent = t;
-    term.appendChild(div);
-    term.scrollTop = term.scrollHeight;
+    // Les lignes les plus récentes s'affichent en haut
+    term.insertBefore(div, term.firstChild);
+    term.scrollTop = 0;
   };
   sourceSSE.onerror = function() {
+    const term = document.getElementById('terminal');
     const div = document.createElement('div');
     div.className = 'log-warn';
     div.textContent = '— connexion perdue, tentative de reconnexion…';
-    document.getElementById('terminal').appendChild(div);
+    term.insertBefore(div, term.firstChild);
+    term.scrollTop = 0;
   };
 }
 
