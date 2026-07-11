@@ -967,13 +967,39 @@ async function chargerListeIssues() {
     // Fusion + tri global par numéro décroissant (plus récentes en premier).
     listeIssuesResultats = listes.flat().sort((a, b) => b.number - a.number);
 
-    // Par défaut, tous les projets sont actifs (visibles).
-    projetsFiltresActifs = new Set(noms);
+    // État des filtres restauré depuis localStorage (tous actifs par défaut).
+    projetsFiltresActifs = restaurerFiltresProjets(noms);
     construireBoutonsFiltre(noms);
     rendreListeIssues(true);
   } catch(e) {
     select.innerHTML = '<option value="">(erreur de chargement)</option>';
   }
+}
+
+// Clé localStorage mémorisant l'état des boutons de filtre projet.
+const CLE_FILTRES_RESULTATS = 'bridge_filtres_resultats';
+
+// Lit l'état des filtres depuis localStorage → Set des projets actifs.
+// Clé absente/illisible → tous actifs (comportement par défaut). Un projet
+// n'est inactif que s'il est explicitement marqué false ; un projet apparu
+// depuis la dernière sauvegarde (absent de l'objet) est donc actif.
+function restaurerFiltresProjets(noms) {
+  let brut = null;
+  try { brut = localStorage.getItem(CLE_FILTRES_RESULTATS); } catch(e) {}
+  if (!brut) return new Set(noms);
+  let etat;
+  try { etat = JSON.parse(brut); } catch(e) { return new Set(noms); }
+  if (!etat || typeof etat !== 'object') return new Set(noms);
+  return new Set(noms.filter(nom => etat[nom] !== false));
+}
+
+// Écrit l'état courant des filtres dans localStorage.
+function sauvegarderFiltresProjets(noms) {
+  const etat = {};
+  for (const nom of noms) etat[nom] = projetsFiltresActifs.has(nom);
+  try {
+    localStorage.setItem(CLE_FILTRES_RESULTATS, JSON.stringify(etat));
+  } catch(e) {}
 }
 
 // (Re)construit la ligne de boutons toggle — un par projet + « Tous ».
@@ -1005,13 +1031,16 @@ function construireBoutonsFiltre(noms) {
 function basculerFiltreProjet(nom) {
   if (projetsFiltresActifs.has(nom)) projetsFiltresActifs.delete(nom);
   else projetsFiltresActifs.add(nom);
+  sauvegarderFiltresProjets(nomsProjetsDisponibles());
   majClassesBoutonsFiltre();
   rendreListeIssues(true);
 }
 
-// Remet tous les projets à l'état actif.
+// Remet tous les projets à l'état actif ET efface la mémoire localStorage
+// (retour au comportement par défaut : tous actifs au prochain chargement).
 function reactiverTousLesFiltres() {
   projetsFiltresActifs = new Set(nomsProjetsDisponibles());
+  try { localStorage.removeItem(CLE_FILTRES_RESULTATS); } catch(e) {}
   majClassesBoutonsFiltre();
   rendreListeIssues(true);
 }
