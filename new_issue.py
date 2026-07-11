@@ -85,13 +85,19 @@ def charger_mot_de_passe() -> str:
 
 MOT_DE_PASSE = charger_mot_de_passe()
 
+# Authentification exigée uniquement en mode --externe (exposition réseau).
+# En mode local (127.0.0.1, HTTP), on est déjà sur la machine : le login n'a
+# pas de sens. Passé à True dans main() si --externe est présent.
+MODE_EXTERNE = False
+
 
 def login_requis(vue):
     """Décorateur : redirige vers /login tant que la session n'est pas
-    authentifiée. Inactif si aucun mot de passe n'est configuré."""
+    authentifiée. Inactif si aucun mot de passe n'est configuré ou en mode
+    local (login exigé uniquement en mode --externe)."""
     @wraps(vue)
     def enveloppe(*args, **kwargs):
-        if MOT_DE_PASSE and not session.get("authentifie"):
+        if MOT_DE_PASSE and MODE_EXTERNE and not session.get("authentifie"):
             return redirect(url_for("login"))
         return vue(*args, **kwargs)
     return enveloppe
@@ -2096,6 +2102,8 @@ def main():
     #   • externe (--externe) : host 0.0.0.0, HTTPS + mot de passe OBLIGATOIRES.
     #     Destiné à l'accès distant (téléphone via tunnel).
     if args.externe:
+        global MODE_EXTERNE
+        MODE_EXTERNE = True
         host   = "0.0.0.0"
         schema = "https"
 
