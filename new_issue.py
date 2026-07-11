@@ -421,15 +421,18 @@ button.danger:hover{background:#f8d7da}
 .commentaire{position:relative;border:1px solid #e0dfda;border-radius:6px;padding:12px;
   margin-bottom:10px;background:#fff}
 .commentaire.resultat{border-color:#b7d7c0;background:#f6fbf7}
-.commentaire-auteur{font-size:12px;font-weight:500;color:#555;margin-bottom:6px;
-  padding-right:130px}
-.btn-copier{position:absolute;top:10px;right:10px;font-size:12px;font-weight:500;
+.commentaire-auteur{font-size:12px;font-weight:500;color:#555;margin-bottom:6px}
+/* Le bouton « Copier la réponse » est ancré en haut à droite du bloc résumé
+   (texte court avant <details>), pas du bloc détails verbeux (issue #59). */
+.commentaire-resume{position:relative;padding-top:30px}
+.btn-copier{position:absolute;top:0;right:0;font-size:12px;font-weight:500;
   padding:4px 10px;border:1px solid #7fb08c;border-radius:5px;background:#eaf5ee;
   color:#2c6b41;cursor:pointer}
 .btn-copier:hover{background:#dcefe2}
 .btn-copier:disabled{cursor:default;border-color:#9ccbaa;color:#3a7a4f}
 .commentaire-corps{font-family:monospace;font-size:12px;white-space:pre-wrap;
   word-break:break-word;line-height:1.6;color:#1a1a18}
+.commentaire-details{margin-top:10px}
 .bloc-annuler{margin-bottom:16px}
 /* Modal de confirmation — overlay en flux normal (position:absolute, pas fixed).
    Le body est positionné (position:relative) : l'overlay le recouvre entièrement. */
@@ -1326,17 +1329,32 @@ function construireHtmlIssue(it, nom) {
     ordre.forEach(i => {
       const c = comms[i];
       const auteur = (c.author && c.author.login) ? c.author.login : (c.author || 'inconnu');
-      const resultat = (i === dernier) ? ' resultat' : '';
-      // Le dernier commentaire (réponse de CCL) porte un bouton « Copier ».
-      const boutonCopier = (i === dernier)
-        ? '<button class="btn-copier" onclick="copierReponse(this)">Copier la réponse</button>'
-        : '';
-      html += '<div class="commentaire' + resultat + '">'
-            + boutonCopier
-            + '<div class="commentaire-auteur">' + escapeHtml(auteur)
-            + (resultat ? ' — résultat CCL' : '') + '</div>'
-            + '<div class="commentaire-corps">' + escapeHtml(c.body || '') + '</div>'
-            + '</div>';
+      if (i === dernier) {
+        // Réponse de CCL : on sépare le résumé court (texte AVANT <details>)
+        // du bloc détails verbeux. Le bouton « Copier » est ancré au bloc
+        // résumé et ne copie que ce résumé — pas les détails (issue #59).
+        const corpsBrut = c.body || '';
+        const idxDetails = corpsBrut.indexOf('<details>');
+        const resume = (idxDetails >= 0 ? corpsBrut.slice(0, idxDetails) : corpsBrut)
+                       .replace(/\s+$/, '');
+        const details = idxDetails >= 0 ? corpsBrut.slice(idxDetails) : '';
+        html += '<div class="commentaire resultat">'
+              + '<div class="commentaire-auteur">' + escapeHtml(auteur) + ' — résultat CCL</div>'
+              + '<div class="commentaire-resume">'
+              + '<button class="btn-copier" onclick="copierReponse(this)">Copier la réponse</button>'
+              + '<div class="commentaire-corps">' + escapeHtml(resume) + '</div>'
+              + '</div>';
+        if (details) {
+          html += '<div class="commentaire-corps commentaire-details">'
+                + escapeHtml(details) + '</div>';
+        }
+        html += '</div>';
+      } else {
+        html += '<div class="commentaire">'
+              + '<div class="commentaire-auteur">' + escapeHtml(auteur) + '</div>'
+              + '<div class="commentaire-corps">' + escapeHtml(c.body || '') + '</div>'
+              + '</div>';
+      }
     });
   }
   return html;
@@ -1433,7 +1451,9 @@ async function rafraichirResultats() {
 // Feedback visuel « ✓ Copié ! » pendant 2 s. Fallback silencieux (sélection du
 // texte + warning console) si navigator.clipboard est indisponible (non-HTTPS).
 async function copierReponse(btn) {
-  const bloc = btn.closest('.commentaire');
+  // Le bouton vit dans le bloc résumé : on copie le texte de CE bloc
+  // uniquement (résumé court), jamais le bloc détails verbeux (issue #59).
+  const bloc = btn.closest('.commentaire-resume') || btn.closest('.commentaire');
   const corps = bloc ? bloc.querySelector('.commentaire-corps') : null;
   if (!corps) return;
   const texte = corps.textContent || '';
