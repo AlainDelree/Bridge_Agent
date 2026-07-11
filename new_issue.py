@@ -246,6 +246,7 @@ def construire_body(data: dict) -> str:
     timeout         = data.get("timeout", "300")
     modele_ponctuel = data.get("modele_ponctuel", "").strip()
     corps           = data.get("corps", "").strip()
+    nom_projet      = data.get("projet", "").strip()
 
     lignes = [
         "## En-tête\n",
@@ -257,6 +258,7 @@ def construire_body(data: dict) -> str:
         f"| MODE     | {mode} |",
         f"| PRIORITE | {priorite} |",
         f"| TIMEOUT  | {timeout}s |",
+        f"| PROJET   | {nom_projet} |",
     ]
     if modele_ponctuel:
         lignes.append(f"| MODELE   | {modele_ponctuel} |")
@@ -1346,117 +1348,31 @@ function afficherModalGenerique(titre, texteOui, texteNon) {
   });
 }
 
-// Détecte une éventuelle incohérence entre le corps de l'issue et le projet
-// sélectionné : on cherche dans le corps une mention explicite (nom, dépôt, ou
-// nom de dépôt) d'UN AUTRE projet connu. Retourne l'objet du projet mentionné
-// (issu de /watchers) ou null si rien de suspect. But : n'avertir que sur une
-// incohérence réelle, sans imposer une modale systématique à chaque envoi.
-async function detecterIncoherenceProjet(data) {
-  let projets;
-  try {
-    const rep = await fetch('/watchers');
-    projets = await rep.json();
-  } catch(e) { return null; }
-  if (!Array.isArray(projets)) return null;
-
-  // On écarte de l'analyse les chemins techniques et le code : ils citent
-  // légitimement d'autres projets (« Dans ~/NicLink/bip.py », blocs ```) sans
-  // trahir une erreur de cible. Seul le texte narratif restant est examiné.
-  const nettoyerCorps = (brut) => {
-    const lignes = brut.split('\n');
-    const gardees = [];
-    let dansBloc = false;                                // bloc ``` en cours
-    for (const ligne of lignes) {
-      if (ligne.trim().startsWith('```')) {              // ouverture/fermeture
-        dansBloc = !dansBloc;
-        continue;                                        // la clôture aussi retirée
-      }
-      if (dansBloc) continue;                            // contenu de bloc de code
-      const t = ligne.trim();
-      // Ligne « Dans ~/… » / « dans ~/… » : renvoi vers un fichier.
-      if (/^dans\s+~\//i.test(t)) continue;
-      // Ligne ne contenant qu'un chemin absolu (~/… ou /home/…).
-      if (/^(~\/|\/home\/)\S*$/.test(t)) continue;
-      gardees.push(ligne);
-    }
-    return gardees.join('\n');
-  };
-
-  // Le ## Contexte peut légitimement citer d'autres projets pour expliquer la
-  // situation : seul le texte narratif de la section « ## Tâche demandée »
-  // (jusqu'à la prochaine ligne « ## » ou la fin) est réellement suspect. On
-  // isole cette section avant nettoyage ; si elle est absente, on retombe sur
-  // l'analyse du corps entier (comportement historique).
-  const extraireTacheDemandee = (brut) => {
-    const lignes = brut.split('\n');
-    let debut = -1;
-    for (let i = 0; i < lignes.length; i++) {
-      if (/^\s*##\s+t[âa]che\s+demand[ée]e/i.test(lignes[i])) { debut = i; break; }
-    }
-    if (debut === -1) return brut;                        // section absente : repli
-    const gardees = [];
-    for (let i = debut + 1; i < lignes.length; i++) {
-      if (/^\s*##\s/.test(lignes[i])) break;              // prochaine section ##
-      gardees.push(lignes[i]);
-    }
-    return gardees.join('\n');
-  };
-
-  const corps = nettoyerCorps(extraireTacheDemandee(data.corps || '')).toLowerCase();
-  if (!corps.trim()) return null;
-
-  // Tokens caractéristiques d'un projet : son nom, son dépôt complet
-  // (owner/repo) et le nom de dépôt seul (repo). L'owner seul est écarté car
-  // commun à tous les projets → non discriminant.
-  const tokensProjet = (p) => {
-    const t = [];
-    if (p.nom)   t.push(p.nom.toLowerCase());
-    if (p.depot) {
-      t.push(p.depot.toLowerCase());
-      const repo = p.depot.split('/').pop();
-      if (repo) t.push(repo.toLowerCase());
-    }
-    return t;
-  };
-
-  // Tokens du projet ACTIF : ils ne doivent jamais déclencher l'alerte, et
-  // servent à écarter les tokens d'autres projets qui coïncideraient.
-  const actif = projets.find(p => p.nom === data.projet) || {nom: data.projet};
-  const tokensActif = new Set(tokensProjet(actif));
-
-  // Recherche « mot entier » insensible à la casse : le token ne doit pas être
-  // prolongé par un caractère alphanumérique (évite alchess ⊂ alchessboard),
-  // mais tolère les délimiteurs usuels (« ~/NicLink », « AlainDelree/AlChess »).
-  const estCarMot = (c) => /[a-z0-9_]/.test(c);
-  const mentionne = (token) => {
-    let idx = corps.indexOf(token);
-    while (idx !== -1) {
-      const avant = idx > 0 ? corps[idx - 1] : '';
-      const apres = idx + token.length < corps.length ? corps[idx + token.length] : '';
-      if (!estCarMot(avant) && !estCarMot(apres)) return true;
-      idx = corps.indexOf(token, idx + 1);
-    }
-    return false;
-  };
-
-  for (const p of projets) {
-    if (p.nom === data.projet) continue;               // le projet actif : ignoré
-    for (const token of tokensProjet(p)) {
-      if (!token || tokensActif.has(token)) continue;  // token partagé : ignoré
-      if (token.length < 3) continue;                  // trop court : trop risqué
-      if (mentionne(token)) return p;                  // incohérence détectée
-    }
+// Détecte une incohérence entre le projet sélectionné et le champ PROJET de
+// l'en-tête bridge. Fiable : on ne fait plus d'analyse textuelle (source de
+// faux positifs) — on lit le champ « | PROJET | … | » que new_issue.py insère
+// dans l'en-tête, et que Claude Chat reproduit dans le corps qu'il fournit.
+// Retourne {projetIssue, projetSelectionne} si les deux diffèrent, sinon null
+// (champ absent → pas de vérification ; identique → pas de modale).
+function detecterIncoherenceProjet(data) {
+  const corps = data.corps || '';
+  // Ligne du tableau markdown : « | PROJET | valeur | ». La valeur est la
+  // 3e cellule, capturée entre le 2e et le 3e séparateur « | ».
+  const m = corps.match(/^\s*\|\s*PROJET\s*\|([^|]*)\|/im);
+  if (!m) return null;                                  // champ absent : pas de vérif
+  const projetIssue = m[1].trim();
+  if (!projetIssue) return null;                        // valeur vide : pas de vérif
+  const projetSelectionne = (data.projet || '').trim();
+  if (projetIssue.toLowerCase() === projetSelectionne.toLowerCase()) {
+    return null;                                        // identique : pas de modale
   }
-  return null;
+  return {projetIssue, projetSelectionne};
 }
 
 // Modal d'alerte d'incohérence projet ⇄ corps. Réutilise l'overlay des issues
 // en attente pour un rendu cohérent ; restaure libellés et liste à la
 // fermeture. Résout true (envoyer quand même) / false (annuler).
-function afficherModalIncoherence(projetMentionne, nomProjetActif, depotProjetActif) {
-  const mention = (projetMentionne.depot
-    ? projetMentionne.depot.split('/').pop()
-    : projetMentionne.nom) || projetMentionne.nom;
+function afficherModalIncoherence(projetIssue, projetSelectionne) {
   return new Promise(resolve => {
     const overlay = document.getElementById('modal-confirmation');
     const liste   = document.getElementById('modal-liste');
@@ -1467,10 +1383,9 @@ function afficherModalIncoherence(projetMentionne, nomProjetActif, depotProjetAc
     document.getElementById('modal-titre').textContent = '⚠️ Incohérence détectée';
     liste.style.display = '';
     liste.innerHTML =
-      'Le corps de l\'issue mentionne « <b>' + escapeHtml(mention) + '</b> » '
-      + 'mais tu envoies sur <b>' + escapeHtml(nomProjetActif) + '</b>'
-      + (depotProjetActif ? ' — ' + escapeHtml(depotProjetActif) : '') + '.'
-      + '<br><br>Envoyer quand même sur <b>' + escapeHtml(nomProjetActif) + '</b> ?';
+      'L\'en-tête de l\'issue indique le projet « <b>' + escapeHtml(projetIssue) + '</b> » '
+      + 'mais tu envoies sur <b>' + escapeHtml(projetSelectionne) + '</b>.'
+      + '<br><br>Envoyer quand même sur <b>' + escapeHtml(projetSelectionne) + '</b> ?';
     btnOui.textContent = 'Envoyer quand même';
     btnNon.textContent = 'Annuler';
     function fermer(reponse) {
@@ -1515,22 +1430,17 @@ async function envoyerIssue() {
     if (!ok) return;
   }
 
-  // Garde-fou ciblé : alerte seulement si le corps mentionne explicitement un
-  // AUTRE projet connu que celui sélectionné (issue partie sur le mauvais dépôt).
+  // Garde-fou ciblé : alerte seulement si le champ PROJET de l'en-tête diffère
+  // du projet sélectionné (issue partie sur le mauvais dépôt).
   try {
-    const projetMentionne = await detecterIncoherenceProjet(data);
-    if (projetMentionne) {
-      let depotActif = '';
-      try {
-        const repCfg = await fetch('/config/' + encodeURIComponent(data.projet));
-        const cfg    = await repCfg.json();
-        depotActif   = cfg.depot || '';
-      } catch(e) { /* dépôt non récupéré : on affiche l'alerte sans lui */ }
-      const ok = await afficherModalIncoherence(projetMentionne, data.projet, depotActif);
+    const incoherence = detecterIncoherenceProjet(data);
+    if (incoherence) {
+      const ok = await afficherModalIncoherence(
+        incoherence.projetIssue, incoherence.projetSelectionne);
       if (!ok) return;   // l'utilisateur a annulé l'envoi
     }
   } catch(e) {
-    // La détection a échoué (réseau…) : on n'empêche pas l'envoi.
+    // La détection a échoué : on n'empêche pas l'envoi.
   }
 
   const btn = document.getElementById('btn-envoyer');
