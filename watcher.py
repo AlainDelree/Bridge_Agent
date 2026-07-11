@@ -1,12 +1,17 @@
 #!/usr/bin/env python3
 """
-watcher.py — Bridge inter-agents AlChess
-Surveille les GitHub Issues labelisées 'for-linux' et les délègue à Claude Code.
+watcher.py — Bridge inter-agents (multi-projets)
+Surveille les GitHub Issues labelisées 'for-linux' d'un dépôt et les délègue à
+Claude Code. Chaque projet est décrit par un fichier de config (--config).
 
 Usage :
-    python3 watcher.py
-    python3 watcher.py --dry-run   # simule sans lancer Claude Code
-    python3 watcher.py --interval 30
+    python3 watcher.py --config configs/bridge_agent.conf
+    python3 watcher.py --config configs/bridge_agent.conf --dry-run
+    python3 watcher.py --config configs/bridge_agent.conf --interval 30
+
+Lancement de plusieurs projets en parallèle :
+    python3 watcher.py --config configs/bridge_agent.conf &
+    python3 watcher.py --config configs/alchess.conf &
 """
 
 import subprocess
@@ -15,77 +20,219 @@ import time
 import logging
 import argparse
 import sys
+import os
+import glob
+from logging.handlers import RotatingFileHandler
+from dataclasses import dataclass, field
 from pathlib import Path
 from datetime import datetime
 
-# ─── Configuration ────────────────────────────────────────────────────────────
+# ─── Emplacements fixes (relatifs au script, PAS au cwd du projet) ─────────────
+# Les journaux vivent à côté du watcher, quel que soit le projet piloté. Ils ne
+# doivent surtout pas atterrir dans le répertoire de travail du projet (il change).
+DOSSIER_SCRIPT = Path(__file__).resolve().parent
+DOSSIER_LOGS   = DOSSIER_SCRIPT / "logs"
 
-REPO           = "AlainDelree/AlChess"
-LABEL          = "for-linux"
-LABEL_WRITE    = "mode_write"  # label qui ARME le mode écriture (actions permises)
-LABEL_FAILED   = "needs-human"  # posé après échec définitif : stoppe le retraitement automatique
+# ─── Protocole partagé (identique pour TOUS les projets) ───────────────────────
+# Ces noms de labels sont la logique commune du bridge. Les mettre en config
+# permettrait à un projet de diverger et de casser le protocole — c'est
+# exactement la dérive qu'on veut éviter. Ils restent donc en dur.
+# Le NOM des constantes est en français ; la VALEUR (entre guillemets) est le
+# label réel sur GitHub, un contrat qu'on ne touche pas.
 
-# Labels de notification (opt-in : par défaut = beep seul, comme historiquement).
-# Ces labels sont cumulatifs avec le beep sonore, pas en remplacement.
-LABEL_NOTIF_PC   = "notif_pc"    # beep + notify-send (bulle desktop locale)
-LABEL_NOTIF_GSM  = "notif_gsm"   # beep + ntfy (push téléphone)
-LABEL_NOTIF_ALL  = "notif_tous"  # beep + notify-send + ntfy
+LABEL_ECRITURE  = "mode_write"    # ARME le mode écriture (--dangerously-skip-permissions)
+LABEL_ECHEC     = "needs-human"   # posé après échec définitif : stoppe le retraitement auto
+LABEL_FAIT      = "done"          # posé au succès
 
-# Topic ntfy — même que le projet site peinture (choix Alain).
-# À terme, envisager de le sortir de watcher.py (variable d'env ou fichier de config)
-# pour ne pas exposer le topic dans le dépôt si watcher.py y est un jour versionné.
-NTFY_TOPIC = "hippocampe-ff-galerie-xyz123"
-NTFY_URL   = f"https://ntfy.sh/{NTFY_TOPIC}"
-
-POLL_INTERVAL  = 10          # secondes
-MAX_RETRIES    = 3
-CLAUDE_TIMEOUT = 300         # secondes avant timeout Claude Code
-BIP_SCRIPT     = Path.home() / "NicLink" / "bip.py"
-LOG_FILE       = Path.home() / "bridge-agent" / "watcher.log"
+# Labels de notification (opt-in, cumulatifs avec le bip).
+LABEL_NOTIF_PC   = "notif_pc"     # bip + notify-send (bulle bureau locale)
+LABEL_NOTIF_GSM  = "notif_gsm"    # bip + ntfy (push téléphone)
+LABEL_NOTIF_TOUS = "notif_tous"   # bip + notify-send + ntfy
 
 PRIORITES_CRITIQUES = {"haute", "critique"}
 
 # Abréviations du dictionnaire bridge
 SOURCES = {"CC": "Claude Chat", "CCL": "Claude Code Linux", "CCW": "Claude Code Windows"}
 
-# ─── Logging ──────────────────────────────────────────────────────────────────
+# ─── Configuration par projet (ce qui CHANGE d'un projet à l'autre) ────────────
 
-LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+@dataclass
+class Config:
+    """Tout ce qui distingue un projet d'un autre. Rempli une fois au démarrage
+    depuis le fichier --config, puis lu partout via l'objet global CFG."""
+    # Requis
+    nom: str             # identifiant court sans espaces (journal, préfixe notif, prompt)
+    depot: str           # ex. "AlainDelree/Bridge_Agent"
+    rep_travail: Path    # répertoire de travail de Claude Code pour CE projet
+    topic_ntfy: str      # topic ntfy pour les push téléphone
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s",
-    handlers=[
-        logging.FileHandler(LOG_FILE),
-        logging.StreamHandler(sys.stdout),
-    ]
-)
+    # Optionnels (défauts sensés)
+    label: str            = "for-linux"
+    intervalle: int       = 10
+    max_essais: int       = 3
+    timeout_claude: int   = 300
+    script_bip: Path      = field(default_factory=lambda: Path.home() / "NicLink" / "bip.py")
+    log_taille_max_mo: int = 1     # rotation quand le journal dépasse cette taille (Mo)
+    log_archives: int      = 5     # nombre d'archives datées conservées
+    cmd_backup: str        = ""    # commande de sauvegarde avant modif (mode écriture)
+
+    @property
+    def url_ntfy(self) -> str:
+        return f"https://ntfy.sh/{self.topic_ntfy}"
+
+    @property
+    def fichier_log(self) -> Path:
+        return DOSSIER_LOGS / f"watcher-{self.nom}.log"
+
+
+CHAMPS_REQUIS = ("NOM", "DEPOT", "REP_TRAVAIL", "TOPIC_NTFY")
+
+
+def lire_conf(chemin: Path) -> dict:
+    """Lecteur 'CLÉ = valeur' minimal, zéro dépendance.
+    Ignore les lignes vides et les lignes commentées (#). Les clés sont
+    normalisées en MAJUSCULES pour tolérer la casse."""
+    donnees: dict[str, str] = {}
+    for brut in chemin.read_text(encoding="utf-8").splitlines():
+        ligne = brut.strip()
+        if not ligne or ligne.startswith("#"):
+            continue
+        cle, sep, valeur = ligne.partition("=")
+        if not sep:                       # ligne sans '=' → ignorée
+            continue
+        donnees[cle.strip().upper()] = valeur.strip()
+    return donnees
+
+
+def charger_config(chemin: Path) -> Config:
+    """Charge et valide un fichier de config. Échoue proprement (message clair +
+    sortie) si un champ requis manque ou si un entier est mal formé — mieux vaut
+    refuser de démarrer que tourner avec une config bancale."""
+    if not chemin.exists():
+        sys.exit(f"[config] Fichier introuvable : {chemin}")
+
+    brut = lire_conf(chemin)
+
+    manquants = [c for c in CHAMPS_REQUIS if not brut.get(c)]
+    if manquants:
+        sys.exit(f"[config] Champs requis manquants dans {chemin.name} : {', '.join(manquants)}")
+
+    def entier(cle: str, defaut: int) -> int:
+        val = brut.get(cle)
+        if val is None or val == "":
+            return defaut
+        if not val.lstrip("-").isdigit():
+            sys.exit(f"[config] {cle} doit être un entier (lu : '{val}')")
+        return int(val)
+
+    return Config(
+        nom         = brut["NOM"],
+        depot       = brut["DEPOT"],
+        rep_travail = Path(brut["REP_TRAVAIL"]).expanduser(),
+        topic_ntfy  = brut["TOPIC_NTFY"],
+        label       = brut.get("LABEL") or "for-linux",
+        intervalle     = entier("INTERVALLE", 10),
+        max_essais     = entier("MAX_ESSAIS", 3),
+        timeout_claude = entier("TIMEOUT_CLAUDE", 300),
+        script_bip  = Path(brut["SCRIPT_BIP"]).expanduser() if brut.get("SCRIPT_BIP")
+                      else Path.home() / "NicLink" / "bip.py",
+        log_taille_max_mo = entier("LOG_TAILLE_MAX_MO", 1),
+        log_archives      = entier("LOG_ARCHIVES", 5),
+        cmd_backup        = brut.get("CMD_BACKUP", ""),
+    )
+
+
+# Config globale, remplie dans main() avant toute utilisation.
+CFG: Config = None  # type: ignore[assignment]
+
+# ─── Journalisation ───────────────────────────────────────────────────────────
+# Le logger existe dès l'import ; ses gestionnaires (fichier + console) sont
+# ajoutés dans configurer_logs(), une fois qu'on connaît le nom du projet.
 log = logging.getLogger("watcher")
+
+
+class JournalRotatifDate(RotatingFileHandler):
+    """Rotation déclenchée par la TAILLE (héritée de RotatingFileHandler), mais
+    l'archive est nommée avec la date/heure de rotation plutôt que .1/.2 :
+        watcher-<nom>.log.2026_07_11_08_02
+    Le fichier actif garde son nom sans suffixe. Au-delà de backupCount archives,
+    les plus anciennes sont supprimées."""
+
+    def doRollover(self):
+        if self.stream:
+            self.stream.close()
+            self.stream = None
+
+        horodatage = datetime.now().strftime("%Y_%m_%d_%H_%M")
+        cible = f"{self.baseFilename}.{horodatage}"
+        # Deux rotations dans la même minute : on évite l'écrasement.
+        if os.path.exists(cible):
+            i = 1
+            while os.path.exists(f"{cible}_{i}"):
+                i += 1
+            cible = f"{cible}_{i}"
+
+        if os.path.exists(self.baseFilename):
+            os.rename(self.baseFilename, cible)
+
+        self._purger_archives()
+
+        if not self.delay:
+            self.stream = self._open()
+
+    def _purger_archives(self):
+        """Ne garde que les backupCount archives les plus récentes."""
+        if self.backupCount <= 0:
+            return
+        archives = sorted(glob.glob(f"{self.baseFilename}.*"), key=os.path.getmtime)
+        for vieux in archives[:-self.backupCount]:
+            try:
+                os.remove(vieux)
+            except OSError:
+                pass
+
+
+def configurer_logs(cfg: Config):
+    cfg.fichier_log.parent.mkdir(parents=True, exist_ok=True)
+    handler_fichier = JournalRotatifDate(
+        cfg.fichier_log,
+        maxBytes=cfg.log_taille_max_mo * 1024 * 1024,
+        backupCount=cfg.log_archives,
+        encoding="utf-8",
+    )
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(message)s",
+        handlers=[
+            handler_fichier,
+            logging.StreamHandler(sys.stdout),
+        ],
+    )
 
 # ─── Utilitaires ──────────────────────────────────────────────────────────────
 
 def bip(fois=1):
-    """Bip sonore via bip.py de NicLink."""
-    if BIP_SCRIPT.exists():
+    """Bip sonore via bip.py."""
+    if CFG.script_bip.exists():
         for _ in range(fois):
-            subprocess.run(["python3", str(BIP_SCRIPT)], capture_output=True)
+            subprocess.run(["python3", str(CFG.script_bip)], capture_output=True)
             time.sleep(0.3)
 
-def notify_desktop(titre: str, message: str, urgence: str = "normal"):
-    """Envoie une bulle de notification desktop via notify-send.
+def notifier_bureau(titre: str, message: str, urgence: str = "normal"):
+    """Envoie une bulle de notification bureau via notify-send.
     urgence : 'low', 'normal', 'critical'. 'critical' reste affichée jusqu'à
     clic (utile pour les échecs)."""
     try:
         subprocess.run(
-            ["notify-send", "-a", "AlChess Bridge", "-u", urgence, titre, message],
+            ["notify-send", "-a", f"Bridge {CFG.nom}", "-u", urgence, titre, message],
             capture_output=True, timeout=5
         )
     except FileNotFoundError:
-        log.warning("notify-send introuvable (paquet libnotify-bin non installé ?) — notification desktop ignorée.")
+        log.warning("notify-send introuvable (paquet libnotify-bin non installé ?) — notification bureau ignorée.")
     except Exception as e:
         log.error(f"Erreur notify-send : {e}")
 
-def notify_ntfy(titre: str, message: str, priorite: str = "default"):
+def notifier_ntfy(titre: str, message: str, priorite: str = "default"):
     """Envoie une notification push sur le topic ntfy (téléphone).
     priorite : 'min', 'low', 'default', 'high', 'urgent'."""
     try:
@@ -93,9 +240,9 @@ def notify_ntfy(titre: str, message: str, priorite: str = "default"):
             ["curl", "-s",
              "-H", f"Title: {titre}",
              "-H", f"Priority: {priorite}",
-             "-H", "Tags: chess_pawn",
+             "-H", "Tags: robot",
              "-d", message,
-             NTFY_URL],
+             CFG.url_ntfy],
             capture_output=True, timeout=10
         )
     except FileNotFoundError:
@@ -104,148 +251,153 @@ def notify_ntfy(titre: str, message: str, priorite: str = "default"):
         log.error(f"Erreur ntfy : {e}")
 
 def notifier(labels: list[str], titre: str, message: str,
-             urgence_desktop: str = "normal", priorite_ntfy: str = "default"):
+             urgence_bureau: str = "normal", priorite_ntfy: str = "default"):
     """Dispatch de notification selon les labels de l'issue.
-    Le beep est toujours émis (comportement historique). Les canaux additionnels
+    Le bip est toujours émis (comportement historique). Les canaux additionnels
     (notify-send, ntfy) sont opt-in via les labels notif_pc / notif_gsm / notif_tous."""
     bip(1)
-    if LABEL_NOTIF_PC in labels or LABEL_NOTIF_ALL in labels:
-        notify_desktop(titre, message, urgence_desktop)
-    if LABEL_NOTIF_GSM in labels or LABEL_NOTIF_ALL in labels:
-        notify_ntfy(titre, message, priorite_ntfy)
+    if LABEL_NOTIF_PC in labels or LABEL_NOTIF_TOUS in labels:
+        notifier_bureau(titre, message, urgence_bureau)
+    if LABEL_NOTIF_GSM in labels or LABEL_NOTIF_TOUS in labels:
+        notifier_ntfy(titre, message, priorite_ntfy)
 
-def alerte_critique(issue_number, titre, tentative, labels: list[str]):
+def alerte_critique(numero, titre, tentative, labels: list[str]):
     """Alerte pour les issues haute/critique après échec."""
-    msg = f"⚠️  ALERTE — Issue #{issue_number} '{titre}' — tentative {tentative} échouée — nouvelle tentative dans {POLL_INTERVAL}s"
+    msg = f"⚠️  ALERTE — Issue #{numero} '{titre}' — tentative {tentative} échouée — nouvelle tentative dans {CFG.intervalle}s"
     log.warning(msg)
-    bip(2)  # 1 bip déjà émis par notifier() ci-dessous → on ajoute 2 bips pour garder le "3 bips" historique de l'alerte critique
+    bip(2)  # 1 bip déjà émis par notifier() ci-dessous → +2 pour garder le "3 bips" historique
     notifier(
         labels,
-        titre=f"⚠️ Bridge #{issue_number} — alerte critique",
-        message=f"Tentative {tentative} échouée : {titre}\nNouvelle tentative dans {POLL_INTERVAL}s.",
-        urgence_desktop="critical",
+        titre=f"⚠️ {CFG.nom} #{numero} — alerte critique",
+        message=f"Tentative {tentative} échouée : {titre}\nNouvelle tentative dans {CFG.intervalle}s.",
+        urgence_bureau="critical",
         priorite_ntfy="high",
     )
 
 def gh(*args) -> dict | list | None:
     """Lance une commande gh et retourne le JSON parsé."""
     cmd = ["gh", *args, "--json"]
-    # Pour issue list, on précise les champs
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
-        if result.returncode != 0:
-            log.error(f"gh error: {result.stderr.strip()}")
+        res = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        if res.returncode != 0:
+            log.error(f"gh erreur : {res.stderr.strip()}")
             return None
-        return json.loads(result.stdout)
+        return json.loads(res.stdout)
     except Exception as e:
-        log.error(f"gh exception: {e}")
+        log.error(f"gh exception : {e}")
         return None
 
 def lister_issues():
-    """Retourne la liste des issues for-linux ouvertes."""
+    """Retourne la liste des issues (label du projet) ouvertes."""
     try:
-        result = subprocess.run(
+        res = subprocess.run(
             ["gh", "issue", "list",
-             "--repo", REPO,
-             "--label", LABEL,
+             "--repo", CFG.depot,
+             "--label", CFG.label,
              "--state", "open",
              "--json", "number,title,body,labels,createdAt"],
             capture_output=True, text=True, timeout=30
         )
-        if result.returncode != 0:
-            log.error(f"Erreur gh issue list: {result.stderr.strip()}")
+        if res.returncode != 0:
+            log.error(f"Erreur gh issue list : {res.stderr.strip()}")
             return []
-        return json.loads(result.stdout)
+        return json.loads(res.stdout)
     except Exception as e:
-        log.error(f"Exception lister_issues: {e}")
+        log.error(f"Exception lister_issues : {e}")
         return []
 
 def extraire_priorite(body: str) -> str:
-    """Extrait la priorité depuis le body de l'issue (header bridge)."""
-    for line in body.splitlines():
-        if "PRIORITE" in line.upper():
-            parts = line.split("|")
+    """Extrait la priorité depuis le body de l'issue (en-tête bridge)."""
+    for ligne in body.splitlines():
+        if "PRIORITE" in ligne.upper():
+            parts = ligne.split("|")
             if len(parts) >= 3:
                 return parts[2].strip().lower()
     return "normale"
 
 def extraire_timeout(body: str) -> int:
-    """Extrait le TIMEOUT (en secondes) depuis le body de l'issue (header bridge).
-    Le template TACHES-ISSUES.md prévoit un champ '| TIMEOUT | 300s |' ; on le lit
-    ici plutôt que d'imposer CLAUDE_TIMEOUT à toutes les tâches sans distinction.
-    Retombe sur CLAUDE_TIMEOUT si absent ou mal formé."""
-    for line in body.splitlines():
-        if "TIMEOUT" in line.upper():
-            parts = line.split("|")
+    """Extrait le TIMEOUT (en secondes) depuis le body de l'issue (en-tête bridge).
+    Retombe sur le timeout par défaut du projet si absent ou mal formé."""
+    for ligne in body.splitlines():
+        if "TIMEOUT" in ligne.upper():
+            parts = ligne.split("|")
             if len(parts) >= 3:
                 valeur = parts[2].strip().lower().rstrip("s")
                 if valeur.isdigit():
                     return int(valeur)
-    return CLAUDE_TIMEOUT
+    return CFG.timeout_claude
 
-def ajouter_label(number: int, label: str):
+def ajouter_label(numero: int, label: str):
     """Ajoute un label à une issue sans la fermer."""
     try:
         subprocess.run(
-            ["gh", "issue", "edit", str(number),
-             "--repo", REPO,
+            ["gh", "issue", "edit", str(numero),
+             "--repo", CFG.depot,
              "--add-label", label],
             capture_output=True, text=True, timeout=30
         )
     except Exception as e:
-        log.error(f"Erreur ajout label '{label}' sur issue #{number}: {e}")
+        log.error(f"Erreur ajout label '{label}' sur issue #{numero} : {e}")
 
-def commenter_issue(number: int, message: str):
+def commenter_issue(numero: int, message: str):
     """Poste un commentaire sur une issue."""
     try:
         subprocess.run(
-            ["gh", "issue", "comment", str(number),
-             "--repo", REPO,
+            ["gh", "issue", "comment", str(numero),
+             "--repo", CFG.depot,
              "--body", message],
             capture_output=True, text=True, timeout=30
         )
     except Exception as e:
-        log.error(f"Erreur commentaire issue #{number}: {e}")
+        log.error(f"Erreur commentaire issue #{numero} : {e}")
 
-def fermer_issue(number: int):
+def fermer_issue(numero: int):
     """Ferme une issue et ajoute le label 'done'."""
     try:
         subprocess.run(
-            ["gh", "issue", "close", str(number), "--repo", REPO],
+            ["gh", "issue", "close", str(numero), "--repo", CFG.depot],
             capture_output=True, text=True, timeout=30
         )
         subprocess.run(
-            ["gh", "issue", "edit", str(number),
-             "--repo", REPO,
-             "--add-label", "done"],
+            ["gh", "issue", "edit", str(numero),
+             "--repo", CFG.depot,
+             "--add-label", LABEL_FAIT],
             capture_output=True, text=True, timeout=30
         )
     except Exception as e:
-        log.error(f"Erreur fermeture issue #{number}: {e}")
+        log.error(f"Erreur fermeture issue #{numero} : {e}")
 
-def lancer_claude(issue_number: int, titre: str, body: str, dry_run: bool,
+def lancer_claude(numero: int, titre: str, body: str, dry_run: bool,
                   autoriser_ecriture: bool = False,
-                  timeout: int = CLAUDE_TIMEOUT) -> tuple[bool, str]:
+                  timeout: int = None) -> tuple[bool, str]:
     """
     Lance Claude Code en mode non-interactif sur une issue.
 
-    Par défaut (autoriser_ecriture=False) : Claude Code reste en LECTURE SEULE
-    (il diagnostique, lit, grep, mais ne peut pas écrire/exécuter sans confirmation).
+    Par défaut (autoriser_ecriture=False) : LECTURE SEULE (diagnostic, pas d'écriture).
+    Si autoriser_ecriture=True (label 'mode_write' posé sciemment) : on ajoute
+    --dangerously-skip-permissions. Le garde-fou anti-push reste dans le prompt.
 
-    Si autoriser_ecriture=True (label 'mode_write' posé sciemment sur l'issue) :
-    on ajoute --dangerously-skip-permissions, ce qui autorise l'écriture de
-    fichiers, l'exécution de commandes et les commits. Le garde-fou anti-push
-    reste inscrit dans le prompt : Claude Code ne doit JAMAIS git push.
-
-    Retourne (succès, output).
+    Retourne (succès, sortie).
     """
+    if timeout is None:
+        timeout = CFG.timeout_claude
+
     if autoriser_ecriture:
-        garde_fou = """
+        if CFG.cmd_backup:
+            consigne_backup = (
+                "- Fais TOUJOURS une sauvegarde avant toute modification, en lançant "
+                f"cette commande depuis le répertoire du projet :\n  {CFG.cmd_backup}"
+            )
+        else:
+            consigne_backup = (
+                "- Fais TOUJOURS une sauvegarde de l'état courant avant toute modification "
+                "(par exemple un commit git de tout le dossier), afin de permettre un retour arrière."
+            )
+        garde_fou = f"""
 MODE ÉCRITURE ACTIVÉ — tu es autorisé à modifier des fichiers, exécuter des
 commandes et faire des commits git si la tâche le demande.
 RÈGLES DE SÉCURITÉ IMPÉRATIVES :
-- Fais TOUJOURS un backup pinné avant toute modification :
-  python -m nicsoft.utils.backup_manager --pin --label "avant-<description>"
+{consigne_backup}
 - Ne fais JAMAIS 'git push' ni 'git push --force' : Alain pousse lui-même,
   manuellement, après avoir vérifié tes commits.
 - N'exécute aucune commande destructrice (rm -rf large, git reset --hard sur du
@@ -259,8 +411,8 @@ MODE LECTURE SEULE — tu ne dois que lire, analyser et rapporter. N'écris aucu
 fichier, n'exécute aucune commande modifiant l'état du système ou du dépôt.
 """
 
-    prompt = f"""Tu es l'agent Linux du bridge inter-agents AlChess.
-Traite la tâche suivante issue du GitHub Issue #{issue_number} :
+    prompt = f"""Tu es l'agent Linux (CCL) du bridge inter-agents, projet « {CFG.nom} ».
+Traite la tâche suivante issue du GitHub Issue #{numero} :
 
 TITRE : {titre}
 
@@ -271,14 +423,14 @@ Instructions :
 1. Lis attentivement la tâche demandée
 2. Effectue le travail demandé (dans les limites du mode ci-dessus)
 3. Résume ce que tu as fait en quelques lignes (ce sera posté en commentaire sur l'issue)
-4. Si tu dois créer une issue for-windows, utilise : gh issue create --repo {REPO} --label "bridge,for-windows" ...
+4. Si tu dois créer une issue for-windows, utilise : gh issue create --repo {CFG.depot} --label "bridge,for-windows" ...
 
 Réponds uniquement avec le résumé de ce que tu as accompli.
 """
 
     if dry_run:
         mode = "ÉCRITURE" if autoriser_ecriture else "lecture seule"
-        log.info(f"[DRY-RUN] Claude Code serait lancé pour issue #{issue_number} (mode {mode})")
+        log.info(f"[DRY-RUN] Claude Code serait lancé pour issue #{numero} (mode {mode}, cwd {CFG.rep_travail})")
         return True, f"[DRY-RUN] Tâche simulée avec succès (mode {mode})."
 
     cmd = ["claude", "--print"]
@@ -287,16 +439,16 @@ Réponds uniquement avec le résumé de ce que tu as accompli.
     cmd.append(prompt)
 
     try:
-        result = subprocess.run(
+        res = subprocess.run(
             cmd,
             capture_output=True, text=True,
             timeout=timeout,
-            cwd=Path.home() / "NicLink"
+            cwd=CFG.rep_travail
         )
-        if result.returncode == 0:
-            return True, result.stdout.strip()
+        if res.returncode == 0:
+            return True, res.stdout.strip()
         else:
-            return False, result.stderr.strip() or "Erreur inconnue"
+            return False, res.stderr.strip() or "Erreur inconnue"
     except subprocess.TimeoutExpired:
         return False, f"Timeout après {timeout}s"
     except FileNotFoundError:
@@ -310,84 +462,81 @@ Réponds uniquement avec le résumé de ce que tu as accompli.
 issues_en_cours: set[int] = set()
 
 def traiter_issue(issue: dict, dry_run: bool):
-    number = issue["number"]
+    numero = issue["number"]
     titre  = issue["title"]
     body   = issue.get("body") or ""
 
-    if number in issues_en_cours:
+    if numero in issues_en_cours:
         return
 
     labels = [l.get("name", "") for l in issue.get("labels", [])]
 
-    # Une issue déjà marquée 'needs-human' a échoué définitivement lors d'un
-    # cycle précédent : on ne la retraite PAS automatiquement, sinon c'est la
-    # boucle infinie (ACK → 3 tentatives → timeout → échec → nouveau cycle →
-    # ACK → ...) tant qu'un humain n'a pas retiré le label ou fermé l'issue.
-    if LABEL_FAILED in labels:
-        log.debug(f"Issue #{number} déjà marquée '{LABEL_FAILED}' — ignorée (intervention humaine en attente).")
+    # Une issue déjà 'needs-human' a échoué définitivement : on ne la retraite
+    # PAS (sinon boucle infinie) tant qu'un humain n'a pas retiré le label.
+    if LABEL_ECHEC in labels:
+        log.debug(f"Issue #{numero} déjà marquée '{LABEL_ECHEC}' — ignorée (intervention humaine en attente).")
         return
 
-    issues_en_cours.add(number)
+    issues_en_cours.add(numero)
     priorite = extraire_priorite(body)
     critique = priorite in PRIORITES_CRITIQUES
     timeout  = extraire_timeout(body)
 
-    # Détection du label 'mode_write' : arme le mode écriture (actions permises).
-    autoriser_ecriture = LABEL_WRITE in labels
+    autoriser_ecriture = LABEL_ECRITURE in labels
 
     mode_txt = "ÉCRITURE ⚠️" if autoriser_ecriture else "lecture seule"
-    log.info(f"→ Issue #{number} détectée : '{titre}' [priorité: {priorite}] [mode: {mode_txt}]")
+    log.info(f"→ Issue #{numero} détectée : '{titre}' [priorité: {priorite}] [mode: {mode_txt}]")
     if autoriser_ecriture:
-        log.warning(f"  ⚠️  MODE ÉCRITURE ARMÉ pour #{number} (label '{LABEL_WRITE}') — actions permises, push interdit.")
+        log.warning(f"  ⚠️  MODE ÉCRITURE ARMÉ pour #{numero} (label '{LABEL_ECRITURE}') — actions permises, push interdit.")
 
     commenter_issue(
-        number,
-        f"✅ ACK — Issue #{number} reçue par watcher.py (agent Linux). "
+        numero,
+        f"✅ ACK — Issue #{numero} reçue par watcher.py (agent Linux, projet {CFG.nom}). "
         f"Mode : **{mode_txt}**. Traitement en cours..."
     )
 
     tentative = 0
     while True:
         tentative += 1
-        log.info(f"  Tentative {tentative}/{MAX_RETRIES if not critique else '∞'}...")
+        log.info(f"  Tentative {tentative}/{CFG.max_essais if not critique else '∞'}...")
 
-        succes, output = lancer_claude(number, titre, body, dry_run, autoriser_ecriture, timeout)
+        succes, sortie = lancer_claude(numero, titre, body, dry_run, autoriser_ecriture, timeout)
 
         if succes:
-            log.info(f"  ✓ Issue #{number} traitée avec succès.")
-            commenter_issue(number, f"## Résultat\n\n{output}")
-            fermer_issue(number)
-            issues_en_cours.discard(number)
+            log.info(f"  ✓ Issue #{numero} traitée avec succès.")
+            commenter_issue(numero, f"## Résultat\n\n{sortie}")
+            fermer_issue(numero)
+            issues_en_cours.discard(numero)
             notifier(
                 labels,
-                titre=f"✅ Bridge #{number} — traitée",
+                titre=f"✅ {CFG.nom} #{numero} — traitée",
                 message=f"'{titre}' traitée avec succès.",
-                urgence_desktop="normal",
+                urgence_bureau="normal",
                 priorite_ntfy="default",
             )
             return
 
         # Échec
-        log.warning(f"  ✗ Tentative {tentative} échouée : {output}")
+        log.warning(f"  ✗ Tentative {tentative} échouée : {sortie}")
 
-        if tentative >= MAX_RETRIES:
+        if tentative >= CFG.max_essais:
             if critique:
-                alerte_critique(number, titre, tentative, labels)
-                log.warning(f"  Issue critique #{number} — nouvelle tentative au prochain cycle.")
-                issues_en_cours.discard(number)  # sera reprise au prochain poll
+                alerte_critique(numero, titre, tentative, labels)
+                log.warning(f"  Issue critique #{numero} — nouvelle tentative au prochain cycle.")
+                issues_en_cours.discard(numero)  # sera reprise au prochain poll
                 return
             else:
-                log.error(f"  Issue #{number} abandonnée après {MAX_RETRIES} tentatives.")
-                commenter_issue(number, f"❌ Échec après {MAX_RETRIES} tentatives.\n\nDernière erreur : `{output}`\n\nIntervention humaine requise. Label `{LABEL_FAILED}` posé : cette issue ne sera plus retraitée automatiquement tant que le label n'est pas retiré (ou l'issue fermée) manuellement.")
-                ajouter_label(number, LABEL_FAILED)
+                log.error(f"  Issue #{numero} abandonnée après {CFG.max_essais} tentatives.")
+                commenter_issue(numero, f"❌ Échec après {CFG.max_essais} tentatives.\n\nDernière erreur : `{sortie}`\n\nIntervention humaine requise. Label `{LABEL_ECHEC}` posé : cette issue ne sera plus retraitée automatiquement tant que le label n'est pas retiré (ou l'issue fermée) manuellement.")
+                ajouter_label(numero, LABEL_ECHEC)
                 notifier(
                     labels,
-                    titre=f"❌ Bridge #{number} — échec définitif",
-                    message=f"'{titre}' abandonnée après {MAX_RETRIES} tentatives.\nDernière erreur : {output[:200]}",
-                    urgence_desktop="critical",
+                    titre=f"❌ {CFG.nom} #{numero} — échec définitif",
+                    message=f"'{titre}' abandonnée après {CFG.max_essais} tentatives.\nDernière erreur : {sortie[:200]}",
+                    urgence_bureau="critical",
                     priorite_ntfy="high",
                 )
-                issues_en_cours.discard(number)
+                issues_en_cours.discard(numero)
                 return
 
         time.sleep(5)  # pause entre tentatives
@@ -395,15 +544,33 @@ def traiter_issue(issue: dict, dry_run: bool):
 # ─── Boucle principale ─────────────────────────────────────────────────────────
 
 def main():
-    parser = argparse.ArgumentParser(description="Bridge watcher — agent Linux AlChess")
+    global CFG
+
+    parser = argparse.ArgumentParser(description="Bridge watcher — agent Linux (multi-projets)")
+    parser.add_argument("--config", required=True, help="Fichier de config du projet (ex. configs/bridge_agent.conf)")
     parser.add_argument("--dry-run", action="store_true", help="Simule sans lancer Claude Code")
-    parser.add_argument("--interval", type=int, default=POLL_INTERVAL, help="Intervalle de polling en secondes")
+    parser.add_argument("--interval", type=int, default=None, help="Surcharge l'intervalle de polling (secondes)")
     args = parser.parse_args()
 
+    # Résolution tolérante du chemin de config : tel quel, sinon relatif au script.
+    chemin = Path(args.config)
+    if not chemin.exists():
+        chemin = DOSSIER_SCRIPT / args.config
+
+    CFG = charger_config(chemin)
+    configurer_logs(CFG)
+
+    intervalle = args.interval if args.interval is not None else CFG.intervalle
+
     log.info("=" * 60)
-    log.info(f"Bridge watcher démarré — repo: {REPO} — label: {LABEL}")
-    log.info(f"Polling toutes les {args.interval}s — dry-run: {args.dry_run}")
+    log.info(f"Bridge watcher démarré — projet: {CFG.nom} — dépôt: {CFG.depot} — label: {CFG.label}")
+    log.info(f"cwd Claude Code: {CFG.rep_travail} — journal: {CFG.fichier_log}")
+    log.info(f"Polling toutes les {intervalle}s — dry-run: {args.dry_run}")
     log.info("=" * 60)
+
+    if not CFG.rep_travail.is_dir():
+        log.warning(f"⚠️  Le répertoire de travail '{CFG.rep_travail}' n'existe pas (ou n'est pas un dossier). "
+                    f"Claude Code échouera tant que ce n'est pas corrigé dans la config.")
 
     if args.dry_run:
         log.info("[DRY-RUN] Mode simulation activé — Claude Code ne sera pas lancé.")
@@ -423,7 +590,7 @@ def main():
         except Exception as e:
             log.error(f"Erreur boucle principale : {e}")
 
-        time.sleep(args.interval)
+        time.sleep(intervalle)
 
 if __name__ == "__main__":
     main()
