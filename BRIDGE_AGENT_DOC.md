@@ -111,6 +111,7 @@ Le watcher lit ces champs dans le tableau markdown de l'en-tête :
 | `TIMEOUT` | ex. `600s` | Surcharge le timeout par défaut (300s) |
 | `MODELE` | ex. `claude-opus-4-5` | Force un modèle CCL spécifique pour cette issue |
 | `PROJET` | ex. `bridge_agent` | Détection d'incohérence dans `new_issue.py` (issue #44). Inséré automatiquement par l'interface. Claude Chat doit l'inclure dans toutes les issues qu'il génère. |
+| `TYPE` | `chef` ou `ouvrier` | Identifie le rôle de l'issue dans le pattern multi-agent. `chef` = orchestre les ouvriers. `ouvrier` = sous-tâche créée par le chef, masquée par défaut dans l'onglet Résultats. Absent = issue normale. |
 
 Format dans le corps :
 ```markdown
@@ -298,6 +299,14 @@ CCL chef d'orchestre → poste la réponse complète → ferme l'issue mère
    ▼
 notification GSM/bureau
 ```
+
+**Format des titres :**
+
+- **Chef** : titre préfixé par `Chef : ` (ex. `Chef : refonte de l'onglet Résultats`).
+- **Ouvrier** : titre préfixé par `Ouvrier N : ` où N est le numéro
+  (ex. `Ouvrier 1 : ...`, `Ouvrier 2 : ...`).
+- **Claude Chat génère toujours l'issue chef uniquement** — les ouvriers sont
+  créés par le chef lui-même via `gh issue create`.
 
 **Points à concevoir avant implémentation :**
 
