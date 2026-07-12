@@ -631,7 +631,17 @@ function construireHtmlIssue(it, nom) {
         html += '<div class="commentaire resultat">'
               + '<div class="commentaire-auteur">' + escapeHtml(auteur) + ' — résultat CCL</div>'
               + '<div class="commentaire-resume">'
-              + '<button class="btn-copier" onclick="copierReponse(this)">Copier la réponse</button>'
+              // « Copier résumé » : le texte avant <details> uniquement (issue #59).
+              // « Copier tout » : résumé + détails en markdown brut (issue #77).
+              + '<button class="btn-copier" onclick="copierReponse(this)">Copier résumé</button>'
+              + '<button class="btn-copier" onclick="copierTout(this)">Copier tout</button>'
+              // Le bloc <details> brut (markdown non rendu) est conservé caché ici
+              // pour que « Copier tout » puisse reconstruire le texte exact à coller
+              // dans Claude Chat, indépendamment du rendu HTML de l'accordéon.
+              + (details
+                  ? '<div class="commentaire-details-brut" style="display:none">'
+                    + escapeHtml(details) + '</div>'
+                  : '')
               + '<div class="commentaire-corps">' + escapeHtml(resume) + '</div>'
               + '</div>';
         if (details) {
@@ -752,7 +762,7 @@ async function copierReponse(btn) {
   const bloc = btn.closest('.commentaire-resume') || btn.closest('.commentaire');
   const corps = bloc ? bloc.querySelector('.commentaire-corps') : null;
   if (!corps) return;
-  // Libellé d'origine : « Copier la réponse » (CCL) ou « Copier » (autres
+  // Libellé d'origine : « Copier résumé » (CCL, issue #77) ou « Copier » (autres
   // commentaires, issue #61) — on le restaure après le retour visuel.
   const libelle = btn.textContent;
   const texte = corps.textContent || '';
@@ -775,6 +785,65 @@ async function copierReponse(btn) {
   // Fallback : on sélectionne le texte du bloc pour permettre un Ctrl+C manuel.
   const sel = window.getSelection();
   if (sel) {
+    const range = document.createRange();
+    range.selectNodeContents(corps);
+    sel.removeAllRanges();
+    sel.addRange(range);
+  }
+}
+
+// Reconstruit la réponse CCL COMPLÈTE en markdown brut (issue #77) : le résumé,
+// une ligne vide, puis le contenu du bloc <details> débarrassé de ses seules
+// balises structurantes (<details>, <summary>, </summary>, </details>). Le texte
+// interne (dont le libellé du <summary>) est conservé tel quel — résultat lisible
+// et collable directement dans Claude Chat. Si les détails sont vides, on ne
+// renvoie que le résumé (pas de ligne vide superflue).
+function texteReponseComplete(resume, detailsBrut) {
+  const contenu = (detailsBrut || '')
+    .split('<details>').join('')
+    .split('</details>').join('')
+    .split('<summary>').join('')
+    .split('</summary>').join('')
+    .replace(/^\s+|\s+$/g, '');
+  const r = (resume || '').replace(/\s+$/, '');
+  return contenu ? (r + '\n\n' + contenu) : r;
+}
+
+// « Copier tout » (issue #77) : copie la réponse CCL complète (résumé + détails)
+// en markdown brut, via texteReponseComplete(). Même feedback visuel que
+// « Copier résumé » — « ✓ Copié ! » pendant 1,5 s puis retour au libellé. Le
+// résumé est lu dans .commentaire-corps, les détails bruts dans le bloc caché
+// .commentaire-details-brut. Fallback silencieux (sélection du résumé) si
+// navigator.clipboard est indisponible (contexte non-HTTPS).
+async function copierTout(btn) {
+  const bloc = btn.closest('.commentaire-resume') || btn.closest('.commentaire');
+  if (!bloc) return;
+  const corps  = bloc.querySelector('.commentaire-corps');
+  const brutEl = bloc.querySelector('.commentaire-details-brut');
+  const resume = corps  ? (corps.textContent  || '') : '';
+  const details = brutEl ? (brutEl.textContent || '') : '';
+  const texte  = texteReponseComplete(resume, details);
+  const libelle = btn.textContent;
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    try {
+      await navigator.clipboard.writeText(texte);
+      btn.disabled = true;
+      btn.textContent = '✓ Copié !';
+      setTimeout(function() {
+        btn.textContent = libelle;
+        btn.disabled = false;
+      }, 1500);
+      return;
+    } catch(e) {
+      console.warn('copierTout : échec navigator.clipboard, fallback sélection.', e);
+    }
+  } else {
+    console.warn('copierTout : navigator.clipboard indisponible (contexte non-HTTPS), fallback sélection.');
+  }
+  // Fallback : à défaut de presse-papier, on sélectionne au moins le résumé
+  // affiché (le texte complet reconstruit ne peut pas être injecté dans le DOM).
+  const sel = window.getSelection();
+  if (sel && corps) {
     const range = document.createRange();
     range.selectNodeContents(corps);
     sel.removeAllRanges();
