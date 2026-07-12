@@ -259,11 +259,15 @@ def notifier_ntfy(titre: str, message: str, priorite: str = "default"):
         log.error(f"Erreur ntfy : {e}")
 
 def notifier(labels: list[str], titre: str, message: str,
-             urgence_bureau: str = "normal", priorite_ntfy: str = "default"):
+             urgence_bureau: str = "normal", priorite_ntfy: str = "default",
+             fois_bip: int = 1):
     """Dispatch de notification selon les labels de l'issue.
-    Le bip est toujours émis (comportement historique). Les canaux additionnels
-    (notify-send, ntfy) sont opt-in via les labels notif_pc / notif_gsm / notif_tous."""
-    bip(1)
+    Le bip et les canaux additionnels (notify-send, ntfy) sont opt-in via les
+    labels notif_pc / notif_gsm / notif_tous : sans aucun de ces labels, aucun
+    signal n'est émis. fois_bip permet de renforcer le signal (ex. 3 pour une
+    alerte critique)."""
+    if LABEL_NOTIF_PC in labels or LABEL_NOTIF_GSM in labels or LABEL_NOTIF_TOUS in labels:
+        bip(fois_bip)
     if LABEL_NOTIF_PC in labels or LABEL_NOTIF_TOUS in labels:
         notifier_bureau(titre, message, urgence_bureau)
     if LABEL_NOTIF_GSM in labels or LABEL_NOTIF_TOUS in labels:
@@ -273,13 +277,13 @@ def alerte_critique(numero, titre, tentative, labels: list[str]):
     """Alerte pour les issues haute/critique après échec."""
     msg = f"⚠️  ALERTE — Issue #{numero} '{titre}' — tentative {tentative} échouée — nouvelle tentative dans {CFG.intervalle}s"
     log.warning(msg)
-    bip(2)  # 1 bip déjà émis par notifier() ci-dessous → +2 pour garder le "3 bips" historique
     notifier(
         labels,
         titre=f"⚠️ {CFG.nom} #{numero} — alerte critique",
         message=f"Tentative {tentative} échouée : {titre}\nNouvelle tentative dans {CFG.intervalle}s.",
         urgence_bureau="critical",
         priorite_ntfy="high",
+        fois_bip=3,  # 3 bips pour l'alerte critique (au lieu du bip simple par défaut)
     )
 
 def gh(*args) -> dict | list | None:
