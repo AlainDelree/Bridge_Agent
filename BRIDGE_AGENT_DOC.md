@@ -148,6 +148,10 @@ hors périmètre même si l'issue le demande explicitement :
 - **configs/*.conf** : gitignoré — jamais versionné (contient topic ntfy et
   mot de passe hashé).
 - **ssl/** : gitignoré — certificat auto-signé, clé privée jamais versionnée.
+- **Repo public** : le dépôt GitHub est public — le code source est lisible
+  par tous. C'est sans risque car tout ce qui est sensible est gitignoré :
+  `configs/*.conf` (topic ntfy, mot de passe hashé), `ssl/` (clé privée),
+  `logs/`, `venv/`. Le repo ne contient que du code et de la documentation.
 
 ---
 
@@ -161,6 +165,13 @@ https://bridge.frederiqueferette.be
 Lancé automatiquement par `python3 new_issue.py --externe`.
 Nécessite : cloudflared installé + `~/.cloudflared/config.yml` configuré
 + `MOT_DE_PASSE` dans le `.conf`.
+
+**Accès à la doc sans token** : le repo étant public, `BRIDGE_AGENT_DOC.md`
+est accessible directement (sans authentification) — utile pour les
+instructions personnalisées Claude :
+```
+https://raw.githubusercontent.com/AlainDelree/Bridge_Agent/master/BRIDGE_AGENT_DOC.md
+```
 
 ---
 
