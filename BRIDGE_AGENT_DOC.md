@@ -263,4 +263,59 @@ git log --oneline origin/master..HEAD
 
 ---
 
+## 14. Vision multi-agent (évolution future)
+
+> Section prospective — pas encore implémentée. Elle fixe une direction pour
+> guider les futures évolutions du bridge et ne pas perdre l'idée.
+
+**Principe :** un CCL « chef d'orchestre » reçoit une tâche complexe,
+la découpe en sous-tâches, crée une issue GitHub par sous-tâche,
+attend que les CCL « ouvriers » les traitent en parallèle, assemble
+les résultats, valide la cohérence et livre une réponse complète
+avant de se terminer.
+
+**Flux :**
+
+```
+Claude Chat → crée 1 issue « tâche complexe »
+   │
+   ▼
+CCL chef d'orchestre
+   │  1. analyse la tâche et la découpe en N sous-tâches
+   │  2. crée N issues GitHub (une par sous-tâche, label for-linux)
+   │
+   ├─→ CCL ouvrier #1  ─┐
+   ├─→ CCL ouvrier #2   │  traitement en parallèle
+   ├─→ …                │  (chacun ferme son issue + poste son résultat)
+   └─→ CCL ouvrier #N  ─┘
+   │
+   │  3. attend la fermeture des N issues ouvrières
+   │  4. récupère et assemble les N résultats
+   │  5. valide la cohérence de l'ensemble
+   ▼
+CCL chef d'orchestre → poste la réponse complète → ferme l'issue mère
+   │
+   ▼
+notification GSM/bureau
+```
+
+**Points à concevoir avant implémentation :**
+
+- **Découpage** : le chef d'orchestre doit produire des sous-tâches
+  indépendantes (pas de dépendances croisées entre ouvriers), sinon la
+  parallélisation n'apporte rien.
+- **Attente / synchronisation** : mécanisme fiable pour détecter la
+  fermeture des issues ouvrières (polling GitHub ou réutilisation du watcher).
+- **Anti-boucle** : empêcher qu'un ouvrier recrée à son tour des sous-issues
+  (risque de récursion infinie) — ex. un flag « niveau » dans l'en-tête.
+- **Périmètre & concurrence** : plusieurs CCL écrivant en parallèle dans le
+  même dépôt = risque de conflits git. Prévoir un périmètre par ouvrier ou
+  une sérialisation des commits (voir §5 et §8).
+- **Timeout global** : le chef d'orchestre doit avoir un timeout couvrant
+  l'ensemble des ouvriers, plus large que le TIMEOUT d'une issue simple.
+- **Échec partiel** : décider du comportement si un ouvrier échoue
+  (réponse partielle documentée vs échec global).
+
+---
+
 *Dernière mise à jour : juillet 2026 — Bridge_Agent v1, 3 projets actifs.*
