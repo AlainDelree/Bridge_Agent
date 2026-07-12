@@ -605,6 +605,19 @@ function construireHtmlIssue(it, nom) {
           + '⏳ En cours de traitement — annulation impossible</span></div>';
   }
 
+  // Issue en échec définitif (label needs-human) et toujours ouverte :
+  // l'intervention humaine ayant été effectuée, on propose de la clore
+  // directement, sans passer par GitHub (issue #80). Bouton rouge plein à côté
+  // du rappel « intervention humaine requise ».
+  if (!ferme && nomsLabels.includes('needs-human')) {
+    html += '<div class="bloc-annuler">'
+          + '<span class="traitement-encours">'
+          + '⚠️ Échec — intervention humaine requise</span> '
+          + '<button class="danger-plein" onclick="fermerIssue(\'' + nom + '\', '
+          + Number(it.number) + ')">'
+          + 'Fermer définitivement</button></div>';
+  }
+
   html += '<div class="issue-body">' + escapeHtml(it.body || '(pas de description)') + '</div>';
 
   const comms = it.comments || [];
@@ -927,6 +940,35 @@ async function annulerIssue(nom, numero) {
     const json = await rep.json();
     if (!json.succes) {
       alert('Erreur : ' + (json.message || 'échec de l\'annulation.'));
+      return;
+    }
+  } catch(e) {
+    alert('Erreur réseau : ' + e.message);
+    return;
+  }
+  // Recharge la liste (l'issue devient fermée) puis réaffiche la même issue si
+  // sa ligne existe encore et reste visible (projet non filtré).
+  const numStr = String(numero);
+  await chargerListeIssues();
+  const ligne = [...document.querySelectorAll('#liste-issues .ligne-issue')]
+    .find(l => l.dataset.projet === nom && l.dataset.numero === numStr);
+  if (ligne && ligne.style.display !== 'none') {
+    await afficherIssue(nom, numStr);
+  }
+}
+
+// Ferme définitivement une issue en échec (label needs-human) après
+// intervention humaine, puis rafraîchit l'affichage et la combobox (issue #80).
+// L'action est irréversible → double confirmation via confirm().
+async function fermerIssue(nom, numero) {
+  if (!confirm("Fermer définitivement l'issue #" + numero
+               + " ? Cette action est irréversible.")) return;
+  try {
+    const rep = await fetch('/fermer-issue/' + encodeURIComponent(nom)
+                            + '/' + encodeURIComponent(numero), {method: 'POST'});
+    const json = await rep.json();
+    if (!json.succes) {
+      alert('Erreur : ' + (json.message || 'échec de la fermeture.'));
       return;
     }
   } catch(e) {

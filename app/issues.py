@@ -227,3 +227,36 @@ def annuler_issue(nom_projet, numero):
         return jsonify(succes=False, message="gh introuvable dans le PATH.")
     except Exception as e:
         return jsonify(succes=False, message=str(e))
+
+
+def fermer_issue(nom_projet, numero):
+    """Ferme définitivement une issue en échec (label needs-human).
+
+    Après 3 tentatives infructueuses, le watcher pose le label needs-human et
+    stoppe le retraitement : une intervention humaine est requise. Une fois
+    celle-ci effectuée, ce point d'entrée permet de clore l'issue directement
+    depuis l'onglet Résultats, sans passer par l'interface GitHub."""
+    cfg = projet_par_nom(nom_projet)
+    if not cfg:
+        return jsonify(succes=False, message="Projet introuvable."), 404
+    if not str(numero).isdigit():
+        return jsonify(succes=False, message="Numéro d'issue invalide."), 400
+    commentaire = ("Issue fermée définitivement depuis new_issue.py "
+                   "(label needs-human — intervention humaine effectuée).")
+    try:
+        res = subprocess.run(
+            ["gh", "issue", "close", str(numero),
+             "--repo",    cfg.depot,
+             "--comment", commentaire],
+            capture_output=True, text=True, timeout=30
+        )
+        if res.returncode == 0:
+            return jsonify(succes=True, message=f"Issue #{numero} fermée définitivement.")
+        return jsonify(succes=False,
+                       message=res.stderr.strip() or "Erreur inconnue de gh.")
+    except subprocess.TimeoutExpired:
+        return jsonify(succes=False, message="Timeout (gh n'a pas répondu en 30s).")
+    except FileNotFoundError:
+        return jsonify(succes=False, message="gh introuvable dans le PATH.")
+    except Exception as e:
+        return jsonify(succes=False, message=str(e))
