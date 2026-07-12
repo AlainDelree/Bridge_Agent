@@ -2,11 +2,6 @@ let sourceSSE = null;
 
 let intervalWatchers = null;
 
-// Dernier projet ayant reçu une issue dans CETTE session (onglet ouvert). Sert
-// à déclencher un second avertissement dans envoyerIssue() si l'utilisateur
-// change de projet juste avant l'envoi. Réinitialisé à chaque rechargement.
-let sessionDernierEnvoi = null;
-
 // Couleur d'accent STABLE dérivée du nom du projet (hash simple sur les
 // charCodes → teinte HSL). Même nom ⇒ même couleur à chaque session.
 function couleurProjet(nom) {
@@ -1049,35 +1044,6 @@ function afficherModalConfirmation(issues) {
   });
 }
 
-// Modal de confirmation générique (titre + libellés de boutons personnalisés,
-// sans liste). Réutilise le même overlay ; restaure les libellés d'origine à la
-// fermeture. Résout true (bouton de gauche/oui) ou false (annuler).
-function afficherModalGenerique(titre, texteOui, texteNon) {
-  return new Promise(resolve => {
-    const overlay = document.getElementById('modal-confirmation');
-    const liste   = document.getElementById('modal-liste');
-    const btnOui  = document.getElementById('modal-oui');
-    const btnNon  = document.getElementById('modal-non');
-    const ouiAvant = btnOui.textContent;
-    const nonAvant = btnNon.textContent;
-    document.getElementById('modal-titre').textContent = titre;
-    liste.style.display = 'none';
-    btnOui.textContent  = texteOui;
-    btnNon.textContent  = texteNon;
-    function fermer(reponse) {
-      overlay.classList.remove('actif');
-      btnOui.onclick = null; btnNon.onclick = null;
-      btnOui.textContent = ouiAvant;
-      btnNon.textContent = nonAvant;
-      liste.style.display = '';
-      resolve(reponse);
-    }
-    btnOui.onclick = () => fermer(true);
-    btnNon.onclick = () => fermer(false);
-    overlay.classList.add('actif');
-  });
-}
-
 // Détecte une incohérence entre le projet sélectionné et le champ PROJET de
 // l'en-tête bridge. Fiable : on ne fait plus d'analyse textuelle (source de
 // faux positifs) — on lit le champ « | PROJET | … | » que new_issue.py insère
@@ -1149,17 +1115,6 @@ async function envoyerIssue() {
     // La vérification a échoué (réseau, gh…) : on n'empêche pas l'envoi.
   }
 
-  // Second garde-fou : si on a déjà envoyé une issue dans cette session sur un
-  // AUTRE projet, on confirme explicitement la cible avant d'envoyer.
-  if (sessionDernierEnvoi && sessionDernierEnvoi !== data.projet) {
-    const ok = await afficherModalGenerique(
-      'Attention : tu envoies sur ' + data.projet
-        + ' (dernier envoi : ' + sessionDernierEnvoi + '). Confirmer ?',
-      'Oui, envoyer sur ' + data.projet,
-      'Annuler');
-    if (!ok) return;
-  }
-
   // Garde-fou ciblé : alerte seulement si le champ PROJET de l'en-tête diffère
   // du projet sélectionné (issue partie sur le mauvais dépôt).
   try {
@@ -1184,7 +1139,6 @@ async function envoyerIssue() {
     const json = await rep.json();
     if (json.succes) {
       afficherMessage('✓ Issue créée : ' + json.url, 'succes');
-      sessionDernierEnvoi = data.projet;   // mémorise la cible du dernier envoi
       viderFormulaire(false);
     } else {
       afficherMessage('Erreur : ' + json.erreur, 'erreur');
