@@ -39,6 +39,11 @@ from app import create_app, etat  # noqa: E402
 
 DOSSIER_SCRIPT = Path(__file__).resolve().parent
 
+# Instance Flask créée au démarrage (main) via create_app(). Déclarée ici pour
+# permettre les décorateurs @app.route au niveau module — l'objet est affecté
+# avant d'enregistrer les routes.
+app = None
+
 
 # ─── Cycle de vie serveur ↔ onglet navigateur ────────────────────────────────
 # Le navigateur émet un heartbeat (POST /heartbeat) toutes les 5 s. Un thread
@@ -309,11 +314,11 @@ def login():
     return render_template_string(TEMPLATE_LOGIN, erreur=erreur, bloque=bloque)
 
 
-@app.route("/login", methods=["POST"])
 def login_post():
     """Vérifie le mot de passe saisi (sha256) contre MOT_DE_PASSE du .conf.
     Bloque la session après MAX_ECHECS_LOGIN tentatives échouées."""
-    if not MOT_DE_PASSE:
+    mot_de_passe = etat.get("MOT_DE_PASSE")
+    if not mot_de_passe:
         return redirect(url_for("index"))
     if session.get("echecs", 0) >= MAX_ECHECS_LOGIN:
         return render_template_string(
@@ -321,7 +326,7 @@ def login_post():
             erreur="Trop de tentatives échouées. Redémarrez le serveur pour réessayer.")
 
     saisi = request.form.get("mot_de_passe", "")
-    if hashlib.sha256(saisi.encode("utf-8")).hexdigest() == MOT_DE_PASSE:
+    if hashlib.sha256(saisi.encode("utf-8")).hexdigest() == mot_de_passe:
         session["authentifie"] = True
         session.pop("echecs", None)
         return redirect(url_for("index"))
@@ -335,22 +340,17 @@ def login_post():
     return render_template_string(TEMPLATE_LOGIN, erreur=erreur, bloque=bloque)
 
 
-@app.route("/logout")
 def logout():
     """Ferme la session et renvoie vers le formulaire de connexion."""
     session.clear()
     return redirect(url_for("login"))
 
 
-@app.route("/")
-@login_requis
 def index():
     return render_template("index.html", projets=lister_projets(),
-                           auth_active=bool(MOT_DE_PASSE))
+                           auth_active=bool(etat.get("MOT_DE_PASSE")))
 
 
-@app.route("/apercu", methods=["POST"])
-@login_requis
 def apercu():
     data   = request.json or {}
     cfg    = projet_par_nom(data.get("projet", ""))
@@ -371,8 +371,6 @@ def apercu():
     return jsonify(commande=commande)
 
 
-@app.route("/envoyer", methods=["POST"])
-@login_requis
 def envoyer():
     data = request.json or {}
     cfg  = projet_par_nom(data.get("projet", ""))
@@ -414,8 +412,6 @@ def envoyer():
         os.unlink(chemin_body)
 
 
-@app.route("/journal/<nom_projet>")
-@login_requis
 def journal(nom_projet):
     """Server-Sent Events : streame le journal du watcher en temps réel."""
     cfg = projet_par_nom(nom_projet)
@@ -462,8 +458,6 @@ def journal(nom_projet):
     )
 
 
-@app.route("/issues-liste/<nom_projet>")
-@login_requis
 def issues_liste(nom_projet):
     """Retourne les 30 dernières issues (tous états) du projet via gh."""
     cfg = projet_par_nom(nom_projet)
@@ -489,8 +483,6 @@ def issues_liste(nom_projet):
         return jsonify(erreur=str(e)), 500
 
 
-@app.route("/issue/<nom_projet>/<numero>")
-@login_requis
 def issue_detail(nom_projet, numero):
     """Retourne le détail d'une issue (corps + commentaires) via gh."""
     cfg = projet_par_nom(nom_projet)
@@ -516,8 +508,6 @@ def issue_detail(nom_projet, numero):
         return jsonify(erreur=str(e)), 500
 
 
-@app.route("/issues-en-attente/<nom_projet>")
-@login_requis
 def issues_en_attente(nom_projet):
     """Retourne les issues ouvertes portant le label for-linux (en attente de
     traitement par le watcher). La liste peut être vide."""
@@ -544,8 +534,6 @@ def issues_en_attente(nom_projet):
         return jsonify(erreur=str(e)), 500
 
 
-@app.route("/annuler-issue/<nom_projet>/<numero>", methods=["POST"])
-@login_requis
 def annuler_issue(nom_projet, numero):
     """Ferme une issue créée sur GitHub mais pas encore traitée par le watcher."""
     cfg = projet_par_nom(nom_projet)
@@ -574,8 +562,6 @@ def annuler_issue(nom_projet, numero):
         return jsonify(succes=False, message=str(e))
 
 
-@app.route("/config/<nom_projet>")
-@login_requis
 def get_config(nom_projet):
     """Retourne les valeurs actuelles du .conf, relues depuis le disque à
     chaque appel (via charger_config) plutôt que depuis l'objet Config en
@@ -610,8 +596,6 @@ def get_config(nom_projet):
     )
 
 
-@app.route("/config/<nom_projet>", methods=["POST"])
-@login_requis
 def post_config(nom_projet):
     """Enregistre les clés éditables dans le .conf."""
     data = request.json or {}
@@ -619,8 +603,6 @@ def post_config(nom_projet):
     return jsonify(succes=ok, message=msg)
 
 
-@app.route("/watchers")
-@login_requis
 def watchers():
     """Retourne le statut de tous les projets disponibles."""
     resultat = []
@@ -635,8 +617,6 @@ def watchers():
     return jsonify(resultat)
 
 
-@app.route("/lancer-watcher", methods=["POST"])
-@login_requis
 def lancer_watcher():
     """Lance ou relance le watcher du projet.
     relancer=true → redémarre même s'il tourne déjà.
@@ -653,8 +633,6 @@ def lancer_watcher():
         return jsonify(succes=False, erreur=str(e))
 
 
-@app.route("/arreter-watcher", methods=["POST"])
-@login_requis
 def arreter_watcher_route():
     """Arrête le watcher du projet."""
     data = request.json or {}
@@ -665,8 +643,6 @@ def arreter_watcher_route():
     return jsonify(succes=ok, message=msg)
 
 
-@app.route("/statut/<nom_projet>")
-@login_requis
 def statut(nom_projet):
     """Indique si le watcher de ce projet est en cours d'exécution."""
     cfg = projet_par_nom(nom_projet)
@@ -676,26 +652,22 @@ def statut(nom_projet):
     return jsonify(actif=actif, pid=pid)
 
 
-@app.route("/heartbeat", methods=["POST"])
 def heartbeat():
     """Le navigateur signale que l'onglet est toujours ouvert. Met à jour
     l'horodatage surveillé par surveiller_heartbeat()."""
-    global last_heartbeat, heartbeat_recu
-    last_heartbeat = time.time()
-    heartbeat_recu = True
+    etat.set("LAST_HEARTBEAT", time.time())
+    etat.set("HEARTBEAT_RECU", True)
     return jsonify(ok=True)
 
 
-@app.route("/events")
-@login_requis
 def events():
     """SSE dédié au cycle de vie (séparé du journal watcher).
     Envoie un keepalive toutes les 5 s ; dès qu'un signal d'arrêt a été reçu
-    (arret_demande), émet un event « shutdown » puis ferme la connexion."""
+    (ARRET_DEMANDE), émet un event « shutdown » puis ferme la connexion."""
     def generer():
         dernier_ping = time.time()
         while True:
-            if arret_demande:
+            if etat.get("ARRET_DEMANDE"):
                 yield "event: shutdown\ndata: stop\n\n"
                 return
             time.sleep(0.5)   # sonde fréquente du flag, keepalive espacé
@@ -710,16 +682,13 @@ def events():
     )
 
 
-@app.route("/quitter", methods=["POST"])
-@login_requis
 def quitter():
     """Arrêt volontaire déclenché par le bouton « Quitter » de l'onglet.
-    Positionne arret_demande (l'overlay /events sert de filet de sécurité si
+    Positionne ARRET_DEMANDE (l'overlay /events sert de filet de sécurité si
     window.close() est bloqué), répond immédiatement, puis coupe le processus
     après 2 s — le délai laisse le navigateur recevoir la réponse et exécuter
     window.close() avant que le serveur ne disparaisse."""
-    global arret_demande
-    arret_demande = True
+    etat.set("ARRET_DEMANDE", True)
 
     def arret_differe():
         time.sleep(2)
@@ -741,13 +710,12 @@ def quitter():
 URL_TUNNEL = "https://bridge.frederiqueferette.be"
 
 
-def demarrer_tunnel():
+def demarrer_tunnel(app_instance):
     """Vérifie l'installation de cloudflared et sa config, puis lance le tunnel
     bridge-agent en arrière-plan (stdout/stderr silencieux sauf erreur). Stocke
-    le processus dans la variable globale proc_tunnel. Termine le programme
-    (exit 1) avec un message clair si un prérequis manque ou si le tunnel meurt
+    le processus dans app.config['PROC_TUNNEL']. Termine le programme (exit 1)
+    avec un message clair si un prérequis manque ou si le tunnel meurt
     immédiatement au démarrage."""
-    global proc_tunnel
 
     # 1) cloudflared doit être installé.
     if shutil.which("cloudflared") is None:
@@ -781,14 +749,20 @@ def demarrer_tunnel():
             print(err.strip())
         sys.exit(1)
 
+    app_instance.config["PROC_TUNNEL"] = proc_tunnel
     print(f"Tunnel cloudflared démarré (pid {proc_tunnel.pid})")
     print(f"URL : {URL_TUNNEL}")
 
 
 def arreter_tunnel():
     """Arrête proprement le tunnel cloudflared s'il a été démarré et tourne
-    encore. Sans effet si aucun tunnel n'est actif (mode local ou déjà arrêté)."""
-    global proc_tunnel
+    encore. Sans effet si aucun tunnel n'est actif (mode local ou déjà arrêté).
+    Fonctionne hors contexte de requête (gestionnaire de signal) en accédant
+    directement à app.config via l'instance globale."""
+    global app
+    if app is None:
+        return
+    proc_tunnel = app.config.get("PROC_TUNNEL")
     if proc_tunnel is not None and proc_tunnel.poll() is None:
         try:
             proc_tunnel.terminate()
@@ -798,19 +772,49 @@ def arreter_tunnel():
         print("Tunnel cloudflared arrêté.")
 
 
-def surveiller_heartbeat():
+def surveiller_heartbeat(app_instance):
     """Thread daemon : coupe le serveur (SIGTERM sur son propre PID) si l'onglet
     navigateur a cessé d'émettre des heartbeats depuis plus de DELAI_HEARTBEAT_MAX
     secondes. Tant qu'aucun heartbeat n'a jamais été reçu (serveur qui démarre,
     ou lancé en --no-browser), aucune surveillance : on n'auto-coupe jamais un
-    serveur qui n'a pas encore eu de client."""
+    serveur qui n'a pas encore eu de client. L'état est lu via app.config
+    (l'instance est passée au thread car on est hors contexte de requête)."""
     while True:
         time.sleep(INTERVALLE_HEARTBEAT)
+        heartbeat_recu = app_instance.config.get("HEARTBEAT_RECU", False)
+        last_heartbeat = app_instance.config.get("LAST_HEARTBEAT", 0.0)
         if heartbeat_recu and (time.time() - last_heartbeat) > DELAI_HEARTBEAT_MAX:
             os.kill(os.getpid(), signal.SIGTERM)
             return
 
+def enregistrer_routes(app_instance):
+    """Enregistre toutes les routes Flask sur l'instance d'application.
+    Les décorateurs @login_requis sont appliqués aux routes protégées."""
+    app_instance.add_url_rule("/login", "login", login, methods=["GET"])
+    app_instance.add_url_rule("/login", "login_post", login_post, methods=["POST"])
+    app_instance.add_url_rule("/logout", "logout", logout)
+    app_instance.add_url_rule("/", "index", login_requis(index))
+    app_instance.add_url_rule("/apercu", "apercu", login_requis(apercu), methods=["POST"])
+    app_instance.add_url_rule("/envoyer", "envoyer", login_requis(envoyer), methods=["POST"])
+    app_instance.add_url_rule("/journal/<nom_projet>", "journal", login_requis(journal))
+    app_instance.add_url_rule("/issues-liste/<nom_projet>", "issues_liste", login_requis(issues_liste))
+    app_instance.add_url_rule("/issue/<nom_projet>/<numero>", "issue_detail", login_requis(issue_detail))
+    app_instance.add_url_rule("/issues-en-attente/<nom_projet>", "issues_en_attente", login_requis(issues_en_attente))
+    app_instance.add_url_rule("/annuler-issue/<nom_projet>/<numero>", "annuler_issue", login_requis(annuler_issue), methods=["POST"])
+    app_instance.add_url_rule("/config/<nom_projet>", "get_config", login_requis(get_config), methods=["GET"])
+    app_instance.add_url_rule("/config/<nom_projet>", "post_config", login_requis(post_config), methods=["POST"])
+    app_instance.add_url_rule("/watchers", "watchers", login_requis(watchers))
+    app_instance.add_url_rule("/lancer-watcher", "lancer_watcher", login_requis(lancer_watcher), methods=["POST"])
+    app_instance.add_url_rule("/arreter-watcher", "arreter_watcher_route", login_requis(arreter_watcher_route), methods=["POST"])
+    app_instance.add_url_rule("/statut/<nom_projet>", "statut", login_requis(statut))
+    app_instance.add_url_rule("/heartbeat", "heartbeat", heartbeat, methods=["POST"])
+    app_instance.add_url_rule("/events", "events", login_requis(events))
+    app_instance.add_url_rule("/quitter", "quitter", login_requis(quitter), methods=["POST"])
+
+
 def main():
+    global app
+
     parser = argparse.ArgumentParser(
         description="Interface web de création d'issues — Bridge Agent"
     )
@@ -845,6 +849,11 @@ def main():
         print(f"MOT_DE_PASSE = {hache}")
         sys.exit(0)
 
+    # Création de l'application Flask et chargement de l'état initial.
+    app = create_app()
+    app.config["MOT_DE_PASSE"] = etat.charger_mot_de_passe()
+    enregistrer_routes(app)
+
     # Deux modes de fonctionnement :
     #   • local (défaut)      : host 127.0.0.1, HTTP simple, sans SSL. Destiné à
     #     un usage sur place (devant le ThinkPad) — pas d'exposition réseau. Le
@@ -853,14 +862,13 @@ def main():
     #   • externe (--externe) : host 0.0.0.0, HTTPS + mot de passe OBLIGATOIRES.
     #     Destiné à l'accès distant (téléphone via tunnel).
     if args.externe:
-        global MODE_EXTERNE
-        MODE_EXTERNE = True
+        app.config["MODE_EXTERNE"] = True
         host   = "0.0.0.0"
         schema = "https"
 
         # En mode externe, refuser de démarrer si aucun mot de passe n'est
         # configuré : l'interface serait exposée au réseau sans authentification.
-        if not MOT_DE_PASSE:
+        if not app.config["MOT_DE_PASSE"]:
             print("Erreur : MOT_DE_PASSE non configuré.")
             print("Lancez d'abord : python3 new_issue.py --set-password")
             sys.exit(1)
@@ -882,11 +890,10 @@ def main():
         ssl_context = None
 
     # Ctrl+C (SIGINT) ou SIGTERM : on prévient d'abord l'onglet via /events en
-    # positionnant arret_demande, puis on laisse ~1,5 s à la connexion SSE pour
+    # positionnant ARRET_DEMANDE, puis on laisse ~1,5 s à la connexion SSE pour
     # livrer l'event « shutdown » avant de terminer le processus.
     def gestionnaire_arret(signum, frame):
-        global arret_demande
-        arret_demande = True
+        app.config["ARRET_DEMANDE"] = True
         arreter_tunnel()
         Timer(1.5, lambda: os._exit(0)).start()
 
@@ -898,11 +905,11 @@ def main():
     # quitte proprement (exit 1) en cas de problème. L'arrêt est géré par le
     # gestionnaire de signal ci-dessus et par la route /quitter.
     if args.externe:
-        demarrer_tunnel()
+        demarrer_tunnel(app)
 
     # Surveillance des heartbeats du navigateur (daemon → ne bloque jamais
     # l'arrêt du processus si le gestionnaire de signal est lent).
-    Thread(target=surveiller_heartbeat, daemon=True).start()
+    Thread(target=surveiller_heartbeat, args=(app,), daemon=True).start()
 
     if not args.no_browser:
         Timer(1.2, lambda: webbrowser.open(f"{schema}://localhost:{args.port}")).start()
