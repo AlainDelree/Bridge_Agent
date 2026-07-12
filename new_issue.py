@@ -44,6 +44,11 @@ from app.auth import login_requis, login, login_post, logout  # noqa: E402,F401
 # Gestion du tunnel cloudflared (extraite à l'étape 5 du refactoring).
 from app.tunnel import URL_TUNNEL, demarrer_tunnel, arreter_tunnel  # noqa: E402,F401
 
+# Gestion des watchers : cycle de vie + routes (extraite à l'étape 6).
+from app.watchers import (chemin_pid, watcher_actif,  # noqa: E402,F401
+                          demarrer_watcher, arreter_watcher, watchers,
+                          lancer_watcher, arreter_watcher_route, statut)
+
 DOSSIER_SCRIPT = Path(__file__).resolve().parent
 
 # Instance Flask créée au démarrage (main) via create_app(). Déclarée ici pour
@@ -76,68 +81,8 @@ DELAI_HEARTBEAT_MAX  = 15       # au-delà, l'onglet est considéré fermé
 
 
 # ─── Gestion du processus watcher ────────────────────────────────────────────
-
-def chemin_pid(cfg: Config) -> Path:
-    return cfg.fichier_log.parent / f"watcher-{cfg.nom}.pid"
-
-
-def watcher_actif(cfg: Config) -> tuple[bool, int | None]:
-    """Retourne (actif, pid). Consulte le fichier PID et vérifie que le
-    processus existe encore (os.kill(pid, 0) ne tue pas, il sonde)."""
-    pid_file = chemin_pid(cfg)
-    if not pid_file.exists():
-        return False, None
-    try:
-        pid = int(pid_file.read_text().strip())
-        os.kill(pid, 0)   # lève OSError si le processus est mort
-        return True, pid
-    except (OSError, ProcessLookupError, ValueError):
-        return False, None
-
-
-def demarrer_watcher(cfg: Config, forcer: bool = True) -> tuple[bool, int]:
-    """Lance (ou relance) le watcher du projet.
-    Si forcer=False et qu'un watcher tourne déjà, retourne (False, pid_existant).
-    Si forcer=True, arrête l'existant avant de redémarrer.
-    Retourne (redemarré, pid)."""
-    actif, pid_ancien = watcher_actif(cfg)
-    if actif and not forcer:
-        return False, pid_ancien
-
-    if actif and pid_ancien:
-        try:
-            os.kill(pid_ancien, signal.SIGTERM)
-            time.sleep(0.8)
-        except OSError:
-            pass
-
-    pid_file = chemin_pid(cfg)
-    pid_file.parent.mkdir(parents=True, exist_ok=True)
-    conf_file      = DOSSIER_SCRIPT / "configs" / f"{cfg.nom}.conf"
-    watcher_script = DOSSIER_SCRIPT / "watcher.py"
-
-    proc = subprocess.Popen(
-        [sys.executable, str(watcher_script), "--config", str(conf_file)],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        start_new_session=True,
-    )
-    pid_file.write_text(str(proc.pid))
-    return True, proc.pid
-
-
-def arreter_watcher(cfg: Config) -> tuple[bool, str]:
-    """Arrête le watcher du projet via SIGTERM.
-    Retourne (succès, message)."""
-    actif, pid = watcher_actif(cfg)
-    if not actif:
-        return False, "watcher déjà inactif"
-    try:
-        os.kill(pid, signal.SIGTERM)
-        chemin_pid(cfg).unlink(missing_ok=True)
-        return True, f"watcher arrêté (pid {pid})"
-    except OSError as e:
-        return False, str(e)
+# chemin_pid(), watcher_actif(), demarrer_watcher() et arreter_watcher() sont
+# désormais dans app/watchers.py (importés en tête de fichier, étape 6).
 
 
 # ─── Construction du body et des labels ───────────────────────────────────────
@@ -442,53 +387,8 @@ def post_config(nom_projet):
     return jsonify(succes=ok, message=msg)
 
 
-def watchers():
-    """Retourne le statut de tous les projets disponibles."""
-    resultat = []
-    for cfg in lister_projets():
-        actif, pid = watcher_actif(cfg)
-        resultat.append({
-            "nom":   cfg.nom,
-            "depot": cfg.depot,
-            "actif": actif,
-            "pid":   pid,
-        })
-    return jsonify(resultat)
-
-
-def lancer_watcher():
-    """Lance ou relance le watcher du projet.
-    relancer=true → redémarre même s'il tourne déjà.
-    relancer=false → démarre seulement s'il est inactif."""
-    data    = request.json or {}
-    cfg     = projet_par_nom(data.get("projet", ""))
-    if not cfg:
-        return jsonify(succes=False, erreur="Projet introuvable.")
-    forcer  = data.get("relancer", True)
-    try:
-        redemarré, pid = demarrer_watcher(cfg, forcer=forcer)
-        return jsonify(succes=True, pid=pid, redemarré=redemarré)
-    except Exception as e:
-        return jsonify(succes=False, erreur=str(e))
-
-
-def arreter_watcher_route():
-    """Arrête le watcher du projet."""
-    data = request.json or {}
-    cfg  = projet_par_nom(data.get("projet", ""))
-    if not cfg:
-        return jsonify(succes=False, erreur="Projet introuvable.")
-    ok, msg = arreter_watcher(cfg)
-    return jsonify(succes=ok, message=msg)
-
-
-def statut(nom_projet):
-    """Indique si le watcher de ce projet est en cours d'exécution."""
-    cfg = projet_par_nom(nom_projet)
-    if not cfg:
-        return jsonify(actif=False)
-    actif, pid = watcher_actif(cfg)
-    return jsonify(actif=actif, pid=pid)
+# watchers(), lancer_watcher(), arreter_watcher_route() et statut() sont
+# désormais dans app/watchers.py (importés en tête de fichier, étape 6).
 
 
 def heartbeat():
