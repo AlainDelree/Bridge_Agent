@@ -16,13 +16,11 @@ import hashlib
 import os
 import signal
 import sys
-import time
 import webbrowser
 from pathlib import Path
 from threading import Thread, Timer
 
-from flask import (Response, current_app, jsonify, render_template,
-                   request, stream_with_context)
+from flask import jsonify, request
 
 # Partage du lecteur de config avec watcher.py (même dossier).
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -51,6 +49,16 @@ from app.issues import (construire_body, construire_labels,  # noqa: E402,F401
                         apercu, envoyer, issues_liste, issue_detail,
                         issues_en_attente, annuler_issue)
 
+# Journal watcher SSE : route journal() (extraite à l'étape 8).
+from app.journal import journal  # noqa: E402,F401
+
+# Cycle de vie serveur ↔ onglet : routes + surveillance (extraite à l'étape 8).
+from app.cycle_vie import (heartbeat, events, quitter,  # noqa: E402,F401
+                           surveiller_heartbeat)
+
+# Vues générales : route index() (extraite à l'étape 8).
+from app.vues import index  # noqa: E402,F401
+
 DOSSIER_SCRIPT = Path(__file__).resolve().parent
 
 # Instance Flask créée au démarrage (main) via create_app(). Déclarée ici pour
@@ -60,14 +68,9 @@ app = None
 
 
 # ─── Cycle de vie serveur ↔ onglet navigateur ────────────────────────────────
-# Le navigateur émet un heartbeat (POST /heartbeat) toutes les 5 s. Un thread
-# daemon coupe le serveur si plus rien n'arrive pendant DELAI_HEARTBEAT_MAX s
-# (onglet fermé). Dans l'autre sens, un Ctrl+C (SIGINT/SIGTERM) positionne
-# l'état ARRET_DEMANDE : la route SSE /events le détecte et prévient l'onglet.
-# L'état partagé (heartbeat, arrêt demandé, tunnel, mode externe, mot de passe)
-# vit désormais dans app.config, lu à la requête via app/etat.py.
-INTERVALLE_HEARTBEAT = 5        # période de sonde côté serveur (s)
-DELAI_HEARTBEAT_MAX  = 15       # au-delà, l'onglet est considéré fermé
+# heartbeat(), events(), quitter(), surveiller_heartbeat() ainsi que les
+# constantes INTERVALLE_HEARTBEAT et DELAI_HEARTBEAT_MAX sont désormais dans
+# app/cycle_vie.py (importés en tête de fichier, étape 8).
 
 
 # CLES_EDITABLES, lister_projets(), projet_par_nom() et sauvegarder_conf() sont
@@ -96,56 +99,8 @@ DELAI_HEARTBEAT_MAX  = 15       # au-delà, l'onglet est considéré fermé
 # login(), login_post(), logout() et le gabarit TEMPLATE_LOGIN sont désormais
 # dans app/auth.py (importés en tête de fichier, étape 4). apercu() et envoyer()
 # sont désormais dans app/issues.py (importés en tête de fichier, étape 7).
-
-def index():
-    return render_template("index.html", projets=lister_projets(),
-                           auth_active=bool(etat.get("MOT_DE_PASSE")))
-
-
-def journal(nom_projet):
-    """Server-Sent Events : streame le journal du watcher en temps réel."""
-    cfg = projet_par_nom(nom_projet)
-    if not cfg:
-        return Response("Projet introuvable.", status=404)
-    fichier_log = cfg.fichier_log
-
-    def generer():
-        # ── 1. Les 80 dernières lignes existantes ──────────────────────────
-        if fichier_log.exists():
-            with open(fichier_log, "r", encoding="utf-8", errors="replace") as f:
-                lignes = f.readlines()
-            for l in lignes[-80:]:
-                yield f"data: {l.rstrip()}\n\n"
-        else:
-            yield "data: (journal vide — le watcher n'a pas encore démarré)\n\n"
-
-        # ── 2. Nouvelles lignes au fil de l'eau ────────────────────────────
-        while True:
-            try:
-                taille = fichier_log.stat().st_size if fichier_log.exists() else 0
-                with open(fichier_log, "r", encoding="utf-8", errors="replace") as f:
-                    f.seek(taille)
-                    while True:
-                        ligne = f.readline()
-                        if ligne:
-                            taille += len(ligne.encode("utf-8"))
-                            yield f"data: {ligne.rstrip()}\n\n"
-                        else:
-                            time.sleep(0.5)
-                            yield ": ping\n\n"  # keepalive (ignoré par onmessage)
-                            # Vérifier si le fichier a été rotaté (taille diminuée)
-                            nouvelle_taille = fichier_log.stat().st_size if fichier_log.exists() else 0
-                            if nouvelle_taille < taille:
-                                break  # rotation détectée → réouvrir
-            except FileNotFoundError:
-                time.sleep(2)
-                yield ": ping\n\n"
-
-    return Response(
-        generer(),
-        mimetype="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-    )
+# index() est désormais dans app/vues.py et journal() dans app/journal.py
+# (importés en tête de fichier, étape 8).
 
 
 # issues_liste(), issue_detail(), issues_en_attente() et annuler_issue() sont
@@ -195,77 +150,12 @@ def post_config(nom_projet):
 
 # watchers(), lancer_watcher(), arreter_watcher_route() et statut() sont
 # désormais dans app/watchers.py (importés en tête de fichier, étape 6).
-
-
-def heartbeat():
-    """Le navigateur signale que l'onglet est toujours ouvert. Met à jour
-    l'horodatage surveillé par surveiller_heartbeat()."""
-    etat.set("LAST_HEARTBEAT", time.time())
-    etat.set("HEARTBEAT_RECU", True)
-    return jsonify(ok=True)
-
-
-def events():
-    """SSE dédié au cycle de vie (séparé du journal watcher).
-    Envoie un keepalive toutes les 5 s ; dès qu'un signal d'arrêt a été reçu
-    (ARRET_DEMANDE), émet un event « shutdown » puis ferme la connexion.
-    app.config est capturé ICI (dans le contexte de requête) avant d'entrer
-    dans le générateur — current_app n'est plus disponible une fois le
-    générateur démarré hors contexte de requête."""
-    config = current_app.config   # capturé dans le contexte de requête
-
-    def generer():
-        dernier_ping = time.time()
-        while True:
-            if config.get("ARRET_DEMANDE"):   # lecture directe, pas via etat.get()
-                yield "event: shutdown\ndata: stop\n\n"
-                return
-            time.sleep(0.5)   # sonde fréquente du flag, keepalive espacé
-            if time.time() - dernier_ping >= 5:
-                yield ": ping\n\n"
-                dernier_ping = time.time()
-
-    return Response(
-        generer(),
-        mimetype="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-    )
-
-
-def quitter():
-    """Arrêt volontaire déclenché par le bouton « Quitter » de l'onglet.
-    Positionne ARRET_DEMANDE (l'overlay /events sert de filet de sécurité si
-    window.close() est bloqué), répond immédiatement, puis coupe le processus
-    après 2 s — le délai laisse le navigateur recevoir la réponse et exécuter
-    window.close() avant que le serveur ne disparaisse."""
-    etat.set("ARRET_DEMANDE", True)
-
-    def arret_differe():
-        time.sleep(2)
-        arreter_tunnel()
-        os._exit(0)
-
-    Thread(target=arret_differe, daemon=True).start()
-    return jsonify(ok=True)
+# heartbeat(), events(), quitter() et surveiller_heartbeat() sont désormais
+# dans app/cycle_vie.py (importés en tête de fichier, étape 8).
 
 
 # ─── Point d'entrée ───────────────────────────────────────────────────────────
 
-
-def surveiller_heartbeat(app_instance):
-    """Thread daemon : coupe le serveur (SIGTERM sur son propre PID) si l'onglet
-    navigateur a cessé d'émettre des heartbeats depuis plus de DELAI_HEARTBEAT_MAX
-    secondes. Tant qu'aucun heartbeat n'a jamais été reçu (serveur qui démarre,
-    ou lancé en --no-browser), aucune surveillance : on n'auto-coupe jamais un
-    serveur qui n'a pas encore eu de client. L'état est lu via app.config
-    (l'instance est passée au thread car on est hors contexte de requête)."""
-    while True:
-        time.sleep(INTERVALLE_HEARTBEAT)
-        heartbeat_recu = app_instance.config.get("HEARTBEAT_RECU", False)
-        last_heartbeat = app_instance.config.get("LAST_HEARTBEAT", 0.0)
-        if heartbeat_recu and (time.time() - last_heartbeat) > DELAI_HEARTBEAT_MAX:
-            os.kill(os.getpid(), signal.SIGTERM)
-            return
 
 def enregistrer_routes(app_instance):
     """Enregistre toutes les routes Flask sur l'instance d'application.
