@@ -143,6 +143,12 @@ button.danger:hover{background:#f8d7da}
   color:#2c6b41;cursor:pointer}
 .btn-copier:hover{background:#dcefe2}
 .btn-copier:disabled{cursor:default;border-color:#9ccbaa;color:#3a7a4f}
+/* Réponse CCL : « Copier résumé » et « Copier tout » côte à côte dans un
+   conteneur flex ancré en haut à droite, au lieu de deux boutons absolute
+   superposés au même top/right (issue #81). Les boutons redeviennent statiques
+   à l'intérieur du conteneur pour se laisser aligner par le flex. */
+.copier-actions{position:absolute;top:8px;right:8px;display:flex;gap:8px}
+.copier-actions .btn-copier{position:static}
 .commentaire-corps{font-family:monospace;font-size:12px;white-space:pre-wrap;
   word-break:break-word;line-height:1.6;color:#1a1a18}
 .commentaire-details{margin-top:10px}

@@ -641,8 +641,12 @@ function construireHtmlIssue(it, nom) {
               + '<div class="commentaire-resume">'
               // « Copier résumé » : le texte avant <details> uniquement (issue #59).
               // « Copier tout » : résumé + détails en markdown brut (issue #77).
+              // Les deux boutons sont côte à côte dans un conteneur flex ancré en
+              // haut à droite, au lieu de deux absolute superposés (issue #81).
+              + '<div class="copier-actions">'
               + '<button class="btn-copier" onclick="copierReponse(this)">Copier résumé</button>'
               + '<button class="btn-copier" onclick="copierTout(this)">Copier tout</button>'
+              + '</div>'
               // Le bloc <details> brut (markdown non rendu) est conservé caché ici
               // pour que « Copier tout » puisse reconstruire le texte exact à coller
               // dans Claude Chat, indépendamment du rendu HTML de l'accordéon.
