@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<title>Bridge Agent</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+<div class="fenetre">
+
+  <div class="entete">
+    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+      <circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/>
+      <path d="M6 9v1a2 2 0 002 2h4a2 2 0 012 2v1"/>
+    </svg>
+    <h1>Bridge Agent</h1>
+    <span class="statut">{{ projets|length }} projet(s) disponible(s)</span>
+    {% if auth_active %}
+    <button class="danger" onclick="location.href='/logout'"
+            style="font-size:12px;padding:5px 12px">Déconnexion</button>
+    {% endif %}
+    <button id="btn-quitter" class="danger" onclick="quitter()"
+            style="font-size:12px;padding:5px 12px">Quitter</button>
+  </div>
+
+  <!-- ─── Bandeau global : sélecteur de projet (pilote tous les onglets sauf Watchers) ─ -->
+  <div class="bandeau-projet">
+
+    <!-- Ligne 1 : combobox Projet + bouton (relancer) à sa droite, statut à droite -->
+    <div class="bandeau-ligne">
+      <label for="projet">Projet :</label>
+      <select id="projet" onchange="onProjetChange()">
+        {% for p in projets %}
+        <option value="{{ p.nom }}">{{ p.nom }} — {{ p.depot }}</option>
+        {% endfor %}
+      </select>
+      <button id="btn-watcher" onclick="lancerWatcher()">Lancer le watcher</button>
+
+      <div id="bandeau-statut" style="display:flex;align-items:center;gap:10px;
+           margin-left:auto;padding:6px 12px;background:#f8f8f5;
+           border:1px solid #e0dfda;border-radius:6px;font-size:13px">
+        <span id="dot-statut" style="width:8px;height:8px;border-radius:50%;
+              background:#ccc;flex-shrink:0"></span>
+        <span id="texte-statut" style="color:#888">Vérification…</span>
+      </div>
+    </div>
+
+    <!-- Ligne 2 : « Projet actif : … » en grand, avec la couleur accent du projet -->
+    <div id="projet-actif-label" class="projet-actif-label"></div>
+
+    <!-- Ligne 3 : nom du dépôt et du répertoire, sous la combobox et le statut -->
+    <div id="info-projet" style="font-size:12px;color:#888;padding:0 2px">
+      <span id="info-depot"></span>
+      <span id="info-rep-travail"></span>
+      <span id="info-perimetre"></span>
+    </div>
+  </div>
+
+  <div class="onglets">
+    <div class="onglet actif" onclick="basculerOnglet('creation')">Nouvelle issue</div>
+    <div class="onglet" onclick="basculerOnglet('resultats')">Résultats</div>
+    <div class="onglet" onclick="basculerOnglet('journal')">Journal watcher</div>
+    <div class="onglet" onclick="basculerOnglet('config')">Configuration</div>
+    <div class="onglet" onclick="basculerOnglet('watchers')">Watchers</div>
+  </div>
+
+  <!-- ─── Onglet 1 : création d'issue ──────────────────────────────────── -->
+  <div id="panneau-creation" class="panneau actif">
+
+    <div class="rangee">
+      <div class="champ" style="max-width:150px">
+        <label>Priorité</label>
+        <select id="priorite">
+          <option value="normale">normale</option>
+          <option value="haute">haute</option>
+          <option value="critique">critique</option>
+        </select>
+      </div>
+      <div class="champ" style="max-width:110px">
+        <label>Timeout (s)</label>
+        <input type="number" id="timeout" value="300" min="30" step="30">
+      </div>
+    </div>
+
+    <div class="champ" style="margin-bottom:14px">
+      <label>Titre</label>
+      <input type="text" id="titre" placeholder="Résumé court et actionnable">
+    </div>
+
+    <div class="titre-section">Mode</div>
+    <div class="radio-groupe">
+      <label><input type="radio" name="mode" value="lecture" checked
+                    onchange="mettreAJourBoutonEnvoi()"> Lecture seule</label>
+      <label><input type="radio" name="mode" value="ecriture"
+                    onchange="mettreAJourBoutonEnvoi()">
+        Écriture <span class="badge-alerte">⚠ mode_write</span>
+      </label>
+    </div>
+
+    <div class="titre-section">Notifications</div>
+    <div class="case-groupe">
+      <label><input type="checkbox" name="notifs" value="notif_pc"> Bureau (notif_pc)</label>
+      <label><input type="checkbox" name="notifs" value="notif_gsm"> GSM (notif_gsm)</label>
+      <label><input type="checkbox" name="notifs" value="notif_tous"> Tous (notif_tous)</label>
+    </div>
+
+    <div class="barre-envoi">
+      <select id="modele-ponctuel" title="Modèle CCL pour cette issue uniquement"
+              style="font-size:13px;padding:6px 10px;border:1px solid #ddd;
+                     border-radius:6px;color:#555;background:#fff">
+        <option value="">(modèle par défaut)</option>
+        <option value="claude-opus-4-5">claude-opus-4-5</option>
+        <option value="claude-sonnet-4-5">claude-sonnet-4-5</option>
+        <option value="claude-haiku-4-5">claude-haiku-4-5</option>
+      </select>
+      <div style="flex:1"></div>
+      <button class="danger" onclick="viderFormulaire()">Vider</button>
+      <button onclick="afficherApercu()">Aperçu de la commande</button>
+      <button class="primaire" id="btn-envoyer" onclick="envoyerIssue()">Envoyer l'issue</button>
+    </div>
+
+    <div class="titre-section">Corps de la tâche</div>
+    <textarea id="corps" placeholder="## Contexte&#10;…&#10;&#10;Ou coller directement avec #Titre: mon titre en première ligne."></textarea>
+
+    <div id="zone-apercu" class="apercu"></div>
+    <div id="message" class="message"></div>
+  </div>
+
+  <!-- ─── Onglet Résultats : visualisation des issues ──────────────────── -->
+  <div id="panneau-resultats" class="panneau">
+
+    <!-- Boutons toggle : un par projet + « Tous ». Générés dynamiquement. -->
+    <div id="filtres-projets" class="filtres-projets"></div>
+
+    <!-- Liste HTML cliquable des issues récentes (tous projets). Remplace la
+         combobox : chaque ligne est coloriée à la couleur de son projet, ce que
+         Firefox refuse de faire sur les <option>. Navigation par clic direct. -->
+    <div id="liste-issues" class="liste-issues"></div>
+
+    <!-- Barre : indicateur discret affiché pendant le fetch d'arrière-plan
+         quand la liste est déjà rendue depuis le cache localStorage (issue #52).
+         Le bouton rafraîchir (issue #56) a été déplacé dans la ligne de filtres,
+         juste après « Tous » (issue #57). -->
+    <div class="barre-maj">
+      <div id="maj-indicateur" class="maj-indicateur" style="display:none">Mise à jour…</div>
+    </div>
+
+    <div class="legende-resultats">
+      <span>✅ Traitée avec succès (label done)</span>
+      <span>✏️ Lancée en mode écriture (label mode_write)</span>
+      <span>⚠️ Échec — intervention humaine requise (label needs-human)</span>
+      <span>○ Aucun de ces labels</span>
+    </div>
+
+    <div id="zone-issue" class="zone-issue">
+      <div class="issue-vide">Aucune issue à afficher</div>
+    </div>
+  </div>
+
+  <!-- ─── Onglet 2 : gestion des watchers ──────────────────────────────── -->
+  <div id="panneau-watchers" class="panneau">
+    <table style="width:100%;border-collapse:collapse" id="tableau-watchers">
+      <thead>
+        <tr style="border-bottom:1px solid #eee">
+          <th style="width:36px;padding:8px 0;text-align:center">
+            <input type="checkbox" id="cb-tous" onchange="selectionnerTous(this)">
+          </th>
+          <th style="width:20px"></th>
+          <th style="text-align:left;font-size:12px;color:#666;font-weight:500;padding:8px 12px">Projet</th>
+          <th style="text-align:left;font-size:12px;color:#666;font-weight:500;padding:8px 12px">Dépôt</th>
+          <th style="text-align:left;font-size:12px;color:#666;font-weight:500;padding:8px 0;width:120px">PID</th>
+        </tr>
+      </thead>
+      <tbody id="corps-watchers"></tbody>
+    </table>
+    <div id="msg-watchers" class="message"></div>
+    <div style="display:flex;align-items:center;gap:10px;margin-top:16px;
+         padding-top:14px;border-top:1px solid #eee">
+      <span style="font-size:12px;color:#aaa" id="compte-selection">0 sélectionné</span>
+      <div style="margin-left:auto;display:flex;gap:10px">
+        <button onclick="actionWatchers('lancer')">Lancer</button>
+        <button onclick="actionWatchers('relancer')">Relancer</button>
+        <button class="danger" onclick="actionWatchers('arreter')">Éteindre</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ─── Onglet 3 : configuration ────────────────────────────────────── -->
+  <div id="panneau-config" class="panneau">
+
+    <div class="titre-section">Identité — modification manuelle dans le .conf uniquement</div>
+    <div id="config-readonly" style="background:#f8f8f5;border:1px solid #e0dfda;
+         border-radius:6px;padding:10px 14px;font-size:12px;font-family:monospace;
+         color:#666;line-height:2;margin-bottom:14px"></div>
+
+    <div class="titre-section">Paramètres éditables</div>
+
+    <div class="rangee">
+      <div class="champ">
+        <label>Topic ntfy</label>
+        <input type="text" id="conf-TOPIC_NTFY">
+      </div>
+      <div class="champ" style="max-width:140px">
+        <label>Label</label>
+        <input type="text" id="conf-LABEL">
+      </div>
+    </div>
+
+    <div class="rangee">
+      <div class="champ" style="max-width:140px">
+        <label>Intervalle (s)</label>
+        <input type="number" id="conf-INTERVALLE" min="5" step="5">
+      </div>
+      <div class="champ" style="max-width:140px">
+        <label>Max essais</label>
+        <input type="number" id="conf-MAX_ESSAIS" min="1" step="1">
+      </div>
+      <div class="champ" style="max-width:160px">
+        <label>Timeout Claude (s)</label>
+        <input type="number" id="conf-TIMEOUT_CLAUDE" min="30" step="30">
+      </div>
+    </div>
+
+    <div class="champ" style="margin-bottom:14px">
+      <label>Script bip</label>
+      <input type="text" id="conf-SCRIPT_BIP">
+    </div>
+
+    <div class="champ" style="margin-bottom:14px">
+      <label>Fichier de contexte projet (relatif au rep. de travail)</label>
+      <input type="text" id="conf-FICHIER_CONTEXTE"
+             placeholder="ex: CONTEXTE.md ou BRIDGE_AGENT_DOC.md">
+    </div>
+
+    <div class="champ" style="margin-bottom:14px">
+      <label>Modèle Claude Code (vide = défaut)</label>
+      <input type="text" id="conf-MODELE_CCL" placeholder="ex: claude-opus-4-5">
+    </div>
+
+    <div class="rangee">
+      <div class="champ" style="max-width:180px">
+        <label>Taille max journal (Mo)</label>
+        <input type="number" id="conf-LOG_TAILLE_MAX_MO" min="1" step="1">
+      </div>
+      <div class="champ" style="max-width:140px">
+        <label>Archives journal</label>
+        <input type="number" id="conf-LOG_ARCHIVES" min="1" step="1">
+      </div>
+    </div>
+
+    <div id="msg-config" class="message"></div>
+
+    <div class="barre-envoi">
+      <button onclick="sauvegarderConfig(false)">Enregistrer</button>
+      <button class="primaire" onclick="sauvegarderConfig(true)">Enregistrer et relancer</button>
+    </div>
+  </div>
+
+  <!-- ─── Onglet 4 : journal watcher ───────────────────────────────────── -->
+  <div id="panneau-journal" class="panneau">
+    <div class="terminal" id="terminal"></div>
+    <div class="barre-journal">
+      <span id="label-journal">—</span>
+      <button onclick="viderTerminal()">Vider l'affichage</button>
+    </div>
+  </div>
+
+</div>
+
+<!-- ─── Modal de confirmation d'envoi (issues en attente) ─────────────────── -->
+<div id="modal-confirmation" class="modal-overlay">
+  <div class="modal-carte">
+    <div class="modal-titre" id="modal-titre"></div>
+    <div class="modal-liste" id="modal-liste"></div>
+    <div class="modal-boutons">
+      <button id="modal-non">Annuler</button>
+      <button class="danger-plein" id="modal-oui">Envoyer quand même</button>
+    </div>
+  </div>
+</div>
+
+<!-- ─── Overlay « serveur arrêté » ────────────────────────────────────────── -->
+<div id="overlay-arret" class="overlay-arret">
+  <div class="msg">🔴 Serveur arrêté — relancez new_issue.py puis rechargez</div>
+  <button onclick="window.location.reload()">Recharger</button>
+</div>
+<script src="{{ url_for('static', filename='js/app.js') }}"></script>
+</body>
+</html>

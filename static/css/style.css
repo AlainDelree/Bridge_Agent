@@ -1,0 +1,188 @@
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:system-ui,sans-serif;font-size:14px;background:#f0efe9;color:#1a1a18;min-height:100vh;padding:28px 16px;position:relative}
+.fenetre{max-width:860px;margin:0 auto;background:#fff;border:1px solid #ddd;border-radius:12px;overflow:hidden}
+.entete{padding:14px 20px;border-bottom:1px solid #dad9d2;display:flex;align-items:center;gap:9px;background:#e7e6e0}
+.entete h1{font-size:15px;font-weight:500}
+.entete .statut{margin-left:auto;font-size:12px;color:#888}
+.bandeau-projet{display:flex;flex-direction:column;gap:8px;
+  padding:14px 20px;border-bottom:1px solid #dad9d2;background:#e7e6e0;
+  border-left:4px solid #1a1a18}
+.bandeau-ligne{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.bandeau-ligne label{font-size:14px;color:#333;font-weight:600;white-space:nowrap}
+.bandeau-projet select{padding:8px 12px;border:1px solid #ccc;border-radius:6px;
+  font-size:15px;font-weight:600;background:#fff;color:#1a1a18;min-width:240px;
+  border-left:4px solid #1a1a18}
+.bandeau-projet select:focus{outline:none;border-color:#888}
+.projet-actif-label{font-size:14px;font-weight:700;color:#1a1a18;padding:0 2px}
+.onglets{display:flex;gap:4px;padding:8px 20px 0;background:#e7e6e0;border-bottom:1px solid #dad9d2;
+  box-shadow:inset 0 6px 8px -8px rgba(0,0,0,.18)}
+.onglet{padding:9px 16px 10px;font-size:15px;font-weight:500;color:#777;cursor:pointer;
+  border:1px solid transparent;border-bottom:none;border-radius:8px 8px 0 0;
+  margin-bottom:-1px;user-select:none;background:transparent}
+.onglet:hover:not(.actif){color:#1a1a18;background:#f0efe9}
+.onglet.actif{color:#1a1a18;font-weight:700;background:#fff;border-color:#dad9d2}
+.panneau{display:none;padding:20px}
+.panneau.actif{display:block}
+.rangee{display:flex;gap:12px;margin-bottom:14px;align-items:flex-end}
+.champ{display:flex;flex-direction:column;gap:5px;flex:1}
+.champ label{font-size:12px;color:#666}
+.champ select,.champ input[type=text],.champ input[type=number]{
+  width:100%;padding:7px 10px;border:1px solid #ddd;border-radius:6px;
+  font-size:13px;background:#fff;color:#1a1a18}
+.champ select:focus,.champ input:focus,textarea:focus{outline:none;border-color:#888}
+textarea{width:100%;padding:10px;border:1px solid #ddd;border-radius:6px;
+  font-size:13px;font-family:monospace;resize:vertical;color:#1a1a18;min-height:300px}
+.titre-section{font-size:11px;font-weight:500;color:#999;text-transform:uppercase;
+  letter-spacing:.06em;margin:16px 0 8px;padding-bottom:6px;border-bottom:1px solid #f0efe9}
+.radio-groupe,.case-groupe{display:flex;gap:18px;flex-wrap:wrap;padding:4px 0}
+.radio-groupe label,.case-groupe label{font-size:13px;display:flex;align-items:center;gap:6px;cursor:pointer}
+.badge-alerte{font-size:11px;padding:2px 7px;border-radius:4px;background:#fff3cd;color:#856404;margin-left:4px}
+.barre-envoi{display:flex;justify-content:flex-end;gap:10px;margin-top:18px;
+  padding-top:14px;border-top:1px solid #eee}
+button{padding:7px 16px;border:1px solid #ccc;border-radius:6px;font-size:13px;
+  cursor:pointer;background:#fff;color:#1a1a18}
+button:hover{background:#f0efe9}
+button:active{transform:scale(.98)}
+button.primaire{background:#1a1a18;color:#fff;border-color:#1a1a18}
+button.primaire:hover{background:#333}
+button.primaire:disabled{background:#999;border-color:#999;cursor:not-allowed}
+button.danger{color:#721c24;border-color:#f5c6cb}
+button.danger:hover{background:#f8d7da}
+.apercu{background:#f8f8f5;border:1px solid #e0dfda;border-radius:6px;padding:14px;
+  font-family:monospace;font-size:12px;margin-top:14px;white-space:pre-wrap;
+  word-break:break-all;display:none;line-height:1.6}
+.message{padding:10px 14px;border-radius:6px;font-size:13px;margin-top:12px;display:none}
+.message.succes{background:#d4edda;color:#155724}
+.message.erreur{background:#f8d7da;color:#721c24}
+.terminal{background:#1a1a18;color:#a0a098;border-radius:8px;padding:14px;
+  font-family:monospace;font-size:12px;min-height:360px;max-height:520px;
+  overflow-y:auto;line-height:1.7}
+.log-info{color:#a0a098}
+.log-warn{color:#d4a017}
+.log-ok{color:#5cb85c}
+.log-err{color:#d9534f}
+.barre-journal{display:flex;justify-content:space-between;align-items:center;margin-top:10px}
+.barre-journal span{font-size:11px;color:#aaa}
+.barre-issue{display:flex;align-items:center;gap:10px;margin-bottom:16px;
+  padding-bottom:14px;border-bottom:1px solid #eee}
+.barre-issue select{flex:1;padding:7px 10px;border:1px solid #ddd;border-radius:6px;
+  font-size:13px;background:#fff;color:#1a1a18;min-width:0}
+.barre-issue select:focus{outline:none;border-color:#888}
+.zone-issue{min-height:120px}
+.issue-vide{color:#aaa;font-size:13px;text-align:center;padding:40px 0}
+.issue-titre{font-size:20px;font-weight:600;line-height:1.3;margin-bottom:10px}
+.issue-badges{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px}
+/* Ligne de boutons toggle « filtre par projet » au-dessus de la combobox. */
+.filtres-projets{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px;align-items:center}
+.filtre-projet{display:inline-flex;align-items:center;gap:6px;font-size:12px;
+  font-weight:500;padding:5px 11px;border:1px solid #ccc;border-radius:14px;
+  background:#fff;color:#333;cursor:pointer;user-select:none;transition:opacity .12s}
+.filtre-projet .pastille{width:9px;height:9px;border-radius:50%;flex-shrink:0}
+.filtre-projet.inactif{opacity:.4;background:#f2f2f0;color:#999}
+.filtre-projet.tous{border-style:dashed;color:#555}
+/* Liste HTML cliquable des issues (remplace l'ancienne combobox #select-issue).
+   Une ligne par issue, coloriée à la couleur de son projet — contrôle total du
+   rendu, contrairement à <option> que Firefox refuse de colorier. Les couleurs
+   de survol/sélection sont portées par --bg-hover/--bg-sel, posées en inline sur
+   chaque ligne pour être propres à son projet. */
+.liste-issues{max-height:280px;overflow-y:auto;border:1px solid #e0dfda;
+  border-radius:6px;margin-bottom:6px;background:#fff}
+/* Barre « Mise à jour… » : bouton rafraîchir + indicateur (issue #56). */
+.barre-maj{display:flex;align-items:center;gap:10px;margin-bottom:12px}
+/* Bouton rafraîchir discret, même gabarit que les boutons de filtre. */
+.btn-rafraichir{font-size:14px;line-height:1;padding:4px 11px;border:1px solid #ccc;
+  border-radius:14px;background:#fff;color:#555;cursor:pointer;user-select:none;
+  transition:opacity .12s}
+.btn-rafraichir:hover{opacity:.6}
+/* Indicateur discret de rafraîchissement en arrière-plan (cache localStorage). */
+.maj-indicateur{font-size:11px;color:#9a978f;font-style:italic;
+  margin:0 2px;user-select:none}
+.ligne-issue{display:flex;align-items:center;gap:9px;padding:7px 11px;cursor:pointer;
+  font-size:13px;line-height:1.4;border-bottom:1px solid #f0efea;transition:background .12s}
+.ligne-issue:last-child{border-bottom:none}
+.ligne-issue:hover{background:var(--bg-hover)}
+.ligne-issue.selectionnee{background:var(--bg-sel);font-weight:600}
+.ligne-issue.selectionnee:hover{background:var(--bg-sel)}
+.ligne-issue .ligne-gauche{display:inline-flex;align-items:center;gap:6px;flex-shrink:0}
+.ligne-issue .ligne-badges{font-size:13px;white-space:nowrap}
+.ligne-issue .badge-copie-ccl{cursor:pointer}
+.ligne-issue .pastille-ligne{width:9px;height:9px;border-radius:50%;flex-shrink:0}
+.ligne-issue .ligne-texte{flex:1;min-width:0;overflow:hidden;
+  text-overflow:ellipsis;white-space:nowrap}
+/* Badge du projet source dans l'en-tête du panneau de détail. */
+.badge-projet{display:inline-flex;align-items:center;gap:6px;font-size:12px;
+  font-weight:600;padding:3px 11px;border-radius:12px;color:#fff;margin-bottom:12px}
+.badge-projet .pastille{width:8px;height:8px;border-radius:50%;
+  background:rgba(255,255,255,.85);flex-shrink:0}
+.badge-etat{font-size:12px;font-weight:500;padding:3px 10px;border-radius:12px}
+.badge-etat.ouvert{background:#d4edda;color:#155724}
+.badge-etat.ferme{background:#e2e3e5;color:#555}
+.badge-label{font-size:11px;padding:3px 9px;border-radius:12px;
+  background:#eef;color:#3b3b8f;border:1px solid #dde}
+.badge-label.succes{background:#d4edda;color:#155724;border-color:#b7d7c0}
+.badge-label.echec{background:#fff3cd;color:#856404;border-color:#f5e0a3}
+.badge-label.ecriture{background:#f8d7da;color:#721c24;border-color:#f5c6cb}
+.badge-label.gris{background:#eee;color:#666;border-color:#ddd}
+.legende-resultats{font-size:12px;color:#888;background:#f8f8f5;
+  border:1px solid #e0dfda;border-radius:6px;padding:8px 12px;
+  margin-bottom:16px;display:flex;flex-direction:column;gap:2px;line-height:1.55}
+.issue-body{background:#f8f8f5;border:1px solid #e0dfda;border-radius:6px;padding:12px;
+  font-family:monospace;font-size:12px;white-space:pre-wrap;word-break:break-word;
+  max-height:200px;overflow-y:auto;line-height:1.6;margin-bottom:16px}
+.issue-sep{font-size:11px;font-weight:500;color:#999;text-transform:uppercase;
+  letter-spacing:.06em;margin:16px 0 10px;padding-bottom:6px;border-bottom:1px solid #f0efe9}
+.commentaire{position:relative;border:1px solid #e0dfda;border-radius:6px;padding:12px;
+  margin-bottom:10px;background:#fff}
+.commentaire.resultat{border-color:#b7d7c0;background:#f6fbf7}
+.commentaire-auteur{font-size:12px;font-weight:500;color:#555;margin-bottom:6px}
+/* Le bouton « Copier la réponse » est ancré en haut à droite du bloc résumé
+   (texte court avant <details>), pas du bloc détails verbeux (issue #59). */
+.commentaire-resume{position:relative;padding-top:30px}
+.btn-copier{position:absolute;top:0;right:0;font-size:12px;font-weight:500;
+  padding:4px 10px;border:1px solid #7fb08c;border-radius:5px;background:#eaf5ee;
+  color:#2c6b41;cursor:pointer}
+.btn-copier:hover{background:#dcefe2}
+.btn-copier:disabled{cursor:default;border-color:#9ccbaa;color:#3a7a4f}
+.commentaire-corps{font-family:monospace;font-size:12px;white-space:pre-wrap;
+  word-break:break-word;line-height:1.6;color:#1a1a18}
+.commentaire-details{margin-top:10px}
+/* Autres commentaires (ACK, etc.) : bouton « Copier » discret ancré en haut à
+   droite du bloc, comme pour la réponse CCL (issue #61). */
+.commentaire-copiable{position:relative;padding-top:30px}
+/* Bloc <details> de la réponse CCL rendu en HTML restreint : accordéon
+   dépliable (issue #61). Le résumé est cliquable, le contenu conserve la mise
+   en forme monospace/pré-formatée pour la lisibilité du rapport verbeux. */
+.commentaire-html{font-family:monospace;font-size:12px;word-break:break-word;
+  line-height:1.6;color:#1a1a18}
+.commentaire-html summary{cursor:pointer;font-weight:600;color:#2c6b41;
+  padding:2px 0}
+.commentaire-html pre{white-space:pre-wrap;margin:6px 0}
+.commentaire-html code{background:#f0efe9;padding:1px 4px;border-radius:3px}
+.commentaire-html ul,.commentaire-html ol{margin:6px 0;padding-left:22px}
+.bloc-annuler{margin-bottom:16px}
+/* Modal de confirmation — overlay en flux normal (position:absolute, pas fixed).
+   Le body est positionné (position:relative) : l'overlay le recouvre entièrement. */
+.modal-overlay{position:absolute;top:0;left:0;width:100%;min-height:100%;
+  background:rgba(0,0,0,.42);display:none;justify-content:center;
+  align-items:flex-start;padding:70px 16px 40px;z-index:1000}
+.modal-overlay.actif{display:flex}
+.modal-carte{background:#fff;border-radius:12px;max-width:460px;width:100%;
+  padding:22px 24px;box-shadow:0 10px 40px rgba(0,0,0,.28)}
+.modal-titre{font-size:15px;font-weight:600;line-height:1.4;margin-bottom:14px}
+.modal-liste{font-family:monospace;font-size:12px;background:#f8f8f5;
+  border:1px solid #e0dfda;border-radius:6px;padding:10px 12px;margin-bottom:18px;
+  max-height:200px;overflow-y:auto;line-height:1.8;word-break:break-word}
+.modal-boutons{display:flex;justify-content:flex-end;gap:10px}
+button.danger-plein{background:#a32d2d;color:#fff;border-color:#a32d2d}
+button.danger-plein:hover{background:#8f2626}
+/* Overlay « serveur arrêté » — flux normal (position:absolute, pas fixed),
+   recouvre tout le body (position:relative). Affiché sur Ctrl+C serveur ou
+   coupure brutale de la connexion SSE /events. */
+.overlay-arret{position:absolute;top:0;left:0;width:100%;min-height:100%;
+  background:rgba(20,20,18,.94);display:none;flex-direction:column;
+  justify-content:center;align-items:center;gap:22px;padding:60px 20px;
+  z-index:2000;text-align:center}
+.overlay-arret.actif{display:flex}
+.overlay-arret .msg{color:#fff;font-size:18px;font-weight:600;line-height:1.5;
+  max-width:520px}
+.overlay-arret button{font-size:15px;padding:11px 24px}
