@@ -194,6 +194,34 @@ function prefixeIssue(labels) {
   return p || '○';
 }
 
+// Détecte le TYPE d'une issue dans le pattern chef/ouvriers (issue #86).
+// Renvoie 'ouvrier', 'chef' ou '' (issue normale). Trois signaux, l'un suffit :
+//  - un label dont le nom contient « ouvrier » ou « chef » ;
+//  - le titre commençant par « Ouvrier » ou « Chef » (insensible à la casse,
+//    ex. « Ouvrier 3 : ... ») ;
+//  - le corps contenant | TYPE | ouvrier | ou | TYPE | chef | (le corps n'est
+//    disponible qu'au détail ; en liste la détection repose sur titre/labels).
+// « ouvrier » est prioritaire sur « chef ».
+function typeIssue(it) {
+  const noms = ((it && it.labels) || [])
+    .map(l => ((l && l.name) || l || '').toLowerCase());
+  if (noms.some(n => n.includes('ouvrier'))) return 'ouvrier';
+  if (noms.some(n => n.includes('chef')))    return 'chef';
+  const titre = ((it && it.title) || '').trim().toLowerCase();
+  if (/^ouvrier\b/.test(titre)) return 'ouvrier';
+  if (/^chef\b/.test(titre))    return 'chef';
+  const body = ((it && it.body) || '').toLowerCase();
+  if (/\|\s*type\s*\|\s*ouvrier\s*\|/.test(body)) return 'ouvrier';
+  if (/\|\s*type\s*\|\s*chef\s*\|/.test(body))    return 'chef';
+  return '';
+}
+
+// Préfixe emoji du TYPE d'une issue : 🎯 chef, 👷 ouvrier, rien sinon.
+function prefixeTypeIssue(it) {
+  const t = typeIssue(it);
+  return t === 'chef' ? '🎯' : (t === 'ouvrier' ? '👷' : '');
+}
+
 // Badge coloré pour un label dans le panneau de détail.
 function badgeLabel(nom) {
   const map = {
@@ -248,6 +276,7 @@ function majIndicateurListe(actif) {
 function appliquerListeIssues(liste, noms) {
   listeIssuesResultats = liste;
   projetsFiltresActifs = restaurerFiltresProjets(noms);
+  filtreOuvriersActif  = restaurerFiltreOuvriers();
   construireBoutonsFiltre(noms);
   rendreListeIssues(true);
 }
@@ -324,6 +353,37 @@ function restaurerFiltresProjets(noms) {
   return new Set(noms.filter(nom => etat[nom] !== false));
 }
 
+// ── Filtre « 👷 Ouvriers » (issue #86) ────────────────────────────────────
+// Par défaut inactif → les issues de type ouvrier sont masquées dans Résultats.
+// État persisté (true/false) sous cette clé ; absent/illisible → false.
+const CLE_FILTRE_OUVRIERS = 'bridge_filtre_ouvriers';
+let filtreOuvriersActif = false;
+
+// Lit l'état du filtre ouvriers depuis localStorage (false par défaut).
+function restaurerFiltreOuvriers() {
+  try { return localStorage.getItem(CLE_FILTRE_OUVRIERS) === 'true'; }
+  catch(e) { return false; }
+}
+
+// Bascule l'affichage des issues ouvrières, persiste l'état et ré-applique le
+// filtre. Si la ligne sélectionnée devient masquée, on sélectionne la première
+// encore visible.
+function basculerFiltreOuvriers() {
+  filtreOuvriersActif = !filtreOuvriersActif;
+  try { localStorage.setItem(CLE_FILTRE_OUVRIERS, filtreOuvriersActif ? 'true' : 'false'); }
+  catch(e) {}
+  majBoutonOuvriers();
+  appliquerFiltresListe();
+  const sel = document.querySelector('#liste-issues .ligne-issue.selectionnee');
+  if (!sel || sel.style.display === 'none') selectionnerPremiereVisible();
+}
+
+// Reflète l'état du filtre ouvriers sur le bouton toggle (grisé = inactif).
+function majBoutonOuvriers() {
+  const btn = document.getElementById('filtre-ouvriers');
+  if (btn) btn.classList.toggle('inactif', !filtreOuvriersActif);
+}
+
 // Écrit l'état courant des filtres dans localStorage.
 function sauvegarderFiltresProjets(noms) {
   const etat = {};
@@ -351,6 +411,16 @@ function construireBoutonsFiltre(noms) {
     zone.appendChild(btn);
   }
   majClassesBoutonsFiltre();
+  // Toggle « 👷 Ouvriers » (issue #86), après les boutons projet. Inactif par
+  // défaut : les issues de type ouvrier restent masquées jusqu'à un clic.
+  const ouv = document.createElement('span');
+  ouv.id = 'filtre-ouvriers';
+  ouv.className = 'filtre-projet ouvriers';
+  ouv.textContent = '👷 Ouvriers';
+  ouv.title = 'Afficher / masquer les issues de type ouvrier';
+  ouv.onclick = basculerFiltreOuvriers;
+  zone.appendChild(ouv);
+  majBoutonOuvriers();
   const tous = document.createElement('span');
   tous.className = 'filtre-projet tous';
   tous.textContent = 'Tous';
@@ -444,6 +514,9 @@ function rendreListeIssues(reset) {
     ligne.className = 'ligne-issue';
     ligne.dataset.projet = it.projet;
     ligne.dataset.numero = numero;
+    // TYPE de l'issue (pattern chef/ouvriers, issue #86) porté en dataset :
+    // exploité par appliquerFiltresListe() pour masquer les ouvriers au besoin.
+    ligne.dataset.type = typeIssue(it);
     // Couleur du texte = couleur du projet ; fonds translucides propres au projet
     // portés par des variables CSS, exploitées par .ligne-issue:hover/.selectionnee.
     ligne.style.color = couleur;
@@ -469,7 +542,9 @@ function rendreListeIssues(reset) {
     // Le badge ✅ des issues FERMÉES portant le label « done » (les seules qui
     // ont une réponse CCL) devient cliquable : un clic copie directement la
     // réponse CCL sans ouvrir le détail (issue #62).
-    let badgesHtml = prefixeIssue(it.labels);
+    // Préfixe visuel du TYPE (🎯 chef / 👷 ouvrier / rien) devant les badges.
+    const prefType = prefixeTypeIssue(it);
+    let badgesHtml = (prefType ? prefType + ' ' : '') + prefixeIssue(it.labels);
     const nomsLabelsLigne = (it.labels || [])
       .map(l => ((l && l.name) || l || '').toLowerCase());
     if (etat === 'fermé' && nomsLabelsLigne.includes('done')
@@ -494,10 +569,14 @@ function rendreListeIssues(reset) {
   if (reset) selectionnerPremiereVisible();
 }
 
-// Masque/affiche les lignes selon les projets actifs (filtre = display:none).
+// Masque/affiche les lignes selon les projets actifs ET le filtre ouvriers
+// (filtre = display:none). Une ligne ouvrière reste masquée tant que le toggle
+// « 👷 Ouvriers » est inactif (issue #86).
 function appliquerFiltresListe() {
   document.querySelectorAll('#liste-issues .ligne-issue').forEach(ligne => {
-    ligne.style.display = projetsFiltresActifs.has(ligne.dataset.projet) ? '' : 'none';
+    const projetVisible  = projetsFiltresActifs.has(ligne.dataset.projet);
+    const ouvrierMasque  = ligne.dataset.type === 'ouvrier' && !filtreOuvriersActif;
+    ligne.style.display  = (projetVisible && !ouvrierMasque) ? '' : 'none';
   });
 }
 
