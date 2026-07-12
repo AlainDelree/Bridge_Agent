@@ -26,39 +26,29 @@ from functools import wraps
 from pathlib import Path
 from threading import Thread, Timer
 
-from flask import (Flask, Response, jsonify, redirect, render_template,
-                   render_template_string, request, session, url_for)
+from flask import (Response, current_app, jsonify, redirect, render_template,
+                   render_template_string, request, session,
+                   stream_with_context, url_for)
 
 # Partage du lecteur de config avec watcher.py (même dossier).
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from watcher import Config, charger_config  # noqa: E402
 
-DOSSIER_SCRIPT = Path(__file__).resolve().parent
+# Fabrique de l'application et accesseurs à l'état partagé (app.config).
+from app import create_app, etat  # noqa: E402
 
-app = Flask(__name__)
-# Clé de signature des cookies de session régénérée à chaque démarrage : les
-# sessions ne survivent pas à un redémarrage (acceptable) mais la clé n'est
-# jamais figée dans le code source — un cookie session['authentifie'] ne peut
-# donc pas être forgé à partir du dépôt.
-app.config["SECRET_KEY"] = os.urandom(32)
+DOSSIER_SCRIPT = Path(__file__).resolve().parent
 
 
 # ─── Cycle de vie serveur ↔ onglet navigateur ────────────────────────────────
 # Le navigateur émet un heartbeat (POST /heartbeat) toutes les 5 s. Un thread
 # daemon coupe le serveur si plus rien n'arrive pendant DELAI_HEARTBEAT_MAX s
 # (onglet fermé). Dans l'autre sens, un Ctrl+C (SIGINT/SIGTERM) positionne
-# arret_demande = True : la route SSE /events le détecte et prévient l'onglet.
+# l'état ARRET_DEMANDE : la route SSE /events le détecte et prévient l'onglet.
+# L'état partagé (heartbeat, arrêt demandé, tunnel, mode externe, mot de passe)
+# vit désormais dans app.config, lu à la requête via app/etat.py.
 INTERVALLE_HEARTBEAT = 5        # période de sonde côté serveur (s)
 DELAI_HEARTBEAT_MAX  = 15       # au-delà, l'onglet est considéré fermé
-
-last_heartbeat = 0.0            # horodatage du dernier heartbeat reçu
-heartbeat_recu = False          # tant qu'aucun heartbeat : pas de surveillance
-arret_demande  = False          # passé à True par le gestionnaire de signal
-
-# Processus du tunnel cloudflared, démarré automatiquement en mode --externe
-# (None en mode local ou tant que le tunnel n'est pas lancé). Arrêté proprement
-# par le gestionnaire de signal et par la route /quitter.
-proc_tunnel = None
 
 
 # Clés modifiables via l'interface (les autres : NOM, DEPOT, REP_TRAVAIL,
@@ -75,26 +65,9 @@ CLES_EDITABLES = {
 # sous la clé MOT_DE_PASSE. Vide → interface accessible sans authentification.
 # Générer le hash avec :  python3 new_issue.py --set-password
 MAX_ECHECS_LOGIN = 5   # nombre de tentatives avant blocage de la session
-
-
-def charger_mot_de_passe() -> str:
-    """Hash sha256 du mot de passe d'accès, relu depuis bridge_agent.conf.
-    Chaîne vide → aucune authentification exigée."""
-    chemin = DOSSIER_SCRIPT / "configs" / "bridge_agent.conf"
-    if not chemin.exists():
-        return ""
-    try:
-        return charger_config(chemin).mot_de_passe.strip()
-    except SystemExit:
-        return ""
-
-
-MOT_DE_PASSE = charger_mot_de_passe()
-
-# Authentification exigée uniquement en mode --externe (exposition réseau).
-# En mode local (127.0.0.1, HTTP), on est déjà sur la machine : le login n'a
-# pas de sens. Passé à True dans main() si --externe est présent.
-MODE_EXTERNE = False
+# Le hash du mot de passe (MOT_DE_PASSE) et le drapeau MODE_EXTERNE vivent dans
+# app.config : chargés au démarrage (main), lus à la requête via etat.get().
+# charger_mot_de_passe() est déplacé dans app/etat.py.
 
 
 def login_requis(vue):
@@ -103,7 +76,8 @@ def login_requis(vue):
     local (login exigé uniquement en mode --externe)."""
     @wraps(vue)
     def enveloppe(*args, **kwargs):
-        if MOT_DE_PASSE and MODE_EXTERNE and not session.get("authentifie"):
+        if (etat.get("MOT_DE_PASSE") and etat.get("MODE_EXTERNE")
+                and not session.get("authentifie")):
             return redirect(url_for("login"))
         return vue(*args, **kwargs)
     return enveloppe
@@ -324,11 +298,10 @@ button:disabled{background:#999;border-color:#999;cursor:not-allowed}
 
 # ─── Routes Flask ──────────────────────────────────────────────────────────────
 
-@app.route("/login", methods=["GET"])
 def login():
     """Formulaire de connexion. Redirige vers l'accueil si aucune authentification
     n'est requise ou si la session est déjà authentifiée."""
-    if not MOT_DE_PASSE or session.get("authentifie"):
+    if not etat.get("MOT_DE_PASSE") or session.get("authentifie"):
         return redirect(url_for("index"))
     bloque = session.get("echecs", 0) >= MAX_ECHECS_LOGIN
     erreur = ("Trop de tentatives échouées. Redémarrez le serveur pour réessayer."
