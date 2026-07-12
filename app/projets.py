@@ -9,6 +9,8 @@ import os
 import sys
 from pathlib import Path
 
+from flask import jsonify, request
+
 # Racine du projet (dossier parent du package app/) : watcher.py et le dossier
 # configs/ y vivent. On l'ajoute au sys.path pour que « from watcher import »
 # fonctionne même si ce module est importé isolément.
@@ -86,3 +88,46 @@ def lister_projets() -> list[Config]:
 
 def projet_par_nom(nom: str) -> Config | None:
     return next((p for p in lister_projets() if p.nom == nom), None)
+
+
+# ─── Routes Flask : consultation/écriture du .conf d'un projet ─────────────────
+
+def get_config(nom_projet):
+    """Retourne les valeurs actuelles du .conf, relues depuis le disque à
+    chaque appel (via charger_config) plutôt que depuis l'objet Config en
+    mémoire. Ainsi l'onglet Configuration reflète toujours l'état réel du
+    fichier, même s'il a été modifié à la main après le démarrage."""
+    chemin = DOSSIER_SCRIPT / "configs" / f"{nom_projet}.conf"
+    if not chemin.exists():
+        return jsonify(erreur="Projet introuvable."), 404
+    try:
+        cfg = charger_config(chemin)
+    except SystemExit as e:
+        # charger_config quitte (sys.exit) si un champ requis manque ou
+        # qu'un entier est mal formé : on le rattrape pour ne pas tuer
+        # le serveur et renvoyer une erreur exploitable côté onglet.
+        return jsonify(erreur=f"Config invalide : {e}"), 400
+    return jsonify(
+        nom            = cfg.nom,
+        depot          = cfg.depot,
+        rep_travail    = str(cfg.rep_travail),
+        perimetre      = cfg.perimetre,
+        cmd_backup     = cfg.cmd_backup,
+        topic_ntfy     = cfg.topic_ntfy,
+        label          = cfg.label,
+        intervalle     = cfg.intervalle,
+        max_essais     = cfg.max_essais,
+        timeout_claude = cfg.timeout_claude,
+        script_bip     = str(cfg.script_bip),
+        fichier_contexte = cfg.fichier_contexte,
+        log_taille_max_mo = cfg.log_taille_max_mo,
+        log_archives   = cfg.log_archives,
+        modele_ccl     = cfg.modele_ccl,
+    )
+
+
+def post_config(nom_projet):
+    """Enregistre les clés éditables dans le .conf."""
+    data = request.json or {}
+    ok, msg = sauvegarder_conf(nom_projet, data)
+    return jsonify(succes=ok, message=msg)
