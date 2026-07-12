@@ -663,11 +663,16 @@ def heartbeat():
 def events():
     """SSE dédié au cycle de vie (séparé du journal watcher).
     Envoie un keepalive toutes les 5 s ; dès qu'un signal d'arrêt a été reçu
-    (ARRET_DEMANDE), émet un event « shutdown » puis ferme la connexion."""
+    (ARRET_DEMANDE), émet un event « shutdown » puis ferme la connexion.
+    app.config est capturé ICI (dans le contexte de requête) avant d'entrer
+    dans le générateur — current_app n'est plus disponible une fois le
+    générateur démarré hors contexte de requête."""
+    config = current_app.config   # capturé dans le contexte de requête
+
     def generer():
         dernier_ping = time.time()
         while True:
-            if etat.get("ARRET_DEMANDE"):
+            if config.get("ARRET_DEMANDE"):   # lecture directe, pas via etat.get()
                 yield "event: shutdown\ndata: stop\n\n"
                 return
             time.sleep(0.5)   # sonde fréquente du flag, keepalive espacé
