@@ -1571,6 +1571,34 @@ async function quitter() {
   window.close();
 }
 
+// ─── Mémorisation de notif_pc (issue #93) ─────────────────────────────────
+// notif_pc est coché par défaut au premier usage. Si Alain le décoche, ce
+// choix est mémorisé (localStorage) et respecté aux ouvertures suivantes,
+// jusqu'à ce qu'il le recoche. Cohérent avec le pattern des autres clés
+// « bridge_* » de l'interface. notif_gsm / notif_tous ne sont pas concernés.
+const CLE_NOTIF_PC = 'bridge_notif_pc';
+
+// Applique l'état mémorisé au champ notif_pc : coché par défaut si la clé
+// n'existe pas encore, sinon l'état enregistré ('true' / 'false').
+function appliquerNotifPc() {
+  const cb = document.getElementById('notif_pc');
+  if (!cb) return;
+  let memo = null;
+  try { memo = localStorage.getItem(CLE_NOTIF_PC); } catch(e) {}
+  cb.checked = (memo === null) ? true : (memo === 'true');
+}
+
+// À chaque changement manuel, on écrit l'état courant dans localStorage.
+(function initNotifPc() {
+  const cb = document.getElementById('notif_pc');
+  if (cb) {
+    cb.addEventListener('change', function() {
+      try { localStorage.setItem(CLE_NOTIF_PC, cb.checked ? 'true' : 'false'); } catch(e) {}
+    });
+  }
+  appliquerNotifPc();
+})();
+
 function viderFormulaire(cacherMsg=true) {
   if (cacherMsg) cacherRetours();
   document.getElementById('titre').value = '';
@@ -1581,5 +1609,7 @@ function viderFormulaire(cacherMsg=true) {
   document.querySelector('input[name=mode][value=lecture]').checked = true;
   mettreAJourBoutonEnvoi();
   document.querySelectorAll('input[name=notifs]').forEach(c => c.checked = false);
+  // notif_pc revient à l'état mémorisé (coché par défaut), pas à décoché.
+  appliquerNotifPc();
   document.getElementById('modele-ponctuel').value = '';
 }
