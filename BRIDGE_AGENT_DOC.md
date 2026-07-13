@@ -388,22 +388,25 @@ moment de rédiger l'issue, quel(s) Spec(s) sont concernés par la demande,
 via un champ structuré dans l'en-tête :
 
 ```markdown
-| SPEC | Vue |
+| SPECS | vue |
 ```
 
-> Le champ `SPEC` accepte un ou plusieurs rôles séparés par des virgules —
-> `Vue`, `Métier`, `Persistance` — selon les couches touchées par la demande
-> (ex. `| SPEC | Vue, Métier |` pour une fonctionnalité qui modifie à la fois
-> l'affichage et la logique). Chaque valeur route l'issue vers le Spec
+> Le champ `SPECS` (pluriel) accepte un ou plusieurs rôles en **minuscules**,
+> séparés par des virgules sur **une seule ligne** — `vue`, `metier`,
+> `persistance` — selon les couches touchées par la demande. Pour plusieurs
+> couches, tout tient sur une ligne : `| SPECS | vue, metier |` (et **non**
+> une ligne par valeur), ici pour une fonctionnalité qui modifie à la fois
+> l'affichage et la logique. Chaque valeur route l'issue vers le Spec
 > correspondant, avec son périmètre de dossiers et son fichier de contexte
 > propres. Absent = pas de spécialisation (issue normale ou pattern §14).
+> (Valeurs en minuscules, cohérent avec `chef`/`ouvrier` du champ `TYPE` au §6.)
 
 **Points à concevoir avant implémentation** (en plus de ceux du §14) :
 
-- **Routage** : le watcher (ou un dispatcher) doit lire le champ `SPEC` et
+- **Routage** : le watcher (ou un dispatcher) doit lire le champ `SPECS` et
   aiguiller l'issue vers le bon CCL spécialisé, avec le bon fichier de
   contexte et le bon périmètre.
-- **Multi-Spec** : une issue touchant plusieurs couches (`Vue, Métier`) doit
+- **Multi-Spec** : une issue touchant plusieurs couches (`vue, metier`) doit
   être décomposée en issues mono-Spec (une par couche), ce qui rejoint la
   logique chef/ouvrier du §14 — le chef devient alors un simple répartiteur
   vers les Specs concernés.
@@ -416,4 +419,4 @@ via un champ structuré dans l'en-tête :
 
 ---
 
-*Dernière mise à jour : 13 juillet 2026 — Bridge_Agent v1, 3 projets actifs. Ajout section 15 « Chef + Specs MVC » (issue #96).*
+*Dernière mise à jour : 13 juillet 2026 — Bridge_Agent v1, 3 projets actifs. Section 15 « Chef + Specs MVC » : champ `SPECS` (pluriel, minuscules, combinable en une ligne) — correction du champ `SPEC` introduit par erreur (issue #97, suite #96).*
