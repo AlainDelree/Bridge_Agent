@@ -175,9 +175,79 @@ def issue_detail(nom_projet, numero):
         return jsonify(erreur=str(e)), 500
 
 
+# ─── Temps restant estimé des issues ouvertes (issue #91) ─────────────────────
+# L'heure de début de traitement d'une issue n'est persistée NULLE PART par le
+# watcher (le set issues_en_cours est en mémoire, sans horodatage, et perdu au
+# redémarrage). Elle est cependant retrouvable : au démarrage du traitement, le
+# watcher poste un commentaire ACK sur l'issue (« ✅ ACK — Issue #N reçue par
+# watcher.py … Traitement en cours… »). L'horodatage createdAt de ce commentaire
+# EST l'heure de début — source de vérité qui survit à un redémarrage du watcher.
+# On la relit ici pour calculer, côté navigateur, un temps restant estimé.
+
+def _parser_timeout(body: str) -> int:
+    """TIMEOUT (secondes) lu dans l'en-tête bridge du body ; défaut 300 s.
+    Miroir de watcher.extraire_timeout, mais sans dépendance à CFG (absent du
+    processus Flask) : le défaut est ici la valeur par défaut projet (300 s)."""
+    for ligne in body.splitlines():
+        if "TIMEOUT" in ligne.upper():
+            parts = ligne.split("|")
+            if len(parts) >= 3:
+                valeur = parts[2].strip().lower().rstrip("s")
+                if valeur.isdigit():
+                    return int(valeur)
+    return 300
+
+
+def _parser_priorite(body: str) -> str:
+    """PRIORITE lue dans l'en-tête bridge du body ; défaut 'normale'.
+    Miroir de watcher.extraire_priorite."""
+    for ligne in body.splitlines():
+        if "PRIORITE" in ligne.upper():
+            parts = ligne.split("|")
+            if len(parts) >= 3:
+                return parts[2].strip().lower()
+    return "normale"
+
+
+def _debut_traitement(commentaires: list) -> str | None:
+    """createdAt (ISO) du commentaire ACK que le watcher poste au démarrage du
+    traitement, ou None si aucun (issue pas encore prise en charge). gh renvoie
+    les commentaires par ordre chronologique : le premier ACK fait foi."""
+    for c in commentaires:
+        corps = c.get("body") or ""
+        if "ACK —" in corps and "watcher.py" in corps:
+            return c.get("createdAt")
+    return None
+
+
+def _commentaires_issue(cfg, numero) -> list:
+    """Récupère les commentaires d'une issue via gh (liste vide sur erreur)."""
+    try:
+        res = subprocess.run(
+            ["gh", "issue", "view", str(numero),
+             "--repo", cfg.depot,
+             "--json", "comments"],
+            capture_output=True, text=True, timeout=30
+        )
+        if res.returncode != 0:
+            return []
+        return (json.loads(res.stdout or "{}") or {}).get("comments") or []
+    except Exception:
+        return []
+
+
 def issues_en_attente(nom_projet):
     """Retourne les issues ouvertes portant le label for-linux (en attente de
-    traitement par le watcher). La liste peut être vide."""
+    traitement par le watcher). La liste peut être vide.
+
+    Chaque issue est enrichie des champs nécessaires au calcul, côté navigateur,
+    d'un temps restant estimé (issue #91) :
+      - timeout      : TIMEOUT de l'issue en secondes (défaut 300)
+      - priorite     : PRIORITE de l'issue
+      - sans_limite  : True si priorité haute/critique (retry infini, §6) → pas
+                       de deadline, afficher « en cours (pas de limite) »
+      - debut        : horodatage ISO du début de traitement (commentaire ACK),
+                       ou null si l'issue n'est pas encore prise en charge."""
     cfg = projet_par_nom(nom_projet)
     if not cfg:
         return jsonify(erreur="Projet introuvable."), 404
@@ -187,18 +257,31 @@ def issues_en_attente(nom_projet):
              "--repo",  cfg.depot,
              "--label", "for-linux",
              "--state", "open",
-             "--json",  "number,title,labels"],
+             "--json",  "number,title,labels,body"],
             capture_output=True, text=True, timeout=30
         )
         if res.returncode != 0:
             return jsonify(erreur=res.stderr.strip() or "Erreur de gh."), 502
-        return jsonify(json.loads(res.stdout or "[]"))
+        issues = json.loads(res.stdout or "[]")
     except subprocess.TimeoutExpired:
         return jsonify(erreur="Timeout (gh n'a pas répondu en 30s)."), 504
     except FileNotFoundError:
         return jsonify(erreur="gh introuvable dans le PATH."), 500
     except Exception as e:
         return jsonify(erreur=str(e)), 500
+
+    # Enrichissement : une passe gh view par issue ouverte (nécessaire pour lire
+    # les commentaires — gh issue list ne les expose pas). Les issues ouvertes
+    # for-linux sont rares (souvent 0-3), le surcoût reste modéré.
+    for it in issues:
+        body = it.get("body") or ""
+        priorite = _parser_priorite(body)
+        it["timeout"]     = _parser_timeout(body)
+        it["priorite"]    = priorite
+        it["sans_limite"] = priorite in ("haute", "critique")
+        it["debut"]       = _debut_traitement(_commentaires_issue(cfg, it["number"]))
+        it.pop("body", None)   # body volumineux : inutile au navigateur
+    return jsonify(issues)
 
 
 def annuler_issue(nom_projet, numero):

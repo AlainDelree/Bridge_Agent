@@ -34,7 +34,8 @@ function basculerOnglet(nom) {
   noms.forEach(n =>
     document.getElementById('panneau-' + n).classList.toggle('actif', n === nom));
   if (nom === 'journal')  demarrerJournal();
-  if (nom === 'resultats') chargerListeIssues();
+  if (nom === 'resultats') { chargerListeIssues(); demarrerTempsRestant(); }
+  else arreterTempsRestant();
   if (nom === 'watchers') {
     chargerWatchers();
     intervalWatchers = setInterval(chargerWatchers, 5000);
@@ -562,10 +563,16 @@ function rendreListeIssues(reset) {
       + '<span class="pastille-ligne" style="background:' + couleur + '"></span>'
       + '</span>'
       + '<span class="ligne-texte">#' + escapeHtml(numero) + ' — '
-      + escapeHtml(it.title) + ' [' + etat + ']</span>';
+      + escapeHtml(it.title) + ' [' + etat + ']</span>'
+      // Badge de temps restant estimé (issue #91) : rempli/actualisé par
+      // majBadgesTempsRestant() pour les issues ouvertes uniquement.
+      + (etat === 'ouvert'
+          ? '<span class="ligne-tempsrestant" style="display:none"></span>'
+          : '');
     zone.appendChild(ligne);
   }
   appliquerFiltresListe();
+  majBadgesTempsRestant();
   if (reset) selectionnerPremiereVisible();
 }
 
@@ -578,6 +585,108 @@ function appliquerFiltresListe() {
     const ouvrierMasque  = ligne.dataset.type === 'ouvrier' && !filtreOuvriersActif;
     ligne.style.display  = (projetVisible && !ouvrierMasque) ? '' : 'none';
   });
+}
+
+// ─── Temps restant estimé des issues ouvertes (issue #91) ─────────────────
+// L'heure de début de traitement n'est persistée nulle part par le watcher :
+// la route /issues-en-attente la retrouve via l'horodatage du commentaire ACK
+// (champ `debut`). Le compte à rebours est ensuite PUREMENT client : une fois
+// debut+timeout connus, un intervalle JS recalcule le restant chaque seconde
+// sans re-solliciter le serveur. Un re-fetch plus espacé (fetchTiming) capte
+// les issues nouvellement démarrées ou terminées.
+let timingIssues = {};              // clé "projet#numero" → {timeout, debut, sans_limite}
+let intervalTempsRestant = null;    // recalcul 1 s du compte à rebours (client seul)
+let intervalFetchTiming  = null;    // re-fetch périodique des débuts/timeouts
+
+function cleTiming(projet, numero) { return projet + '#' + numero; }
+
+// Formate une durée en secondes → "45s" / "3min 20s" (compact, lisible).
+function formaterDuree(s) {
+  s = Math.max(0, Math.floor(s));
+  if (s < 60) return s + 's';
+  const m = Math.floor(s / 60), r = s % 60;
+  return m + 'min' + (r ? ' ' + r + 's' : '');
+}
+
+// Récupère, pour tous les projets, les débuts de traitement + timeouts des
+// issues ouvertes, puis rafraîchit immédiatement les badges.
+async function chargerTimingIssues() {
+  const noms = nomsProjetsDisponibles();
+  const map = {};
+  await Promise.all(noms.map(async nom => {
+    try {
+      const rep = await fetch('/issues-en-attente/' + encodeURIComponent(nom));
+      const liste = await rep.json();
+      if (!Array.isArray(liste)) return;
+      for (const it of liste) {
+        map[cleTiming(nom, it.number)] = {
+          timeout:     it.timeout,
+          debut:       it.debut,
+          sans_limite: it.sans_limite,
+        };
+      }
+    } catch(e) {}
+  }));
+  timingIssues = map;
+  majBadgesTempsRestant();
+}
+
+// Applique l'état de temps restant à un badge, selon les données de timing.
+function formaterBadgeTempsRestant(badge, t) {
+  badge.className = 'ligne-tempsrestant';
+  if (!t) { badge.style.display = 'none'; badge.textContent = ''; return; }
+  badge.style.display = '';
+  if (!t.debut) {                       // ouverte mais pas encore prise en charge
+    badge.textContent = '⏳ en file';
+    badge.classList.add('tr-attente');
+    badge.title = 'En attente de prise en charge par le watcher';
+    return;
+  }
+  if (t.sans_limite) {                   // priorité haute/critique → retry infini
+    badge.textContent = '⏳ en cours (pas de limite)';
+    badge.classList.add('tr-illimite');
+    badge.title = 'Priorité haute/critique : réessais illimités, pas de deadline';
+    return;
+  }
+  const ecoule  = (Date.now() - new Date(t.debut).getTime()) / 1000;
+  const restant = Math.round(t.timeout - ecoule);
+  if (restant > 0) {
+    badge.textContent = '⏳ ' + formaterDuree(restant);
+    badge.classList.add(restant <= 30 ? 'tr-bientot' : 'tr-ok');
+    badge.title = 'Temps restant estimé avant dépassement du TIMEOUT ('
+                + t.timeout + 's)';
+  } else {                               // dépassement du TIMEOUT
+    badge.textContent = '⌛ dépassement +' + formaterDuree(-restant);
+    badge.classList.add('tr-depasse');
+    badge.title = 'TIMEOUT (' + t.timeout + 's) dépassé ; le watcher peut '
+                + 'encore réessayer selon la priorité';
+  }
+}
+
+// Actualise tous les badges de temps restant des lignes ouvertes (recalcul pur,
+// aucun appel réseau). Appelée chaque seconde et après chaque rendu de liste.
+function majBadgesTempsRestant() {
+  document.querySelectorAll('#liste-issues .ligne-issue').forEach(ligne => {
+    const badge = ligne.querySelector('.ligne-tempsrestant');
+    if (!badge) return;
+    formaterBadgeTempsRestant(
+      badge, timingIssues[cleTiming(ligne.dataset.projet, ligne.dataset.numero)]);
+  });
+}
+
+// Démarre le suivi du temps restant (à l'ouverture de l'onglet Résultats) :
+// fetch initial des débuts/timeouts, recalcul chaque seconde, re-fetch espacé.
+function demarrerTempsRestant() {
+  chargerTimingIssues();
+  arreterTempsRestant();
+  intervalTempsRestant = setInterval(majBadgesTempsRestant, 1000);
+  intervalFetchTiming  = setInterval(chargerTimingIssues, 15000);
+}
+
+// Stoppe les intervalles de temps restant (en quittant l'onglet Résultats).
+function arreterTempsRestant() {
+  if (intervalTempsRestant) { clearInterval(intervalTempsRestant); intervalTempsRestant = null; }
+  if (intervalFetchTiming)  { clearInterval(intervalFetchTiming);  intervalFetchTiming  = null; }
 }
 
 // Sélectionne et affiche la première ligne encore visible (ou vide le détail).
