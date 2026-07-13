@@ -45,6 +45,12 @@ LABELS = [
 TOPIC_NTFY_DEFAUT = "hippocampe-ff-galerie-xyz123"
 SCRIPT_BIP_DEFAUT = "/home/alain/NicLink/bip.py"
 
+# Propriétaire GitHub par défaut pour le dépôt proposé (owner/Nom).
+OWNER_DEFAUT = "AlainDelree"
+
+# Fichiers Specs MVC (§15) créés en plus de CONTEXTE.md quand l'option est active.
+FICHIERS_SPECS = ("CONTEXTE_VUE.md", "CONTEXTE_METIER.md", "CONTEXTE_PERSISTANCE.md")
+
 MOIS_FR = ["", "janvier", "février", "mars", "avril", "mai", "juin", "juillet",
            "août", "septembre", "octobre", "novembre", "décembre"]
 
@@ -93,6 +99,234 @@ def valider_nom(nom: str) -> bool:
     return bool(re.fullmatch(r"[a-z][a-z0-9_]*", nom))
 
 
+# ─── Logique réutilisable (CLI + route Flask) ────────────────────────────────
+# Ces fonctions n'affichent rien et ne lisent aucune saisie : elles concentrent
+# les actions (gh, écriture de fichiers) pour être appelables aussi bien depuis
+# le script interactif que depuis app/nouveau_projet.py. Le comportement
+# idempotent (labels, contexte, doc) est identique dans les deux cas.
+
+def conf_existe(nom: str) -> bool:
+    """True si configs/<nom>.conf existe déjà (nom déjà pris)."""
+    return (DOSSIER_CONFIGS / f"{nom}.conf").exists()
+
+
+def depot_defaut(nom: str) -> str:
+    """Dépôt GitHub proposé par défaut : owner + nom capitalisé."""
+    return f"{OWNER_DEFAUT}/{nom.capitalize()}"
+
+
+def rep_defaut(nom: str) -> str:
+    """Répertoire de travail CCL proposé par défaut."""
+    return f"/home/alain/{nom.capitalize()}"
+
+
+def depot_existe(depot: str) -> bool:
+    """True si le dépôt GitHub cible existe déjà (gh repo view)."""
+    return gh("repo", "view", depot).returncode == 0
+
+
+def creer_depot(depot: str, nom: str) -> tuple[bool, str]:
+    """Crée le dépôt public. Renvoie (succès, message d'erreur éventuel)."""
+    res = gh("repo", "create", depot, "--public",
+             "--description", f"Projet {nom} — piloté via Bridge_Agent")
+    return res.returncode == 0, res.stderr.strip()
+
+
+def ecrire_conf(nom: str, depot: str, rep: str, perimetre: str,
+                topic: str = TOPIC_NTFY_DEFAUT,
+                script_bip: str = SCRIPT_BIP_DEFAUT) -> Path:
+    """Génère configs/<nom>.conf depuis le gabarit. Renvoie le chemin écrit."""
+    chemin = DOSSIER_CONFIGS / f"{nom}.conf"
+    contenu = GABARIT_CONF.format(
+        nom=nom,
+        depot=depot,
+        rep_travail=rep,
+        perimetre=perimetre,
+        topic_ntfy=topic,
+        script_bip=script_bip,
+    )
+    chemin.write_text(contenu, encoding="utf-8")
+    return chemin
+
+
+def creer_labels(depot: str) -> list[tuple[str, str, str]]:
+    """Crée les labels manquants sur le dépôt cible (idempotent : les présents
+    sont laissés intacts). Renvoie une liste ordonnée de (label, statut, detail)
+    où statut ∈ {"deja", "cree", "echec"}."""
+    res = gh("label", "list", "--repo", depot, "--limit", "200")
+    existants = set()
+    if res.returncode == 0:
+        for ligne in res.stdout.splitlines():
+            if ligne.strip():
+                existants.add(ligne.split("\t")[0].strip().lower())
+
+    resultats = []
+    for nom_label, couleur, description in LABELS:
+        if nom_label.lower() in existants:
+            resultats.append((nom_label, "deja", ""))
+            continue
+        r = gh("label", "create", nom_label, "--repo", depot,
+               "--color", couleur, "--description", description)
+        if r.returncode == 0:
+            resultats.append((nom_label, "cree", ""))
+        else:
+            resultats.append((nom_label, "echec", r.stderr.strip()))
+    return resultats
+
+
+def _ecrire_fichiers_contexte(rep_path: Path,
+                              avec_specs: bool) -> tuple[list[Path], list[Path]]:
+    """Crée CONTEXTE.md (et les 3 fichiers Specs MVC si demandé) dans un
+    répertoire supposé existant. Renvoie (créés, déjà présents). Idempotent :
+    les fichiers déjà là sont laissés intacts."""
+    crees, existants = [], []
+    fichiers = ["CONTEXTE.md"]
+    if avec_specs:
+        fichiers += list(FICHIERS_SPECS)
+    for nom_fic in fichiers:
+        f = rep_path / nom_fic
+        if f.exists():
+            existants.append(f)
+        else:
+            f.write_text("", encoding="utf-8")
+            crees.append(f)
+    return crees, existants
+
+
+def creer_fichiers_contexte(rep: str, avec_specs: bool) -> dict:
+    """Version non interactive : crée le répertoire de travail s'il manque puis
+    les fichiers contexte. Renvoie {crees, existants, rep_cree}."""
+    rep_path = Path(rep).expanduser()
+    rep_cree = False
+    if not rep_path.exists():
+        rep_path.mkdir(parents=True, exist_ok=True)
+        rep_cree = True
+    crees, existants = _ecrire_fichiers_contexte(rep_path, avec_specs)
+    return {"crees": crees, "existants": existants, "rep_cree": rep_cree}
+
+
+def mettre_a_jour_doc(nom: str, depot: str, rep: str, perimetre: str) -> dict:
+    """Insère le projet dans les tableaux §2 et §7 de BRIDGE_AGENT_DOC.md et
+    rafraîchit la date en bas. Renvoie {existe, ok2, ok7, ok_date}."""
+    if not DOC.exists():
+        return {"existe": False, "ok2": False, "ok7": False, "ok_date": False}
+
+    lignes = DOC.read_text(encoding="utf-8").splitlines()
+
+    ligne_2 = (f"| `{nom}` | {depot} | {_afficher_rep(rep)} | (conf local) |")
+    ligne_7 = f"| `{nom}` | {perimetre} |"
+
+    ok2 = _inserer_ligne_tableau(lignes, "## 2. Projets actifs", ligne_2)
+    ok7 = _inserer_ligne_tableau(lignes, "## 7. Périmètre par projet", ligne_7)
+
+    aujourd_hui = date.today()
+    date_fr = f"{aujourd_hui.day} {MOIS_FR[aujourd_hui.month]} {aujourd_hui.year}"
+    ok_date = False
+    for i, ligne in enumerate(lignes):
+        if ligne.startswith("*Dernière mise à jour :"):
+            lignes[i] = re.sub(
+                r"(\*Dernière mise à jour : )[^—]*( —)",
+                rf"\g<1>{date_fr}\g<2>",
+                ligne,
+            )
+            ok_date = True
+            break
+
+    DOC.write_text("\n".join(lignes) + "\n", encoding="utf-8")
+    return {"existe": True, "ok2": ok2, "ok7": ok7, "ok_date": ok_date}
+
+
+def creer_projet(nom: str, depot: str = "", rep: str = "", perimetre: str = "",
+                 topic: str = "", script_bip: str = "", avec_specs: bool = False,
+                 creer_depot_si_absent: bool = True) -> dict:
+    """Orchestrateur non interactif appelé par la route Flask. Enchaîne les
+    mêmes étapes que le script CLI (dépôt, .conf, labels, contexte, doc) et
+    renvoie un compte-rendu structuré : {succes, nom, depot, rep, perimetre,
+    depot_existait, etapes:[{etape, ok, detail}], erreur}."""
+    nom = (nom or "").strip().lower()
+    if not nom:
+        return {"succes": False, "erreur": "Un nom de projet est requis.", "etapes": []}
+    if not valider_nom(nom):
+        return {"succes": False, "etapes": [],
+                "erreur": "Format de nom invalide (minuscules, chiffres, "
+                          "underscore ; commence par une lettre)."}
+    if conf_existe(nom):
+        return {"succes": False, "etapes": [],
+                "erreur": f"configs/{nom}.conf existe déjà — choisir un autre nom "
+                          "ou supprimer l'ancien d'abord."}
+
+    depot = (depot or "").strip() or depot_defaut(nom)
+    rep = (rep or "").strip() or rep_defaut(nom)
+    perimetre = (perimetre or "").strip() or rep
+    topic = (topic or "").strip() or TOPIC_NTFY_DEFAUT
+    script_bip = (script_bip or "").strip() or SCRIPT_BIP_DEFAUT
+
+    etapes = []
+
+    # 1. Dépôt GitHub — installation si existant, création sinon.
+    if depot_existe(depot):
+        depot_existait = True
+        etapes.append({"etape": "Dépôt GitHub", "ok": True,
+                       "detail": f"{depot} existe déjà → installation dessus "
+                                 "(pas de recréation)."})
+    else:
+        if not creer_depot_si_absent:
+            return {"succes": False, "etapes": etapes, "depot": depot,
+                    "erreur": f"Le dépôt {depot} n'existe pas. Cochez la création "
+                              "du dépôt pour continuer."}
+        ok, err = creer_depot(depot, nom)
+        depot_existait = False
+        if not ok:
+            etapes.append({"etape": "Dépôt GitHub", "ok": False,
+                           "detail": f"Échec de la création : {err}"})
+            return {"succes": False, "etapes": etapes, "depot": depot,
+                    "erreur": f"Impossible de créer {depot} : {err}"}
+        etapes.append({"etape": "Dépôt GitHub", "ok": True,
+                       "detail": f"{depot} créé (public)."})
+
+    # 2. Fichier configs/<nom>.conf.
+    ecrire_conf(nom, depot, rep, perimetre, topic, script_bip)
+    etapes.append({"etape": "Fichier .conf", "ok": True,
+                   "detail": f"configs/{nom}.conf créé (à partir du gabarit)."})
+
+    # 3. Labels GitHub requis (idempotent).
+    resultats = creer_labels(depot)
+    nb_crees = sum(1 for _, s, _ in resultats if s == "cree")
+    nb_deja = sum(1 for _, s, _ in resultats if s == "deja")
+    echecs = [(n, e) for n, s, e in resultats if s == "echec"]
+    detail_labels = f"{nb_crees} nouveau(x), {nb_deja} déjà existant(s)"
+    if echecs:
+        detail_labels += " ; échecs : " + ", ".join(f"{n} ({e})" for n, e in echecs)
+    etapes.append({"etape": "Labels GitHub", "ok": not echecs,
+                   "detail": detail_labels})
+
+    # 4. Fichier(s) de contexte (crée le répertoire de travail au besoin).
+    ctx = creer_fichiers_contexte(rep, avec_specs)
+    noms_crees = [f.name for f in ctx["crees"]]
+    if noms_crees:
+        detail_ctx = ", ".join(noms_crees) + " créé(s)"
+    else:
+        detail_ctx = "tous déjà présents"
+    if ctx["rep_cree"]:
+        detail_ctx = f"répertoire {rep} créé ; " + detail_ctx
+    etapes.append({"etape": "Fichiers contexte", "ok": True, "detail": detail_ctx})
+
+    # 5. Mise à jour de BRIDGE_AGENT_DOC.md (§2, §7, date).
+    doc = mettre_a_jour_doc(nom, depot, rep, perimetre)
+    if not doc["existe"]:
+        etapes.append({"etape": "Documentation", "ok": False,
+                       "detail": "BRIDGE_AGENT_DOC.md introuvable — non mis à jour."})
+    else:
+        ok_doc = doc["ok2"] and doc["ok7"]
+        etapes.append({"etape": "Documentation", "ok": ok_doc,
+                       "detail": "§2/§7/date mis à jour" if ok_doc
+                       else "sections §2/§7 non trouvées — à vérifier"})
+
+    return {"succes": True, "nom": nom, "depot": depot, "rep": rep,
+            "perimetre": perimetre, "depot_existait": depot_existait,
+            "etapes": etapes, "erreur": None}
+
+
 def etape_nom() -> str:
     titre("1. Nom du projet")
     print("   Identifiant court, minuscules + underscore (ex. bridge_agent, alchess).")
@@ -118,12 +352,9 @@ def etape_depot(nom: str) -> tuple[str, bool]:
     l'utilisateur confirme."""
     titre("2. Dépôt GitHub cible")
     # Proposition par défaut : owner du dépôt courant + nom capitalisé.
-    owner = "AlainDelree"
-    defaut = f"{owner}/{nom.capitalize()}"
-    depot = demander("Dépôt GitHub (owner/nom)", defaut)
+    depot = demander("Dépôt GitHub (owner/nom)", depot_defaut(nom))
 
-    existe = gh("repo", "view", depot).returncode == 0
-    if existe:
+    if depot_existe(depot):
         print(f"   ✓ Le dépôt {depot} existe déjà → installation dessus "
               "(pas de recréation).")
         return depot, True
@@ -134,10 +365,9 @@ def etape_depot(nom: str) -> tuple[str, bool]:
         sys.exit(1)
 
     print(f"   Création de {depot}…")
-    res = gh("repo", "create", depot, "--public",
-             "--description", f"Projet {nom} — piloté via Bridge_Agent")
-    if res.returncode != 0:
-        print(f"   ❌ Échec de la création : {res.stderr.strip()}")
+    ok, err = creer_depot(depot, nom)
+    if not ok:
+        print(f"   ❌ Échec de la création : {err}")
         sys.exit(1)
     print("   ✓ Dépôt créé.")
     return depot, False
@@ -146,8 +376,7 @@ def etape_depot(nom: str) -> tuple[str, bool]:
 def etape_repertoire(nom: str) -> tuple[str, str]:
     """Renvoie (rep_travail, perimetre)."""
     titre("3. Répertoire de travail CCL et périmètre")
-    defaut_rep = f"/home/alain/{nom.capitalize()}"
-    rep = demander("Répertoire de travail CCL", defaut_rep)
+    rep = demander("Répertoire de travail CCL", rep_defaut(nom))
     perimetre = demander("Périmètre autorisé (dossiers, séparés par des virgules)", rep)
     return rep, perimetre
 
