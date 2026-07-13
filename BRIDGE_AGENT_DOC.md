@@ -68,6 +68,12 @@ Ce que CCL doit produire ou confirmer.
 > des issues qu'il génère (nom exact du projet cible : `bridge_agent`,
 > `alchess`, `ff_galerie`). Détaillé au §6 « Champs spéciaux ».
 
+> 🔗 **Issue de suivi** : si l'issue fait suite à une discussion sur une issue
+> existante #N, préfixer le titre par `Suite #N : ` et inclure
+> `| SUITE_DE | #N |` dans l'en-tête. Sans ce préfixe/champ, l'issue est
+> considérée comme inédite. (Convention cohérente avec `Chef :`/`Ouvrier N :`
+> du §14 ; voir aussi le champ `SUITE_DE` au §6.)
+
 ---
 
 ## 4. Labels disponibles
@@ -116,6 +122,7 @@ Le watcher lit ces champs dans le tableau markdown de l'en-tête :
 | `PROJET` | ex. `bridge_agent` | Détection d'incohérence dans `new_issue.py` (issue #44). Inséré automatiquement par l'interface. Claude Chat doit l'inclure dans toutes les issues qu'il génère. |
 | `TYPE` | `chef` ou `ouvrier` | Identifie le rôle de l'issue dans le pattern multi-agent. `chef` = orchestre les ouvriers. `ouvrier` = sous-tâche créée par le chef, masquée par défaut dans l'onglet Résultats. Absent = issue normale. |
 | `FICHIER_CONTEXTE` | ex. chemin relatif | Fichier additionnel fourni en contexte à CCL pour cette issue (modifiable via l'onglet Configuration, voir §12) |
+| `SUITE_DE` | ex. `#5` | Indique que cette issue fait suite à l'issue #N (discussion ou tâche complémentaire). Absent = issue inédite. |
 
 Format dans le corps :
 ```markdown
@@ -354,4 +361,4 @@ notification GSM/bureau
 
 ---
 
-*Dernière mise à jour : 13 juillet 2026 — Bridge_Agent v1, 3 projets actifs.*
+*Dernière mise à jour : 13 juillet 2026 — Bridge_Agent v1, 3 projets actifs. Ajout convention SUITE_DE (issue #92).*
