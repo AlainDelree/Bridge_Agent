@@ -31,7 +31,7 @@ body{font-family:system-ui,sans-serif;font-size:14px;background:#f0efe9;color:#1
   font-size:13px;background:#fff;color:#1a1a18}
 .champ select:focus,.champ input:focus,textarea:focus{outline:none;border-color:#888}
 textarea{width:100%;padding:10px;border:1px solid #ddd;border-radius:6px;
-  font-size:13px;font-family:monospace;resize:vertical;color:#1a1a18;min-height:300px}
+  font-size:13px;font-family:monospace;resize:vertical;color:#1a1a18;min-height:460px}
 .titre-section{font-size:11px;font-weight:500;color:#999;text-transform:uppercase;
   letter-spacing:.06em;margin:16px 0 8px;padding-bottom:6px;border-bottom:1px solid #f0efe9}
 .radio-groupe,.case-groupe{display:flex;gap:18px;flex-wrap:wrap;padding:4px 0}
