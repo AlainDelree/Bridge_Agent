@@ -503,10 +503,17 @@ function rendreListeIssues(reset) {
     const etat = (it.state || '').toUpperCase() === 'CLOSED' ? 'fermé' : 'ouvert';
     const couleur = couleurProjetResultats(it.projet);
     const numero = String(it.number);
-    // Date de création formatée en heure locale du navigateur (issue #58) :
-    // "DD/MM/YYYY HH:MM:SS" jusqu'à la seconde via toLocaleString('fr-FR').
-    const dateCreation = it.createdAt
-      ? new Date(it.createdAt).toLocaleString('fr-FR', {
+    // Horodatage en heure locale du navigateur (issue #58). Depuis l'issue #95,
+    // la ligne n'affiche QUE l'heure "HH:MM:SS" (colonne plus étroite) ; la date
+    // complète "DD/MM/YYYY HH:MM:SS" reste disponible au survol (attribut title).
+    const dObj = it.createdAt ? new Date(it.createdAt) : null;
+    const heureCreation = dObj
+      ? dObj.toLocaleTimeString('fr-FR', {
+          hour: '2-digit', minute: '2-digit', second: '2-digit'
+        })
+      : '';
+    const dateCreation = dObj
+      ? dObj.toLocaleString('fr-FR', {
           day: '2-digit', month: '2-digit', year: 'numeric',
           hour: '2-digit', minute: '2-digit', second: '2-digit'
         })
@@ -554,14 +561,27 @@ function rendreListeIssues(reset) {
         '<span class="badge-copie-ccl" title="Copier la réponse CCL"'
         + ' onclick="copierReponseDepuisBadge(event, \''
         + escapeHtml(it.projet) + '\', ' + Number(numero) + ')">✅</span>');
+      // Icône « All » (issue #95) : juste à côté de l'icône ✅ (qui ne copie que
+      // le résumé), elle copie le contenu COMPLET de la réponse CCL (résumé +
+      // détails), via le même mécanisme de copie/feedback (copierDepuisBadge).
+      badgesHtml +=
+        '<span class="badge-copie-all" title="Copier le contenu complet de l\'issue"'
+        + ' onclick="copierToutDepuisBadge(event, \''
+        + escapeHtml(it.projet) + '\', ' + Number(numero) + ')">All</span>';
     }
     ligne.innerHTML =
-      '<span class="ligne-date" style="font-size:11px;color:#999;'
-      + 'min-width:140px;font-family:monospace">' + escapeHtml(dateCreation) + '</span>'
+      '<span class="ligne-date" title="' + escapeHtml(dateCreation) + '"'
+      + ' style="font-size:11px;color:#999;'
+      + 'min-width:66px;font-family:monospace">' + escapeHtml(heureCreation) + '</span>'
       + '<span class="ligne-gauche">'
       + '<span class="ligne-badges">' + badgesHtml + '</span>'
       + '<span class="pastille-ligne" style="background:' + couleur + '"></span>'
       + '</span>'
+      // Poignée de redimensionnement de la SEULE colonne titre (issue #95) :
+      // sur la bordure gauche de .ligne-texte. onclick stoppe la propagation
+      // pour qu'un clic de fin de glisser ne sélectionne pas l'issue.
+      + '<span class="poignee-titre" title="Glisser pour redimensionner la colonne titre"'
+      + ' onmousedown="demarrerRedimTitre(event)" onclick="event.stopPropagation()"></span>'
       + '<span class="ligne-texte">#' + escapeHtml(numero) + ' — '
       + escapeHtml(it.title) + ' [' + etat + ']</span>'
       // Badge de temps restant estimé (issue #91) : rempli/actualisé par
