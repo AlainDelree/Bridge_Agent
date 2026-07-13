@@ -135,9 +135,10 @@ button.danger:hover{background:#f8d7da}
    la liste défile horizontalement au besoin. Les autres colonnes restent fixes. */
 .liste-issues.titre-redimensionne .ligne-issue .ligne-texte{
   flex:0 0 var(--largeur-titre)}
-/* Badge de temps restant estimé des issues ouvertes (issue #91). Couleur selon
-   l'état : vert = large marge, orange = échéance proche (<=30 s), rouge =
-   dépassement, gris = pas encore démarrée, bleu = priorité sans deadline. */
+/* Badge de temps restant estimé des issues ouvertes (issue #91), conscient du
+   budget de retry (issue #106). Couleur selon l'état : vert = large marge,
+   orange = échéance proche (<=30 s), rouge = budget total dépassé, gris = pas
+   encore démarrée, bleu = priorité sans deadline, violet = retry en cours. */
 .ligne-issue .ligne-tempsrestant{flex-shrink:0;font-size:11px;font-weight:600;
   padding:1px 7px;border-radius:9px;white-space:nowrap;color:#fff}
 .ligne-issue .ligne-tempsrestant.tr-ok{background:#3B8C2F}
@@ -145,6 +146,7 @@ button.danger:hover{background:#f8d7da}
 .ligne-issue .ligne-tempsrestant.tr-depasse{background:#B32020}
 .ligne-issue .ligne-tempsrestant.tr-attente{background:#8A8A85}
 .ligne-issue .ligne-tempsrestant.tr-illimite{background:#185FA5}
+.ligne-issue .ligne-tempsrestant.tr-retry{background:#7A4FA5}   /* retry en cours (au-delà du 1er cycle, budget non épuisé) */
 /* Badge du projet source dans l'en-tête du panneau de détail. */
 .badge-projet{display:inline-flex;align-items:center;gap:6px;font-size:12px;
   font-weight:600;padding:3px 11px;border-radius:12px;color:#fff;margin-bottom:12px}

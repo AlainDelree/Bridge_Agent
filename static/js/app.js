@@ -700,7 +700,7 @@ function appliquerFiltresListe() {
 // debut+timeout connus, un intervalle JS recalcule le restant chaque seconde
 // sans re-solliciter le serveur. Un re-fetch plus espacé (fetchTiming) capte
 // les issues nouvellement démarrées ou terminées.
-let timingIssues = {};              // clé "projet#numero" → {timeout, debut, sans_limite}
+let timingIssues = {};              // clé "projet#numero" → {timeout, max_essais, backoff, debut, sans_limite}
 let intervalTempsRestant = null;    // recalcul 1 s du compte à rebours (client seul)
 let intervalFetchTiming  = null;    // re-fetch périodique des débuts/timeouts
 
@@ -727,6 +727,8 @@ async function chargerTimingIssues() {
       for (const it of liste) {
         map[cleTiming(nom, it.number)] = {
           timeout:     it.timeout,
+          max_essais:  it.max_essais,
+          backoff:     it.backoff,
           debut:       it.debut,
           sans_limite: it.sans_limite,
         };
@@ -754,18 +756,37 @@ function formaterBadgeTempsRestant(badge, t) {
     badge.title = 'Priorité haute/critique : réessais illimités, pas de deadline';
     return;
   }
-  const ecoule  = (Date.now() - new Date(t.debut).getTime()) / 1000;
-  const restant = Math.round(t.timeout - ecoule);
-  if (restant > 0) {
+  // Budget de retry conscient (issue #106) : le watcher dispose de max_essais
+  // tentatives de `timeout` secondes, séparées par un backoff. On raisonne donc
+  // sur le budget TOTAL (timeout × essais + backoffs), et non sur un seul cycle.
+  const essais   = Math.max(1, t.max_essais || 1);
+  const backoff  = t.backoff || 0;
+  const cycle    = t.timeout + backoff;                 // durée d'un cycle (tentative + backoff)
+  const budget   = t.timeout * essais + backoff * (essais - 1);
+  const ecoule   = (Date.now() - new Date(t.debut).getTime()) / 1000;
+  const restant  = Math.round(budget - ecoule);
+  // Tentative estimée en cours (1-based), plafonnée au nombre max.
+  const tentative = Math.min(essais, Math.floor(ecoule / cycle) + 1);
+
+  if (restant > 0 && tentative <= 1) {   // 1er cycle : compte à rebours classique
     badge.textContent = '⏳ ' + formaterDuree(restant);
     badge.classList.add(restant <= 30 ? 'tr-bientot' : 'tr-ok');
-    badge.title = 'Temps restant estimé avant dépassement du TIMEOUT ('
-                + t.timeout + 's)';
-  } else {                               // dépassement du TIMEOUT
+    badge.title = 'Temps restant estimé sur le budget total ('
+                + essais + ' tentative(s) × ' + t.timeout + 's'
+                + (backoff ? ' + backoffs' : '') + ') avant dépassement réel.';
+  } else if (restant > 0) {              // au-delà du 1er cycle : retry en cours, PAS un échec
+    badge.textContent = '🔄 tentative ' + tentative + '/' + essais
+                      + ' — ' + formaterDuree(restant);
+    badge.classList.add('tr-retry');
+    badge.title = 'Le 1er cycle TIMEOUT (' + t.timeout + 's) a été dépassé, mais '
+                + 'le watcher dispose de ' + essais + ' tentatives. Reste ~'
+                + formaterDuree(restant) + ' sur le budget total ; pas encore un échec.';
+  } else {                               // budget total (toutes tentatives) épuisé
     badge.textContent = '⌛ dépassement +' + formaterDuree(-restant);
     badge.classList.add('tr-depasse');
-    badge.title = 'TIMEOUT (' + t.timeout + 's) dépassé ; le watcher peut '
-                + 'encore réessayer selon la priorité';
+    badge.title = 'Budget total épuisé (' + essais + ' tentatives × ' + t.timeout
+                + 's' + (backoff ? ' + backoffs' : '') + ') ; intervention '
+                + 'humaine probable (label needs-human).';
   }
 }
 

@@ -16,6 +16,10 @@ from flask import jsonify, request
 
 from app.projets import projet_par_nom
 from app.auth import login_requis  # noqa: F401 (exporté pour l'enregistrement des routes)
+# projet_par_nom (app.projets) a déjà inséré la racine dans sys.path : l'import
+# du watcher fonctionne. On réutilise ses primitives pour éviter toute dérive
+# entre le calcul du watcher et celui du badge (issues #91 et #106).
+from watcher import est_titre_chef, PAUSE_ENTRE_TENTATIVES
 
 # Racine du projet (dossier parent du package app/).
 DOSSIER_SCRIPT = Path(__file__).resolve().parent.parent
@@ -184,10 +188,11 @@ def issue_detail(nom_projet, numero):
 # EST l'heure de début — source de vérité qui survit à un redémarrage du watcher.
 # On la relit ici pour calculer, côté navigateur, un temps restant estimé.
 
-def _parser_timeout(body: str) -> int:
-    """TIMEOUT (secondes) lu dans l'en-tête bridge du body ; défaut 300 s.
-    Miroir de watcher.extraire_timeout, mais sans dépendance à CFG (absent du
-    processus Flask) : le défaut est ici la valeur par défaut projet (300 s)."""
+def _parser_timeout(body: str, titre: str = "", cfg=None) -> int:
+    """TIMEOUT (secondes) lu dans l'en-tête bridge du body. Miroir de
+    watcher.extraire_timeout : si absent/mal formé, retombe sur le défaut projet
+    (cfg.timeout_claude), ou sur le défaut Chef plus généreux (cfg.timeout_chef)
+    pour les issues « Chef : » (issue #106). Sans cfg, défaut historique 300 s."""
     for ligne in body.splitlines():
         if "TIMEOUT" in ligne.upper():
             parts = ligne.split("|")
@@ -195,7 +200,11 @@ def _parser_timeout(body: str) -> int:
                 valeur = parts[2].strip().lower().rstrip("s")
                 if valeur.isdigit():
                     return int(valeur)
-    return 300
+    if cfg is None:
+        return 300
+    if est_titre_chef(titre):
+        return cfg.timeout_chef
+    return cfg.timeout_claude
 
 
 def _parser_priorite(body: str) -> str:
@@ -241,8 +250,13 @@ def issues_en_attente(nom_projet):
     traitement par le watcher). La liste peut être vide.
 
     Chaque issue est enrichie des champs nécessaires au calcul, côté navigateur,
-    d'un temps restant estimé (issue #91) :
-      - timeout      : TIMEOUT de l'issue en secondes (défaut 300)
+    d'un temps restant estimé (issue #91), conscient du budget de retry (#106) :
+      - timeout      : TIMEOUT par tentative en secondes (défaut projet, ou
+                       défaut Chef plus généreux pour les issues « Chef : »)
+      - max_essais   : nombre de tentatives du watcher (budget = timeout × ce
+                       nombre + backoffs) — le badge ne signale « dépassement »
+                       qu'une fois ce budget total épuisé, pas au 1er cycle
+      - backoff      : pause (s) entre deux tentatives
       - priorite     : PRIORITE de l'issue
       - sans_limite  : True si priorité haute/critique (retry infini, §6) → pas
                        de deadline, afficher « en cours (pas de limite) »
@@ -275,8 +289,11 @@ def issues_en_attente(nom_projet):
     # for-linux sont rares (souvent 0-3), le surcoût reste modéré.
     for it in issues:
         body = it.get("body") or ""
+        titre = it.get("title") or ""
         priorite = _parser_priorite(body)
-        it["timeout"]     = _parser_timeout(body)
+        it["timeout"]     = _parser_timeout(body, titre, cfg)
+        it["max_essais"]  = cfg.max_essais
+        it["backoff"]     = PAUSE_ENTRE_TENTATIVES
         it["priorite"]    = priorite
         it["sans_limite"] = priorite in ("haute", "critique")
         it["debut"]       = _debut_traitement(_commentaires_issue(cfg, it["number"]))

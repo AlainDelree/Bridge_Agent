@@ -22,6 +22,7 @@ import argparse
 import sys
 import os
 import glob
+import re
 from logging.handlers import RotatingFileHandler
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -51,6 +52,10 @@ LABEL_NOTIF_TOUS = "notif_tous"   # bip + notify-send + ntfy
 
 PRIORITES_CRITIQUES = {"haute", "critique"}
 
+# Pause (secondes) entre deux tentatives d'une même issue (backoff). Sert aussi
+# à calculer, côté navigateur, le budget total de retry du badge (issue #106).
+PAUSE_ENTRE_TENTATIVES = 5
+
 # Abréviations du dictionnaire bridge
 SOURCES = {"CC": "Claude Chat", "CCL": "Claude Code Linux", "CCW": "Claude Code Windows"}
 
@@ -71,6 +76,7 @@ class Config:
     intervalle: int       = 10
     max_essais: int       = 3
     timeout_claude: int   = 300
+    timeout_chef: int     = 1200   # défaut plus généreux pour les issues « Chef : » sans TIMEOUT explicite (issue #106)
     script_bip: Path      = field(default_factory=lambda: Path.home() / "NicLink" / "bip.py")
     log_taille_max_mo: int = 1     # rotation quand le journal dépasse cette taille (Mo)
     log_archives: int      = 5     # nombre d'archives datées conservées
@@ -138,6 +144,7 @@ def charger_config(chemin: Path) -> Config:
         intervalle     = entier("INTERVALLE", 10),
         max_essais     = entier("MAX_ESSAIS", 3),
         timeout_claude = entier("TIMEOUT_CLAUDE", 300),
+        timeout_chef   = entier("TIMEOUT_CHEF", 1200),
         script_bip  = Path(brut["SCRIPT_BIP"]).expanduser() if brut.get("SCRIPT_BIP")
                       else Path.home() / "NicLink" / "bip.py",
         log_taille_max_mo = entier("LOG_TAILLE_MAX_MO", 1),
@@ -327,9 +334,18 @@ def extraire_priorite(body: str) -> str:
                 return parts[2].strip().lower()
     return "normale"
 
-def extraire_timeout(body: str) -> int:
+def est_titre_chef(titre: str) -> bool:
+    """Vrai si le titre désigne une tâche « Chef » (pattern chef/ouvriers, §14).
+    Cohérent avec la détection côté navigateur (app.js) : titre commençant par
+    « Chef », insensible à la casse (ex. « Chef : orchestrer … »)."""
+    return bool(re.match(r"chef\b", (titre or "").strip(), re.IGNORECASE))
+
+
+def extraire_timeout(body: str, titre: str = "") -> int:
     """Extrait le TIMEOUT (en secondes) depuis le body de l'issue (en-tête bridge).
-    Retombe sur le timeout par défaut du projet si absent ou mal formé."""
+    Si absent ou mal formé, retombe sur le défaut du projet — mais un défaut plus
+    généreux (CFG.timeout_chef) pour les issues « Chef : » (tâches monolithiques
+    plus longues), afin d'éviter un dépassement du seul cycle standard (issue #106)."""
     for ligne in body.splitlines():
         if "TIMEOUT" in ligne.upper():
             parts = ligne.split("|")
@@ -337,6 +353,8 @@ def extraire_timeout(body: str) -> int:
                 valeur = parts[2].strip().lower().rstrip("s")
                 if valeur.isdigit():
                     return int(valeur)
+    if est_titre_chef(titre):
+        return CFG.timeout_chef
     return CFG.timeout_claude
 
 def extraire_modele(body: str) -> str:
@@ -556,7 +574,7 @@ def traiter_issue(issue: dict, dry_run: bool):
     issues_en_cours.add(numero)
     priorite = extraire_priorite(body)
     critique = priorite in PRIORITES_CRITIQUES
-    timeout  = extraire_timeout(body)
+    timeout  = extraire_timeout(body, titre)
     modele   = extraire_modele(body)
 
     autoriser_ecriture = LABEL_ECRITURE in labels
@@ -616,7 +634,7 @@ def traiter_issue(issue: dict, dry_run: bool):
                 issues_en_cours.discard(numero)
                 return
 
-        time.sleep(5)  # pause entre tentatives
+        time.sleep(PAUSE_ENTRE_TENTATIVES)  # backoff entre tentatives
 
 # ─── Boucle principale ─────────────────────────────────────────────────────────
 
