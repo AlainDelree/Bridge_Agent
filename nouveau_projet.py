@@ -17,6 +17,7 @@ effectué : Alain pousse lui-même après vérification.
 import re
 import subprocess
 import sys
+import unicodedata
 from datetime import date
 from pathlib import Path
 
@@ -623,6 +624,55 @@ def main() -> None:
     print(f"   • Vérifier puis committer/pousser les changements du dépôt "
           "Bridge_Agent (configs/, doc).")
     print("   • (Optionnel) Piloter le watcher depuis l'interface new_issue.py.")
+
+    rappel_projet_claude(nom)
+
+
+def rappel_projet_claude(nom: str) -> None:
+    """Affiche un encadré ASCII rappelant de créer un Projet Claude dédié pour
+    le projet fraîchement créé (action manuelle, hors périmètre du script,
+    facilement oubliée). Le nom du projet est injecté dynamiquement.
+
+    Le même rappel doit être proposé sous forme de modal après la création via
+    le bouton web (issue #99) — voir le commentaire posté sur cette issue."""
+    largeur = 72
+    interne = largeur - 4          # colonnes utiles entre les bordures
+    barre = "═" * largeur
+
+    def largeur_affichee(txt: str) -> int:
+        # Les glyphes « wide » (emoji…) occupent 2 colonnes à l'écran alors que
+        # len() n'en compte qu'une : sans ça la bordure droite se décale.
+        return sum(2 if unicodedata.east_asian_width(c) in ("W", "F") else 1
+                   for c in txt)
+
+    def ligne(txt: str = "") -> None:
+        # Découpe le texte en lignes tenant dans l'encadré, coupe aux espaces.
+        mots, courante = txt.split(), ""
+        rendus = []
+        for mot in mots:
+            essai = f"{courante} {mot}".strip()
+            if largeur_affichee(essai) > interne:
+                rendus.append(courante)
+                courante = mot
+            else:
+                courante = essai
+        rendus.append(courante)
+        for r in rendus or [""]:
+            bourrage = " " * (interne - largeur_affichee(r))
+            print(f"║ {r}{bourrage} ║")
+
+    print()
+    print(f"╔{barre}╗")
+    ligne(f"💡 Pense à créer un Projet Claude dédié pour « {nom} »")
+    ligne()
+    ligne(f"Un Projet Claude dédié te donne un espace mémoire séparé dans "
+          f"l'interface Claude pour « {nom} ». C'est une action manuelle, "
+          "facultative, à faire depuis l'interface Claude.")
+    ligne()
+    ligne("Settings n'a plus besoin d'être modifié : le §2 de "
+          "BRIDGE_AGENT_DOC.md fait foi automatiquement pour la "
+          "reconnaissance du projet.")
+    print(f"╚{barre}╝")
 
 
 if __name__ == "__main__":
