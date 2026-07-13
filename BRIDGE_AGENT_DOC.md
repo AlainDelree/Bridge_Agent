@@ -285,6 +285,10 @@ python3 new_issue.py --externe
 # Configurer le mot de passe
 python3 new_issue.py --set-password
 
+# Créer / installer un nouveau projet bridge (interactif)
+# Crée le .conf, les 8 labels, CONTEXTE.md et met à jour cette doc (§2/§7).
+python3 nouveau_projet.py
+
 # Lancer un watcher manuellement
 python3 watcher.py --config configs/bridge_agent.conf
 python3 watcher.py --config configs/bridge_agent.conf --dry-run
