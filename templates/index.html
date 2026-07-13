@@ -34,6 +34,8 @@
         <option value="{{ p.nom }}">{{ p.nom }} — {{ p.depot }}</option>
         {% endfor %}
       </select>
+      <button id="btn-nouveau-projet" onclick="ouvrirNouveauProjet()"
+              title="Créer ou installer un nouveau projet dans le bridge">+ Nouveau projet</button>
       <button id="btn-watcher" onclick="lancerWatcher()">Lancer le watcher</button>
 
       <div id="bandeau-statut" style="display:flex;align-items:center;gap:10px;
@@ -275,6 +277,63 @@
     <div class="modal-boutons">
       <button id="modal-non">Annuler</button>
       <button class="danger-plein" id="modal-oui">Envoyer quand même</button>
+    </div>
+  </div>
+</div>
+
+<!-- ─── Modal « Nouveau projet » (issue #99) ──────────────────────────────── -->
+<div id="modal-nouveau-projet" class="modal-overlay">
+  <div class="modal-carte" style="max-width:560px">
+    <div class="modal-titre">➕ Nouveau projet Bridge_Agent</div>
+
+    <div class="champ" style="margin-bottom:12px">
+      <label>Nom du projet (minuscules, chiffres, underscore ; commence par une lettre)</label>
+      <input type="text" id="np-nom" placeholder="ex : mon_projet"
+             oninput="npNomChange()" autocomplete="off">
+      <span id="np-nom-msg" style="font-size:12px;min-height:16px"></span>
+    </div>
+
+    <div class="champ" style="margin-bottom:12px">
+      <label>Dépôt GitHub (owner/nom)</label>
+      <input type="text" id="np-depot" placeholder="AlainDelree/Nom"
+             oninput="npDepotEdite=true" onchange="npVerifierDepot()" autocomplete="off">
+      <span id="np-depot-msg" style="font-size:12px;min-height:16px"></span>
+    </div>
+
+    <label id="np-creer-depot-ligne"
+           style="display:none;font-size:13px;color:#333;margin-bottom:12px">
+      <input type="checkbox" id="np-creer-depot" checked>
+      Créer le dépôt (public) s'il n'existe pas encore
+    </label>
+
+    <div class="champ" style="margin-bottom:12px">
+      <label>Répertoire de travail CCL</label>
+      <input type="text" id="np-rep" placeholder="/home/alain/Nom"
+             oninput="npRepEdite=true" autocomplete="off">
+    </div>
+
+    <div class="champ" style="margin-bottom:12px">
+      <label>Périmètre autorisé (dossiers, séparés par des virgules)</label>
+      <input type="text" id="np-perimetre" placeholder="par défaut : le répertoire de travail"
+             oninput="npPerimetreEdite=true" autocomplete="off">
+    </div>
+
+    <div class="champ" style="margin-bottom:12px">
+      <label>Topic ntfy (notifications)</label>
+      <input type="text" id="np-topic" autocomplete="off">
+    </div>
+
+    <label style="display:block;font-size:13px;color:#333;margin-bottom:16px">
+      <input type="checkbox" id="np-specs">
+      Pattern Specs MVC (§15) — crée aussi CONTEXTE_VUE / METIER / PERSISTANCE
+    </label>
+
+    <div id="np-compte-rendu" class="modal-liste" style="display:none"></div>
+    <div id="np-message" class="message" style="display:none;margin-bottom:14px"></div>
+
+    <div class="modal-boutons">
+      <button id="np-fermer" onclick="fermerNouveauProjet()">Fermer</button>
+      <button class="primaire" id="np-creer" onclick="soumettreNouveauProjet()">Créer le projet</button>
     </div>
   </div>
 </div>

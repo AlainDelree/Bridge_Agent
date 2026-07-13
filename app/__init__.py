@@ -57,6 +57,7 @@ def _enregistrer_routes(app: Flask) -> None:
     """
     from app.auth import login_requis, login, login_post, logout
     from app.projets import get_config, post_config
+    from app.nouveau_projet import verifier_nouveau_projet, creer_nouveau_projet
     from app.watchers import (watchers, lancer_watcher,
                               arreter_watcher_route, statut)
     from app.issues import (apercu, envoyer, issues_liste, issue_detail,
@@ -79,6 +80,8 @@ def _enregistrer_routes(app: Flask) -> None:
     app.add_url_rule("/fermer-issue/<nom_projet>/<numero>", "fermer_issue", login_requis(fermer_issue), methods=["POST"])
     app.add_url_rule("/config/<nom_projet>", "get_config", login_requis(get_config), methods=["GET"])
     app.add_url_rule("/config/<nom_projet>", "post_config", login_requis(post_config), methods=["POST"])
+    app.add_url_rule("/nouveau-projet/verifier", "verifier_nouveau_projet", login_requis(verifier_nouveau_projet), methods=["GET"])
+    app.add_url_rule("/nouveau-projet", "creer_nouveau_projet", login_requis(creer_nouveau_projet), methods=["POST"])
     app.add_url_rule("/watchers", "watchers", login_requis(watchers))
     app.add_url_rule("/lancer-watcher", "lancer_watcher", login_requis(lancer_watcher), methods=["POST"])
     app.add_url_rule("/arreter-watcher", "arreter_watcher_route", login_requis(arreter_watcher_route), methods=["POST"])

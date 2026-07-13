@@ -285,8 +285,11 @@ python3 new_issue.py --externe
 # Configurer le mot de passe
 python3 new_issue.py --set-password
 
-# Créer / installer un nouveau projet bridge (interactif)
+# Créer / installer un nouveau projet bridge (interactif, terminal)
 # Crée le .conf, les 8 labels, CONTEXTE.md et met à jour cette doc (§2/§7).
+# Équivalent web : bouton « + Nouveau projet » à côté du sélecteur de projet
+# dans l'interface (mêmes étapes, compte-rendu par étape, sélecteur rafraîchi
+# sans redémarrer new_issue.py). Le script CLI reste utilisable en parallèle.
 python3 nouveau_projet.py
 
 # Lancer un watcher manuellement

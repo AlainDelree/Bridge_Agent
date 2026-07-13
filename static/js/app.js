@@ -1788,3 +1788,194 @@ function viderFormulaire(cacherMsg=true) {
   appliquerNotifPc();
   document.getElementById('modele-ponctuel').value = '';
 }
+
+// ─── Nouveau projet (issue #99) ───────────────────────────────────────────
+// Modal reproduisant fidèlement les étapes de nouveau_projet.py, exécutées
+// côté serveur par app/nouveau_projet.py (qui réutilise le script CLI sans le
+// dupliquer). Les défauts (dépôt, répertoire) sont pré-remplis mais restent
+// modifiables ; un champ touché à la main n'est plus écrasé par l'auto-remplissage.
+
+let npDepotEdite = false, npRepEdite = false, npPerimetreEdite = false;
+let npTimerVerif = null;
+
+function ouvrirNouveauProjet() {
+  ['np-nom', 'np-depot', 'np-rep', 'np-perimetre', 'np-topic'].forEach(id =>
+    document.getElementById(id).value = '');
+  document.getElementById('np-specs').checked = false;
+  document.getElementById('np-creer-depot').checked = true;
+  document.getElementById('np-creer-depot-ligne').style.display = 'none';
+  document.getElementById('np-nom-msg').textContent = '';
+  document.getElementById('np-depot-msg').textContent = '';
+  document.getElementById('np-compte-rendu').style.display = 'none';
+  document.getElementById('np-message').style.display = 'none';
+  const btn = document.getElementById('np-creer');
+  btn.disabled = false; btn.textContent = 'Créer le projet';
+  document.getElementById('np-fermer').textContent = 'Fermer';
+  npDepotEdite = npRepEdite = npPerimetreEdite = false;
+  document.getElementById('modal-nouveau-projet').classList.add('actif');
+  document.getElementById('np-nom').focus();
+}
+
+function fermerNouveauProjet() {
+  document.getElementById('modal-nouveau-projet').classList.remove('actif');
+}
+
+// Saisie du nom : débounce puis vérification serveur (validité, .conf déjà pris,
+// existence du dépôt) et pré-remplissage des champs par défaut non encore édités.
+function npNomChange() {
+  clearTimeout(npTimerVerif);
+  npTimerVerif = setTimeout(npVerifier, 350);
+}
+
+// Changement manuel du dépôt : vérifie immédiatement son existence sur GitHub.
+async function npVerifierDepot() {
+  clearTimeout(npTimerVerif);
+  await npVerifier();
+}
+
+async function npVerifier() {
+  const nom       = document.getElementById('np-nom').value.trim().toLowerCase();
+  const depotSaisi = document.getElementById('np-depot').value.trim();
+  const nomMsg    = document.getElementById('np-nom-msg');
+  const ligneCreer = document.getElementById('np-creer-depot-ligne');
+  if (!nom) {
+    nomMsg.textContent = '';
+    document.getElementById('np-depot-msg').textContent = '';
+    ligneCreer.style.display = 'none';
+    return;
+  }
+  let r;
+  try {
+    const url = '/nouveau-projet/verifier?nom=' + encodeURIComponent(nom)
+              + (depotSaisi ? '&depot=' + encodeURIComponent(depotSaisi) : '');
+    r = await (await fetch(url)).json();
+  } catch (e) {
+    nomMsg.textContent = 'Erreur réseau : ' + e.message;
+    nomMsg.style.color = '#a32d2d';
+    return;
+  }
+
+  if (!r.nom_valide) {
+    nomMsg.textContent = '⚠ Format invalide (minuscules, chiffres, underscore ; commence par une lettre).';
+    nomMsg.style.color = '#a32d2d';
+  } else if (r.conf_existe) {
+    nomMsg.textContent = '⚠ configs/' + nom + '.conf existe déjà — choisir un autre nom.';
+    nomMsg.style.color = '#a32d2d';
+  } else {
+    nomMsg.textContent = '✓ Nom disponible.';
+    nomMsg.style.color = '#2e7d32';
+  }
+
+  // Pré-remplissage : uniquement les champs que l'utilisateur n'a pas touchés.
+  if (r.nom_valide) {
+    if (!npDepotEdite && r.depot_defaut) document.getElementById('np-depot').value = r.depot_defaut;
+    if (!npRepEdite   && r.rep_defaut)   document.getElementById('np-rep').value   = r.rep_defaut;
+  }
+
+  npAfficherEtatDepot(r);
+}
+
+// Affiche l'état du dépôt vérifié : existant → installation (pas de recréation),
+// absent → propose la case « créer le dépôt ».
+function npAfficherEtatDepot(r) {
+  const depotMsg   = document.getElementById('np-depot-msg');
+  const ligneCreer = document.getElementById('np-creer-depot-ligne');
+  if (!r.nom_valide || !r.depot) {
+    depotMsg.textContent = '';
+    ligneCreer.style.display = 'none';
+    return;
+  }
+  if (r.depot_existe) {
+    depotMsg.textContent = '✓ ' + r.depot + ' existe déjà → installation dessus (pas de recréation).';
+    depotMsg.style.color = '#2e7d32';
+    ligneCreer.style.display = 'none';
+  } else {
+    depotMsg.textContent = 'ℹ ' + r.depot + " n'existe pas encore.";
+    depotMsg.style.color = '#8a6d00';
+    ligneCreer.style.display = 'block';
+  }
+}
+
+function npMsg(texte, type) {
+  const el = document.getElementById('np-message');
+  el.textContent = texte;
+  el.className = 'message ' + type;
+  el.style.display = 'block';
+}
+
+async function soumettreNouveauProjet() {
+  const nom = document.getElementById('np-nom').value.trim().toLowerCase();
+  const cr  = document.getElementById('np-compte-rendu');
+  document.getElementById('np-message').style.display = 'none';
+  cr.style.display = 'none';
+  if (!nom) { npMsg('Un nom de projet est requis.', 'erreur'); return; }
+
+  const btn = document.getElementById('np-creer');
+  const avant = btn.textContent;
+  btn.disabled = true; btn.textContent = 'Création…';
+
+  const data = {
+    nom,
+    depot:     document.getElementById('np-depot').value.trim(),
+    rep:       document.getElementById('np-rep').value.trim(),
+    perimetre: document.getElementById('np-perimetre').value.trim(),
+    topic:     document.getElementById('np-topic').value.trim(),
+    avec_specs: document.getElementById('np-specs').checked,
+    creer_depot_si_absent: document.getElementById('np-creer-depot').checked,
+  };
+
+  let res;
+  try {
+    const rep = await fetch('/nouveau-projet', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(data),
+    });
+    res = await rep.json();
+  } catch (e) {
+    btn.disabled = false; btn.textContent = avant;
+    npMsg('Erreur réseau : ' + e.message, 'erreur');
+    return;
+  }
+  btn.textContent = avant;
+
+  // Compte-rendu par étape (succès/échec), cohérent avec le script CLI.
+  if (res.etapes && res.etapes.length) {
+    cr.innerHTML = res.etapes.map(e =>
+      (e.ok ? '✓ ' : '❌ ') + '<b>' + escapeHtml(e.etape) + '</b> — ' + escapeHtml(e.detail || '')
+    ).join('<br>');
+    cr.style.display = 'block';
+  }
+
+  if (res.succes) {
+    npMsg('✅ Projet « ' + res.nom + ' » créé'
+          + (res.depot_existait ? ' (installé sur dépôt existant)' : '') + '.', 'succes');
+    ajouterProjetAuSelecteur(res.nom, res.depot);
+    // Création réussie : on verrouille « Créer » (évite un double envoi) et on
+    // renomme « Fermer » en « Terminé ».
+    btn.disabled = true;
+    document.getElementById('np-fermer').textContent = 'Terminé';
+  } else {
+    btn.disabled = false;
+    npMsg('❌ ' + (res.erreur || 'Échec de la création.'), 'erreur');
+  }
+}
+
+// Rafraîchit le sélecteur global SANS redémarrer new_issue.py (contrainte
+// issue #99 : le <select> est peuplé côté serveur au chargement). Ajoute (ou
+// met à jour) l'option, la sélectionne, met à jour le compteur d'en-tête, puis
+// onProjetChange() applique accent/statut/infos — le projet est aussitôt utilisable.
+function ajouterProjetAuSelecteur(nom, depot) {
+  const select = document.getElementById('projet');
+  let opt = [...select.options].find(o => o.value === nom);
+  if (!opt) {
+    opt = document.createElement('option');
+    opt.value = nom;
+    select.appendChild(opt);
+  }
+  opt.textContent = nom + ' — ' + depot;
+  select.value = nom;
+  const statut = document.querySelector('.entete .statut');
+  if (statut) statut.textContent = select.options.length + ' projet(s) disponible(s)';
+  onProjetChange();
+}
