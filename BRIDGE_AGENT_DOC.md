@@ -361,4 +361,59 @@ notification GSM/bureau
 
 ---
 
-*Dernière mise à jour : 13 juillet 2026 — Bridge_Agent v1, 3 projets actifs. Ajout convention SUITE_DE (issue #92).*
+## 15. Pattern Chef + Specs MVC (évolution future)
+
+> Section prospective — pas encore implémentée, complémentaire au pattern
+> chef/ouvrier générique du §14 (celui-ci reste valable pour un découpage
+> ad hoc ponctuel ; celui-ci vise un découpage fixe et récurrent par couche).
+
+**Principe :** pour un projet donné, trois CCL spécialisés permanents
+coexistent, chacun restreint à un périmètre de dossiers fixe et disposant
+de son propre fichier de contexte :
+
+| Rôle | Titre préfixé | Fichier de contexte | Périmètre (exemple) |
+|------|---------------|---------------------|----------------------|
+| Spec-Vue | `Spec-Vue : ` | CONTEXTE_VUE.md | templates/, static/ |
+| Spec-Métier | `Spec-Métier : ` | CONTEXTE_METIER.md | modules de logique/contrôleur |
+| Spec-Persistance | `Spec-Persistance : ` | CONTEXTE_PERSISTANCE.md | modèles, migrations, configs |
+
+**Les trois rôles sont créés dès la mise en place du pattern sur un projet,
+même si l'un d'eux reste peu ou pas utilisé au départ** — créer le rôle et
+son contexte à l'avance coûte moins cher que devoir l'ajouter dans l'urgence
+le jour où un besoin de persistance apparaît soudainement.
+
+**Différence clé avec le chef/ouvrier du §14 :** le découpage n'est **pas**
+décidé par le CCL chef à l'exécution. C'est Claude Chat qui décide, au
+moment de rédiger l'issue, quel(s) Spec(s) sont concernés par la demande,
+via un champ structuré dans l'en-tête :
+
+```markdown
+| SPEC | Vue |
+```
+
+> Le champ `SPEC` accepte un ou plusieurs rôles séparés par des virgules —
+> `Vue`, `Métier`, `Persistance` — selon les couches touchées par la demande
+> (ex. `| SPEC | Vue, Métier |` pour une fonctionnalité qui modifie à la fois
+> l'affichage et la logique). Chaque valeur route l'issue vers le Spec
+> correspondant, avec son périmètre de dossiers et son fichier de contexte
+> propres. Absent = pas de spécialisation (issue normale ou pattern §14).
+
+**Points à concevoir avant implémentation** (en plus de ceux du §14) :
+
+- **Routage** : le watcher (ou un dispatcher) doit lire le champ `SPEC` et
+  aiguiller l'issue vers le bon CCL spécialisé, avec le bon fichier de
+  contexte et le bon périmètre.
+- **Multi-Spec** : une issue touchant plusieurs couches (`Vue, Métier`) doit
+  être décomposée en issues mono-Spec (une par couche), ce qui rejoint la
+  logique chef/ouvrier du §14 — le chef devient alors un simple répartiteur
+  vers les Specs concernés.
+- **Cohérence des contextes** : les trois fichiers `CONTEXTE_*.md` décrivent
+  des périmètres disjoints ; prévoir une convention pour les points de contact
+  (ex. contrat d'interface entre Vue et Métier) afin d'éviter les divergences.
+- **Périmètre strict** : chaque Spec refuse de travailler hors de ses dossiers
+  (cohérent avec le §7), ce qui limite mécaniquement les conflits git entre
+  Specs travaillant en parallèle.
+
+---
+
+*Dernière mise à jour : 13 juillet 2026 — Bridge_Agent v1, 3 projets actifs. Ajout section 15 « Chef + Specs MVC » (issue #96).*
