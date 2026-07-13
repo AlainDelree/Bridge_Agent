@@ -23,6 +23,12 @@ body{font-family:system-ui,sans-serif;font-size:14px;background:#f0efe9;color:#1
 .onglet.actif{color:#1a1a18;font-weight:700;background:#fff;border-color:#dad9d2}
 .panneau{display:none;padding:20px}
 .panneau.actif{display:block}
+/* Onglet Résultats : ascenseur horizontal si le contenu (badges temps restant,
+   filtres, texte long) dépasse la largeur visible — surtout en mode --externe
+   (mobile) où l'espace est restreint. Ciblé par id : les autres onglets gardent
+   leur mise en page. overflow-x:auto → l'ascenseur n'apparaît que si le contenu
+   déborde réellement (issue #94). */
+#panneau-resultats{overflow-x:auto}
 .rangee{display:flex;gap:12px;margin-bottom:14px;align-items:flex-end}
 .champ{display:flex;flex-direction:column;gap:5px;flex:1}
 .champ label{font-size:12px;color:#666}
