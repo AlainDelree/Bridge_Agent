@@ -592,8 +592,94 @@ function rendreListeIssues(reset) {
     zone.appendChild(ligne);
   }
   appliquerFiltresListe();
+  appliquerLargeurTitre();
   majBadgesTempsRestant();
   if (reset) selectionnerPremiereVisible();
+}
+
+// ─── Colonne titre redimensionnable (issue #95) ───────────────────────────
+// SEULE la colonne titre (.ligne-texte) est redimensionnable : par défaut elle
+// est en flex:1 (occupe l'espace restant, tronquée par ellipsis). Dès qu'une
+// largeur est mémorisée, on bascule .liste-issues en mode « titre fixe » : la
+// colonne prend cette largeur explicite (var CSS --largeur-titre) et l'onglet
+// défile horizontalement si la ligne dépasse. Les autres colonnes (heure,
+// badges, pastille) gardent leur largeur fixe. La largeur choisie est persistée
+// (même convention que bridge_notif_pc, issue #93).
+const CLE_LARGEUR_TITRE = 'bridge_largeur_titre';
+
+// Lit la largeur mémorisée (px) ou null si absente/illisible/invalide.
+function largeurTitreStockee() {
+  try {
+    const v = parseInt(localStorage.getItem(CLE_LARGEUR_TITRE), 10);
+    return Number.isFinite(v) && v > 0 ? v : null;
+  } catch(e) { return null; }
+}
+
+// Applique (ou retire) la largeur de titre mémorisée sur le conteneur de liste.
+// Sans largeur stockée : mode par défaut (flex:1, ellipsis, pas de scroll).
+function appliquerLargeurTitre() {
+  const liste = document.getElementById('liste-issues');
+  if (!liste) return;
+  const w = largeurTitreStockee();
+  if (w) {
+    liste.style.setProperty('--largeur-titre', w + 'px');
+    liste.classList.add('titre-redimensionne');
+  } else {
+    liste.classList.remove('titre-redimensionne');
+    liste.style.removeProperty('--largeur-titre');
+  }
+}
+
+// État du glisser-déposer en cours (null hors redimensionnement).
+let redimTitreEtat = null;
+
+// Début du glisser sur la poignée gauche de la colonne titre. On mémorise la
+// largeur de départ de CETTE ligne comme référence ; le mouvement met à jour la
+// var CSS partagée par toutes les lignes (colonne cohérente).
+function demarrerRedimTitre(event) {
+  event.preventDefault();
+  event.stopPropagation();
+  const ligne = event.currentTarget.closest('.ligne-issue');
+  const texte = ligne ? ligne.querySelector('.ligne-texte') : null;
+  if (!texte) return;
+  redimTitreEtat = {
+    xDepart: event.clientX,
+    largeurDepart: texte.getBoundingClientRect().width,
+  };
+  document.body.style.cursor = 'col-resize';
+  document.body.style.userSelect = 'none';
+  document.addEventListener('mousemove', surRedimTitre);
+  document.addEventListener('mouseup', finRedimTitre);
+}
+
+// Pendant le glisser : la poignée est sur la bordure GAUCHE du titre → tirer
+// vers la gauche élargit la colonne, vers la droite la rétrécit. Bornée à
+// [80, 1200] px pour rester utilisable.
+function surRedimTitre(event) {
+  if (!redimTitreEtat) return;
+  const delta = redimTitreEtat.xDepart - event.clientX;
+  let w = Math.round(redimTitreEtat.largeurDepart + delta);
+  w = Math.max(80, Math.min(w, 1200));
+  const liste = document.getElementById('liste-issues');
+  if (!liste) return;
+  liste.style.setProperty('--largeur-titre', w + 'px');
+  liste.classList.add('titre-redimensionne');
+}
+
+// Fin du glisser : on persiste la largeur courante dans localStorage.
+function finRedimTitre() {
+  document.removeEventListener('mousemove', surRedimTitre);
+  document.removeEventListener('mouseup', finRedimTitre);
+  document.body.style.cursor = '';
+  document.body.style.userSelect = '';
+  if (!redimTitreEtat) return;
+  redimTitreEtat = null;
+  const liste = document.getElementById('liste-issues');
+  if (!liste) return;
+  const w = parseInt(liste.style.getPropertyValue('--largeur-titre'), 10);
+  if (Number.isFinite(w) && w > 0) {
+    try { localStorage.setItem(CLE_LARGEUR_TITRE, String(w)); } catch(e) {}
+  }
 }
 
 // Masque/affiche les lignes selon les projets actifs ET le filtre ouvriers
@@ -1134,6 +1220,75 @@ async function copierReponseDepuisBadge(event, nom, numero) {
   if (badge) {
     badge.textContent = '✓';
     setTimeout(function() { badge.textContent = '✅'; }, 1500);
+  }
+}
+
+// Reconstruit la réponse CCL COMPLÈTE (résumé + détails) en markdown brut à
+// partir d'une donnée issue brute — équivalent de « Copier tout » du détail
+// (issue #77), mais pour l'icône « All » de la liste (issue #95). Réutilise
+// texteReponseComplete() pour retirer les seules balises structurantes du bloc
+// <details>.
+function reponseCompleteCcl(it) {
+  const comms = (it && it.comments) || [];
+  if (!comms.length) return '';
+  const corpsBrut = comms[comms.length - 1].body || '';
+  const idxDetails = corpsBrut.indexOf('<details>');
+  const resume  = (idxDetails >= 0 ? corpsBrut.slice(0, idxDetails) : corpsBrut)
+                  .replace(/\s+$/, '');
+  const details = idxDetails >= 0 ? corpsBrut.slice(idxDetails) : '';
+  return texteReponseComplete(resume, details);
+}
+
+// Clic sur l'icône « All » d'une issue fermée+done (issue #95) : copie la
+// réponse CCL COMPLÈTE (résumé + détails) directement depuis la liste, sans
+// ouvrir le détail. Même mécanisme que copierReponseDepuisBadge (cache frais <
+// TTL sinon fetch, feedback bref sur le badge), mais via reponseCompleteCcl().
+async function copierToutDepuisBadge(event, nom, numero) {
+  event.stopPropagation();
+  const badge = event.currentTarget;   // capturé avant tout await (nullé ensuite)
+  numero = String(numero);
+  const cleCache = CLE_CACHE_DETAIL + nom + '_' + numero;
+  let texte = null;
+
+  // 1) Cache frais (< TTL) : on évite le fetch.
+  try {
+    const obj = JSON.parse(localStorage.getItem(cleCache) || 'null');
+    if (obj && obj.it && (Date.now() - obj.ts) < TTL_DETAIL_MS) {
+      texte = reponseCompleteCcl(obj.it);
+    }
+  } catch(e) {}
+
+  // 2) Pas de cache exploitable : fetch le détail et rafraîchit le cache.
+  if (texte === null) {
+    try {
+      const rep = await fetch('/issue/' + encodeURIComponent(nom)
+                              + '/' + encodeURIComponent(numero));
+      const it = await rep.json();
+      if (!it.erreur) {
+        try { localStorage.setItem(cleCache, JSON.stringify({ts: Date.now(), it: it})); } catch(e) {}
+        texte = reponseCompleteCcl(it);
+      }
+    } catch(e) {
+      console.warn('copierToutDepuisBadge : échec fetch du détail.', e);
+    }
+  }
+  if (texte === null) texte = '';
+
+  // Copie dans le presse-papier (fallback silencieux si indisponible / non-HTTPS).
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    try {
+      await navigator.clipboard.writeText(texte);
+    } catch(e) {
+      console.warn('copierToutDepuisBadge : échec navigator.clipboard.', e);
+    }
+  } else {
+    console.warn('copierToutDepuisBadge : navigator.clipboard indisponible (non-HTTPS).');
+  }
+
+  // Feedback visuel : « All » → ✓ pendant 1,5 s, puis retour à « All ».
+  if (badge) {
+    badge.textContent = '✓';
+    setTimeout(function() { badge.textContent = 'All'; }, 1500);
   }
 }
 

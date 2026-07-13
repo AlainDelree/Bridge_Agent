@@ -23,12 +23,12 @@ body{font-family:system-ui,sans-serif;font-size:14px;background:#f0efe9;color:#1
 .onglet.actif{color:#1a1a18;font-weight:700;background:#fff;border-color:#dad9d2}
 .panneau{display:none;padding:20px}
 .panneau.actif{display:block}
-/* Onglet Résultats : ascenseur horizontal si le contenu (badges temps restant,
-   filtres, texte long) dépasse la largeur visible — surtout en mode --externe
-   (mobile) où l'espace est restreint. Ciblé par id : les autres onglets gardent
-   leur mise en page. overflow-x:auto → l'ascenseur n'apparaît que si le contenu
-   déborde réellement (issue #94). */
-#panneau-resultats{overflow-x:auto}
+/* Onglet Résultats (issue #94→#95) : l'ascenseur horizontal est désormais porté
+   par la liste elle-même (.liste-issues) quand la colonne titre est élargie
+   au-delà de la largeur visible — voir .liste-issues plus bas. La règle
+   #panneau-resultats{overflow-x:auto} de l'issue #94 est donc retirée (obsolète :
+   elle faisait défiler tout le panneau, filtres compris, sans effet réel car le
+   titre était tronqué par CSS, pas débordant). */
 .rangee{display:flex;gap:12px;margin-bottom:14px;align-items:flex-end}
 .champ{display:flex;flex-direction:column;gap:5px;flex:1}
 .champ label{font-size:12px;color:#666}
@@ -93,6 +93,9 @@ button.danger:hover{background:#f8d7da}
    chaque ligne pour être propres à son projet. */
 .liste-issues{max-height:280px;overflow-y:auto;border:1px solid #e0dfda;
   border-radius:6px;margin-bottom:6px;background:#fff}
+/* Colonne titre redimensionnée (issue #95) : dès qu'une largeur est mémorisée,
+   la liste peut défiler horizontalement pour révéler la colonne titre élargie. */
+.liste-issues.titre-redimensionne{overflow-x:auto}
 /* Barre « Mise à jour… » : bouton rafraîchir + indicateur (issue #56). */
 .barre-maj{display:flex;align-items:center;gap:10px;margin-bottom:12px}
 /* Bouton rafraîchir discret, même gabarit que les boutons de filtre. */
@@ -112,9 +115,26 @@ button.danger:hover{background:#f8d7da}
 .ligne-issue .ligne-gauche{display:inline-flex;align-items:center;gap:6px;flex-shrink:0}
 .ligne-issue .ligne-badges{font-size:13px;white-space:nowrap}
 .ligne-issue .badge-copie-ccl{cursor:pointer}
+/* Icône « All » (issue #95) : copie le contenu complet de la réponse CCL.
+   Petit badge carré « All » rouge sur fond blanc, bordure rouge, juste après
+   l'icône ✅ (qui, elle, ne copie que le résumé). */
+.ligne-issue .badge-copie-all{display:inline-block;cursor:pointer;font-size:9px;
+  font-weight:700;line-height:1;color:#B32020;background:#fff;border:1px solid #B32020;
+  border-radius:3px;padding:1px 3px;margin-left:3px;vertical-align:middle;user-select:none}
+.ligne-issue .badge-copie-all:hover{background:#fbeaea}
 .ligne-issue .pastille-ligne{width:9px;height:9px;border-radius:50%;flex-shrink:0}
+/* Poignée de redimensionnement de la SEULE colonne titre (issue #95), posée sur
+   sa bordure gauche. Fine bande à curseur col-resize, surlignée au survol. */
+.ligne-issue .poignee-titre{flex-shrink:0;align-self:stretch;width:5px;margin:0 -2px;
+  cursor:col-resize;border-left:2px solid transparent}
+.ligne-issue .poignee-titre:hover{border-left-color:#bbb}
 .ligne-issue .ligne-texte{flex:1;min-width:0;overflow:hidden;
   text-overflow:ellipsis;white-space:nowrap}
+/* Largeur fixe de la colonne titre quand l'utilisateur l'a redimensionnée : la
+   colonne prend --largeur-titre (posée en JS), ne s'étire plus (flex:0 0), et
+   la liste défile horizontalement au besoin. Les autres colonnes restent fixes. */
+.liste-issues.titre-redimensionne .ligne-issue .ligne-texte{
+  flex:0 0 var(--largeur-titre)}
 /* Badge de temps restant estimé des issues ouvertes (issue #91). Couleur selon
    l'état : vert = large marge, orange = échéance proche (<=30 s), rouge =
    dépassement, gris = pas encore démarrée, bleu = priorité sans deadline. */
