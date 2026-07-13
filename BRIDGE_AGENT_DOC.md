@@ -83,6 +83,9 @@ Ce que CCL doit produire ou confirmer.
 | `notif_gsm` | Ajoute une notification push (ntfy) |
 | `notif_tous` | notify-send + ntfy |
 
+> Sans label `notif_pc` / `notif_gsm` / `notif_tous`, aucune notification
+> sonore ou push n'est déclenchée. Le bip est strictement opt-in.
+
 ---
 
 ## 5. Modes lecture seule vs écriture
@@ -112,6 +115,7 @@ Le watcher lit ces champs dans le tableau markdown de l'en-tête :
 | `MODELE` | ex. `claude-opus-4-5` | Force un modèle CCL spécifique pour cette issue |
 | `PROJET` | ex. `bridge_agent` | Détection d'incohérence dans `new_issue.py` (issue #44). Inséré automatiquement par l'interface. Claude Chat doit l'inclure dans toutes les issues qu'il génère. |
 | `TYPE` | `chef` ou `ouvrier` | Identifie le rôle de l'issue dans le pattern multi-agent. `chef` = orchestre les ouvriers. `ouvrier` = sous-tâche créée par le chef, masquée par défaut dans l'onglet Résultats. Absent = issue normale. |
+| `FICHIER_CONTEXTE` | ex. chemin relatif | Fichier additionnel fourni en contexte à CCL pour cette issue (modifiable via l'onglet Configuration, voir §12) |
 
 Format dans le corps :
 ```markdown
@@ -174,6 +178,15 @@ instructions personnalisées Claude :
 https://raw.githubusercontent.com/AlainDelree/Bridge_Agent/master/BRIDGE_AGENT_DOC.md
 ```
 
+⚠️ Pour une lecture fiable et à jour par Claude Chat, privilégier une
+récupération via curl/bash plutôt que web_fetch, qui peut servir une
+version mise en cache de cette page :
+```bash
+curl -sL https://raw.githubusercontent.com/AlainDelree/Bridge_Agent/master/BRIDGE_AGENT_DOC.md
+```
+Si l'outil terminal n'est pas disponible dans la conversation, se rabattre
+sur web_fetch en étant conscient du risque de contenu obsolète.
+
 ---
 
 ## 10. Structure du dépôt Bridge_Agent
@@ -181,7 +194,19 @@ https://raw.githubusercontent.com/AlainDelree/Bridge_Agent/master/BRIDGE_AGENT_D
 ```
 ~/Bridge_Agent/
   watcher.py          — watcher générique (prend --config)
-  new_issue.py        — interface web Flask (port 5100)
+  new_issue.py        — point d'entrée de l'interface web Flask (~150 lignes)
+  app/                — package modulaire de l'interface web
+    auth.py           — authentification (login, mot de passe hashé)
+    projets.py        — gestion des projets et de leur configuration
+    watchers.py       — pilotage des watcher (start/stop/état)
+    issues.py         — création et suivi des issues GitHub
+    journal.py        — lecture des journaux de log
+    cycle_vie.py      — cycle de vie de l'application
+    tunnel.py         — tunnel Cloudflare (mode externe)
+    vues.py           — routes Flask et rendu des pages
+    etat.py           — état partagé de l'application
+  templates/          — gabarits HTML (Jinja2)
+  static/             — CSS, JS, assets statiques
   configs/            — gitignoré : un .conf par projet
     bridge_agent.conf
     alchess.conf
@@ -193,6 +218,8 @@ https://raw.githubusercontent.com/AlainDelree/Bridge_Agent/master/BRIDGE_AGENT_D
   ssl/                — gitignoré : certificat auto-signé
   venv/               — gitignoré : environnement Python
 ```
+
+Pour le détail de l'architecture technique interne, voir `ARCHITECTURE.md`.
 
 ---
 
@@ -327,4 +354,4 @@ notification GSM/bureau
 
 ---
 
-*Dernière mise à jour : juillet 2026 — Bridge_Agent v1, 3 projets actifs.*
+*Dernière mise à jour : 13 juillet 2026 — Bridge_Agent v1, 3 projets actifs.*
