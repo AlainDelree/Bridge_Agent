@@ -731,6 +731,7 @@ async function chargerTimingIssues() {
           backoff:     it.backoff,
           debut:       it.debut,
           sans_limite: it.sans_limite,
+          estimation:  it.estimation,   // estimation prédictive de durée (issue #108)
         };
       }
     } catch(e) {}

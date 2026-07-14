@@ -34,6 +34,13 @@ from datetime import datetime
 DOSSIER_SCRIPT = Path(__file__).resolve().parent
 DOSSIER_LOGS   = DOSSIER_SCRIPT / "logs"
 
+# Historique des durées réelles de traitement (issue #108) : un fichier commun,
+# une entrée par issue fermée {projet, type, mode, duree, date}. Vit dans logs/
+# (déjà gitignoré, cohérent avec les .conf) : donnée de télémétrie locale, pas de
+# source à versionner. Lu par app/issues.py pour estimer la durée d'une issue en
+# cours (médiane du même projet+type+mode).
+FICHIER_HISTORIQUE = DOSSIER_LOGS / "historique_durees.json"
+
 # ─── Protocole partagé (identique pour TOUS les projets) ───────────────────────
 # Ces noms de labels sont la logique commune du bridge. Les mettre en config
 # permettrait à un projet de diverger et de casser le protocole — c'est
@@ -341,6 +348,78 @@ def est_titre_chef(titre: str) -> bool:
     return bool(re.match(r"chef\b", (titre or "").strip(), re.IGNORECASE))
 
 
+# Types d'issue reconnus pour l'historique des durées (issue #108). L'ordre du
+# tuple n'a pas d'importance ; « normal » est le repli.
+TYPES_ISSUE = ("chef", "ouvrier", "spec_vue", "spec_metier", "spec_persistance", "normal")
+
+
+def _classer_valeur_type(valeur: str) -> str | None:
+    """Normalise une valeur brute (champ TYPE) vers un type canonique, ou None si
+    elle ne correspond à rien de connu. Tolère les variantes (métier/metier,
+    spec_vue/vue, …)."""
+    v = (valeur or "").strip().lower()
+    if not v:
+        return None
+    if "ouvrier" in v:
+        return "ouvrier"
+    if "chef" in v:
+        return "chef"
+    if "persistance" in v:
+        return "spec_persistance"
+    if "métier" in v or "metier" in v:
+        return "spec_metier"
+    if "vue" in v:
+        return "spec_vue"
+    return None
+
+
+def deduire_type_issue(titre: str, body: str) -> str:
+    """Déduit le TYPE d'une issue pour l'historique des durées (issue #108).
+    Renvoie l'un de TYPES_ISSUE. Priorité : champ « | TYPE | … | » de l'en-tête
+    bridge (source explicite, seul canal pour les spec_*), puis préfixe du titre
+    (Chef/Ouvrier, cohérent avec est_titre_chef et app.js), sinon « normal »."""
+    for ligne in (body or "").splitlines():
+        if "| TYPE" in ligne.upper():
+            parts = ligne.split("|")
+            if len(parts) >= 3:
+                t = _classer_valeur_type(parts[2])
+                if t:
+                    return t
+    # Repli sur le préfixe du titre : on n'y accepte QUE chef/ouvrier (un titre
+    # « Ajouter la vue X » ne doit pas devenir spec_vue par accident).
+    prefixe = _classer_valeur_type((titre or "").strip().split(":")[0])
+    if prefixe in ("chef", "ouvrier"):
+        return prefixe
+    return "normal"
+
+
+def enregistrer_duree(projet: str, type_issue: str, mode: str,
+                      duree_s: float, date_iso: str):
+    """Ajoute une mesure de durée réelle (ACK → fermeture) à l'historique commun
+    (issue #108). Best-effort : toute erreur est journalisée sans jamais
+    interrompre le traitement de l'issue. Le fichier est une simple liste JSON
+    d'objets {projet, type, mode, duree, date}."""
+    try:
+        DOSSIER_LOGS.mkdir(parents=True, exist_ok=True)
+        historique = []
+        if FICHIER_HISTORIQUE.exists():
+            try:
+                historique = json.loads(FICHIER_HISTORIQUE.read_text(encoding="utf-8")) or []
+            except (json.JSONDecodeError, OSError):
+                historique = []   # fichier corrompu : on repart d'une liste vide
+        historique.append({
+            "projet": projet,
+            "type":   type_issue,
+            "mode":   mode,
+            "duree":  round(duree_s),   # secondes
+            "date":   date_iso,
+        })
+        FICHIER_HISTORIQUE.write_text(
+            json.dumps(historique, ensure_ascii=False, indent=2), encoding="utf-8")
+    except Exception as e:
+        log.error(f"Erreur enregistrement historique durée : {e}")
+
+
 def extraire_timeout(body: str, titre: str = "") -> int:
     """Extrait le TIMEOUT (en secondes) depuis le body de l'issue (en-tête bridge).
     Si absent ou mal formé, retombe sur le défaut du projet — mais un défaut plus
@@ -589,6 +668,10 @@ def traiter_issue(issue: dict, dry_run: bool):
         f"✅ ACK — Issue #{numero} reçue par watcher.py (agent Linux, projet {CFG.nom}). "
         f"Mode : **{mode_txt}**. Traitement en cours..."
     )
+    # Départ du chrono de durée réelle (ACK → fermeture), pour l'historique des
+    # durées (issue #108). monotonic() pour la mesure d'écoulement (insensible aux
+    # changements d'heure système).
+    debut_traitement = time.monotonic()
 
     tentative = 0
     while True:
@@ -602,6 +685,15 @@ def traiter_issue(issue: dict, dry_run: bool):
             commenter_issue(numero, f"## Résultat\n\n{sortie}")
             fermer_issue(numero)
             issues_en_cours.discard(numero)
+            # Historique des durées (issue #108) : durée réelle ACK → fermeture,
+            # catégorisée par projet/type/mode, pour l'estimation prédictive.
+            enregistrer_duree(
+                CFG.nom,
+                deduire_type_issue(titre, body),
+                "write" if autoriser_ecriture else "read",
+                time.monotonic() - debut_traitement,
+                datetime.now().isoformat(timespec="seconds"),
+            )
             notifier(
                 labels,
                 titre=f"✅ {CFG.nom} #{numero} — traitée",

@@ -19,10 +19,25 @@ from app.auth import login_requis  # noqa: F401 (exporté pour l'enregistrement 
 # projet_par_nom (app.projets) a déjà inséré la racine dans sys.path : l'import
 # du watcher fonctionne. On réutilise ses primitives pour éviter toute dérive
 # entre le calcul du watcher et celui du badge (issues #91 et #106).
-from watcher import est_titre_chef, PAUSE_ENTRE_TENTATIVES
+from watcher import est_titre_chef, deduire_type_issue, PAUSE_ENTRE_TENTATIVES
 
 # Racine du projet (dossier parent du package app/).
 DOSSIER_SCRIPT = Path(__file__).resolve().parent.parent
+
+# Historique des durées réelles alimenté par le watcher (issue #108). Même
+# emplacement que watcher.FICHIER_HISTORIQUE — on le recalcule ici plutôt que de
+# l'importer pour rester robuste si le watcher n'a pas encore tourné.
+FICHIER_HISTORIQUE = DOSSIER_SCRIPT / "logs" / "historique_durees.json"
+
+# Seuils de fiabilité de l'estimation, exprimés en NOMBRE D'ÉCHANTILLONS de la
+# catégorie précise (projet+type+mode). Volume réel observé sur le bridge : la
+# plupart des catégories ont peu de fermetures, quelques-unes (ex. alchess) en
+# cumulent davantage. On garde donc les seuils indicatifs de l'issue #108 :
+#   n < 5   → estimation incertaine (rouge)
+#   5 ≤ n ≤ 15 → estimation correcte (noir)
+#   n > 15  → estimation fiable (vert)
+SEUIL_ESTIM_CORRECT = 5    # en dessous : « incertain » (rouge)
+SEUIL_ESTIM_SUR     = 15   # au-dessus : « sûr » (vert) ; entre les deux : « correct » (noir)
 
 
 # ─── Construction du body et des labels ───────────────────────────────────────
@@ -245,6 +260,63 @@ def _commentaires_issue(cfg, numero) -> list:
         return []
 
 
+# ─── Estimation prédictive de durée (issue #108) ──────────────────────────────
+# Le badge de décompte (issues #91/#106) mesure le TEMPS RESTANT avant l'échéance
+# du TIMEOUT configuré — pas une durée réaliste. On ajoute ici une estimation
+# fondée sur l'historique réel des issues fermées du même projet+type+mode
+# (médiane), avec un code couleur de fiabilité selon le nombre d'échantillons.
+
+def _charger_historique() -> list:
+    """Charge la liste des durées historiques (logs/historique_durees.json).
+    Liste vide si le fichier n'existe pas encore ou est illisible/corrompu —
+    dans ce cas toutes les catégories seront « pas encore de données »."""
+    try:
+        if FICHIER_HISTORIQUE.exists():
+            return json.loads(FICHIER_HISTORIQUE.read_text(encoding="utf-8")) or []
+    except (json.JSONDecodeError, OSError):
+        pass
+    return []
+
+
+def _mediane(valeurs: list) -> float:
+    """Médiane d'une liste non vide (moyenne des deux centraux si pair)."""
+    s = sorted(valeurs)
+    n = len(s)
+    mid = n // 2
+    if n % 2:
+        return s[mid]
+    return (s[mid - 1] + s[mid]) / 2
+
+
+def estimer_duree(historique: list, projet: str, type_issue: str, mode: str) -> dict:
+    """Estimation prédictive (médiane des durées) + niveau de fiabilité pour une
+    catégorie projet+type+mode (issue #108).
+
+    Retourne un dict prêt pour le navigateur :
+      - mediane   : durée médiane en secondes (int), ou None si aucune donnée
+      - n         : nombre d'échantillons de la catégorie
+      - fiabilite : 'aucune' (pas encore de données) | 'incertain' (rouge) |
+                    'correct' (noir) | 'sur' (vert)
+    """
+    durees = [
+        r.get("duree") for r in historique
+        if r.get("projet") == projet
+        and r.get("type") == type_issue
+        and r.get("mode") == mode
+        and isinstance(r.get("duree"), (int, float))
+    ]
+    n = len(durees)
+    if n == 0:
+        return {"mediane": None, "n": 0, "fiabilite": "aucune"}
+    if n < SEUIL_ESTIM_CORRECT:
+        fiabilite = "incertain"
+    elif n <= SEUIL_ESTIM_SUR:
+        fiabilite = "correct"
+    else:
+        fiabilite = "sur"
+    return {"mediane": round(_mediane(durees)), "n": n, "fiabilite": fiabilite}
+
+
 def issues_en_attente(nom_projet):
     """Retourne les issues ouvertes portant le label for-linux (en attente de
     traitement par le watcher). La liste peut être vide.
@@ -261,7 +333,11 @@ def issues_en_attente(nom_projet):
       - sans_limite  : True si priorité haute/critique (retry infini, §6) → pas
                        de deadline, afficher « en cours (pas de limite) »
       - debut        : horodatage ISO du début de traitement (commentaire ACK),
-                       ou null si l'issue n'est pas encore prise en charge."""
+                       ou null si l'issue n'est pas encore prise en charge.
+      - estimation   : estimation prédictive de durée (issue #108) — dict
+                       {mediane (s|null), n, fiabilite} basé sur la médiane des
+                       durées historiques du même projet+type+mode. fiabilite
+                       'aucune' → « pas encore de données »."""
     cfg = projet_par_nom(nom_projet)
     if not cfg:
         return jsonify(erreur="Projet introuvable."), 404
@@ -284,6 +360,10 @@ def issues_en_attente(nom_projet):
     except Exception as e:
         return jsonify(erreur=str(e)), 500
 
+    # Historique des durées chargé une seule fois pour toutes les issues (issue
+    # #108) : sert au calcul de l'estimation prédictive par catégorie.
+    historique = _charger_historique()
+
     # Enrichissement : une passe gh view par issue ouverte (nécessaire pour lire
     # les commentaires — gh issue list ne les expose pas). Les issues ouvertes
     # for-linux sont rares (souvent 0-3), le surcoût reste modéré.
@@ -291,12 +371,18 @@ def issues_en_attente(nom_projet):
         body = it.get("body") or ""
         titre = it.get("title") or ""
         priorite = _parser_priorite(body)
+        labels = [(l.get("name") or "").lower() for l in it.get("labels", [])]
+        type_issue = deduire_type_issue(titre, body)
+        mode = "write" if "mode_write" in labels else "read"
         it["timeout"]     = _parser_timeout(body, titre, cfg)
         it["max_essais"]  = cfg.max_essais
         it["backoff"]     = PAUSE_ENTRE_TENTATIVES
         it["priorite"]    = priorite
         it["sans_limite"] = priorite in ("haute", "critique")
         it["debut"]       = _debut_traitement(_commentaires_issue(cfg, it["number"]))
+        # Estimation prédictive (médiane historique du même projet+type+mode),
+        # affichée AVANT le badge de décompte, qui reste inchangé (issue #108).
+        it["estimation"]  = estimer_duree(historique, cfg.nom, type_issue, mode)
         it.pop("body", None)   # body volumineux : inutile au navigateur
     return jsonify(issues)
 
