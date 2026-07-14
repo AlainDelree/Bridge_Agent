@@ -557,25 +557,30 @@ function rendreListeIssues(reset) {
       .map(l => ((l && l.name) || l || '').toLowerCase());
     if (etat === 'fermé' && nomsLabelsLigne.includes('done')
         && badgesHtml.includes('✅')) {
+      // Trois badges aux rôles distincts et non redondants (issue #116) :
+      //   ✅ (vert) → réponse CCL COMPLÈTE seule (plus jamais le résumé),
+      //   « Diff »  → diff seul du/des commit(s) associé(s),
+      //   « All »   → réponse complète + diff ensemble.
+      // Le badge ✅ (vert) copie la réponse CCL COMPLÈTE (résumé + détails), sans
+      // le diff. Le résumé seul n'est plus copié par aucun badge (issue #116).
       badgesHtml = badgesHtml.replace('✅',
-        '<span class="badge-copie-ccl" title="Copier la réponse CCL"'
+        '<span class="badge-copie-ccl" title="Copier la réponse CCL complète"'
         + ' onclick="copierReponseDepuisBadge(event, \''
         + escapeHtml(it.projet) + '\', ' + Number(numero) + ')">✅</span>');
-      // Icône « All » (issue #95) : juste à côté de l'icône ✅ (qui ne copie que
-      // le résumé), elle copie le contenu COMPLET de la réponse CCL (résumé +
-      // détails), via le même mécanisme de copie/feedback (copierDepuisBadge).
+      // Badge « Diff » (issue #116) : copie UNIQUEMENT le diff du/des commit(s)
+      // associé(s) (résultat de git show), sans la réponse. Sans commit (issue en
+      // lecture seule), comportement neutre — rien n'est copié, pas d'erreur.
       badgesHtml +=
-        '<span class="badge-copie-all" title="Copier le contenu complet de l\'issue"'
-        + ' onclick="copierToutDepuisBadge(event, \''
-        + escapeHtml(it.projet) + '\', ' + Number(numero) + ')">All</span>';
-      // Badge « ± » (issue #114) : à côté de « All », il copie la réponse CCL
-      // COMPLÈTE suivie du diff du/des commit(s) associé(s). « All » (réponse
-      // seule, sans diff) reste inchangé à côté. Si l'issue n'a pas de commit
-      // (lecture seule), ce badge copie la réponse seule — comme « All ».
+        '<span class="badge-copie-diff" title="Copier le diff seul du/des commit(s)"'
+        + ' onclick="copierDiffDepuisBadge(event, \''
+        + escapeHtml(it.projet) + '\', ' + Number(numero) + ')">Diff</span>';
+      // Badge « All » (issue #116) : copie, en un seul geste, la réponse CCL
+      // COMPLÈTE suivie du diff du/des commit(s) associé(s). Sans commit (lecture
+      // seule), copie la réponse seule — sans section diff vide ni erreur.
       badgesHtml +=
-        '<span class="badge-copie-diff" title="Copier la réponse complète + le diff"'
+        '<span class="badge-copie-all" title="Copier la réponse complète + le diff"'
         + ' onclick="copierToutEtDiffDepuisBadge(event, \''
-        + escapeHtml(it.projet) + '\', ' + Number(numero) + ')">±</span>';
+        + escapeHtml(it.projet) + '\', ' + Number(numero) + ')">All</span>';
     }
     ligne.innerHTML =
       '<span class="ligne-date" title="' + escapeHtml(dateCreation) + '"'
@@ -1294,95 +1299,17 @@ async function copierTout(btn) {
   }
 }
 
-// Extrait le RÉSUMÉ de la réponse CCL (dernier commentaire) d'une donnée issue
-// brute : texte AVANT le bloc <details>, whitespace de fin retiré. Cohérent
-// avec ce que copie le bouton « Copier la réponse » du détail (issue #59).
-function resumeReponseCcl(it) {
-  const comms = (it && it.comments) || [];
-  if (!comms.length) return '';
-  const corpsBrut = comms[comms.length - 1].body || '';
-  const idxDetails = corpsBrut.indexOf('<details>');
-  return (idxDetails >= 0 ? corpsBrut.slice(0, idxDetails) : corpsBrut)
-         .replace(/\s+$/, '');
-}
-
-// Clic sur le badge ✅ d'une issue fermée+done (issue #62) : copie la réponse
-// CCL directement depuis la liste, sans ouvrir le détail. Utilise le cache
+// Clic sur le badge ✅ (vert) d'une issue fermée+done (issue #62, comportement
+// revu #116) : copie la réponse CCL COMPLÈTE (résumé + détails) directement
+// depuis la liste, sans ouvrir le détail — plus jamais le résumé seul. Réutilise
+// reponseCompleteCcl(), comme le badge « All ». Utilise le cache
 // bridge_cache_detail_<projet>_<numero> s'il est frais (< TTL), sinon fetch le
 // détail (et met le cache à jour). Feedback visuel bref sur le badge lui-même,
 // sans modifier la ligne. stopPropagation() empêche la sélection de la ligne.
 async function copierReponseDepuisBadge(event, nom, numero) {
   event.stopPropagation();
   const badge = event.currentTarget;   // capturé avant tout await (nullé ensuite)
-  numero = String(numero);
-  const cleCache = CLE_CACHE_DETAIL + nom + '_' + numero;
-  let texte = null;
-
-  // 1) Cache frais (< TTL) : on évite le fetch.
-  try {
-    const obj = JSON.parse(localStorage.getItem(cleCache) || 'null');
-    if (obj && obj.it && (Date.now() - obj.ts) < TTL_DETAIL_MS) {
-      texte = resumeReponseCcl(obj.it);
-    }
-  } catch(e) {}
-
-  // 2) Pas de cache exploitable : fetch le détail et rafraîchit le cache.
-  if (texte === null) {
-    try {
-      const rep = await fetch('/issue/' + encodeURIComponent(nom)
-                              + '/' + encodeURIComponent(numero));
-      const it = await rep.json();
-      if (!it.erreur) {
-        try { localStorage.setItem(cleCache, JSON.stringify({ts: Date.now(), it: it})); } catch(e) {}
-        texte = resumeReponseCcl(it);
-      }
-    } catch(e) {
-      console.warn('copierReponseDepuisBadge : échec fetch du détail.', e);
-    }
-  }
-  if (texte === null) texte = '';
-
-  // Copie dans le presse-papier (fallback silencieux si indisponible / non-HTTPS).
-  if (navigator.clipboard && navigator.clipboard.writeText) {
-    try {
-      await navigator.clipboard.writeText(texte);
-    } catch(e) {
-      console.warn('copierReponseDepuisBadge : échec navigator.clipboard.', e);
-    }
-  } else {
-    console.warn('copierReponseDepuisBadge : navigator.clipboard indisponible (non-HTTPS).');
-  }
-
-  // Feedback visuel : ✅ → ✓ pendant 1,5 s, puis retour à ✅ (ligne inchangée).
-  if (badge) {
-    badge.textContent = '✓';
-    setTimeout(function() { badge.textContent = '✅'; }, 1500);
-  }
-}
-
-// Reconstruit la réponse CCL COMPLÈTE (résumé + détails) en markdown brut à
-// partir d'une donnée issue brute — équivalent de « Copier tout » du détail
-// (issue #77), mais pour l'icône « All » de la liste (issue #95). Réutilise
-// texteReponseComplete() pour retirer les seules balises structurantes du bloc
-// <details>.
-function reponseCompleteCcl(it) {
-  const comms = (it && it.comments) || [];
-  if (!comms.length) return '';
-  const corpsBrut = comms[comms.length - 1].body || '';
-  const idxDetails = corpsBrut.indexOf('<details>');
-  const resume  = (idxDetails >= 0 ? corpsBrut.slice(0, idxDetails) : corpsBrut)
-                  .replace(/\s+$/, '');
-  const details = idxDetails >= 0 ? corpsBrut.slice(idxDetails) : '';
-  return texteReponseComplete(resume, details);
-}
-
-// Clic sur l'icône « All » d'une issue fermée+done (issue #95) : copie la
-// réponse CCL COMPLÈTE (résumé + détails) directement depuis la liste, sans
-// ouvrir le détail. Même mécanisme que copierReponseDepuisBadge (cache frais <
-// TTL sinon fetch, feedback bref sur le badge), mais via reponseCompleteCcl().
-async function copierToutDepuisBadge(event, nom, numero) {
-  event.stopPropagation();
-  const badge = event.currentTarget;   // capturé avant tout await (nullé ensuite)
+  const original = badge ? badge.textContent : '';
   numero = String(numero);
   const cleCache = CLE_CACHE_DETAIL + nom + '_' + numero;
   let texte = null;
@@ -1406,7 +1333,7 @@ async function copierToutDepuisBadge(event, nom, numero) {
         texte = reponseCompleteCcl(it);
       }
     } catch(e) {
-      console.warn('copierToutDepuisBadge : échec fetch du détail.', e);
+      console.warn('copierReponseDepuisBadge : échec fetch du détail.', e);
     }
   }
   if (texte === null) texte = '';
@@ -1416,17 +1343,33 @@ async function copierToutDepuisBadge(event, nom, numero) {
     try {
       await navigator.clipboard.writeText(texte);
     } catch(e) {
-      console.warn('copierToutDepuisBadge : échec navigator.clipboard.', e);
+      console.warn('copierReponseDepuisBadge : échec navigator.clipboard.', e);
     }
   } else {
-    console.warn('copierToutDepuisBadge : navigator.clipboard indisponible (non-HTTPS).');
+    console.warn('copierReponseDepuisBadge : navigator.clipboard indisponible (non-HTTPS).');
   }
 
-  // Feedback visuel : « All » → ✓ pendant 1,5 s, puis retour à « All ».
+  // Feedback visuel : ✅ → ✓ pendant 1,5 s, puis retour au libellé (ligne inchangée).
   if (badge) {
     badge.textContent = '✓';
-    setTimeout(function() { badge.textContent = 'All'; }, 1500);
+    setTimeout(function() { badge.textContent = original; }, 1500);
   }
+}
+
+// Reconstruit la réponse CCL COMPLÈTE (résumé + détails) en markdown brut à
+// partir d'une donnée issue brute — équivalent de « Copier tout » du détail
+// (issue #77), mais pour l'icône « All » de la liste (issue #95). Réutilise
+// texteReponseComplete() pour retirer les seules balises structurantes du bloc
+// <details>.
+function reponseCompleteCcl(it) {
+  const comms = (it && it.comments) || [];
+  if (!comms.length) return '';
+  const corpsBrut = comms[comms.length - 1].body || '';
+  const idxDetails = corpsBrut.indexOf('<details>');
+  const resume  = (idxDetails >= 0 ? corpsBrut.slice(0, idxDetails) : corpsBrut)
+                  .replace(/\s+$/, '');
+  const details = idxDetails >= 0 ? corpsBrut.slice(idxDetails) : '';
+  return texteReponseComplete(resume, details);
 }
 
 // ─── Onglets Réponse / Diff du détail d'une issue (issue #114) ────────────────
@@ -1514,15 +1457,16 @@ async function chargerDiffOnglet(pane) {
   pane.innerHTML = morceaux.join('');
 }
 
-// Clic sur le badge « ± » d'une issue fermée+done (issue #114) : copie, en un
-// seul geste, la réponse CCL COMPLÈTE (réutilise reponseCompleteCcl) suivie du
-// diff du/des commit(s) associé(s) (fetch /diff pour chaque hash). Sans commit
-// (lecture seule), copie la réponse seule — équivalent à « All », sans section
-// diff vide ni erreur. Même mécanique cache/fetch et feedback que les autres
-// badges de la liste.
+// Clic sur le badge « All » d'une issue fermée+done (issue #114, rôle confirmé
+// #116) : copie, en un seul geste, la réponse CCL COMPLÈTE (réutilise
+// reponseCompleteCcl) suivie du diff du/des commit(s) associé(s) (fetch /diff
+// pour chaque hash). Sans commit (lecture seule), copie la réponse seule — sans
+// section diff vide ni erreur. Même mécanique cache/fetch et feedback que les
+// autres badges de la liste.
 async function copierToutEtDiffDepuisBadge(event, nom, numero) {
   event.stopPropagation();
   const badge = event.currentTarget;   // capturé avant tout await (nullé ensuite)
+  const original = badge ? badge.textContent : '';
   numero = String(numero);
   const cleCache = CLE_CACHE_DETAIL + nom + '_' + numero;
   let it = null;
@@ -1574,10 +1518,88 @@ async function copierToutEtDiffDepuisBadge(event, nom, numero) {
     console.warn('copierToutEtDiffDepuisBadge : navigator.clipboard indisponible (non-HTTPS).');
   }
 
-  // Feedback visuel : « ± » → ✓ pendant 1,5 s, puis retour à « ± ».
+  // Feedback visuel : « All » → ✓ pendant 1,5 s, puis retour au libellé.
   if (badge) {
     badge.textContent = '✓';
-    setTimeout(function() { badge.textContent = '±'; }, 1500);
+    setTimeout(function() { badge.textContent = original; }, 1500);
+  }
+}
+
+// Clic sur le badge « Diff » d'une issue fermée+done (issue #116) : copie
+// UNIQUEMENT le diff du/des commit(s) associé(s) (fetch /diff pour chaque hash),
+// sans la réponse — pendant du bloc résultat filtré sur son seul onglet « Diff ».
+// Sans commit (lecture seule), comportement NEUTRE : rien n'est copié, feedback
+// « ∅ » bref, pas d'erreur. Même mécanique cache/fetch du détail et feedback que
+// les autres badges de la liste.
+async function copierDiffDepuisBadge(event, nom, numero) {
+  event.stopPropagation();
+  const badge = event.currentTarget;   // capturé avant tout await (nullé ensuite)
+  const original = badge ? badge.textContent : '';
+  numero = String(numero);
+  const cleCache = CLE_CACHE_DETAIL + nom + '_' + numero;
+  let it = null;
+
+  // 1) Cache frais (< TTL) : on évite le fetch du détail.
+  try {
+    const obj = JSON.parse(localStorage.getItem(cleCache) || 'null');
+    if (obj && obj.it && (Date.now() - obj.ts) < TTL_DETAIL_MS) it = obj.it;
+  } catch(e) {}
+
+  // 2) Pas de cache exploitable : fetch le détail et rafraîchit le cache.
+  if (it === null) {
+    try {
+      const rep = await fetch('/issue/' + encodeURIComponent(nom)
+                              + '/' + encodeURIComponent(numero));
+      const j = await rep.json();
+      if (!j.erreur) {
+        it = j;
+        try { localStorage.setItem(cleCache, JSON.stringify({ts: Date.now(), it: it})); } catch(e) {}
+      }
+    } catch(e) {
+      console.warn('copierDiffDepuisBadge : échec fetch du détail.', e);
+    }
+  }
+
+  const hashes = it ? hashesDeCommit(it) : [];
+  // Aucun commit (lecture seule) : rien à copier, comportement neutre. Feedback
+  // « ∅ » bref pour signaler l'absence de diff, sans toucher au presse-papier.
+  if (!hashes.length) {
+    if (badge) {
+      badge.textContent = '∅';
+      setTimeout(function() { badge.textContent = original; }, 1500);
+    }
+    return;
+  }
+
+  // Concatène le diff de chaque commit — sans la réponse (contraste avec « All »).
+  const morceaux = [];
+  for (const h of hashes) {
+    try {
+      const rep = await fetch('/diff/' + encodeURIComponent(nom)
+                              + '/' + encodeURIComponent(h));
+      const j = await rep.json();
+      if (j.diff) morceaux.push('===== Diff ' + h + ' =====\n\n' + j.diff);
+    } catch(e) {
+      console.warn('copierDiffDepuisBadge : échec fetch diff ' + h + '.', e);
+    }
+  }
+  const texte = morceaux.join('\n\n');
+
+  // Copie dans le presse-papier (fallback silencieux si indisponible / non-HTTPS).
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    try {
+      await navigator.clipboard.writeText(texte);
+    } catch(e) {
+      console.warn('copierDiffDepuisBadge : échec navigator.clipboard.', e);
+    }
+  } else {
+    console.warn('copierDiffDepuisBadge : navigator.clipboard indisponible (non-HTTPS).');
+  }
+
+  // Feedback visuel : « Diff » → ✓ pendant 1,5 s, puis retour au libellé.
+  if (badge) {
+    badge.textContent = '✓';
+    setTimeout(function() { badge.textContent = original; }, 1500);
   }
 }
 

@@ -115,14 +115,14 @@ button.danger:hover{background:#f8d7da}
 .ligne-issue .ligne-gauche{display:inline-flex;align-items:center;gap:6px;flex-shrink:0}
 .ligne-issue .ligne-badges{font-size:13px;white-space:nowrap}
 .ligne-issue .badge-copie-ccl{cursor:pointer}
-/* Icône « All » (issue #95) : copie le contenu complet de la réponse CCL.
-   Petit badge carré « All » rouge sur fond blanc, bordure rouge, juste après
-   l'icône ✅ (qui, elle, ne copie que le résumé). */
+/* Badge « All » (issue #95, rôle #116) : copie la réponse CCL complète + le diff.
+   Petit badge carré « All » rouge sur fond blanc, bordure rouge, dans la série
+   ✅ (réponse seule) / « Diff » (diff seul) / « All » (réponse + diff). */
 .ligne-issue .badge-copie-all{display:inline-block;cursor:pointer;font-size:9px;
   font-weight:700;line-height:1;color:#B32020;background:#fff;border:1px solid #B32020;
   border-radius:3px;padding:1px 3px;margin-left:3px;vertical-align:middle;user-select:none}
 .ligne-issue .badge-copie-all:hover{background:#fbeaea}
-/* Badge « ± » (issue #114) : copie la réponse complète + le diff. Même carré
+/* Badge « Diff » (issue #116) : copie le diff SEUL du/des commit(s). Même carré
    que « All » mais couleur DISTINCTE (bleu) pour ne pas se confondre avec lui. */
 .ligne-issue .badge-copie-diff{display:inline-block;cursor:pointer;font-size:9px;
   font-weight:700;line-height:1;color:#1f5f8b;background:#fff;border:1px solid #1f5f8b;
