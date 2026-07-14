@@ -749,13 +749,21 @@ async function chargerTimingIssues() {
 // + niveau de fiabilité (nombre d'échantillons). Code couleur : rouge = peu sûr
 // (< 5 échantillons), noir = correct (5-15), vert = sûr (> 15). Sans historique
 // pour la catégorie : « pas encore de données ». N'affecte JAMAIS le décompte.
+//
+// Décompte live (issue #112) : une fois l'issue prise en charge (ACK connu),
+// le badge devient un compte à rebours recalculé chaque seconde par
+// majBadgesTempsRestant() : restant_estime = médiane − (maintenant − heure ACK).
+// Contrairement au décompte réel (temps restant sur le TIMEOUT), le dépassement
+// de la médiane n'est PAS une alerte de blocage : l'estimation reste indicative,
+// affichée « estimation dépassée » en ton neutre (jamais l'alerte rouge ⌛).
 function formaterBadgeEstimation(badge, t) {
   badge.className = 'ligne-estimation';
   const est = t && t.estimation;
   if (!est) { badge.style.display = 'none'; badge.textContent = ''; return; }
   badge.style.display = '';
   // Catégorie inédite (projet+type+mode jamais fermé) : on le dit clairement,
-  // sans masquer le décompte qui suit (issue #108, cas 4).
+  // sans masquer le décompte qui suit (issue #108, cas 4). Rien à décompter
+  // sans médiane.
   if (est.fiabilite === 'aucune' || est.mediane == null) {
     badge.textContent = '◦ pas encore de données';
     badge.classList.add('est-aucune');
@@ -764,18 +772,53 @@ function formaterBadgeEstimation(badge, t) {
                 + 'été traitée. Le décompte à droite reste affiché normalement.';
     return;
   }
-  badge.textContent = '≈ ' + formaterDuree(est.mediane);
+  // Classe de fiabilité (code couleur rouge/noir/vert selon le nombre
+  // d'échantillons), commune à l'estimation figée et au décompte live.
   const cls = est.fiabilite === 'sur'     ? 'est-sur'       // vert  (> 15 échant.)
             : est.fiabilite === 'correct' ? 'est-correct'   // noir  (5-15 échant.)
             :                               'est-incertain';// rouge (< 5 échant.)
-  badge.classList.add(cls);
   const libFiab = est.fiabilite === 'sur'     ? 'fiable'
                 : est.fiabilite === 'correct' ? 'correcte'
                 :                               'incertaine (peu de données)';
-  badge.title = 'Durée médiane observée sur ' + est.n + ' issue(s) fermée(s) du même '
-              + 'projet + type + mode — estimation ' + libFiab + '. '
-              + 'À ne pas confondre avec le décompte à droite, qui est le temps '
-              + 'restant sur le TIMEOUT configuré.';
+  // Rappel commun : ne jamais confondre avec le décompte réel à droite, seule
+  // vraie alerte de blocage (basée sur le TIMEOUT configuré).
+  const rappel = ' À ne pas confondre avec le décompte à droite, qui est le temps '
+               + 'restant réel sur le TIMEOUT configuré (seule vraie alerte de blocage).';
+
+  // Pas encore prise en charge (aucun ACK) : impossible de décompter, on
+  // affiche l'estimation figée (médiane) comme repère de départ.
+  if (!t.debut) {
+    badge.textContent = '≈ ' + formaterDuree(est.mediane);
+    badge.classList.add(cls);
+    badge.title = 'Durée médiane observée sur ' + est.n + ' issue(s) fermée(s) du même '
+                + 'projet + type + mode — estimation ' + libFiab + '. Le décompte '
+                + 'estimé démarrera dès la prise en charge par le watcher.' + rappel;
+    return;
+  }
+
+  // Décompte live (issue #112) : restant estimé = médiane − temps écoulé depuis
+  // l'ACK. Recalculé chaque seconde comme le badge de décompte réel (issue #91).
+  const ecoule  = (Date.now() - new Date(t.debut).getTime()) / 1000;
+  const restant = Math.round(est.mediane - ecoule);
+
+  if (restant > 0) {                     // encore sous la médiane : compte à rebours
+    badge.textContent = '≈ ' + formaterDuree(restant);
+    badge.classList.add(cls);
+    badge.title = 'Temps restant ESTIMÉ avant la durée médiane ('
+                + formaterDuree(est.mediane) + ' sur ' + est.n + ' issue(s) similaires, '
+                + 'estimation ' + libFiab + '). Simple repère prédictif, '
+                + 'pas une limite dure.' + rappel;
+  } else {                               // médiane franchie mais issue non fermée
+    // Estimation dépassée (issue #112, cas 3) : ce n'est qu'une estimation, PAS
+    // un blocage. Ton neutre, visuellement distinct de l'alerte rouge « ⌛
+    // dépassement » du décompte réel (qui, elle, signale un vrai budget épuisé).
+    badge.textContent = '≈ estimation dépassée';
+    badge.classList.add('est-depasse');
+    badge.title = 'La durée médiane estimée (' + formaterDuree(est.mediane)
+                + ') est dépassée de ' + formaterDuree(-restant) + ", mais ce n'est "
+                + "qu'une estimation indicative, pas une limite dure : l'issue peut "
+                + 'légitimement durer plus longtemps.' + rappel;
+  }
 }
 
 // Applique l'état de temps restant à un badge, selon les données de timing.

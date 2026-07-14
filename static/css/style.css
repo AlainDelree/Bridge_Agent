@@ -160,6 +160,12 @@ button.danger:hover{background:#f8d7da}
 .ligne-issue .ligne-estimation.est-sur{background:#3B8C2F}         /* vert  : nombre suffisant */
 .ligne-issue .ligne-estimation.est-aucune{background:transparent;color:#8A8A85;
   font-weight:400;font-style:italic}   /* pas encore de données pour la catégorie */
+/* Estimation dépassée (issue #112) : la médiane estimée est franchie mais l'issue
+   tourne toujours. Ton NEUTRE (gris atténué, italique) volontairement distinct de
+   l'alerte rouge « ⌛ dépassement » du décompte réel : l'estimation reste
+   indicative, ce n'est pas un blocage. */
+.ligne-issue .ligne-estimation.est-depasse{background:#5E5E58;color:#E8E8E4;
+  font-weight:500;font-style:italic}
 /* Badge du projet source dans l'en-tête du panneau de détail. */
 .badge-projet{display:inline-flex;align-items:center;gap:6px;font-size:12px;
   font-weight:600;padding:3px 11px;border-radius:12px;color:#fff;margin-bottom:12px}
