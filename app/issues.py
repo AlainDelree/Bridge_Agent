@@ -207,14 +207,19 @@ def _parser_timeout(body: str, titre: str = "", cfg=None) -> int:
     """TIMEOUT (secondes) lu dans l'en-tête bridge du body. Miroir de
     watcher.extraire_timeout : si absent/mal formé, retombe sur le défaut projet
     (cfg.timeout_claude), ou sur le défaut Chef plus généreux (cfg.timeout_chef)
-    pour les issues « Chef : » (issue #106). Sans cfg, défaut historique 300 s."""
+    pour les issues « Chef : » (issue #106). Filet de sécurité #111 : pour une
+    tâche « Chef : », plancher à max(valeur_trouvée, cfg.timeout_chef) pour que le
+    badge reflète le même budget que le watcher (voir watcher.extraire_timeout).
+    Sans cfg, défaut historique 300 s."""
+    chef = cfg is not None and est_titre_chef(titre)
     for ligne in body.splitlines():
         if "TIMEOUT" in ligne.upper():
             parts = ligne.split("|")
             if len(parts) >= 3:
                 valeur = parts[2].strip().lower().rstrip("s")
                 if valeur.isdigit():
-                    return int(valeur)
+                    trouve = int(valeur)
+                    return max(trouve, cfg.timeout_chef) if chef else trouve
     if cfg is None:
         return 300
     if est_titre_chef(titre):

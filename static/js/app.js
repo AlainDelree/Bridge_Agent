@@ -1720,6 +1720,39 @@ function detecterProjetDansCorps() {
 }
 document.getElementById('corps').addEventListener('input', detecterProjetDansCorps);
 
+// Détection de « | TIMEOUT | <valeur> | » dans le corps → pré-remplissage du
+// champ Timeout du formulaire (issue #111). Sans cette synchronisation, le
+// tableau d'en-tête généré par l'interface portait le TIMEOUT par défaut du
+// formulaire (300s), PLACÉ AVANT le corps collé. Comme watcher.extraire_timeout
+// retient la PREMIÈRE occurrence de TIMEOUT, cette valeur du formulaire écrasait
+// silencieusement le « | TIMEOUT | 1200s | » collé par Alain (cause de l'échec
+// de #108). En recopiant la valeur collée dans le champ, les deux occurrences du
+// corps final deviennent identiques : plus d'écrasement silencieux.
+//
+// Même garde-fou que detecterProjetDansCorps (#109) : on ne réapplique la
+// détection que si la valeur détectée a CHANGÉ depuis la dernière fois. Ainsi,
+// si Alain corrige ensuite le champ Timeout à la main (pour surcharger la valeur
+// collée), sa correction n'est pas réécrasée à la frappe suivante dans le corps.
+let dernierTimeoutAutoDetecte = null;
+function detecterTimeoutDansCorps() {
+  const corpsEl = document.getElementById('corps');
+  // Ligne de tableau « | TIMEOUT | <valeur>[s] | ». On tolère un suffixe « s »
+  // (ex. 1200s) et les espaces ; seuls les chiffres sont capturés.
+  const m = corpsEl.value.match(/^\s*\|\s*TIMEOUT\s*\|\s*(\d+)\s*s?\s*\|/im);
+  if (!m) { dernierTimeoutAutoDetecte = null; return; }
+
+  const valeurDetectee = m[1];
+  // Rien de neuf depuis la dernière détection : ne pas réécraser un éventuel
+  // choix manuel d'Alain.
+  if (valeurDetectee === dernierTimeoutAutoDetecte) return;
+  dernierTimeoutAutoDetecte = valeurDetectee;
+
+  const champ = document.getElementById('timeout');
+  if (champ.value === valeurDetectee) return;   // déjà à cette valeur
+  champ.value = valeurDetectee;
+}
+document.getElementById('corps').addEventListener('input', detecterTimeoutDansCorps);
+
 async function verifierStatut() {
   const nom = document.getElementById('projet').value;
   try {

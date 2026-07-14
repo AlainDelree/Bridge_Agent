@@ -424,15 +424,26 @@ def extraire_timeout(body: str, titre: str = "") -> int:
     """Extrait le TIMEOUT (en secondes) depuis le body de l'issue (en-tête bridge).
     Si absent ou mal formé, retombe sur le défaut du projet — mais un défaut plus
     généreux (CFG.timeout_chef) pour les issues « Chef : » (tâches monolithiques
-    plus longues), afin d'éviter un dépassement du seul cycle standard (issue #106)."""
+    plus longues), afin d'éviter un dépassement du seul cycle standard (issue #106).
+
+    Filet de sécurité (issue #111) : pour une tâche « Chef : », on applique
+    max(valeur_trouvée, CFG.timeout_chef) au lieu de la première valeur telle
+    quelle. L'interface place son tableau d'en-tête (TIMEOUT du formulaire, souvent
+    le défaut 300s) AVANT le corps collé ; comme on retient la PREMIÈRE occurrence,
+    ce défaut pouvait écraser un « | TIMEOUT | 1200s | » collé plus bas et faire
+    échouer une tâche Chef sur un dépassement (cause de #108). Le plancher garantit
+    qu'une tâche Chef ne tourne jamais sous son budget dédié, même si une valeur
+    plus basse est trouvée en premier."""
+    chef = est_titre_chef(titre)
     for ligne in body.splitlines():
         if "TIMEOUT" in ligne.upper():
             parts = ligne.split("|")
             if len(parts) >= 3:
                 valeur = parts[2].strip().lower().rstrip("s")
                 if valeur.isdigit():
-                    return int(valeur)
-    if est_titre_chef(titre):
+                    trouve = int(valeur)
+                    return max(trouve, CFG.timeout_chef) if chef else trouve
+    if chef:
         return CFG.timeout_chef
     return CFG.timeout_claude
 
