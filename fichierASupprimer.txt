@@ -1,0 +1,9 @@
+commit 3379a553729d6259e3a1a87ea04962406a3c8fbc
+Author: Athanatos123 <alain.delree@gmail.com>
+Date:   Tue Jul 14 16:58:05 2026 +0200
+
+    Badge d'estimation transformé en décompte live (issue #112)
+
+ static/css/style.css |  6 ++++++
+ static/js/app.js     | 57 +++++++++++++++++++++++++++++++++++++++++++++-------
+ 2 files changed, 56 insertions(+), 7 deletions(-)
