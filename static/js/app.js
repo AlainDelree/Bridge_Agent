@@ -1682,6 +1682,44 @@ function detecterTitreDansCorps() {
 }
 document.getElementById('corps').addEventListener('input', detecterTitreDansCorps);
 
+// Détection de « | PROJET | <nom> | » dans le corps → pré-sélection de la
+// combobox projet (issue #109). Presque toutes les issues générées par Claude
+// Chat portent cette ligne dans l'en-tête markdown (§6) : plutôt qu'obliger
+// Alain à changer la combobox à la main, on la positionne automatiquement sur
+// le projet cité, à condition qu'il existe dans la liste.
+//
+// Garde-fous (§ tâche demandée) :
+//   • nom inconnu (typo, projet pas encore créé) → on ne touche à rien ;
+//   • la combobox reste entièrement manuelle : on ne réapplique la détection
+//     que si le nom détecté a CHANGÉ depuis la dernière fois. Ainsi, si Alain
+//     corrige manuellement la combobox alors que le corps contient toujours la
+//     même ligne PROJET, sa correction n'est pas écrasée à la frappe suivante.
+let dernierProjetAutoDetecte = null;
+function detecterProjetDansCorps() {
+  const corpsEl = document.getElementById('corps');
+  // Cherche une ligne de tableau « | PROJET | <nom> | » (mot-clé insensible à
+  // la casse, espaces tolérés). Le nom capturé est nettoyé de ses espaces.
+  const m = corpsEl.value.match(/^\s*\|\s*PROJET\s*\|\s*([^|]+?)\s*\|/im);
+  if (!m) { dernierProjetAutoDetecte = null; return; }
+
+  const nomDetecte = m[1].trim();
+  // Rien de neuf depuis la dernière détection : ne pas réécraser un éventuel
+  // choix manuel d'Alain.
+  if (nomDetecte === dernierProjetAutoDetecte) return;
+  dernierProjetAutoDetecte = nomDetecte;
+
+  // Le nom doit correspondre (insensible à la casse) à une option existante.
+  const select = document.getElementById('projet');
+  const option = [...select.options]
+    .find(o => o.value.toLowerCase() === nomDetecte.toLowerCase());
+  if (!option) return;                 // projet inconnu → on ne change rien
+  if (select.value === option.value) return;  // déjà sélectionné
+
+  select.value = option.value;
+  onProjetChange();                    // applique accent, statut, infos, etc.
+}
+document.getElementById('corps').addEventListener('input', detecterProjetDansCorps);
+
 async function verifierStatut() {
   const nom = document.getElementById('projet').value;
   try {
