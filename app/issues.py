@@ -7,6 +7,7 @@ aux issues : aperçu de la commande gh, envoi, listes et détail.
 
 import json
 import os
+import re
 import subprocess
 import sys  # noqa: F401 (conservé pour parité avec les autres modules extraits)
 import tempfile
@@ -190,6 +191,55 @@ def issue_detail(nom_projet, numero):
         return jsonify(erreur="Timeout (gh n'a pas répondu en 30s)."), 504
     except FileNotFoundError:
         return jsonify(erreur="gh introuvable dans le PATH."), 500
+    except Exception as e:
+        return jsonify(erreur=str(e)), 500
+
+
+# ─── Diff d'un commit (issue #114) ────────────────────────────────────────────
+# L'onglet « Diff » du détail d'une issue affiche le `git show` du/des commit(s)
+# détecté(s) dans la réponse CCL. Un hash arrivant depuis le navigateur est une
+# entrée non fiable injectée dans une commande git : on le VALIDE strictement
+# (7 à 40 caractères hexadécimaux minuscules, rien d'autre) AVANT tout usage.
+
+# Format d'un hash de commit git : 7 à 40 chiffres hexadécimaux. La validation
+# stricte (ancrée ^…$) garantit qu'aucun métacaractère shell ni option git
+# (préfixe « - ») ne peut passer — l'argument est de toute façon transmis en
+# liste (pas via un shell), mais on refuse net toute entrée non conforme.
+HASH_COMMIT_RE = re.compile(r"^[0-9a-f]{7,40}$")
+
+
+def diff_commit(nom_projet, hash_commit):
+    """Retourne la sortie de `git show <hash>` exécuté dans le répertoire de
+    travail du projet, pour un hash de commit détecté dans la réponse CCL.
+
+    Le hash est validé strictement (HASH_COMMIT_RE) avant toute utilisation :
+    seul un hash hexadécimal 7-40 caractères est accepté. Git est invoqué en
+    liste d'arguments (jamais via un shell), avec -C pour cibler le dépôt du
+    projet et -- pour éviter toute interprétation du hash comme un chemin."""
+    cfg = projet_par_nom(nom_projet)
+    if not cfg:
+        return jsonify(erreur="Projet introuvable."), 404
+    hash_commit = str(hash_commit).lower()
+    if not HASH_COMMIT_RE.match(hash_commit):
+        return jsonify(erreur="Hash de commit invalide."), 400
+    if not cfg.rep_travail.is_dir():
+        return jsonify(erreur="Répertoire de travail introuvable."), 404
+    try:
+        res = subprocess.run(
+            ["git", "-C", str(cfg.rep_travail), "show",
+             "--no-color", "--stat", "--patch", hash_commit, "--"],
+            capture_output=True, text=True, timeout=30
+        )
+        if res.returncode != 0:
+            # Commit inconnu du dépôt (ex. backup pas encore poussé/abandonné) :
+            # message clair plutôt qu'erreur brute.
+            return jsonify(erreur=(res.stderr.strip()
+                                   or f"Commit {hash_commit} introuvable.")), 404
+        return jsonify(diff=res.stdout)
+    except subprocess.TimeoutExpired:
+        return jsonify(erreur="Timeout (git n'a pas répondu en 30s)."), 504
+    except FileNotFoundError:
+        return jsonify(erreur="git introuvable dans le PATH."), 500
     except Exception as e:
         return jsonify(erreur=str(e)), 500
 

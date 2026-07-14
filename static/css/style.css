@@ -122,6 +122,12 @@ button.danger:hover{background:#f8d7da}
   font-weight:700;line-height:1;color:#B32020;background:#fff;border:1px solid #B32020;
   border-radius:3px;padding:1px 3px;margin-left:3px;vertical-align:middle;user-select:none}
 .ligne-issue .badge-copie-all:hover{background:#fbeaea}
+/* Badge « ± » (issue #114) : copie la réponse complète + le diff. Même carré
+   que « All » mais couleur DISTINCTE (bleu) pour ne pas se confondre avec lui. */
+.ligne-issue .badge-copie-diff{display:inline-block;cursor:pointer;font-size:9px;
+  font-weight:700;line-height:1;color:#1f5f8b;background:#fff;border:1px solid #1f5f8b;
+  border-radius:3px;padding:1px 4px;margin-left:3px;vertical-align:middle;user-select:none}
+.ligne-issue .badge-copie-diff:hover{background:#e8f1f8}
 .ligne-issue .pastille-ligne{width:9px;height:9px;border-radius:50%;flex-shrink:0}
 /* Poignée de redimensionnement de la SEULE colonne titre (issue #95), posée sur
    sa bordure gauche. Fine bande à curseur col-resize, surlignée au survol. */
@@ -222,6 +228,27 @@ button.danger:hover{background:#f8d7da}
 .commentaire-html pre{white-space:pre-wrap;margin:6px 0}
 .commentaire-html code{background:#f0efe9;padding:1px 4px;border-radius:3px}
 .commentaire-html ul,.commentaire-html ol{margin:6px 0;padding-left:22px}
+/* Onglets Réponse / Diff du bloc résultat CCL (issue #114). Barre d'onglets
+   discrète ; le panneau actif seul est affiché (.reponse-pane sans .actif est
+   masqué). L'onglet actif porte un soulignage vert cohérent avec la réponse. */
+.reponse-tabs{display:flex;gap:4px;border-bottom:1px solid #d7e7dc;margin-bottom:10px}
+.reponse-tab{font-size:12px;font-weight:500;color:#557;background:none;border:none;
+  border-bottom:2px solid transparent;padding:5px 12px;margin-bottom:-1px;cursor:pointer}
+.reponse-tab:hover{color:#2c6b41}
+.reponse-tab.actif{color:#2c6b41;font-weight:600;border-bottom-color:#2c6b41}
+.reponse-pane{display:none}
+.reponse-pane.actif{display:block}
+/* Onglet Diff : messages d'état (chargement / aucun commit / erreur) et blocs
+   de diff colorés (sortie de `git show`), en monospace scrollable. */
+.diff-vide{font-size:12px;color:#888;font-style:italic;padding:8px 2px}
+.diff-erreur{font-size:12px;color:#a32d2d;padding:8px 2px}
+.diff-bloc{font-family:monospace;font-size:12px;line-height:1.5;white-space:pre-wrap;
+  word-break:break-word;background:#f8f8f5;border:1px solid #e0dfda;border-radius:6px;
+  padding:10px 12px;margin:0 0 10px;max-height:460px;overflow:auto}
+.diff-bloc .diff-add{color:#22803a}
+.diff-bloc .diff-del{color:#c0392b}
+.diff-bloc .diff-hunk{color:#1f5f8b;font-weight:600}
+.diff-bloc .diff-meta{color:#888}
 .bloc-annuler{margin-bottom:16px}
 /* Modal de confirmation — overlay en flux normal (position:absolute, pas fixed).
    Le body est positionné (position:relative) : l'overlay le recouvre entièrement. */

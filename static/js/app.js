@@ -568,6 +568,14 @@ function rendreListeIssues(reset) {
         '<span class="badge-copie-all" title="Copier le contenu complet de l\'issue"'
         + ' onclick="copierToutDepuisBadge(event, \''
         + escapeHtml(it.projet) + '\', ' + Number(numero) + ')">All</span>';
+      // Badge « ± » (issue #114) : à côté de « All », il copie la réponse CCL
+      // COMPLÈTE suivie du diff du/des commit(s) associé(s). « All » (réponse
+      // seule, sans diff) reste inchangé à côté. Si l'issue n'a pas de commit
+      // (lecture seule), ce badge copie la réponse seule — comme « All ».
+      badgesHtml +=
+        '<span class="badge-copie-diff" title="Copier la réponse complète + le diff"'
+        + ' onclick="copierToutEtDiffDepuisBadge(event, \''
+        + escapeHtml(it.projet) + '\', ' + Number(numero) + ')">±</span>';
     }
     ligne.innerHTML =
       '<span class="ligne-date" title="' + escapeHtml(dateCreation) + '"'
@@ -1036,8 +1044,20 @@ function construireHtmlIssue(it, nom) {
         const resume = (idxDetails >= 0 ? corpsBrut.slice(0, idxDetails) : corpsBrut)
                        .replace(/\s+$/, '');
         const details = idxDetails >= 0 ? corpsBrut.slice(idxDetails) : '';
+        // Hash(s) de commit détecté(s) dans la réponse CCL : alimentent l'onglet
+        // « Diff » (issue #114). Liste vide pour une issue en lecture seule.
+        const hashes = hashesDeCommit(it);
+        // Onglet « Réponse » : le contenu actuel (résumé + détails dépliables).
+        // Onglet « Diff » : chargé paresseusement au clic (git show du/des
+        // commit(s)), ou message clair si aucun commit associé (issue #114).
         html += '<div class="commentaire resultat">'
               + '<div class="commentaire-auteur">' + escapeHtml(auteur) + ' — résultat CCL</div>'
+              + '<div class="reponse-onglets">'
+              + '<div class="reponse-tabs">'
+              + '<button class="reponse-tab actif" onclick="basculerOngletReponse(this,\'reponse\')">Réponse</button>'
+              + '<button class="reponse-tab" onclick="basculerOngletReponse(this,\'diff\')">Diff</button>'
+              + '</div>'
+              + '<div class="reponse-pane reponse-pane-reponse actif">'
               + '<div class="commentaire-resume">'
               // « Copier résumé » : le texte avant <details> uniquement (issue #59).
               // « Copier tout » : résumé + détails en markdown brut (issue #77).
@@ -1063,7 +1083,18 @@ function construireHtmlIssue(it, nom) {
           html += '<div class="commentaire-details commentaire-html">'
                 + rendreHtmlRestreint(details) + '</div>';
         }
-        html += '</div>';
+        html += '</div>'   // fin .reponse-pane-reponse
+              // Onglet Diff : les hash sont portés en dataset ; le contenu est
+              // chargé au premier clic sur l'onglet (chargerDiffOnglet).
+              + '<div class="reponse-pane reponse-pane-diff" data-charge="0"'
+              + ' data-projet="' + escapeHtml(nom) + '"'
+              + ' data-hashes="' + escapeHtml(hashes.join(',')) + '">'
+              + (hashes.length
+                  ? '<div class="diff-vide">Cliquez sur l\'onglet « Diff » pour charger le diff.</div>'
+                  : '<div class="diff-vide">Aucun commit associé à cette issue.</div>')
+              + '</div>'   // fin .reponse-pane-diff
+              + '</div>';  // fin .reponse-onglets
+        html += '</div>';  // fin .commentaire.resultat
       } else {
         // Autres commentaires (ACK, etc.) : rendu texte échappé (sécurité) +
         // bouton « Copier » discret en haut à droite, ancré au bloc (issue #61).
@@ -1395,6 +1426,158 @@ async function copierToutDepuisBadge(event, nom, numero) {
   if (badge) {
     badge.textContent = '✓';
     setTimeout(function() { badge.textContent = 'All'; }, 1500);
+  }
+}
+
+// ─── Onglets Réponse / Diff du détail d'une issue (issue #114) ────────────────
+
+// Extrait la liste des hash de commit mentionnés dans la réponse CCL (dernier
+// commentaire). Le template de réponse porte une ligne « Commits : <hash>
+// (backup) + <hash> (fix) — … » (ou « Commits : aucun » en lecture seule) : on
+// cible cette ligne et on en tire les jetons hexadécimaux 7-40 caractères,
+// dédupliqués dans l'ordre. Liste vide si aucun commit (issue en lecture seule).
+function hashesDeCommit(it) {
+  const comms = (it && it.comments) || [];
+  if (!comms.length) return [];
+  const corps = comms[comms.length - 1].body || '';
+  const ligneCommits = corps.split('\n').find(l => /^\s*commits?\s*:/i.test(l));
+  if (!ligneCommits) return [];
+  const trouves = ligneCommits.match(/\b[0-9a-f]{7,40}\b/gi) || [];
+  const vus = [];
+  trouves.forEach(h => { h = h.toLowerCase(); if (!vus.includes(h)) vus.push(h); });
+  return vus;
+}
+
+// Colore un texte de diff (sortie de `git show`) ligne par ligne : ajouts en
+// vert, retraits en rouge, en-têtes de section (@@) et métadonnées (diff/index/
+// commit/…) distincts. Chaque ligne est échappée AVANT insertion (sécurité).
+function colorierDiff(texte) {
+  return (texte || '').split('\n').map(function(l) {
+    const e = escapeHtml(l);
+    if (l.startsWith('@@')) return '<span class="diff-hunk">' + e + '</span>';
+    if (l.startsWith('+') && !l.startsWith('+++')) return '<span class="diff-add">' + e + '</span>';
+    if (l.startsWith('-') && !l.startsWith('---')) return '<span class="diff-del">' + e + '</span>';
+    if (/^(diff |index |\+\+\+|---|commit |Author:|Date:|Merge:)/.test(l))
+      return '<span class="diff-meta">' + e + '</span>';
+    return e;
+  }).join('\n');
+}
+
+// Bascule entre les onglets « Réponse » et « Diff » du bloc résultat CCL. Le
+// diff est chargé paresseusement au premier affichage de son onglet
+// (chargerDiffOnglet), pour ne pas appeler `git show` tant qu'Alain ne consulte
+// pas le diff.
+function basculerOngletReponse(btn, onglet) {
+  const onglets = btn.closest('.reponse-onglets');
+  if (!onglets) return;
+  onglets.querySelectorAll('.reponse-tab').forEach(t => t.classList.remove('actif'));
+  btn.classList.add('actif');
+  onglets.querySelectorAll('.reponse-pane').forEach(p => p.classList.remove('actif'));
+  const pane = onglets.querySelector('.reponse-pane-' + onglet);
+  if (!pane) return;
+  pane.classList.add('actif');
+  if (onglet === 'diff') chargerDiffOnglet(pane);
+}
+
+// Charge (une seule fois) le contenu de l'onglet « Diff » : pour chaque hash
+// porté par le dataset, appelle /diff/<projet>/<hash> et rend la sortie colorée.
+// Aucun hash (lecture seule) : le message « aucun commit associé » posé à la
+// construction reste affiché, rien à charger. En cas d'erreur réseau, l'onglet
+// est remis en état « à recharger » pour permettre une nouvelle tentative.
+async function chargerDiffOnglet(pane) {
+  if (!pane || pane.dataset.charge === '1') return;
+  const hashes = (pane.dataset.hashes || '').split(',').filter(Boolean);
+  if (!hashes.length) return;   // message « aucun commit » déjà en place
+  pane.dataset.charge = '1';
+  const nom = pane.dataset.projet || '';
+  pane.innerHTML = '<div class="diff-vide">Chargement du diff…</div>';
+  const morceaux = [];
+  let echecReseau = false;
+  for (const h of hashes) {
+    try {
+      const rep = await fetch('/diff/' + encodeURIComponent(nom)
+                              + '/' + encodeURIComponent(h));
+      const json = await rep.json();
+      if (json.erreur) {
+        morceaux.push('<div class="diff-erreur">Commit ' + escapeHtml(h)
+                      + ' : ' + escapeHtml(json.erreur) + '</div>');
+      } else {
+        morceaux.push('<pre class="diff-bloc">' + colorierDiff(json.diff || '') + '</pre>');
+      }
+    } catch(e) {
+      echecReseau = true;
+      morceaux.push('<div class="diff-erreur">Commit ' + escapeHtml(h)
+                    + ' : erreur réseau.</div>');
+    }
+  }
+  if (echecReseau) pane.dataset.charge = '0';   // autorise une nouvelle tentative
+  pane.innerHTML = morceaux.join('');
+}
+
+// Clic sur le badge « ± » d'une issue fermée+done (issue #114) : copie, en un
+// seul geste, la réponse CCL COMPLÈTE (réutilise reponseCompleteCcl) suivie du
+// diff du/des commit(s) associé(s) (fetch /diff pour chaque hash). Sans commit
+// (lecture seule), copie la réponse seule — équivalent à « All », sans section
+// diff vide ni erreur. Même mécanique cache/fetch et feedback que les autres
+// badges de la liste.
+async function copierToutEtDiffDepuisBadge(event, nom, numero) {
+  event.stopPropagation();
+  const badge = event.currentTarget;   // capturé avant tout await (nullé ensuite)
+  numero = String(numero);
+  const cleCache = CLE_CACHE_DETAIL + nom + '_' + numero;
+  let it = null;
+
+  // 1) Cache frais (< TTL) : on évite le fetch du détail.
+  try {
+    const obj = JSON.parse(localStorage.getItem(cleCache) || 'null');
+    if (obj && obj.it && (Date.now() - obj.ts) < TTL_DETAIL_MS) it = obj.it;
+  } catch(e) {}
+
+  // 2) Pas de cache exploitable : fetch le détail et rafraîchit le cache.
+  if (it === null) {
+    try {
+      const rep = await fetch('/issue/' + encodeURIComponent(nom)
+                              + '/' + encodeURIComponent(numero));
+      const j = await rep.json();
+      if (!j.erreur) {
+        it = j;
+        try { localStorage.setItem(cleCache, JSON.stringify({ts: Date.now(), it: it})); } catch(e) {}
+      }
+    } catch(e) {
+      console.warn('copierToutEtDiffDepuisBadge : échec fetch du détail.', e);
+    }
+  }
+
+  let texte = it ? reponseCompleteCcl(it) : '';
+  const hashes = it ? hashesDeCommit(it) : [];
+  // Concatène le diff de chaque commit sous la réponse complète. Lecture seule
+  // (aucun hash) : la boucle ne s'exécute pas, on copie la réponse seule.
+  for (const h of hashes) {
+    try {
+      const rep = await fetch('/diff/' + encodeURIComponent(nom)
+                              + '/' + encodeURIComponent(h));
+      const j = await rep.json();
+      if (j.diff) texte += '\n\n===== Diff ' + h + ' =====\n\n' + j.diff;
+    } catch(e) {
+      console.warn('copierToutEtDiffDepuisBadge : échec fetch diff ' + h + '.', e);
+    }
+  }
+
+  // Copie dans le presse-papier (fallback silencieux si indisponible / non-HTTPS).
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    try {
+      await navigator.clipboard.writeText(texte);
+    } catch(e) {
+      console.warn('copierToutEtDiffDepuisBadge : échec navigator.clipboard.', e);
+    }
+  } else {
+    console.warn('copierToutEtDiffDepuisBadge : navigator.clipboard indisponible (non-HTTPS).');
+  }
+
+  // Feedback visuel : « ± » → ✓ pendant 1,5 s, puis retour à « ± ».
+  if (badge) {
+    badge.textContent = '✓';
+    setTimeout(function() { badge.textContent = '±'; }, 1500);
   }
 }
 
