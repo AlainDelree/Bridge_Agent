@@ -147,6 +147,19 @@ button.danger:hover{background:#f8d7da}
 .ligne-issue .ligne-tempsrestant.tr-attente{background:#8A8A85}
 .ligne-issue .ligne-tempsrestant.tr-illimite{background:#185FA5}
 .ligne-issue .ligne-tempsrestant.tr-retry{background:#7A4FA5}   /* retry en cours (au-delà du 1er cycle, budget non épuisé) */
+/* Badge d'estimation prédictive de durée (issue #108), affiché JUSTE AVANT le
+   décompte : durée médiane historique du même projet+type+mode (« ≈ 4min 30s »).
+   Code couleur de fiabilité selon le nombre d'échantillons : rouge = peu sûr
+   (< 5), noir = correct (5-15), vert = sûr (> 15). Gris discret = pas encore de
+   données. Même gabarit pilule que le décompte, avec une marge à droite pour
+   le séparer nettement de celui-ci. */
+.ligne-issue .ligne-estimation{flex-shrink:0;font-size:11px;font-weight:600;
+  padding:1px 7px;border-radius:9px;white-space:nowrap;color:#fff;margin-right:5px}
+.ligne-issue .ligne-estimation.est-incertain{background:#B32020}   /* rouge : peu d'échantillons */
+.ligne-issue .ligne-estimation.est-correct{background:#2A2A28}     /* noir  : nombre correct */
+.ligne-issue .ligne-estimation.est-sur{background:#3B8C2F}         /* vert  : nombre suffisant */
+.ligne-issue .ligne-estimation.est-aucune{background:transparent;color:#8A8A85;
+  font-weight:400;font-style:italic}   /* pas encore de données pour la catégorie */
 /* Badge du projet source dans l'en-tête du panneau de détail. */
 .badge-projet{display:inline-flex;align-items:center;gap:6px;font-size:12px;
   font-weight:600;padding:3px 11px;border-radius:12px;color:#fff;margin-bottom:12px}

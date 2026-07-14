@@ -584,10 +584,13 @@ function rendreListeIssues(reset) {
       + ' onmousedown="demarrerRedimTitre(event)" onclick="event.stopPropagation()"></span>'
       + '<span class="ligne-texte">#' + escapeHtml(numero) + ' — '
       + escapeHtml(it.title) + ' [' + etat + ']</span>'
-      // Badge de temps restant estimé (issue #91) : rempli/actualisé par
-      // majBadgesTempsRestant() pour les issues ouvertes uniquement.
+      // Badge d'estimation prédictive (issue #108) PUIS badge de temps restant
+      // (issues #91/#106) : l'estimation (durée médiane historique du même
+      // projet+type+mode) s'affiche JUSTE AVANT le décompte, qui reste inchangé.
+      // Les deux sont remplis/actualisés par majBadgesTempsRestant().
       + (etat === 'ouvert'
-          ? '<span class="ligne-tempsrestant" style="display:none"></span>'
+          ? '<span class="ligne-estimation" style="display:none"></span>'
+            + '<span class="ligne-tempsrestant" style="display:none"></span>'
           : '');
     zone.appendChild(ligne);
   }
@@ -740,6 +743,41 @@ async function chargerTimingIssues() {
   majBadgesTempsRestant();
 }
 
+// Applique l'estimation prédictive de durée à un badge (issue #108), affiché
+// JUSTE AVANT le décompte. La donnée `estimation` vient de la route
+// /issues-en-attente : médiane des durées historiques du même projet+type+mode
+// + niveau de fiabilité (nombre d'échantillons). Code couleur : rouge = peu sûr
+// (< 5 échantillons), noir = correct (5-15), vert = sûr (> 15). Sans historique
+// pour la catégorie : « pas encore de données ». N'affecte JAMAIS le décompte.
+function formaterBadgeEstimation(badge, t) {
+  badge.className = 'ligne-estimation';
+  const est = t && t.estimation;
+  if (!est) { badge.style.display = 'none'; badge.textContent = ''; return; }
+  badge.style.display = '';
+  // Catégorie inédite (projet+type+mode jamais fermé) : on le dit clairement,
+  // sans masquer le décompte qui suit (issue #108, cas 4).
+  if (est.fiabilite === 'aucune' || est.mediane == null) {
+    badge.textContent = '◦ pas encore de données';
+    badge.classList.add('est-aucune');
+    badge.title = 'Aucune issue fermée pour cette catégorie (projet + type + mode). '
+                + "L'estimation apparaîtra dès qu'au moins une issue similaire aura "
+                + 'été traitée. Le décompte à droite reste affiché normalement.';
+    return;
+  }
+  badge.textContent = '≈ ' + formaterDuree(est.mediane);
+  const cls = est.fiabilite === 'sur'     ? 'est-sur'       // vert  (> 15 échant.)
+            : est.fiabilite === 'correct' ? 'est-correct'   // noir  (5-15 échant.)
+            :                               'est-incertain';// rouge (< 5 échant.)
+  badge.classList.add(cls);
+  const libFiab = est.fiabilite === 'sur'     ? 'fiable'
+                : est.fiabilite === 'correct' ? 'correcte'
+                :                               'incertaine (peu de données)';
+  badge.title = 'Durée médiane observée sur ' + est.n + ' issue(s) fermée(s) du même '
+              + 'projet + type + mode — estimation ' + libFiab + '. '
+              + 'À ne pas confondre avec le décompte à droite, qui est le temps '
+              + 'restant sur le TIMEOUT configuré.';
+}
+
 // Applique l'état de temps restant à un badge, selon les données de timing.
 function formaterBadgeTempsRestant(badge, t) {
   badge.className = 'ligne-tempsrestant';
@@ -795,10 +833,13 @@ function formaterBadgeTempsRestant(badge, t) {
 // aucun appel réseau). Appelée chaque seconde et après chaque rendu de liste.
 function majBadgesTempsRestant() {
   document.querySelectorAll('#liste-issues .ligne-issue').forEach(ligne => {
+    const t = timingIssues[cleTiming(ligne.dataset.projet, ligne.dataset.numero)];
+    // Estimation prédictive (issue #108) : affichée JUSTE AVANT le décompte.
+    const badgeEst = ligne.querySelector('.ligne-estimation');
+    if (badgeEst) formaterBadgeEstimation(badgeEst, t);
     const badge = ligne.querySelector('.ligne-tempsrestant');
     if (!badge) return;
-    formaterBadgeTempsRestant(
-      badge, timingIssues[cleTiming(ligne.dataset.projet, ligne.dataset.numero)]);
+    formaterBadgeTempsRestant(badge, t);
   });
 }
 
