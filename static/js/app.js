@@ -1225,6 +1225,51 @@ async function rafraichirResultats() {
 // Copie le texte de la réponse CCL (dernier commentaire) dans le presse-papier.
 // Feedback visuel « ✓ Copié ! » pendant 2 s. Fallback silencieux (sélection du
 // texte + warning console) si navigator.clipboard est indisponible (non-HTTPS).
+// ─── Garde « copie vide » (issue #122) ───────────────────────────────────────
+// Plusieurs fonctions de copie peuvent aboutir à un texte vide sans jamais le
+// signaler : fetch du détail en échec, réponse CCL pas encore propagée côté
+// GitHub au moment du clic, etc. Elles affichaient alors ✓ (identique au succès)
+// et écrasaient le presse-papier avec du vide — Alain collait du vide sans le
+// savoir. Ces helpers factorisent la garde : détecter le texte vide, NE PAS
+// copier (préserver un presse-papier peut-être utile) et afficher un feedback ⚠
+// distinct du ✓ pendant ~2 s, avec un tooltip explicite.
+const TITRE_COPIE_VIDE =
+  'Réponse pas encore disponible — réessaie dans quelques secondes';
+
+// texte est-il vide (chaîne vide ou uniquement des espaces / retours ligne) ?
+function texteCopieVide(texte) {
+  return !texte || !texte.trim();
+}
+
+// Feedback ⚠ sur un badge de liste (span) : ⚠ + tooltip explicite pendant ~2 s,
+// puis restauration du libellé et du titre d'origine. Ne touche pas au
+// presse-papier.
+function feedbackBadgeVide(badge, original, titreOriginal) {
+  if (!badge) return;
+  badge.textContent = '⚠';
+  badge.title = TITRE_COPIE_VIDE;
+  setTimeout(function() {
+    badge.textContent = original;
+    badge.title = titreOriginal;
+  }, 2000);
+}
+
+// Feedback ⚠ sur un bouton « Copier … » : ⚠ + tooltip explicite pendant ~2 s,
+// puis restauration du libellé et du titre d'origine. Ne touche pas au
+// presse-papier.
+function feedbackBoutonVide(btn, libelle) {
+  if (!btn) return;
+  const titreOriginal = btn.title;
+  btn.disabled = true;
+  btn.textContent = '⚠';
+  btn.title = TITRE_COPIE_VIDE;
+  setTimeout(function() {
+    btn.textContent = libelle;
+    btn.title = titreOriginal;
+    btn.disabled = false;
+  }, 2000);
+}
+
 async function copierReponse(btn) {
   // Le bouton vit dans le bloc résumé : on copie le texte de CE bloc
   // uniquement (résumé court), jamais le bloc détails verbeux (issue #59).
@@ -1235,6 +1280,8 @@ async function copierReponse(btn) {
   // commentaires, issue #61) — on le restaure après le retour visuel.
   const libelle = btn.textContent;
   const texte = corps.textContent || '';
+  // Garde « copie vide » (issue #122) : rien à copier → feedback ⚠, pas de ✓.
+  if (texteCopieVide(texte)) { feedbackBoutonVide(btn, libelle); return; }
   if (navigator.clipboard && navigator.clipboard.writeText) {
     try {
       await navigator.clipboard.writeText(texte);
@@ -1293,6 +1340,8 @@ async function copierTout(btn) {
   const details = brutEl ? (brutEl.textContent || '') : '';
   const texte  = texteReponseComplete(resume, details);
   const libelle = btn.textContent;
+  // Garde « copie vide » (issue #122) : rien à copier → feedback ⚠, pas de ✓.
+  if (texteCopieVide(texte)) { feedbackBoutonVide(btn, libelle); return; }
   if (navigator.clipboard && navigator.clipboard.writeText) {
     try {
       await navigator.clipboard.writeText(texte);
@@ -1331,6 +1380,7 @@ async function copierReponseDepuisBadge(event, nom, numero) {
   event.stopPropagation();
   const badge = event.currentTarget;   // capturé avant tout await (nullé ensuite)
   const original = badge ? badge.textContent : '';
+  const titreOriginal = badge ? badge.title : '';
   numero = String(numero);
   const cleCache = CLE_CACHE_DETAIL + nom + '_' + numero;
   let texte = null;
@@ -1358,6 +1408,10 @@ async function copierReponseDepuisBadge(event, nom, numero) {
     }
   }
   if (texte === null) texte = '';
+
+  // Garde « copie vide » (issue #122) : réponse pas encore disponible (fetch en
+  // échec ou dernier commentaire vide) → feedback ⚠, aucune copie, pas de ✓.
+  if (texteCopieVide(texte)) { feedbackBadgeVide(badge, original, titreOriginal); return; }
 
   // Copie dans le presse-papier (fallback silencieux si indisponible / non-HTTPS).
   if (navigator.clipboard && navigator.clipboard.writeText) {
@@ -1488,6 +1542,7 @@ async function copierToutEtDiffDepuisBadge(event, nom, numero) {
   event.stopPropagation();
   const badge = event.currentTarget;   // capturé avant tout await (nullé ensuite)
   const original = badge ? badge.textContent : '';
+  const titreOriginal = badge ? badge.title : '';
   numero = String(numero);
   const cleCache = CLE_CACHE_DETAIL + nom + '_' + numero;
   let it = null;
@@ -1528,6 +1583,11 @@ async function copierToutEtDiffDepuisBadge(event, nom, numero) {
     }
   }
 
+  // Garde « copie vide » (issue #122) : fetch du détail en échec ou réponse CCL
+  // pas encore propagée côté GitHub → texte vide. Feedback ⚠, aucune copie
+  // silencieuse, pas de ✓ trompeur.
+  if (texteCopieVide(texte)) { feedbackBadgeVide(badge, original, titreOriginal); return; }
+
   // Copie dans le presse-papier (fallback silencieux si indisponible / non-HTTPS).
   if (navigator.clipboard && navigator.clipboard.writeText) {
     try {
@@ -1556,6 +1616,7 @@ async function copierDiffDepuisBadge(event, nom, numero) {
   event.stopPropagation();
   const badge = event.currentTarget;   // capturé avant tout await (nullé ensuite)
   const original = badge ? badge.textContent : '';
+  const titreOriginal = badge ? badge.title : '';
   numero = String(numero);
   const cleCache = CLE_CACHE_DETAIL + nom + '_' + numero;
   let it = null;
@@ -1605,6 +1666,12 @@ async function copierDiffDepuisBadge(event, nom, numero) {
     }
   }
   const texte = morceaux.join('\n\n');
+
+  // Garde « copie vide » (issue #122) : des commits existent mais tous les fetch
+  // de diff ont échoué / renvoyé vide → texte vide. Feedback ⚠, aucune copie
+  // silencieuse, pas de ✓ trompeur. (Le cas « aucun commit » reste géré par ∅
+  // plus haut, feedback neutre déjà distinct du ✓.)
+  if (texteCopieVide(texte)) { feedbackBadgeVide(badge, original, titreOriginal); return; }
 
   // Copie dans le presse-papier (fallback silencieux si indisponible / non-HTTPS).
   if (navigator.clipboard && navigator.clipboard.writeText) {
