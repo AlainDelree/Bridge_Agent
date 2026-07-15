@@ -41,6 +41,25 @@ LABELS = [
     ("notif_tous",  "fbca04", "notify-send + ntfy"),
 ]
 
+# Palette fixe de couleurs d'accent proposées à la création d'un projet (issue
+# #121). Une dizaine de teintes bien distinctes, incluant les 5 déjà en usage
+# (cohérence visuelle avec l'existant : voir COULEURS_PROJET dans app.js). Une
+# couleur est attribuée dès la création et écrite dans le .conf (champ COULEUR) ;
+# celles déjà prises par un projet existant sont exclues de la proposition. Hex
+# #RRGGBB, écrits en MAJUSCULES mais comparés sans tenir compte de la casse.
+PALETTE_COULEURS = [
+    "#185FA5",  # bleu       (bridge_agent)
+    "#3B6D11",  # vert       (alchess)
+    "#BA7517",  # orange     (ff_galerie)
+    "#0E8A82",  # turquoise  (scrabble)
+    "#6B3FA0",  # violet     (ecole)
+    "#B0323A",  # rouge brique
+    "#A2348A",  # magenta
+    "#3B45A0",  # indigo
+    "#7A4E2D",  # brun
+    "#556070",  # gris ardoise
+]
+
 # Topic ntfy partagé par tous les projets existants (voir configs/*.conf).
 # Proposé par défaut ; l'utilisateur peut le changer pour un topic dédié.
 TOPIC_NTFY_DEFAUT = "hippocampe-ff-galerie-xyz123"
@@ -111,6 +130,50 @@ def conf_existe(nom: str) -> bool:
     return (DOSSIER_CONFIGS / f"{nom}.conf").exists()
 
 
+def couleurs_utilisees() -> set[str]:
+    """Ensemble des couleurs (hex minuscules) déjà attribuées à un projet
+    existant, lues depuis le champ COULEUR de chaque configs/*.conf. Lecture
+    minimale et tolérante (même esprit zéro-dépendance que le reste du script) :
+    un .conf illisible est simplement ignoré."""
+    prises: set[str] = set()
+    for chemin in DOSSIER_CONFIGS.glob("*.conf"):
+        try:
+            for brut in chemin.read_text(encoding="utf-8").splitlines():
+                ligne = brut.strip()
+                if not ligne or ligne.startswith("#"):
+                    continue
+                cle, sep, valeur = ligne.partition("=")
+                if sep and cle.strip().upper() == "COULEUR":
+                    v = valeur.strip().lower()
+                    if v:
+                        prises.add(v)
+        except OSError:
+            continue
+    return prises
+
+
+def couleurs_disponibles() -> list[str]:
+    """Couleurs de PALETTE_COULEURS non encore attribuées à un projet existant,
+    dans l'ordre de la palette. Sert à la fois au modal (pastilles proposées) et
+    à creer_projet (repli si aucune couleur n'est choisie)."""
+    prises = couleurs_utilisees()
+    return [c for c in PALETTE_COULEURS if c.lower() not in prises]
+
+
+def normaliser_couleur(couleur: str) -> str:
+    """Ramène une couleur choisie à une valeur sûre : la couleur telle qu'écrite
+    dans la palette si elle est encore disponible (comparaison insensible à la
+    casse), sinon la première couleur libre, sinon '' (palette épuisée → repli
+    map fixe/hash côté frontend)."""
+    dispo = couleurs_disponibles()
+    choisie = (couleur or "").strip().lower()
+    if choisie:
+        for c in dispo:
+            if c.lower() == choisie:
+                return c
+    return dispo[0] if dispo else ""
+
+
 def depot_defaut(nom: str) -> str:
     """Dépôt GitHub proposé par défaut : owner + nom capitalisé."""
     return f"{OWNER_DEFAUT}/{nom.capitalize()}"
@@ -135,7 +198,8 @@ def creer_depot(depot: str, nom: str) -> tuple[bool, str]:
 
 def ecrire_conf(nom: str, depot: str, rep: str, perimetre: str,
                 topic: str = TOPIC_NTFY_DEFAUT,
-                script_bip: str = SCRIPT_BIP_DEFAUT) -> Path:
+                script_bip: str = SCRIPT_BIP_DEFAUT,
+                couleur: str = "") -> Path:
     """Génère configs/<nom>.conf depuis le gabarit. Renvoie le chemin écrit."""
     chemin = DOSSIER_CONFIGS / f"{nom}.conf"
     contenu = GABARIT_CONF.format(
@@ -145,6 +209,7 @@ def ecrire_conf(nom: str, depot: str, rep: str, perimetre: str,
         perimetre=perimetre,
         topic_ntfy=topic,
         script_bip=script_bip,
+        couleur=couleur,
     )
     chemin.write_text(contenu, encoding="utf-8")
     return chemin
@@ -239,7 +304,7 @@ def mettre_a_jour_doc(nom: str, depot: str, rep: str, perimetre: str) -> dict:
 
 def creer_projet(nom: str, depot: str = "", rep: str = "", perimetre: str = "",
                  topic: str = "", script_bip: str = "", avec_specs: bool = False,
-                 creer_depot_si_absent: bool = True) -> dict:
+                 creer_depot_si_absent: bool = True, couleur: str = "") -> dict:
     """Orchestrateur non interactif appelé par la route Flask. Enchaîne les
     mêmes étapes que le script CLI (dépôt, .conf, labels, contexte, doc) et
     renvoie un compte-rendu structuré : {succes, nom, depot, rep, perimetre,
@@ -261,6 +326,10 @@ def creer_projet(nom: str, depot: str = "", rep: str = "", perimetre: str = "",
     perimetre = (perimetre or "").strip() or rep
     topic = (topic or "").strip() or TOPIC_NTFY_DEFAUT
     script_bip = (script_bip or "").strip() or SCRIPT_BIP_DEFAUT
+    # Couleur d'accent : la couleur choisie si elle est encore libre, sinon la
+    # première disponible, sinon '' (palette épuisée → repli map fixe/hash côté
+    # frontend). Exclut au passage les couleurs déjà prises (issue #121).
+    couleur = normaliser_couleur(couleur)
 
     etapes = []
 
@@ -286,9 +355,11 @@ def creer_projet(nom: str, depot: str = "", rep: str = "", perimetre: str = "",
                        "detail": f"{depot} créé (public)."})
 
     # 2. Fichier configs/<nom>.conf.
-    ecrire_conf(nom, depot, rep, perimetre, topic, script_bip)
-    etapes.append({"etape": "Fichier .conf", "ok": True,
-                   "detail": f"configs/{nom}.conf créé (à partir du gabarit)."})
+    ecrire_conf(nom, depot, rep, perimetre, topic, script_bip, couleur)
+    detail_conf = f"configs/{nom}.conf créé (à partir du gabarit)."
+    if couleur:
+        detail_conf += f" Couleur d'accent : {couleur}."
+    etapes.append({"etape": "Fichier .conf", "ok": True, "detail": detail_conf})
 
     # 3. Labels GitHub requis (idempotent).
     resultats = creer_labels(depot)
@@ -325,7 +396,7 @@ def creer_projet(nom: str, depot: str = "", rep: str = "", perimetre: str = "",
 
     return {"succes": True, "nom": nom, "depot": depot, "rep": rep,
             "perimetre": perimetre, "depot_existait": depot_existait,
-            "etapes": etapes, "erreur": None}
+            "couleur": couleur, "etapes": etapes, "erreur": None}
 
 
 def etape_nom() -> str:
@@ -385,6 +456,9 @@ def etape_repertoire(nom: str) -> tuple[str, str]:
 def etape_conf(nom: str, depot: str, rep: str, perimetre: str) -> Path:
     titre("4. Fichier configs/<nom>.conf")
     topic = demander("Topic ntfy", TOPIC_NTFY_DEFAUT)
+    # Couleur d'accent : proposer la première libre par défaut, laisser choisir
+    # parmi les couleurs non encore utilisées (issue #121).
+    couleur = etape_couleur()
     chemin = DOSSIER_CONFIGS / f"{nom}.conf"
     contenu = GABARIT_CONF.format(
         nom=nom,
@@ -393,10 +467,30 @@ def etape_conf(nom: str, depot: str, rep: str, perimetre: str) -> Path:
         perimetre=perimetre,
         topic_ntfy=topic,
         script_bip=SCRIPT_BIP_DEFAUT,
+        couleur=couleur,
     )
     chemin.write_text(contenu, encoding="utf-8")
     print(f"   ✓ {chemin.relative_to(RACINE)} créé (à partir du gabarit).")
+    if couleur:
+        print(f"   ✓ Couleur d'accent : {couleur}.")
     return chemin
+
+
+def etape_couleur() -> str:
+    """Propose les couleurs de la palette non encore utilisées et renvoie le hex
+    choisi (ou la première libre si validation à vide). '' si palette épuisée."""
+    dispo = couleurs_disponibles()
+    if not dispo:
+        print("   • Palette épuisée (toutes les couleurs sont prises) — "
+              "couleur auto (repli map fixe/hash côté interface).")
+        return ""
+    print("   Couleurs disponibles (non encore utilisées) :")
+    for i, c in enumerate(dispo, 1):
+        print(f"     {i}. {c}")
+    rep = demander(f"Numéro de couleur (1-{len(dispo)})", "1")
+    if rep.isdigit() and 1 <= int(rep) <= len(dispo):
+        return dispo[int(rep) - 1]
+    return dispo[0]
 
 
 def etape_labels(depot: str) -> list[str]:
@@ -557,6 +651,12 @@ CMD_BACKUP  = git add -A && git commit -m "avant-<description>" --allow-empty
 
 # ─── Contexte ───────────────────────────────────────────────────────────────────
 FICHIER_CONTEXTE = CONTEXTE.md
+
+# ─── Couleur d'accent dans l'interface (hex #RRGGBB ; vide = repli auto) ───────
+# Attribuée à la création (palette de nouveau_projet.py, couleurs déjà prises
+# exclues). Le frontend l'utilise en priorité ; à défaut il retombe sur la map
+# fixe puis sur un hash HSL du nom (issue #121).
+COULEUR          = {couleur}
 
 # ─── Optionnels (le défaut s'applique si la ligne reste commentée) ─────────────
 LABEL             = for-linux

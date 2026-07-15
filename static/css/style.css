@@ -49,6 +49,13 @@ textarea{width:100%;padding:10px;border:1px solid #ddd;border-radius:6px;
 .np-rappel-git{margin-top:14px;padding:10px 12px;border:1px solid #ffe08a;border-left:4px solid #f0ad4e;border-radius:6px;background:#fff3cd;color:#856404}
 .np-rappel-git .titre{font-size:13px;font-weight:600;margin-bottom:8px}
 .np-rappel-git pre{margin:0;padding:8px 10px;background:#fffaf0;border:1px solid #ffe08a;border-radius:4px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;color:#5a4a00;white-space:pre;overflow-x:auto;cursor:pointer}
+/* Sélecteur de couleur d'accent du modal « Nouveau projet » (issue #121) :
+   une pastille cliquable par couleur disponible, la choisie entourée d'un anneau. */
+.np-couleurs{display:flex;flex-wrap:wrap;gap:10px;padding:2px 0}
+.np-pastille{width:26px;height:26px;padding:0;border-radius:50%;border:2px solid #fff;
+  box-shadow:0 0 0 1px #d0cfca;cursor:pointer;transition:transform .08s,box-shadow .08s}
+.np-pastille:hover{transform:scale(1.12)}
+.np-pastille.choisie{box-shadow:0 0 0 2px #333;transform:scale(1.12)}
 /* Résumé lecture seule des champs d'en-tête détectés dans le corps (issue #117).
    Compact et discret : petite série de badges gris sous le champ Titre. */
 .resume-entete{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}

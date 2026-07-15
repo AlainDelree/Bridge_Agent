@@ -54,6 +54,9 @@ def verifier_nouveau_projet():
         rep_defaut   = np_cli.rep_defaut(nom) if valide else "",
         depot        = depot_a_verifier,
         depot_existe = bool(depot_a_verifier) and np_cli.depot_existe(depot_a_verifier),
+        # Couleurs de la palette encore libres (issue #121) : le modal affiche
+        # une pastille par couleur disponible et pré-sélectionne la première.
+        couleurs_disponibles = np_cli.couleurs_disponibles(),
     )
 
 
@@ -73,5 +76,9 @@ def creer_nouveau_projet():
         topic                 = data.get("topic", ""),
         avec_specs            = bool(data.get("avec_specs")),
         creer_depot_si_absent = bool(data.get("creer_depot_si_absent", True)),
+        # Couleur d'accent choisie dans le modal (pastille). creer_projet la
+        # revalide contre les couleurs encore libres (issue #121) : une valeur
+        # vide ou déjà prise retombe sur la première disponible.
+        couleur               = data.get("couleur", ""),
     )
     return jsonify(resultat), (200 if resultat.get("succes") else 400)

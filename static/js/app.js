@@ -26,11 +26,15 @@ function couleurHashProjet(nom) {
   return 'hsl(' + ((h + 360) % 360) + ', 60%, 34%)';
 }
 
-// Couleur du projet : la map fixe si le projet y figure, sinon le hash HSL de
-// secours (plutôt qu'un gris uniforme) pour qu'un nouveau projet reste
-// distinguable en attendant sa couleur définitive.
+// Couleur du projet, par ordre de priorité (issue #121) :
+//   1. couleur persistée dans le .conf (champ COULEUR), exposée par
+//      lister_projets() et injectée dans window.COULEURS_PERSISTEES ;
+//   2. sinon la map fixe COULEURS_PROJET (projets historiques sans ce champ) ;
+//   3. sinon le hash HSL de secours (nouveau projet pas encore configuré),
+//      plutôt qu'un gris uniforme, pour qu'il reste distinguable.
 function couleurProjet(nom) {
-  return COULEURS_PROJET[nom] || couleurHashProjet(nom);
+  const persistees = window.COULEURS_PERSISTEES || {};
+  return persistees[nom] || COULEURS_PROJET[nom] || couleurHashProjet(nom);
 }
 
 // Applique l'accent visuel du projet : bordure gauche du select et du bandeau,
@@ -2245,6 +2249,9 @@ function viderFormulaire(cacherMsg=true) {
 
 let npDepotEdite = false, npRepEdite = false, npPerimetreEdite = false;
 let npTimerVerif = null;
+// Couleur d'accent choisie dans le modal (hex #RRGGBB). '' tant qu'aucune
+// pastille n'est rendue ou si la palette est épuisée (issue #121).
+let npCouleurChoisie = '';
 
 function ouvrirNouveauProjet() {
   ['np-nom', 'np-depot', 'np-rep', 'np-perimetre', 'np-topic'].forEach(id =>
@@ -2261,12 +2268,61 @@ function ouvrirNouveauProjet() {
   btn.disabled = false; btn.textContent = 'Créer le projet';
   document.getElementById('np-fermer').textContent = 'Fermer';
   npDepotEdite = npRepEdite = npPerimetreEdite = false;
+  npChargerCouleurs();
   document.getElementById('modal-nouveau-projet').classList.add('actif');
   document.getElementById('np-nom').focus();
 }
 
 function fermerNouveauProjet() {
   document.getElementById('modal-nouveau-projet').classList.remove('actif');
+}
+
+// Charge les couleurs de la palette encore libres (couleurs déjà attribuées à
+// un projet existant exclues côté serveur) et rend une pastille par couleur.
+// Appelée à l'ouverture du modal ; le nom n'a pas d'incidence sur la liste, on
+// interroge donc /verifier avec un nom vide (qui renvoie couleurs_disponibles
+// dans tous les cas).
+async function npChargerCouleurs() {
+  const cont = document.getElementById('np-couleurs');
+  cont.innerHTML = 'Chargement…';
+  npCouleurChoisie = '';
+  let r;
+  try {
+    r = await (await fetch('/nouveau-projet/verifier?nom=')).json();
+  } catch (e) {
+    cont.textContent = 'Couleurs indisponibles (erreur réseau) — attribution automatique.';
+    return;
+  }
+  npRendreCouleurs(r.couleurs_disponibles || []);
+}
+
+// Rend les pastilles cliquables et pré-sélectionne la première disponible.
+function npRendreCouleurs(couleurs) {
+  const cont = document.getElementById('np-couleurs');
+  cont.innerHTML = '';
+  if (!couleurs.length) {
+    cont.textContent = 'Palette épuisée — couleur attribuée automatiquement.';
+    npCouleurChoisie = '';
+    return;
+  }
+  couleurs.forEach((c, i) => {
+    const p = document.createElement('button');
+    p.type = 'button';
+    p.className = 'np-pastille' + (i === 0 ? ' choisie' : '');
+    p.style.background = c;
+    p.title = c;
+    p.dataset.couleur = c;
+    p.onclick = () => npChoisirCouleur(c);
+    cont.appendChild(p);
+  });
+  npCouleurChoisie = couleurs[0];
+}
+
+// Sélectionne une pastille (couleur choisie pour le nouveau projet).
+function npChoisirCouleur(c) {
+  npCouleurChoisie = c;
+  document.querySelectorAll('#np-couleurs .np-pastille').forEach(p =>
+    p.classList.toggle('choisie', p.dataset.couleur === c));
 }
 
 // Saisie du nom : débounce puis vérification serveur (validité, .conf déjà pris,
@@ -2370,6 +2426,7 @@ async function soumettreNouveauProjet() {
     rep:       document.getElementById('np-rep').value.trim(),
     perimetre: document.getElementById('np-perimetre').value.trim(),
     topic:     document.getElementById('np-topic').value.trim(),
+    couleur:   npCouleurChoisie,
     avec_specs: document.getElementById('np-specs').checked,
     creer_depot_si_absent: document.getElementById('np-creer-depot').checked,
   };
@@ -2400,6 +2457,12 @@ async function soumettreNouveauProjet() {
   if (res.succes) {
     npMsg('✅ Projet « ' + res.nom + ' » créé'
           + (res.depot_existait ? ' (installé sur dépôt existant)' : '') + '.', 'succes');
+    // Enregistre la couleur persistée pour ce projet afin que les onglets déjà
+    // chargés (Résultats, accent du bandeau) l'utilisent sans recharger la page.
+    if (res.couleur) {
+      window.COULEURS_PERSISTEES = window.COULEURS_PERSISTEES || {};
+      window.COULEURS_PERSISTEES[res.nom] = res.couleur;
+    }
     ajouterProjetAuSelecteur(res.nom, res.depot);
     // Rappel des 3 commandes git à lancer soi-même : le modal a modifié
     // BRIDGE_AGENT_DOC.md (§2) localement mais ne pousse pas (cohérent avec le

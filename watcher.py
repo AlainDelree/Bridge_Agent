@@ -92,6 +92,7 @@ class Config:
     modele_ccl: str        = ""    # modèle CCL à utiliser (vide = défaut Claude Code)
     mot_de_passe: str      = ""    # hash sha256 du mot de passe d'accès web (vide = pas d'authentification)
     fichier_contexte: str  = ""    # fichier de contexte projet injecté dans le prompt (chemin relatif au rep_travail ou absolu ; vide = aucun)
+    couleur: str           = ""    # couleur d'accent du projet dans l'interface (hex #RRGGBB ; vide = repli map fixe/hash côté frontend)
 
     @property
     def url_ntfy(self) -> str:
@@ -161,6 +162,7 @@ def charger_config(chemin: Path) -> Config:
         modele_ccl        = brut.get("MODELE_CCL", ""),
         mot_de_passe      = brut.get("MOT_DE_PASSE", ""),
         fichier_contexte  = brut.get("FICHIER_CONTEXTE", ""),
+        couleur           = brut.get("COULEUR", ""),
     )
 
 

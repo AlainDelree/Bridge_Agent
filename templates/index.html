@@ -329,6 +329,11 @@
       <input type="text" id="np-topic" autocomplete="off">
     </div>
 
+    <div class="champ" style="margin-bottom:16px">
+      <label>Couleur d'accent (uniquement les couleurs non encore utilisées)</label>
+      <div id="np-couleurs" class="np-couleurs"></div>
+    </div>
+
     <label style="display:block;font-size:13px;color:#333;margin-bottom:16px">
       <input type="checkbox" id="np-specs">
       Pattern Specs MVC (§15) — crée aussi CONTEXTE_VUE / METIER / PERSISTANCE
@@ -350,6 +355,17 @@
   <div class="msg">🔴 Serveur arrêté — relancez new_issue.py puis rechargez</div>
   <button onclick="window.location.reload()">Recharger</button>
 </div>
+<script>
+  // Couleurs persistées par projet (issue #121) : source PRIORITAIRE de
+  // couleurProjet(). Peuplée côté serveur depuis lister_projets() (champ COULEUR
+  // du .conf). Un projet sans couleur en config est simplement absent ici et
+  // retombe sur la map fixe COULEURS_PROJET puis sur le hash HSL (migration
+  // douce : les .conf existants continuent de fonctionner sans réécriture).
+  window.COULEURS_PERSISTEES = {
+    {% for p in projets if p.couleur %}"{{ p.nom }}": "{{ p.couleur }}",
+    {% endfor %}
+  };
+</script>
 <script src="{{ url_for('static', filename='js/app.js') }}"></script>
 </body>
 </html>

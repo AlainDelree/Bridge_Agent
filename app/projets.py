@@ -25,7 +25,7 @@ from watcher import Config, charger_config  # noqa: E402
 CLES_EDITABLES = {
     "TOPIC_NTFY", "LABEL", "INTERVALLE", "MAX_ESSAIS",
     "TIMEOUT_CLAUDE", "SCRIPT_BIP", "LOG_TAILLE_MAX_MO", "LOG_ARCHIVES",
-    "MODELE_CCL", "MOT_DE_PASSE", "FICHIER_CONTEXTE",
+    "MODELE_CCL", "MOT_DE_PASSE", "FICHIER_CONTEXTE", "COULEUR",
 }
 
 
@@ -123,6 +123,7 @@ def get_config(nom_projet):
         log_taille_max_mo = cfg.log_taille_max_mo,
         log_archives   = cfg.log_archives,
         modele_ccl     = cfg.modele_ccl,
+        couleur        = cfg.couleur,
     )
 
 
