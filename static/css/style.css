@@ -43,6 +43,13 @@ textarea{width:100%;padding:10px;border:1px solid #ddd;border-radius:6px;
 .radio-groupe,.case-groupe{display:flex;gap:18px;flex-wrap:wrap;padding:4px 0}
 .radio-groupe label,.case-groupe label{font-size:13px;display:flex;align-items:center;gap:6px;cursor:pointer}
 .badge-alerte{font-size:11px;padding:2px 7px;border-radius:4px;background:#fff3cd;color:#856404;margin-left:4px}
+/* Résumé lecture seule des champs d'en-tête détectés dans le corps (issue #117).
+   Compact et discret : petite série de badges gris sous le champ Titre. */
+.resume-entete{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
+.resume-entete .badge-entete{font-size:11px;padding:2px 8px;border-radius:10px;
+  background:#f4f4ef;border:1px solid #e6e5df;color:#666;white-space:nowrap}
+.resume-entete .badge-entete b{color:#444;font-weight:600;margin-right:4px;font-size:10px;
+  text-transform:uppercase;letter-spacing:.03em}
 .barre-envoi{display:flex;justify-content:flex-end;gap:10px;margin-top:18px;
   padding-top:14px;border-top:1px solid #eee}
 button{padding:7px 16px;border:1px solid #ccc;border-radius:6px;font-size:13px;

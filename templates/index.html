@@ -89,6 +89,10 @@
     <div class="champ" style="margin-bottom:14px">
       <label>Titre</label>
       <input type="text" id="titre" placeholder="Résumé court et actionnable">
+      <!-- Résumé lecture seule des champs d'en-tête détectés dans le corps
+           collé (issue #117). Masqué tant qu'aucun champ n'est reconnu ;
+           rempli/mis à jour en direct par mettreAJourResumeEntete(). -->
+      <div id="resume-entete" class="resume-entete" style="display:none"></div>
     </div>
 
     <div class="titre-section">Mode</div>

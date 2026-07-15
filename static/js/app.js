@@ -1722,6 +1722,21 @@ function afficherModalConfirmation(issues) {
   });
 }
 
+// Lecture d'un champ d'en-tête « | CHAMP | valeur | » dans le corps collé.
+// Source unique de vérité pour tout le parsing d'en-tête côté formulaire :
+// détection PROJET (#44/#109), TIMEOUT (#111) et résumé d'en-tête (#117)
+// s'appuient tous dessus, pour éviter des regex divergentes.
+//   • mot-clé insensible à la casse, espaces tolérés autour des séparateurs ;
+//   • la valeur est la cellule entre le 2e et le 3e « | », nettoyée ;
+//   • retourne la valeur (chaîne non vide) ou null (champ absent ou vide).
+function lireChampEntete(corps, champ) {
+  const re = new RegExp('^\\s*\\|\\s*' + champ + '\\s*\\|([^|]*)\\|', 'im');
+  const m = (corps || '').match(re);
+  if (!m) return null;
+  const valeur = m[1].trim();
+  return valeur || null;
+}
+
 // Détecte une incohérence entre le projet sélectionné et le champ PROJET de
 // l'en-tête bridge. Fiable : on ne fait plus d'analyse textuelle (source de
 // faux positifs) — on lit le champ « | PROJET | … | » que new_issue.py insère
@@ -1729,13 +1744,8 @@ function afficherModalConfirmation(issues) {
 // Retourne {projetIssue, projetSelectionne} si les deux diffèrent, sinon null
 // (champ absent → pas de vérification ; identique → pas de modale).
 function detecterIncoherenceProjet(data) {
-  const corps = data.corps || '';
-  // Ligne du tableau markdown : « | PROJET | valeur | ». La valeur est la
-  // 3e cellule, capturée entre le 2e et le 3e séparateur « | ».
-  const m = corps.match(/^\s*\|\s*PROJET\s*\|([^|]*)\|/im);
-  if (!m) return null;                                  // champ absent : pas de vérif
-  const projetIssue = m[1].trim();
-  if (!projetIssue) return null;                        // valeur vide : pas de vérif
+  const projetIssue = lireChampEntete(data.corps, 'PROJET');
+  if (!projetIssue) return null;                        // absent/vide : pas de vérif
   const projetSelectionne = (data.projet || '').trim();
   if (projetIssue.toLowerCase() === projetSelectionne.toLowerCase()) {
     return null;                                        // identique : pas de modale
@@ -1944,13 +1954,11 @@ document.getElementById('corps').addEventListener('input', detecterTitreDansCorp
 //     même ligne PROJET, sa correction n'est pas écrasée à la frappe suivante.
 let dernierProjetAutoDetecte = null;
 function detecterProjetDansCorps() {
-  const corpsEl = document.getElementById('corps');
-  // Cherche une ligne de tableau « | PROJET | <nom> | » (mot-clé insensible à
-  // la casse, espaces tolérés). Le nom capturé est nettoyé de ses espaces.
-  const m = corpsEl.value.match(/^\s*\|\s*PROJET\s*\|\s*([^|]+?)\s*\|/im);
-  if (!m) { dernierProjetAutoDetecte = null; return; }
+  // Réutilise lireChampEntete (source unique de parsing d'en-tête) plutôt qu'une
+  // regex locale : mot-clé insensible à la casse, nom nettoyé de ses espaces.
+  const nomDetecte = lireChampEntete(document.getElementById('corps').value, 'PROJET');
+  if (!nomDetecte) { dernierProjetAutoDetecte = null; return; }
 
-  const nomDetecte = m[1].trim();
   // Rien de neuf depuis la dernière détection : ne pas réécraser un éventuel
   // choix manuel d'Alain.
   if (nomDetecte === dernierProjetAutoDetecte) return;
@@ -1983,10 +1991,11 @@ document.getElementById('corps').addEventListener('input', detecterProjetDansCor
 // collée), sa correction n'est pas réécrasée à la frappe suivante dans le corps.
 let dernierTimeoutAutoDetecte = null;
 function detecterTimeoutDansCorps() {
-  const corpsEl = document.getElementById('corps');
-  // Ligne de tableau « | TIMEOUT | <valeur>[s] | ». On tolère un suffixe « s »
-  // (ex. 1200s) et les espaces ; seuls les chiffres sont capturés.
-  const m = corpsEl.value.match(/^\s*\|\s*TIMEOUT\s*\|\s*(\d+)\s*s?\s*\|/im);
+  // Réutilise lireChampEntete (source unique de parsing d'en-tête). La cellule
+  // « | TIMEOUT | <valeur>[s] | » peut porter un suffixe « s » (ex. 1200s) et
+  // des espaces ; on ne retient que les chiffres.
+  const brut = lireChampEntete(document.getElementById('corps').value, 'TIMEOUT');
+  const m = brut && brut.match(/^(\d+)\s*s?$/i);
   if (!m) { dernierTimeoutAutoDetecte = null; return; }
 
   const valeurDetectee = m[1];
@@ -2000,6 +2009,43 @@ function detecterTimeoutDansCorps() {
   champ.value = valeurDetectee;
 }
 document.getElementById('corps').addEventListener('input', detecterTimeoutDansCorps);
+
+// Résumé lecture seule des champs d'en-tête détectés dans le corps (issue #117).
+// Sous le champ Titre, on affiche une petite série de badges listant, dans
+// l'ordre du §6, les champs d'en-tête effectivement présents dans le corps
+// collé — pour qu'Alain vérifie d'un coup d'œil ce qui a été reconnu (TIMEOUT,
+// MODELE, etc.) sans rouvrir le textarea.
+//
+//   • un champ absent (ou vide) n'apparaît pas — pas de ligne « TIMEOUT : — » ;
+//   • si aucun champ n'est reconnu (issue écrite à la main, hors workflow §12),
+//     le bloc reste entièrement masqué ;
+//   • le parsing réutilise lireChampEntete, la même logique que les détections
+//     PROJET/TIMEOUT — aucune regex dupliquée qui pourrait diverger ;
+//   • purement informatif : n'interfère pas avec l'alerte d'incohérence #44,
+//     qui reste pilotée par detecterIncoherenceProjet à l'envoi.
+const CHAMPS_ENTETE_RESUME = [
+  'PROJET', 'PRIORITE', 'TIMEOUT', 'MODELE',
+  'TYPE', 'SPECS', 'SUITE_DE', 'FICHIER_CONTEXTE',
+];
+function mettreAJourResumeEntete() {
+  const corps = document.getElementById('corps').value;
+  const bloc  = document.getElementById('resume-entete');
+  const badges = [];
+  for (const champ of CHAMPS_ENTETE_RESUME) {
+    const valeur = lireChampEntete(corps, champ);
+    if (!valeur) continue;                 // champ absent/vide → pas de badge
+    badges.push('<span class="badge-entete"><b>' + champ + '</b>'
+                + escapeHtml(valeur) + '</span>');
+  }
+  if (!badges.length) {                    // aucun champ reconnu → bloc masqué
+    bloc.style.display = 'none';
+    bloc.innerHTML = '';
+    return;
+  }
+  bloc.innerHTML = badges.join('');
+  bloc.style.display = 'flex';
+}
+document.getElementById('corps').addEventListener('input', mettreAJourResumeEntete);
 
 async function verifierStatut() {
   const nom = document.getElementById('projet').value;
@@ -2169,6 +2215,9 @@ function viderFormulaire(cacherMsg=true) {
   // notif_pc revient à l'état mémorisé (coché par défaut), pas à décoché.
   appliquerNotifPc();
   document.getElementById('modele-ponctuel').value = '';
+  // Le corps est vidé par programme (pas d'event « input ») : on masque
+  // explicitement le résumé d'en-tête (issue #117).
+  mettreAJourResumeEntete();
 }
 
 // ─── Nouveau projet (issue #99) ───────────────────────────────────────────
