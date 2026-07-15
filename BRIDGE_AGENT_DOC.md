@@ -307,6 +307,56 @@ ps aux | grep watcher
 git log --oneline origin/master..HEAD
 ```
 
+### Watchers en services systemd utilisateur (démarrage auto + auto-restart)
+
+Depuis l'issue #119, les watchers des projets actifs tournent en services
+`systemd --user` : ils **démarrent automatiquement** (à l'ouverture de session,
+et dès le boot grâce au linger) et se **relancent automatiquement** en cas de
+crash (`Restart=always`, `RestartSec=10`). Plus besoin de cliquer « Lancer
+watcher » après un redémarrage du PC ou un crash.
+
+Gabarit : `systemd/watcher@.service` (une instance par projet via `%i`).
+Le nom du projet paramètre le fichier de config : `watcher@alchess` lance
+`watcher.py --config configs/alchess.conf`.
+
+```bash
+# Installation / réinstallation (copie le gabarit, daemon-reload,
+# enable --now des 4 instances, active le linger utilisateur)
+cd ~/Bridge_Agent && ./installer_services.sh
+
+# État d'un watcher / de tous
+systemctl --user status watcher@alchess
+systemctl --user list-units 'watcher@*'
+
+# Suivre le journal en direct (filet de sécurité si le crash survient AVANT
+# que le log fichier logs/watcher-<nom>.log soit configuré, p. ex. .conf illisible)
+journalctl --user -u watcher@alchess -f
+
+# Arrêter / relancer / désactiver une instance
+systemctl --user restart watcher@alchess
+systemctl --user stop watcher@alchess
+systemctl --user disable --now watcher@alchess
+
+# Après édition du gabarit systemd/watcher@.service
+cp systemd/watcher@.service ~/.config/systemd/user/ && systemctl --user daemon-reload
+```
+
+> ⚠️ **Le bouton « Lancer watcher » de l'interface devient un filet de secours,
+> pas le mode de démarrage normal.** systemd est désormais la source de vérité.
+> Les deux mécanismes ne se voient pas : systemd suit son process via son
+> cgroup, l'interface via un fichier PID (`logs/watcher-<nom>.pid`) que le
+> service n'écrit jamais. Conséquences :
+> - un watcher lancé par systemd s'affiche « inactif » dans l'onglet
+>   « Watchers » (pas de fichier PID) ;
+> - cliquer « Lancer watcher » démarrerait un **second** process pour le même
+>   projet (doublon, doubles commentaires possibles sur les issues) ;
+> - « Arrêter watcher » ne tue pas l'instance systemd, et `Restart=always` la
+>   relancerait de toute façon.
+>
+> Pour un arrêt/relance propre, passer par `systemctl --user …`. La
+> neutralisation éventuelle du bouton côté interface (`app/watchers.py` +
+> templates) reste à trancher — voir l'en-tête de `installer_services.sh`.
+
 ---
 
 ## 14. Vision multi-agent (évolution future)

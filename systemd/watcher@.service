@@ -1,0 +1,28 @@
+# Gabarit d'unité systemd --user pour les watchers du bridge (issue #119).
+#
+# Une instance par projet actif : le nom du projet est passé via %i.
+#   Ex.  watcher@alchess  ->  %i = "alchess"  ->  configs/alchess.conf
+#
+# Installation : voir installer_services.sh (copie ce fichier dans
+# ~/.config/systemd/user/, daemon-reload, enable --now, enable-linger).
+#
+# Diagnostic :
+#   systemctl --user status watcher@alchess
+#   journalctl --user -u watcher@alchess -f
+
+[Unit]
+Description=Bridge_Agent watcher — %i
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/alain/Bridge_Agent
+ExecStart=/home/alain/Bridge_Agent/venv/bin/python3 watcher.py --config configs/%i.conf
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target
