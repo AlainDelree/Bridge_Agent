@@ -2,14 +2,35 @@ let sourceSSE = null;
 
 let intervalWatchers = null;
 
-// Couleur d'accent STABLE dérivée du nom du projet (hash simple sur les
-// charCodes → teinte HSL). Même nom ⇒ même couleur à chaque session.
-function couleurProjet(nom) {
+// SOURCE UNIQUE DE VÉRITÉ pour la couleur de chaque projet (issue #120).
+// Utilisée à la fois pour l'accent du formulaire (couleurProjet) et pour les
+// pastilles/badges/boutons de l'onglet Résultats (couleurProjetResultats).
+// Les 5 couleurs sont volontairement distinctes visuellement.
+const COULEURS_PROJET = {
+  'bridge_agent': '#185FA5',  // bleu
+  'alchess':      '#3B6D11',  // vert
+  'ff_galerie':   '#BA7517',  // orange
+  'scrabble':     '#0E8A82',  // turquoise
+  'ecole':        '#6B3FA0',  // violet
+};
+
+// Couleur de secours STABLE dérivée du nom du projet (hash simple sur les
+// charCodes → teinte HSL). Même nom ⇒ même couleur à chaque session. Sert
+// uniquement aux projets pas encore présents dans COULEURS_PROJET (nouveau
+// projet créé via le modal avant qu'on lui attribue une couleur dédiée).
+function couleurHashProjet(nom) {
   let h = 0;
   for (let i = 0; i < nom.length; i++) {
     h = (h * 31 + nom.charCodeAt(i)) % 360;
   }
   return 'hsl(' + ((h + 360) % 360) + ', 60%, 34%)';
+}
+
+// Couleur du projet : la map fixe si le projet y figure, sinon le hash HSL de
+// secours (plutôt qu'un gris uniforme) pour qu'un nouveau projet reste
+// distinguable en attendant sa couleur définitive.
+function couleurProjet(nom) {
+  return COULEURS_PROJET[nom] || couleurHashProjet(nom);
 }
 
 // Applique l'accent visuel du projet : bordure gauche du select et du bandeau,
@@ -240,15 +261,11 @@ function badgeLabel(nom) {
 // L'onglet Résultats est INDÉPENDANT du sélecteur global : il agrège les
 // issues de TOUS les projets, quel que soit le projet actif en haut.
 
-// Couleur fixe par projet pour l'onglet Résultats (pastilles, badges, boutons
-// de filtre). Valeurs stables imposées ; gris par défaut pour les autres.
+// Couleur du projet pour l'onglet Résultats (pastilles, badges, boutons de
+// filtre). Alias de couleurProjet : même source de vérité (COULEURS_PROJET)
+// que l'accent du formulaire, donc couleur identique aux deux endroits.
 function couleurProjetResultats(nom) {
-  const map = {
-    'bridge_agent': '#185FA5',  // bleu
-    'alchess':      '#3B6D11',  // vert
-    'ff_galerie':   '#BA7517',  // orange
-  };
-  return map[nom] || '#5F5E5A';  // gris
+  return couleurProjet(nom);
 }
 
 // Liste des noms de projets disponibles (lue depuis le sélecteur global, qui
