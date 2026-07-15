@@ -27,6 +27,7 @@ Claude Chat → crée une issue → GitHub → watcher.py détecte → CCL exéc
 | `alchess` | AlainDelree/AlChess | ~/NicLink | (conf local) |
 | `ff_galerie` | AlainDelree/FF_Galerie | ~/FF_Galerie | (conf local) |
 | `ecole` | AlainDelree/Ecole | ~/Ecole | (conf local) |
+| `scrabble` | AlainDelree/Scrabble | ~/Scrabble | (conf local) |
 
 Chaque projet a son propre watcher (`watcher.py --config configs/<nom>.conf`)
 et son propre journal de log (`logs/watcher-<nom>.log`).
@@ -150,6 +151,7 @@ hors périmètre même si l'issue le demande explicitement :
 | `alchess` | /home/alain/NicLink |
 | `ff_galerie` | /home/alain/FF_Galerie |
 | `ecole` | /home/alain/Ecole |
+| `scrabble` | /home/alain/Scrabble |
 
 ---
 
@@ -428,4 +430,4 @@ via un champ structuré dans l'en-tête :
 
 ---
 
-*Dernière mise à jour : 13 juillet 2026 — Bridge_Agent v1, 4 projets actifs. Ajout du projet `ecole` (AlainDelree/Ecole, ~/Ecole) aux tableaux §2 et §7 (issue #101). Section 15 « Chef + Specs MVC » : champ `SPECS` (pluriel, minuscules, combinable en une ligne) — correction du champ `SPEC` introduit par erreur (issue #97, suite #96).*
+*Dernière mise à jour : 15 juillet 2026 — Bridge_Agent v1, 4 projets actifs. Ajout du projet `ecole` (AlainDelree/Ecole, ~/Ecole) aux tableaux §2 et §7 (issue #101). Section 15 « Chef + Specs MVC » : champ `SPECS` (pluriel, minuscules, combinable en une ligne) — correction du champ `SPEC` introduit par erreur (issue #97, suite #96).*
