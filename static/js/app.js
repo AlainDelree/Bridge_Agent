@@ -2239,6 +2239,7 @@ function ouvrirNouveauProjet() {
   document.getElementById('np-depot-msg').textContent = '';
   document.getElementById('np-compte-rendu').style.display = 'none';
   document.getElementById('np-message').style.display = 'none';
+  document.getElementById('np-rappel-git').style.display = 'none';
   const btn = document.getElementById('np-creer');
   btn.disabled = false; btn.textContent = 'Créer le projet';
   document.getElementById('np-fermer').textContent = 'Fermer';
@@ -2339,6 +2340,7 @@ async function soumettreNouveauProjet() {
   const cr  = document.getElementById('np-compte-rendu');
   document.getElementById('np-message').style.display = 'none';
   cr.style.display = 'none';
+  document.getElementById('np-rappel-git').style.display = 'none';
   if (!nom) { npMsg('Un nom de projet est requis.', 'erreur'); return; }
 
   const btn = document.getElementById('np-creer');
@@ -2382,6 +2384,11 @@ async function soumettreNouveauProjet() {
     npMsg('✅ Projet « ' + res.nom + ' » créé'
           + (res.depot_existait ? ' (installé sur dépôt existant)' : '') + '.', 'succes');
     ajouterProjetAuSelecteur(res.nom, res.depot);
+    // Rappel des 3 commandes git à lancer soi-même : le modal a modifié
+    // BRIDGE_AGENT_DOC.md (§2) localement mais ne pousse pas (cohérent avec le
+    // CLI — Alain vérifie puis pousse). Sans push, la doc reste invisible pour
+    // Claude Chat. Encart distinct du compte-rendu, sélectionnable en un clic.
+    afficherRappelGit(res.nom);
     // Création réussie : on verrouille « Créer » (évite un double envoi) et on
     // renomme « Fermer » en « Terminé ».
     btn.disabled = true;
@@ -2390,6 +2397,35 @@ async function soumettreNouveauProjet() {
     btn.disabled = false;
     npMsg('❌ ' + (res.erreur || 'Échec de la création.'), 'erreur');
   }
+}
+
+// Affiche l'encart de rappel git après une création réussie : les 3 commandes
+// (add/commit/push) avec le nom du projet inséré dans le message de commit.
+// Un clic sur le <pre> sélectionne tout le bloc pour un copier-coller immédiat.
+// Pas de persistance : l'encart n'a de sens que pour la création qui vient
+// d'avoir lieu et disparaît à la prochaine ouverture du modal (issue #118).
+function afficherRappelGit(nom) {
+  const cmds = 'git add BRIDGE_AGENT_DOC.md\n'
+             + 'git commit -m "Ajout du projet ' + nom + ' (§2)"\n'
+             + 'git push';
+  const box = document.getElementById('np-rappel-git');
+  box.innerHTML =
+    '<div class="titre">⚠ Action requise — pousser la doc sur GitHub</div>'
+    + 'Le projet est créé, mais la mise à jour de <b>BRIDGE_AGENT_DOC.md</b> (§2) '
+    + "n'est que locale. Tant qu'elle n'est pas poussée, le projet reste invisible "
+    + 'pour Claude Chat. Exécute (clic pour sélectionner) :'
+    + '<pre onclick="npSelectionnerTexte(this)">' + escapeHtml(cmds) + '</pre>';
+  box.style.display = 'block';
+}
+
+// Sélectionne tout le texte d'un élément (le <pre> des commandes git) pour que
+// l'utilisateur puisse copier en un clic puis Ctrl+C.
+function npSelectionnerTexte(el) {
+  const sel = window.getSelection();
+  const range = document.createRange();
+  range.selectNodeContents(el);
+  sel.removeAllRanges();
+  sel.addRange(range);
 }
 
 // Rafraîchit le sélecteur global SANS redémarrer new_issue.py (contrainte

@@ -43,6 +43,12 @@ textarea{width:100%;padding:10px;border:1px solid #ddd;border-radius:6px;
 .radio-groupe,.case-groupe{display:flex;gap:18px;flex-wrap:wrap;padding:4px 0}
 .radio-groupe label,.case-groupe label{font-size:13px;display:flex;align-items:center;gap:6px;cursor:pointer}
 .badge-alerte{font-size:11px;padding:2px 7px;border-radius:4px;background:#fff3cd;color:#856404;margin-left:4px}
+/* Rappel git add/commit/push après création réussie d'un projet (issue #118).
+   Encart d'action requise, fond ambré comme .badge-alerte, pour ne pas passer
+   inaperçu ; les 3 commandes dans un <pre> monospace, sélectionnables en 1 clic. */
+.np-rappel-git{margin-top:14px;padding:10px 12px;border:1px solid #ffe08a;border-left:4px solid #f0ad4e;border-radius:6px;background:#fff3cd;color:#856404}
+.np-rappel-git .titre{font-size:13px;font-weight:600;margin-bottom:8px}
+.np-rappel-git pre{margin:0;padding:8px 10px;background:#fffaf0;border:1px solid #ffe08a;border-radius:4px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;color:#5a4a00;white-space:pre;overflow-x:auto;cursor:pointer}
 /* Résumé lecture seule des champs d'en-tête détectés dans le corps (issue #117).
    Compact et discret : petite série de badges gris sous le champ Titre. */
 .resume-entete{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
