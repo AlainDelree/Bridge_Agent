@@ -84,6 +84,7 @@ class Config:
     max_essais: int       = 3
     timeout_claude: int   = 300
     timeout_chef: int     = 1200   # défaut plus généreux pour les issues « Chef : » sans TIMEOUT explicite (issue #106)
+    timeout_diagnostic: int = 90   # timeout court et fixe de la passe diagnostique avant abandon non-critique (issue #124)
     script_bip: Path      = field(default_factory=lambda: Path.home() / "NicLink" / "bip.py")
     log_taille_max_mo: int = 1     # rotation quand le journal dépasse cette taille (Mo)
     log_archives: int      = 5     # nombre d'archives datées conservées
@@ -153,6 +154,7 @@ def charger_config(chemin: Path) -> Config:
         max_essais     = entier("MAX_ESSAIS", 3),
         timeout_claude = entier("TIMEOUT_CLAUDE", 300),
         timeout_chef   = entier("TIMEOUT_CHEF", 1200),
+        timeout_diagnostic = entier("TIMEOUT_DIAGNOSTIC", 90),
         script_bip  = Path(brut["SCRIPT_BIP"]).expanduser() if brut.get("SCRIPT_BIP")
                       else Path.home() / "NicLink" / "bip.py",
         log_taille_max_mo = entier("LOG_TAILLE_MAX_MO", 1),
@@ -504,13 +506,20 @@ def fermer_issue(numero: int):
 def lancer_claude(numero: int, titre: str, body: str, dry_run: bool,
                   autoriser_ecriture: bool = False,
                   timeout: int = None,
-                  modele: str = "") -> tuple[bool, str]:
+                  modele: str = "",
+                  prompt_perso: str = None) -> tuple[bool, str]:
     """
     Lance Claude Code en mode non-interactif sur une issue.
 
     Par défaut (autoriser_ecriture=False) : LECTURE SEULE (diagnostic, pas d'écriture).
     Si autoriser_ecriture=True (label 'mode_write' posé sciemment) : on ajoute
     --dangerously-skip-permissions. Le garde-fou anti-push reste dans le prompt.
+
+    prompt_perso : si fourni, remplace intégralement le prompt standard (titre/body
+    + garde-fou + format de réponse imposé). Sert aux passes qui ont besoin d'un
+    prompt sur mesure — ex. la passe diagnostique (issue #124), qui ne doit PAS
+    demander de résoudre la tâche. Le reste de la machinerie (dry-run, cwd, timeout,
+    modèle, --dangerously-skip-permissions selon autoriser_ecriture) est inchangé.
 
     Retourne (succès, sortie).
     """
@@ -579,7 +588,10 @@ fichier, n'exécute aucune commande modifiant l'état du système ou du dépôt.
     else:
         clause_perimetre = ""
 
-    prompt = f"""Tu es l'agent Linux (CCL) du bridge inter-agents, projet « {CFG.nom} ».
+    if prompt_perso is not None:
+        prompt = prompt_perso
+    else:
+        prompt = f"""Tu es l'agent Linux (CCL) du bridge inter-agents, projet « {CFG.nom} ».
 Traite la tâche suivante issue du GitHub Issue #{numero} :
 
 TITRE : {titre}
@@ -641,6 +653,71 @@ Si la tâche échoue, remplace ✅ par ❌ et explique la cause en une ligne.
         return False, "Claude Code introuvable (claude non trouvé dans PATH)"
     except Exception as e:
         return False, str(e)
+
+
+def diagnostiquer_echec(numero: int, titre: str, body: str,
+                        derniere_erreur: str) -> str | None:
+    """Passe diagnostique courte et en LECTURE SEULE, lancée juste avant de poser
+    'needs-human' sur une issue non critique abandonnée (issue #124).
+
+    But : donner à Alain quelques pistes concrètes sur la cause du timeout / de
+    l'échec répété, sans qu'il ait à ouvrir lui-même une session Claude Code pour
+    un diagnostic qui tient souvent en quelques dizaines de secondes de lecture.
+
+    Ne tente JAMAIS de résoudre la tâche : autoriser_ecriture=False (lecture seule,
+    même si l'issue d'origine était en mode écriture) et prompt dédié qui demande
+    explicitement de ne PAS corriger. Timeout court et fixe (CFG.timeout_diagnostic),
+    indépendant du timeout de la tâche d'origine.
+
+    Best-effort : retourne le texte du diagnostic, ou None si la passe elle-même
+    échoue / timeout (l'appelant n'ajoute alors simplement aucune section). On ne
+    boucle jamais dessus et on ne retente pas."""
+    if CFG.perimetre:
+        clause_perimetre = (
+            f"\nPÉRIMÈTRE STRICT — tu ne dois lire que dans les répertoires "
+            f"suivants : {CFG.perimetre}\n"
+        )
+    else:
+        clause_perimetre = ""
+
+    prompt = f"""Tu es l'agent Linux (CCL) du bridge inter-agents, projet « {CFG.nom} ».
+Une tâche (GitHub Issue #{numero}) a échoué de façon répétée et va être confiée à
+un humain. NE tente PAS de résoudre la tâche : n'écris aucun fichier, n'exécute
+aucune commande modifiant l'état du système ou du dépôt.
+
+Ton unique rôle est un diagnostic RAPIDE et en LECTURE SEULE. À partir du titre,
+du corps de la tâche et de la dernière erreur ci-dessous, liste les 3 à 5 causes
+LES PLUS PROBABLES de ce timeout / échec répété — par exemple : boucle infinie
+suspectée, commande interactive qui attend une entrée, opération réseau/IO lente,
+dépendance manquante, tâche simplement trop volumineuse pour le timeout configuré,
+etc. Reste concret et bref.
+
+TITRE : {titre}
+
+BODY :
+{body}
+
+DERNIÈRE ERREUR : {derniere_erreur}
+{clause_perimetre}
+Réponds uniquement par une courte liste à puces (3 à 5 pistes) des causes les plus
+probables, sans préambule ni conclusion, et sans tenter de corriger quoi que ce soit."""
+
+    try:
+        succes, sortie = lancer_claude(
+            numero, titre, body, dry_run=False,
+            autoriser_ecriture=False,
+            timeout=CFG.timeout_diagnostic,
+            modele=CFG.modele_ccl,
+            prompt_perso=prompt,
+        )
+    except Exception as e:
+        log.warning(f"  Passe diagnostique #{numero} indisponible (exception : {e}).")
+        return None
+
+    if succes and sortie.strip():
+        return sortie.strip()
+    log.info(f"  Passe diagnostique #{numero} indisponible (échec/timeout) — abandon sans diagnostic.")
+    return None
 
 # ─── Traitement d'une issue ────────────────────────────────────────────────────
 
@@ -727,7 +804,27 @@ def traiter_issue(issue: dict, dry_run: bool):
                 return
             else:
                 log.error(f"  Issue #{numero} abandonnée après {CFG.max_essais} tentatives.")
-                commenter_issue(numero, f"❌ Échec après {CFG.max_essais} tentatives.\n\nDernière erreur : `{sortie}`\n\nIntervention humaine requise. Label `{LABEL_ECHEC}` posé : cette issue ne sera plus retraitée automatiquement tant que le label n'est pas retiré (ou l'issue fermée) manuellement.")
+                # Passe diagnostique courte, en lecture seule, avant l'abandon
+                # définitif (issue #124) : quelques pistes concrètes pour éviter à
+                # Alain d'ouvrir lui-même une session juste pour comprendre le
+                # timeout. Best-effort — n'ajoute rien si elle échoue/timeout.
+                log.info(f"  Passe diagnostique courte (lecture seule, {CFG.timeout_diagnostic}s) pour #{numero}...")
+                diagnostic = diagnostiquer_echec(numero, titre, body, sortie)
+                message_echec = (
+                    f"❌ Échec après {CFG.max_essais} tentatives.\n\n"
+                    f"Dernière erreur : `{sortie}`\n\n"
+                )
+                if diagnostic:
+                    message_echec += (
+                        f"🔍 Pistes probables (diagnostic automatique) :\n\n"
+                        f"{diagnostic}\n\n"
+                    )
+                message_echec += (
+                    f"Intervention humaine requise. Label `{LABEL_ECHEC}` posé : "
+                    f"cette issue ne sera plus retraitée automatiquement tant que le "
+                    f"label n'est pas retiré (ou l'issue fermée) manuellement."
+                )
+                commenter_issue(numero, message_echec)
                 ajouter_label(numero, LABEL_ECHEC)
                 notifier(
                     labels,
