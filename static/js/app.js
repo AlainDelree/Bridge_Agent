@@ -1931,6 +1931,11 @@ async function chargerWatchers() {
   const rep  = await fetch('/watchers');
   const liste = await rep.json();
   const tbody = document.getElementById('corps-watchers');
+  // Mémoriser la sélection en cours avant de reconstruire les lignes,
+  // pour ne pas la perdre lors d'un rafraîchissement automatique (issue #123).
+  const coches = new Set(
+    [...tbody.querySelectorAll('.cb-watcher:checked')].map(c => c.value)
+  );
   tbody.innerHTML = '';
   for (const w of liste) {
     const tr = document.createElement('tr');
@@ -1938,6 +1943,7 @@ async function chargerWatchers() {
     tr.innerHTML = `
       <td style="padding:10px 0;text-align:center">
         <input type="checkbox" class="cb-watcher" value="${w.nom}"
+               ${coches.has(w.nom) ? 'checked' : ''}
                onchange="mettreAJourCompte()">
       </td>
       <td style="padding:10px 4px">
@@ -1952,8 +1958,13 @@ async function chargerWatchers() {
       </td>`;
     tbody.appendChild(tr);
   }
+  // Recalculer "cb-tous" en fonction de l'état restauré : coché seulement
+  // si toutes les lignes reconstruites sont cochées (et qu'il y en a au moins une).
+  const toutes = tbody.querySelectorAll('.cb-watcher');
+  document.getElementById('cb-tous').checked =
+    toutes.length > 0 &&
+    tbody.querySelectorAll('.cb-watcher:checked').length === toutes.length;
   mettreAJourCompte();
-  document.getElementById('cb-tous').checked = false;
 }
 
 function selectionnerTous(cb) {
