@@ -76,7 +76,15 @@ def sauvegarder_conf(nom_projet: str, nouvelles_valeurs: dict) -> tuple[bool, st
 
 
 def lister_projets() -> list[Config]:
-    """Retourne la liste des projets disponibles (un .conf = un projet)."""
+    """Retourne la liste des projets disponibles (un .conf = un projet).
+
+    charger_config() ne sort (SystemExit) que si un champ REQUIS manque ou qu'un
+    entier est mal formé — il ne vérifie JAMAIS que REP_TRAVAIL pointe vers un
+    dossier existant. Un projet à périmètre dynamique (PERIMETRE_DYNAMIQUE = true,
+    issue #125), dont le REP_TRAVAIL n'est qu'un placeholder remplacé à
+    l'exécution par le REPO_CIBLE de l'issue, est donc chargé normalement et ne
+    tombe pas à tort dans le `except SystemExit` ci-dessous (réservé aux configs
+    réellement invalides)."""
     projets = []
     for chemin in sorted(DOSSIER_SCRIPT.glob("configs/*.conf")):
         try:

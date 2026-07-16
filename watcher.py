@@ -94,6 +94,7 @@ class Config:
     mot_de_passe: str      = ""    # hash sha256 du mot de passe d'accès web (vide = pas d'authentification)
     fichier_contexte: str  = ""    # fichier de contexte projet injecté dans le prompt (chemin relatif au rep_travail ou absolu ; vide = aucun)
     couleur: str           = ""    # couleur d'accent du projet dans l'interface (hex #RRGGBB ; vide = repli map fixe/hash côté frontend)
+    perimetre_dynamique: bool = False  # périmètre fourni par l'issue (REPO_CIBLE) plutôt que figé dans le .conf — outil d'audit multi-dépôts (issue #125)
 
     @property
     def url_ntfy(self) -> str:
@@ -144,6 +145,12 @@ def charger_config(chemin: Path) -> Config:
             sys.exit(f"[config] {cle} doit être un entier (lu : '{val}')")
         return int(val)
 
+    def booleen(cle: str, defaut: bool) -> bool:
+        val = brut.get(cle)
+        if val is None or val == "":
+            return defaut
+        return val.strip().lower() in ("true", "1", "oui", "yes", "vrai")
+
     return Config(
         nom         = brut["NOM"],
         depot       = brut["DEPOT"],
@@ -165,6 +172,7 @@ def charger_config(chemin: Path) -> Config:
         mot_de_passe      = brut.get("MOT_DE_PASSE", ""),
         fichier_contexte  = brut.get("FICHIER_CONTEXTE", ""),
         couleur           = brut.get("COULEUR", ""),
+        perimetre_dynamique = booleen("PERIMETRE_DYNAMIQUE", False),
     )
 
 
@@ -463,6 +471,119 @@ def extraire_modele(body: str) -> str:
                     return valeur
     return CFG.modele_ccl
 
+def extraire_repo_cible(body: str) -> str:
+    """Extrait le REPO_CIBLE depuis le body de l'issue (en-tête bridge).
+    Calqué sur extraire_timeout/extraire_modele : cherche une ligne
+    « | REPO_CIBLE | <chemin absolu> | » et retourne le chemin tel quel (str),
+    ou "" si le champ est absent ou vide.
+
+    Ne concerne que les projets à périmètre dynamique (issue #125) : le chemin
+    renvoyé sert de périmètre effectif ET de cwd pour cette exécution, après
+    validation par valider_repo_cible()."""
+    for ligne in body.splitlines():
+        if "| REPO_CIBLE" in ligne.upper():
+            parts = ligne.split("|")
+            if len(parts) >= 3:
+                valeur = parts[2].strip()
+                if valeur and valeur.lower() not in ("", "-"):
+                    return valeur
+    return ""
+
+def valider_repo_cible(chemin: str) -> tuple[bool, str]:
+    """Valide un REPO_CIBLE avant tout lancement de CCL (issue #125).
+
+    Vérifie, dans cet ordre :
+      1. le chemin est absolu et ne contient aucune séquence de traversée '..'
+         (Path.resolve() puis comparaison stricte au chemin fourni : toute
+         normalisation — '..' ou lien symbolique — le fait diverger et donc
+         refuser) ;
+      2. le chemin existe et est un dossier ;
+      3. le dossier appartient au même utilisateur système que le process
+         watcher (st_uid == os.getuid()).
+
+    Retourne (True, "") si tout passe, sinon (False, raison explicite). L'échec
+    d'une seule vérification suffit à refuser — c'est une erreur de
+    configuration/issue, pas un échec transitoire : aucun retry côté appelant."""
+    if not chemin:
+        return False, "chemin vide"
+    p = Path(chemin)
+    if not p.is_absolute():
+        return False, "le chemin doit être absolu"
+    resolu = p.resolve()
+    if resolu != p:
+        return False, ("le chemin contient une séquence de traversée '..' ou n'est "
+                       "pas canonique (lien symbolique) — fournir un chemin absolu direct")
+    if not resolu.is_dir():
+        return False, "le chemin n'existe pas ou n'est pas un dossier"
+    try:
+        proprietaire = resolu.stat().st_uid
+    except OSError as e:
+        return False, f"impossible de lire les métadonnées du dossier ({e})"
+    if proprietaire != os.getuid():
+        return False, (f"le dossier n'appartient pas à l'utilisateur du watcher "
+                       f"(uid propriétaire {proprietaire} ≠ uid watcher {os.getuid()})")
+    return True, ""
+
+# ─── Détection de conflit avec un watcher actif (issue #125) ───────────────────
+# Variantes LOCALES de app.projets.lister_projets() et app.watchers.watcher_actif() :
+# app.projets importe watcher — réutiliser ces fonctions ici créerait un import
+# circulaire. On réplique donc la même logique (glob des .conf, sonde du fichier
+# PID) plutôt que d'importer le package app depuis le watcher.
+
+def _lister_projets_connus() -> list[Config]:
+    """Charge tous les projets (un configs/*.conf = un projet). Équivalent local
+    de app.projets.lister_projets() ; ignore silencieusement les configs
+    invalides (même contrat : except SystemExit)."""
+    projets = []
+    for chemin in sorted(DOSSIER_SCRIPT.glob("configs/*.conf")):
+        try:
+            projets.append(charger_config(chemin))
+        except SystemExit:
+            pass
+    return projets
+
+def _watcher_actif(cfg: Config) -> bool:
+    """Vrai si un watcher tourne pour ce projet. Équivalent local de
+    app.watchers.watcher_actif() : lit le fichier PID et sonde le processus
+    (os.kill(pid, 0) ne tue pas, il vérifie l'existence)."""
+    pid_file = DOSSIER_LOGS / f"watcher-{cfg.nom}.pid"
+    if not pid_file.exists():
+        return False
+    try:
+        pid = int(pid_file.read_text().strip())
+        os.kill(pid, 0)
+        return True
+    except (OSError, ProcessLookupError, ValueError):
+        return False
+
+def detecter_conflit_watcher(repo_cible_resolu: Path, projet_courant: str) -> str | None:
+    """Cherche un projet connu, watcher actif, dont le rep_travail ou le
+    périmètre chevauche repo_cible_resolu (chemins résolus, égalité ou relation
+    parent/enfant). Retourne le nom du projet en conflit, ou None.
+
+    Approche pragmatique (issue #125) : pas de verrou distribué, juste de la
+    transparence. Le projet courant est exclu (son propre watcher est forcément
+    actif puisqu'il traite l'issue en cours)."""
+    for cfg in _lister_projets_connus():
+        if cfg.nom == projet_courant:
+            continue
+        if not _watcher_actif(cfg):
+            continue
+        candidats = [cfg.rep_travail]
+        if cfg.perimetre:
+            candidats += [Path(part.strip()) for part in cfg.perimetre.split(",")
+                          if part.strip()]
+        for candidat in candidats:
+            try:
+                cr = candidat.expanduser().resolve()
+            except (OSError, RuntimeError):
+                continue
+            if (cr == repo_cible_resolu
+                    or cr in repo_cible_resolu.parents
+                    or repo_cible_resolu in cr.parents):
+                return cfg.nom
+    return None
+
 def ajouter_label(numero: int, label: str):
     """Ajoute un label à une issue sans la fermer."""
     try:
@@ -507,7 +628,9 @@ def lancer_claude(numero: int, titre: str, body: str, dry_run: bool,
                   autoriser_ecriture: bool = False,
                   timeout: int = None,
                   modele: str = "",
-                  prompt_perso: str = None) -> tuple[bool, str]:
+                  prompt_perso: str = None,
+                  perimetre: str = None,
+                  cwd: Path = None) -> tuple[bool, str]:
     """
     Lance Claude Code en mode non-interactif sur une issue.
 
@@ -521,10 +644,18 @@ def lancer_claude(numero: int, titre: str, body: str, dry_run: bool,
     demander de résoudre la tâche. Le reste de la machinerie (dry-run, cwd, timeout,
     modèle, --dangerously-skip-permissions selon autoriser_ecriture) est inchangé.
 
+    perimetre / cwd : surchargent respectivement CFG.perimetre (clause de prompt) et
+    CFG.rep_travail (répertoire réel du subprocess). None = valeur du .conf. Servent
+    au périmètre dynamique (issue #125) : pour un projet à périmètre dynamique, ces
+    deux valeurs viennent du champ REPO_CIBLE de l'issue, pas de la config.
+
     Retourne (succès, sortie).
     """
     if timeout is None:
         timeout = CFG.timeout_claude
+
+    perimetre_effectif = CFG.perimetre if perimetre is None else perimetre
+    cwd_effectif = CFG.rep_travail if cwd is None else cwd
 
     if autoriser_ecriture:
         if CFG.cmd_backup:
@@ -578,10 +709,10 @@ fichier, n'exécute aucune commande modifiant l'état du système ou du dépôt.
         else:
             log.warning(f"Fichier de contexte '{chemin_ctx}' introuvable — rien injecté.")
 
-    if CFG.perimetre:
+    if perimetre_effectif:
         clause_perimetre = (
             f"\nPÉRIMÈTRE STRICT — tu ne dois lire, modifier ou exécuter des commandes "
-            f"que dans les répertoires suivants : {CFG.perimetre}\n"
+            f"que dans les répertoires suivants : {perimetre_effectif}\n"
             f"Toute action en dehors de ce périmètre est interdite, même si la tâche "
             f"le demande explicitement. En cas de doute, arrête-toi et signale-le.\n"
         )
@@ -626,7 +757,7 @@ Si la tâche échoue, remplace ✅ par ❌ et explique la cause en une ligne.
 
     if dry_run:
         mode = "ÉCRITURE" if autoriser_ecriture else "lecture seule"
-        log.info(f"[DRY-RUN] Claude Code serait lancé pour issue #{numero} (mode {mode}, cwd {CFG.rep_travail})")
+        log.info(f"[DRY-RUN] Claude Code serait lancé pour issue #{numero} (mode {mode}, cwd {cwd_effectif})")
         return True, f"[DRY-RUN] Tâche simulée avec succès (mode {mode})."
 
     cmd = ["claude", "--print"]
@@ -641,7 +772,7 @@ Si la tâche échoue, remplace ✅ par ❌ et explique la cause en une ligne.
             cmd,
             capture_output=True, text=True,
             timeout=timeout,
-            cwd=CFG.rep_travail
+            cwd=cwd_effectif
         )
         if res.returncode == 0:
             return True, res.stdout.strip()
@@ -656,7 +787,9 @@ Si la tâche échoue, remplace ✅ par ❌ et explique la cause en une ligne.
 
 
 def diagnostiquer_echec(numero: int, titre: str, body: str,
-                        derniere_erreur: str) -> str | None:
+                        derniere_erreur: str,
+                        perimetre: str = None,
+                        cwd: Path = None) -> str | None:
     """Passe diagnostique courte et en LECTURE SEULE, lancée juste avant de poser
     'needs-human' sur une issue non critique abandonnée (issue #124).
 
@@ -671,11 +804,16 @@ def diagnostiquer_echec(numero: int, titre: str, body: str,
 
     Best-effort : retourne le texte du diagnostic, ou None si la passe elle-même
     échoue / timeout (l'appelant n'ajoute alors simplement aucune section). On ne
-    boucle jamais dessus et on ne retente pas."""
-    if CFG.perimetre:
+    boucle jamais dessus et on ne retente pas.
+
+    perimetre / cwd : mêmes surcharges que lancer_claude (issue #125). Pour un
+    projet à périmètre dynamique, le diagnostic doit lire dans REPO_CIBLE et y
+    être lancé, pas dans le rep_travail figé du .conf (placeholder)."""
+    perimetre_effectif = CFG.perimetre if perimetre is None else perimetre
+    if perimetre_effectif:
         clause_perimetre = (
             f"\nPÉRIMÈTRE STRICT — tu ne dois lire que dans les répertoires "
-            f"suivants : {CFG.perimetre}\n"
+            f"suivants : {perimetre_effectif}\n"
         )
     else:
         clause_perimetre = ""
@@ -709,6 +847,8 @@ probables, sans préambule ni conclusion, et sans tenter de corriger quoi que ce
             timeout=CFG.timeout_diagnostic,
             modele=CFG.modele_ccl,
             prompt_perso=prompt,
+            perimetre=perimetre,
+            cwd=cwd,
         )
     except Exception as e:
         log.warning(f"  Passe diagnostique #{numero} indisponible (exception : {e}).")
@@ -753,6 +893,62 @@ def traiter_issue(issue: dict, dry_run: bool):
     if autoriser_ecriture:
         log.warning(f"  ⚠️  MODE ÉCRITURE ARMÉ pour #{numero} (label '{LABEL_ECRITURE}') — actions permises, push interdit.")
 
+    # Périmètre effectif de cette exécution (issue #125). Par défaut : celui du
+    # .conf. Pour un projet à périmètre dynamique, il vient du champ REPO_CIBLE de
+    # l'issue et devient à la fois le périmètre de la clause de prompt ET le cwd
+    # réel du subprocess. Toute erreur de config/issue ici est définitive (pas de
+    # retry) : commentaire explicite + label 'needs-human' pour stopper la reprise.
+    perimetre_effectif = CFG.perimetre
+    cwd_effectif       = CFG.rep_travail
+    avertissement_conflit = ""
+
+    if CFG.perimetre_dynamique:
+        repo_cible = extraire_repo_cible(body)
+        if not repo_cible:
+            log.error(f"  Issue #{numero} : PERIMETRE_DYNAMIQUE actif mais champ REPO_CIBLE absent — abandon (aucun repli).")
+            commenter_issue(
+                numero,
+                f"❌ Échec de configuration — ce projet est en **périmètre dynamique** "
+                f"(`PERIMETRE_DYNAMIQUE = true`) mais l'issue ne fournit pas de champ "
+                f"`| REPO_CIBLE | <chemin absolu> |`. Aucun repli sur le répertoire de "
+                f"travail du `.conf` n'est effectué — le périmètre doit être explicite. "
+                f"Corrigez l'en-tête de l'issue puis retirez le label `{LABEL_ECHEC}` "
+                f"pour relancer."
+            )
+            ajouter_label(numero, LABEL_ECHEC)
+            issues_en_cours.discard(numero)
+            return
+
+        valide, raison = valider_repo_cible(repo_cible)
+        if not valide:
+            log.error(f"  Issue #{numero} : REPO_CIBLE refusé ({raison}) — abandon, aucun lancement de CCL.")
+            commenter_issue(
+                numero,
+                f"❌ `REPO_CIBLE` refusé — `{repo_cible}` : {raison}.\n\n"
+                f"Aucun lancement de CCL (erreur de configuration/issue, pas un échec "
+                f"transitoire). Corrigez le champ `REPO_CIBLE` puis retirez le label "
+                f"`{LABEL_ECHEC}` pour relancer."
+            )
+            ajouter_label(numero, LABEL_ECHEC)
+            issues_en_cours.discard(numero)
+            return
+
+        repo_cible_resolu  = Path(repo_cible).resolve()
+        perimetre_effectif = str(repo_cible_resolu)
+        cwd_effectif       = repo_cible_resolu
+        log.info(f"  Périmètre dynamique : REPO_CIBLE = {repo_cible_resolu} (périmètre + cwd de cette exécution).")
+
+        # Transparence (issue #125) : si un autre watcher actif partage ce dossier,
+        # on ne bloque pas mais on signale le risque en tête du résultat.
+        conflit = detecter_conflit_watcher(repo_cible_resolu, CFG.nom)
+        if conflit:
+            log.warning(f"  ⚠️  Conflit potentiel : watcher '{conflit}' actif sur {repo_cible_resolu}.")
+            avertissement_conflit = (
+                f"⚠️ Traitement lancé pendant qu'un watcher actif sur ce dépôt "
+                f"(projet {conflit}) pouvait être en train d'écrire — certains constats "
+                f"peuvent être obsolètes.\n\n"
+            )
+
     commenter_issue(
         numero,
         f"✅ ACK — Issue #{numero} reçue par watcher.py (agent Linux, projet {CFG.nom}). "
@@ -768,11 +964,13 @@ def traiter_issue(issue: dict, dry_run: bool):
         tentative += 1
         log.info(f"  Tentative {tentative}/{CFG.max_essais if not critique else '∞'}...")
 
-        succes, sortie = lancer_claude(numero, titre, body, dry_run, autoriser_ecriture, timeout, modele)
+        succes, sortie = lancer_claude(numero, titre, body, dry_run, autoriser_ecriture,
+                                       timeout, modele,
+                                       perimetre=perimetre_effectif, cwd=cwd_effectif)
 
         if succes:
             log.info(f"  ✓ Issue #{numero} traitée avec succès.")
-            commenter_issue(numero, f"## Résultat\n\n{sortie}")
+            commenter_issue(numero, f"## Résultat\n\n{avertissement_conflit}{sortie}")
             fermer_issue(numero)
             issues_en_cours.discard(numero)
             # Historique des durées (issue #108) : durée réelle ACK → fermeture,
@@ -809,7 +1007,9 @@ def traiter_issue(issue: dict, dry_run: bool):
                 # Alain d'ouvrir lui-même une session juste pour comprendre le
                 # timeout. Best-effort — n'ajoute rien si elle échoue/timeout.
                 log.info(f"  Passe diagnostique courte (lecture seule, {CFG.timeout_diagnostic}s) pour #{numero}...")
-                diagnostic = diagnostiquer_echec(numero, titre, body, sortie)
+                diagnostic = diagnostiquer_echec(numero, titre, body, sortie,
+                                                 perimetre=perimetre_effectif,
+                                                 cwd=cwd_effectif)
                 message_echec = (
                     f"❌ Échec après {CFG.max_essais} tentatives.\n\n"
                     f"Dernière erreur : `{sortie}`\n\n"
