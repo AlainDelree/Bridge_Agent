@@ -1825,12 +1825,55 @@ function lireChampEntete(corps, champ) {
   return valeur || null;
 }
 
+// Retire du corps la PREMIÈRE ligne d'en-tête « | CHAMP | … | » — exactement
+// celle que lireChampEntete vient de lire (même regex), saut de ligne compris
+// (issue #129). Contrairement à detecterTitreDansCorps qui retire toujours la
+// première ligne du corps, on cible ici la ligne EXACTE où le champ a été
+// trouvé, où qu'elle soit dans le tableau d'en-tête. Renvoie le corps modifié,
+// ou le corps inchangé si le champ est absent.
+//
+// Champ dupliqué (ex. deux lignes TIMEOUT distinctes, cf. #11) : seule la
+// première occurrence est retirée. Les doublons restants restent visibles dans
+// le corps — c'est volontaire : ça signale à Alain qu'il y a un doublon à
+// nettoyer, plutôt que de les faire disparaître silencieusement tous les deux.
+function retirerLigneEntete(corps, champ) {
+  const re = new RegExp('^\\s*\\|\\s*' + champ + '\\s*\\|[^|]*\\|', 'im');
+  const m = (corps || '').match(re);
+  if (!m) return corps;
+  const debut = m.index;                       // ^ ancre le début de la ligne
+  let fin = corps.indexOf('\n', debut);        // fin de la ligne physique
+  if (fin === -1) fin = corps.length;
+  // Retire le saut de ligne qui suit la ligne ; à défaut (dernière ligne sans
+  // « \n » final), celui qui la précède, pour ne pas laisser de ligne vide.
+  if (corps[fin] === '\n') return corps.slice(0, debut) + corps.slice(fin + 1);
+  if (debut > 0 && corps[debut - 1] === '\n')
+    return corps.slice(0, debut - 1) + corps.slice(fin);
+  return corps.slice(0, debut) + corps.slice(fin);
+}
+
+// Mémoire des champs d'en-tête extraits du corps vers le formulaire (issue #129).
+// PROJET/TIMEOUT étant désormais RETIRÉS du corps après extraction, lireChampEntete
+// ne les y retrouve plus : on conserve ici la valeur extraite pour que le résumé
+// d'en-tête (#117) continue de les afficher (le résumé doit rester une
+// confirmation visuelle fiable, pas se vider au fur et à mesure des retraits).
+// Réinitialisée par viderFormulaire.
+let champsEnteteExtraits = {};
+
 // Détecte une incohérence entre le projet sélectionné et le champ PROJET de
 // l'en-tête bridge. Fiable : on ne fait plus d'analyse textuelle (source de
 // faux positifs) — on lit le champ « | PROJET | … | » que new_issue.py insère
 // dans l'en-tête, et que Claude Chat reproduit dans le corps qu'il fournit.
 // Retourne {projetIssue, projetSelectionne} si les deux diffèrent, sinon null
 // (champ absent → pas de vérification ; identique → pas de modale).
+//
+// Changement de rôle depuis #129 : detecterProjetDansCorps RETIRE désormais la
+// ligne « | PROJET | … | » du corps dès qu'elle correspond à un projet CONNU
+// (le select est alors déjà synchronisé, donc cohérent). À l'envoi il ne reste
+// donc de ligne PROJET dans le corps que dans le cas où le projet était INCONNU
+// (typo, projet pas encore créé) : la ligne a été délibérément laissée en place
+// et le select est resté à sa valeur par défaut. Cette vérification n'est donc
+// plus un doublon de la synchro amont — elle attrape spécifiquement ce cas
+// « projet d'en-tête non reconnu ⇄ select par défaut » avant l'envoi.
 function detecterIncoherenceProjet(data) {
   const projetIssue = lireChampEntete(data.corps, 'PROJET');
   if (!projetIssue) return null;                        // absent/vide : pas de vérif
@@ -2055,7 +2098,12 @@ let dernierProjetAutoDetecte = null;
 function detecterProjetDansCorps() {
   // Réutilise lireChampEntete (source unique de parsing d'en-tête) plutôt qu'une
   // regex locale : mot-clé insensible à la casse, nom nettoyé de ses espaces.
-  const nomDetecte = lireChampEntete(document.getElementById('corps').value, 'PROJET');
+  const corpsEl = document.getElementById('corps');
+  const nomDetecte = lireChampEntete(corpsEl.value, 'PROJET');
+  // Champ absent : on relâche le garde-fou (une même valeur recollée plus tard
+  // pourra être redétectée) mais on NE touche PAS à champsEnteteExtraits — le
+  // champ a pu être retiré du corps par cette fonction même, et le résumé #117
+  // doit continuer à l'afficher.
   if (!nomDetecte) { dernierProjetAutoDetecte = null; return; }
 
   // Rien de neuf depuis la dernière détection : ne pas réécraser un éventuel
@@ -2067,11 +2115,22 @@ function detecterProjetDansCorps() {
   const select = document.getElementById('projet');
   const option = [...select.options]
     .find(o => o.value.toLowerCase() === nomDetecte.toLowerCase());
-  if (!option) return;                 // projet inconnu → on ne change rien
-  if (select.value === option.value) return;  // déjà sélectionné
+  // Projet INCONNU (typo, projet pas encore créé) → on ne change rien ET on
+  // laisse la ligne PROJET dans le corps : le select reste sur sa valeur par
+  // défaut et detecterIncoherenceProjet (#44) pourra alerter à l'envoi.
+  if (!option) return;
 
-  select.value = option.value;
-  onProjetChange();                    // applique accent, statut, infos, etc.
+  if (select.value !== option.value) {
+    select.value = option.value;
+    onProjetChange();                  // applique accent, statut, infos, etc.
+  }
+
+  // Projet connu et synchronisé : on mémorise la valeur retenue (pour le résumé
+  // #117) puis on retire la ligne PROJET du corps, comme detecterTitreDansCorps
+  // le fait pour #Titre — sinon construire_body empilerait un second tableau
+  // d'en-tête sous celui qu'il reconstruit depuis les champs (issue #129).
+  champsEnteteExtraits.PROJET = option.value;
+  corpsEl.value = retirerLigneEntete(corpsEl.value, 'PROJET');
 }
 document.getElementById('corps').addEventListener('input', detecterProjetDansCorps);
 
@@ -2093,8 +2152,11 @@ function detecterTimeoutDansCorps() {
   // Réutilise lireChampEntete (source unique de parsing d'en-tête). La cellule
   // « | TIMEOUT | <valeur>[s] | » peut porter un suffixe « s » (ex. 1200s) et
   // des espaces ; on ne retient que les chiffres.
-  const brut = lireChampEntete(document.getElementById('corps').value, 'TIMEOUT');
+  const corpsEl = document.getElementById('corps');
+  const brut = lireChampEntete(corpsEl.value, 'TIMEOUT');
   const m = brut && brut.match(/^(\d+)\s*s?$/i);
+  // Absent/invalide : on relâche le garde-fou sans toucher au résumé mémorisé
+  // (la ligne a pu être retirée par cette fonction même, cf. detecterProjet).
   if (!m) { dernierTimeoutAutoDetecte = null; return; }
 
   const valeurDetectee = m[1];
@@ -2103,9 +2165,18 @@ function detecterTimeoutDansCorps() {
   if (valeurDetectee === dernierTimeoutAutoDetecte) return;
   dernierTimeoutAutoDetecte = valeurDetectee;
 
+  // Mémorise la valeur (affichée telle quelle dans le résumé #117, ex. « 1200s »)
+  // puis synchronise le champ formulaire.
+  champsEnteteExtraits.TIMEOUT = brut.trim();
   const champ = document.getElementById('timeout');
-  if (champ.value === valeurDetectee) return;   // déjà à cette valeur
-  champ.value = valeurDetectee;
+  if (champ.value !== valeurDetectee) champ.value = valeurDetectee;
+
+  // Retire la ligne TIMEOUT du corps (comme #Titre/PROJET) pour éviter que
+  // construire_body empile un second tableau d'en-tête. Sans ça, si la
+  // synchronisation du champ échouait (ex. TIMEOUT dupliqué, #11), c'est le
+  // TIMEOUT du formulaire — souvent resté à 300s — que le watcher retiendrait
+  // en premier, d'où les décalages 300s/1500s déjà observés (issue #129).
+  corpsEl.value = retirerLigneEntete(corpsEl.value, 'TIMEOUT');
 }
 document.getElementById('corps').addEventListener('input', detecterTimeoutDansCorps);
 
@@ -2131,7 +2202,10 @@ function mettreAJourResumeEntete() {
   const bloc  = document.getElementById('resume-entete');
   const badges = [];
   for (const champ of CHAMPS_ENTETE_RESUME) {
-    const valeur = lireChampEntete(corps, champ);
+    // Lit d'abord le corps ; à défaut (PROJET/TIMEOUT désormais RETIRÉS du corps
+    // après extraction, #129) retombe sur la valeur mémorisée à l'extraction —
+    // ainsi le résumé reste une confirmation fiable même une fois la ligne ôtée.
+    const valeur = lireChampEntete(corps, champ) || champsEnteteExtraits[champ];
     if (!valeur) continue;                 // champ absent/vide → pas de badge
     badges.push('<span class="badge-entete"><b>' + champ + '</b>'
                 + escapeHtml(valeur) + '</span>');
@@ -2314,6 +2388,12 @@ function viderFormulaire(cacherMsg=true) {
   // notif_pc revient à l'état mémorisé (coché par défaut), pas à décoché.
   appliquerNotifPc();
   document.getElementById('modele-ponctuel').value = '';
+  // Réinitialise l'état des détections d'en-tête (issues #117/#129) : sans ça,
+  // un ancien PROJET/TIMEOUT mémorisé empêcherait de redétecter la même valeur
+  // au prochain collage, et le résumé afficherait des champs d'une issue passée.
+  dernierProjetAutoDetecte  = null;
+  dernierTimeoutAutoDetecte = null;
+  champsEnteteExtraits      = {};
   // Le corps est vidé par programme (pas d'event « input ») : on masque
   // explicitement le résumé d'en-tête (issue #117).
   mettreAJourResumeEntete();
