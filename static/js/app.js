@@ -2102,6 +2102,26 @@ async function actionWatchers(action) {
       body: JSON.stringify(payload(nom))
     });
   }
+
+  // Issue #141 : décocher explicitement les cases traitées AVANT que
+  // chargerWatchers() ne restaure la sélection (mécanisme #123 prévu pour le
+  // rafraîchissement automatique). Ordre : décochage → message → chargerWatchers().
+  const traites = new Set(selectionnes);
+  document.querySelectorAll('.cb-watcher').forEach(c => {
+    if (traites.has(c.value)) c.checked = false;
+  });
+  const cbTous = document.getElementById('cb-tous');
+  if (cbTous) cbTous.checked = false;
+  mettreAJourCompte();
+
+  const verbe = action === 'arreter' ? 'arrêté(s)'
+              : action === 'relancer' ? 'relancé(s)'
+              : 'lancé(s)';
+  const msg = document.getElementById('msg-watchers');
+  msg.textContent = `${selectionnes.length} watcher(s) ${verbe}.`;
+  msg.className = 'message succes'; msg.style.display = 'block';
+  setTimeout(() => msg.style.display = 'none', 3000);
+
   await chargerWatchers();
   await verifierStatut();
 }
