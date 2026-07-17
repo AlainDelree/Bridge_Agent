@@ -1059,9 +1059,15 @@ function construireHtmlIssue(it, nom) {
     && nomsLabels.includes('for-linux')
     && !nomsLabels.includes('needs-human')
     && comments.length > 0) {
+    // Issue en cours de traitement (ACK posté, pas encore needs-human). Le CCL
+    // tourne : la seule façon de l'interrompre est de couper le watcher du
+    // projet (killpg via #145). On combine cette coupure et la fermeture de
+    // l'issue dans un seul bouton, car elles n'ont de sens qu'ensemble ici
+    // (issue #144). Le watcher reste éteint : Alain le relance manuellement.
     html += '<div class="bloc-annuler">'
-          + '<span class="traitement-encours">'
-          + '⏳ En cours de traitement — annulation impossible</span></div>';
+          + '<button class="danger" onclick="fermerEtInterrompre(\'' + nom + '\', '
+          + Number(it.number) + ')">'
+          + 'Interrompre et fermer cette issue</button></div>';
   }
 
   // Issue en échec définitif (label needs-human) et toujours ouverte :
@@ -1774,6 +1780,57 @@ async function fermerIssue(nom, numero) {
     .find(l => l.dataset.projet === nom && l.dataset.numero === numStr);
   if (ligne && ligne.style.display !== 'none') {
     await afficherIssue(nom, numStr);
+  }
+}
+
+// Interrompt le CCL en cours ET ferme l'issue en un seul geste (issue #144).
+// Cas visé : une issue « en cours de traitement » (for-linux, pas needs-human,
+// au moins un commentaire = ACK posté). Le CCL tourne déjà : la seule façon de
+// l'interrompre est de couper le watcher du projet — après #145, /arreter-watcher
+// fait un killpg qui tue réellement le `claude` en cours (pas seulement la boucle
+// du watcher). Ordre imposé des deux appels réseau : (1) arrêt du watcher, puis
+// (2) fermeture de l'issue — on ne ferme que si la coupure a réussi ou que le
+// watcher était déjà inactif. Le watcher reste ÉTEINT : Alain le relance lui-même
+// depuis l'onglet Watchers quand il est prêt (pas de relance automatique).
+async function fermerEtInterrompre(nom, numero) {
+  if (!confirm("Ceci va arrêter le watcher du projet " + nom
+             + " (donc interrompre le CCL en cours pour CETTE issue comme pour"
+             + " toute autre en attente sur ce projet) puis fermer l'issue #"
+             + numero + ". Le watcher restera éteint : tu devras le relancer"
+             + " toi-même depuis l'onglet Watchers. Continuer ?")) return;
+
+  // (1) Arrêt du watcher (killpg via #145). On tolère « watcher déjà inactif » :
+  // dans ce cas succes=false mais l'objectif (plus de CCL en cours) est atteint,
+  // et on enchaîne quand même sur la fermeture.
+  let arretOk = false;
+  try {
+    const rep = await fetch('/arreter-watcher', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({projet: nom})
+    });
+    const json = await rep.json();
+    arretOk = json.succes || /déjà inactif/i.test(json.message || '');
+    if (!arretOk) {
+      alert('Erreur : arrêt du watcher impossible — '
+            + (json.message || json.erreur || 'cause inconnue')
+            + '. Issue NON fermée.');
+      return;
+    }
+  } catch(e) {
+    alert('Erreur réseau lors de l\'arrêt du watcher : ' + e.message
+          + '. Issue NON fermée.');
+    return;
+  }
+
+  // (2) Fermeture de l'issue, seulement après un arrêt réussi (ou déjà inactif).
+  // fermerIssue() (inchangée) recharge déjà la liste des issues en fin de course.
+  await fermerIssue(nom, numero);
+
+  // Reflète l'état « watcher éteint » si l'onglet Watchers est actuellement affiché.
+  const panneauWatchers = document.getElementById('panneau-watchers');
+  if (panneauWatchers && panneauWatchers.classList.contains('actif')) {
+    await chargerWatchers();
   }
 }
 
