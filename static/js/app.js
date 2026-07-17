@@ -2362,14 +2362,37 @@ function enModeLot() {
   return decouperCorpsEnBlocs(document.getElementById('corps').value).length >= 2;
 }
 
+// Projet effectivement ciblé par un bloc de lot : son champ « PROJET » d'en-tête
+// s'il est présent, sinon le projet du formulaire en repli. Source unique de
+// cette logique de repli, partagée par mettreAJourBoutonLot (libellé du bouton)
+// et envoyerLot (envoi réel) pour qu'elles ne puissent pas diverger (issue #142).
+function projetEffectifBloc(bloc, projetForm) {
+  return lireChampEntete(bloc.corps, 'PROJET') || projetForm;
+}
+
 // Bascule le bouton d'envoi entre mode mono-issue et mode lot selon le contenu
-// du corps. En lot : « Envoyer le lot (N issues) » → envoyerLot ; sinon on
-// restaure le bouton normal « Envoyer sur <projet> » → envoyerIssue (inchangé).
+// du corps. En lot : « Envoyer le lot (N issues) sur <projet(s)> » → envoyerLot ;
+// sinon on restaure le bouton normal « Envoyer sur <projet> » → envoyerIssue.
+// Les projets ciblés sont calculés bloc par bloc (même repli que envoyerLot) pour
+// donner à Alain la même confirmation visuelle qu'en mono-issue (issue #142).
 function mettreAJourBoutonLot() {
   const blocs = decouperCorpsEnBlocs(document.getElementById('corps').value);
   const btn   = document.getElementById('btn-envoyer');
   if (blocs.length >= 2) {
-    btn.textContent = 'Envoyer le lot (' + blocs.length + ' issues)';
+    const projetForm = document.getElementById('projet').value;
+    // Ensemble ordonné des projets distincts effectivement ciblés par le lot.
+    const projets = [];
+    for (const bloc of blocs) {
+      const p = projetEffectifBloc(bloc, projetForm);
+      if (p && !projets.includes(p)) projets.push(p);
+    }
+    let suffixe = '';
+    if (projets.length === 1) {
+      suffixe = ' sur ' + projets[0];
+    } else if (projets.length > 1) {
+      suffixe = ' sur plusieurs projets (' + projets.join(', ') + ')';
+    }
+    btn.textContent = 'Envoyer le lot (' + blocs.length + ' issues)' + suffixe;
     btn.onclick = envoyerLot;
   } else {
     btn.textContent = 'Envoyer sur ' + document.getElementById('projet').value;
@@ -2454,7 +2477,7 @@ async function envoyerLot() {
     const modeleBloc   = lireChampEntete(bloc.corps, 'MODELE');
     const prioriteBloc = lireChampEntete(bloc.corps, 'PRIORITE');
 
-    const projet = projetBloc || projetForm;
+    const projet = projetEffectifBloc(bloc, projetForm);
 
     // Timeout : la cellule peut porter un suffixe « s » (ex. 1200s) ; on ne
     // conserve que les chiffres, comme detecterTimeoutDansCorps. Repli formulaire.
