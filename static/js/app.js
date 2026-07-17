@@ -70,13 +70,18 @@ function basculerOnglet(nom) {
   if (nom === 'config') chargerConfig();
 }
 
-function onProjetChange() {
+// reinitialiserTimeout : un changement de projet MANUEL (sélecteur, chargement
+// initial, ajouterProjetAuSelecteur) doit recharger le timeout par défaut du
+// projet. En revanche, la détection d'en-tête (detecterProjetDansCorps) appelle
+// onProjetChange(false) pour NE PAS écraser le TIMEOUT collé, dont la pose reste
+// la seule responsabilité de detecterTimeoutDansCorps (issue #143).
+function onProjetChange(reinitialiserTimeout = true) {
   const nom = document.getElementById('projet').value;
   // Mémorise le projet choisi pour le restaurer à la prochaine ouverture.
   try { localStorage.setItem('bridge_projet_actif', nom); } catch(e) {}
   appliquerAccentProjet(nom);
   verifierStatut();
-  mettreAJourInfoProjet();
+  mettreAJourInfoProjet(reinitialiserTimeout);
   // L'onglet Résultats est indépendant du sélecteur global (il agrège tous
   // les projets) : on ne le recharge donc PAS ici.
   // Si l'onglet Configuration est actif, recharger sa config pour le
@@ -86,7 +91,7 @@ function onProjetChange() {
   }
 }
 
-async function mettreAJourInfoProjet() {
+async function mettreAJourInfoProjet(reinitialiserTimeout = true) {
   const nom = document.getElementById('projet').value;
   try {
     const rep = await fetch('/config/' + encodeURIComponent(nom));
@@ -102,7 +107,12 @@ async function mettreAJourInfoProjet() {
       perEl.textContent = '';
     }
     // Le timeout par défaut suit la valeur TIMEOUT_CLAUDE du projet sélectionné.
-    document.getElementById('timeout').value = cfg.timeout_claude || 300;
+    // On ne réinitialise le champ QUE lors d'un changement de projet manuel :
+    // lors d'une détection d'en-tête (reinitialiserTimeout=false), le TIMEOUT
+    // collé, déjà posé par detecterTimeoutDansCorps, doit être préservé (#143).
+    if (reinitialiserTimeout) {
+      document.getElementById('timeout').value = cfg.timeout_claude || 300;
+    }
     // Le libellé du bouton d'envoi affiche le projet cible pour éviter les
     // envois sur le mauvais projet.
     document.getElementById('btn-envoyer').textContent = 'Envoyer sur ' + cfg.nom;
@@ -2208,7 +2218,10 @@ function detecterProjetDansCorps() {
 
   if (select.value !== option.value) {
     select.value = option.value;
-    onProjetChange();                  // applique accent, statut, infos, etc.
+    onProjetChange(false);             // applique accent, statut, infos — SANS
+                                       // réinitialiser le timeout (#143) : le
+                                       // TIMEOUT collé reste géré par
+                                       // detecterTimeoutDansCorps.
   }
 
   // Projet connu et synchronisé : on mémorise la valeur retenue (pour le résumé
