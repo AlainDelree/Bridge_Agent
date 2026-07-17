@@ -1938,10 +1938,46 @@ function afficherModalIncoherence(projetIssue, projetSelectionne) {
   });
 }
 
+// Modale d'erreur générique (un seul bouton). Réutilise l'overlay
+// #modal-confirmation comme afficherModalIncoherence, mais masque #modal-non
+// (pas de choix oui/non) et relabelle #modal-oui en « OK ». Restaure ensuite la
+// visibilité et les libellés d'origine des deux boutons avant de rendre la main.
+// La promesse se résout à la fermeture (valeur sans importance : un seul bouton).
+function afficherModalErreur(titre, message) {
+  return new Promise(resolve => {
+    const overlay = document.getElementById('modal-confirmation');
+    const liste   = document.getElementById('modal-liste');
+    const btnOui  = document.getElementById('modal-oui');
+    const btnNon  = document.getElementById('modal-non');
+    const ouiAvant     = btnOui.textContent;
+    const nonAvant     = btnNon.textContent;
+    const nonDispAvant = btnNon.style.display;
+    document.getElementById('modal-titre').textContent = titre;
+    liste.style.display = '';
+    liste.textContent = message;
+    btnOui.textContent = 'OK';
+    btnNon.style.display = 'none';
+    function fermer() {
+      overlay.classList.remove('actif');
+      btnOui.onclick = null; btnNon.onclick = null;
+      btnOui.textContent = ouiAvant;
+      btnNon.textContent = nonAvant;
+      btnNon.style.display = nonDispAvant;
+      resolve();
+    }
+    btnOui.onclick = () => fermer();
+    overlay.classList.add('actif');
+  });
+}
+
 async function envoyerIssue() {
   cacherRetours();
   const data = collecterFormulaire();
-  if (!data.titre) { afficherMessage('Le titre est obligatoire.', 'erreur'); return; }
+  if (!data.titre) {
+    await afficherModalErreur('Titre manquant',
+      'Le titre est obligatoire pour envoyer cette issue.');
+    return;
+  }
 
   // Avertit si des issues for-linux sont déjà en attente sur ce projet, pour
   // éviter les conflits quand plusieurs issues mode_write s'enchaînent.
@@ -2359,6 +2395,27 @@ async function envoyerLot() {
   cacherRetours();
   const blocs = decouperCorpsEnBlocs(document.getElementById('corps').value);
   if (blocs.length < 2) return;                 // sécurité : bouton lot masqué sinon
+
+  // Garde-fou titre : aucun bloc ne doit avoir un titre vide après « #Titre: ».
+  // Si un ou plusieurs sont fautifs, on abandonne TOUT le lot (aucun envoi) et on
+  // affiche la même modale d'erreur que le mono-issue, listant les blocs fautifs.
+  const sansTitre = [];
+  blocs.forEach((b, i) => { if (!b.titre) sansTitre.push(i + 1); });
+  if (sansTitre.length) {
+    const nums = sansTitre.map(n => 'le bloc ' + n);
+    let liste;
+    if (nums.length === 1) {
+      liste = nums[0];
+    } else {
+      liste = nums.slice(0, -1).join(', ') + ' et ' + nums[nums.length - 1];
+    }
+    const verbe = sansTitre.length === 1 ? "n'a" : "n'ont";
+    await afficherModalErreur('Titre manquant',
+      liste.charAt(0).toUpperCase() + liste.slice(1)
+      + ' ' + verbe + ' pas de titre après #Titre:. Aucune issue du lot n\'a été '
+      + 'envoyée : corrige le corps puis relance.');
+    return;
+  }
 
   const base       = collecterFormulaire();     // valeurs communes/de repli
   const projetForm = base.projet;
