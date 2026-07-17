@@ -291,12 +291,18 @@ def _parser_priorite(body: str) -> str:
 def _debut_traitement(commentaires: list) -> str | None:
     """createdAt (ISO) du commentaire ACK que le watcher poste au démarrage du
     traitement, ou None si aucun (issue pas encore prise en charge). gh renvoie
-    les commentaires par ordre chronologique : le premier ACK fait foi."""
+    les commentaires par ordre chronologique : la DERNIÈRE ACK fait foi (issue
+    #145). En déroulement normal une seule ACK existe (premier = dernier) ; en
+    cas de reprise après interruption du watcher (crash, reset, Éteindre/
+    Relancer), plusieurs ACK coexistent et seule la plus récente reflète le
+    vrai début de la tentative en cours — sinon le badge inclurait à tort le
+    temps mort de l'interruption."""
+    debut = None
     for c in commentaires:
         corps = c.get("body") or ""
         if "ACK —" in corps and "watcher.py" in corps:
-            return c.get("createdAt")
-    return None
+            debut = c.get("createdAt")
+    return debut
 
 
 def _commentaires_issue(cfg, numero) -> list:
