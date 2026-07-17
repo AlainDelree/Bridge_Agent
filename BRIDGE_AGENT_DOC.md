@@ -67,6 +67,23 @@ Description précise. Indiquer explicitement si LECTURE SEULE.
 Ce que CCL doit produire ou confirmer.
 ```
 
+**Envoi en lot (plusieurs issues d'un seul copier-coller) — issue #135 :**
+coller *plusieurs* blocs `#Titre:` à la suite dans le même corps déclenche
+automatiquement le **mode lot** : le bouton d'envoi devient
+« Envoyer le lot (N issues) ». Chaque bloc va de son `#Titre:` jusqu'au
+`#Titre:` suivant et est traité comme une issue indépendante, avec ses propres
+champs d'en-tête optionnels (`PROJET`, `TIMEOUT`, `MODELE`) — à défaut, les
+valeurs du formulaire (projet sélectionné, timeout, modèle) s'appliquent en
+repli. Le `MODE` (lecture/écriture) et les notifications sont communs à tout le
+lot. Les issues partent **en séquence** (une à la fois, jamais en parallèle),
+**sans validation intermédiaire** (aucune modale « issues en attente » ni
+d'incohérence projet) : un bloc dont le `PROJET` diffère du projet sélectionné
+part quand même sur *son* `PROJET` et c'est simplement signalé ; un bloc en
+échec n'interrompt pas le lot. À la fin, un **résumé** liste, pour chaque bloc,
+le titre + le lien de l'issue créée ou le message d'erreur, puis le corps est
+vidé. Un seul bloc `#Titre:` conserve le comportement mono-issue habituel
+(bouton « Envoyer sur <projet> », détection automatique du titre).
+
 > ⚠️ **Claude Chat doit toujours inclure** `| PROJET | <nom> |` dans l'en-tête
 > des issues qu'il génère (nom exact du projet cible : `bridge_agent`,
 > `alchess`, `ff_galerie`). Détaillé au §6 « Champs spéciaux ».
@@ -482,4 +499,4 @@ via un champ structuré dans l'en-tête :
 
 ---
 
-*Dernière mise à jour : 16 juillet 2026 — Bridge_Agent v1, 4 projets actifs. Ajout du projet `ecole` (AlainDelree/Ecole, ~/Ecole) aux tableaux §2 et §7 (issue #101). Section 15 « Chef + Specs MVC » : champ `SPECS` (pluriel, minuscules, combinable en une ligne) — correction du champ `SPEC` introduit par erreur (issue #97, suite #96).*
+*Dernière mise à jour : 17 juillet 2026 — Bridge_Agent v1, 4 projets actifs. §3 « Créer une issue » : ajout de l'**envoi en lot** (issue #135) — coller plusieurs blocs `#Titre:` à la suite dans le même corps déclenche le mode lot (bouton « Envoyer le lot (N issues) »), chaque bloc étant envoyé en séquence comme une issue indépendante (avec ses `PROJET`/`TIMEOUT`/`MODELE` optionnels), sans validation intermédiaire, suivi d'un résumé listant le résultat de chacune. Ajout du projet `ecole` (AlainDelree/Ecole, ~/Ecole) aux tableaux §2 et §7 (issue #101). Section 15 « Chef + Specs MVC » : champ `SPECS` (pluriel, minuscules, combinable en une ligne) — correction du champ `SPEC` introduit par erreur (issue #97, suite #96).*

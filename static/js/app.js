@@ -1771,6 +1771,8 @@ function afficherMessage(texte, type) {
 function cacherRetours() {
   document.getElementById('message').style.display = 'none';
   document.getElementById('zone-apercu').style.display = 'none';
+  const resumeLot = document.getElementById('resume-lot');
+  if (resumeLot) resumeLot.style.display = 'none';
 }
 
 async function afficherApercu() {
@@ -2063,6 +2065,10 @@ function mettreAJourBoutonEnvoi() {
 // dedans ne déclenche aucun comportement automatique (l'écouteur est sur #corps).
 function detecterTitreDansCorps() {
   const corpsEl = document.getElementById('corps');
+  // En mode lot (2+ blocs « #Titre: »), cette détection mono-titre n'a plus de
+  // sens : c'est envoyerLot qui traite chaque bloc avec son propre titre. On la
+  // neutralise tant que le lot est détecté (issue #135).
+  if (enModeLot()) return;
   const valeur  = corpsEl.value;
   const finLigne      = valeur.indexOf('\n');
   const premiereLigne = finLigne === -1 ? valeur : valeur.slice(0, finLigne);
@@ -2096,6 +2102,10 @@ document.getElementById('corps').addEventListener('input', detecterTitreDansCorp
 //     même ligne PROJET, sa correction n'est pas écrasée à la frappe suivante.
 let dernierProjetAutoDetecte = null;
 function detecterProjetDansCorps() {
+  // En mode lot, chaque bloc porte son propre PROJET, lu par envoyerLot : on ne
+  // synchronise pas la combobox sur le premier bloc et on ne mute pas le corps
+  // (issue #135).
+  if (enModeLot()) { dernierProjetAutoDetecte = null; return; }
   // Réutilise lireChampEntete (source unique de parsing d'en-tête) plutôt qu'une
   // regex locale : mot-clé insensible à la casse, nom nettoyé de ses espaces.
   const corpsEl = document.getElementById('corps');
@@ -2149,6 +2159,10 @@ document.getElementById('corps').addEventListener('input', detecterProjetDansCor
 // collée), sa correction n'est pas réécrasée à la frappe suivante dans le corps.
 let dernierTimeoutAutoDetecte = null;
 function detecterTimeoutDansCorps() {
+  // En mode lot, chaque bloc porte son propre TIMEOUT, lu par envoyerLot : on ne
+  // synchronise pas le champ sur le premier bloc et on ne mute pas le corps
+  // (issue #135).
+  if (enModeLot()) { dernierTimeoutAutoDetecte = null; return; }
   // Réutilise lireChampEntete (source unique de parsing d'en-tête). La cellule
   // « | TIMEOUT | <valeur>[s] | » peut porter un suffixe « s » (ex. 1200s) et
   // des espaces ; on ne retient que les chiffres.
@@ -2200,6 +2214,9 @@ const CHAMPS_ENTETE_RESUME = [
 function mettreAJourResumeEntete() {
   const corps = document.getElementById('corps').value;
   const bloc  = document.getElementById('resume-entete');
+  // En mode lot, ce résumé mono (qui ne lirait que le 1er bloc) serait trompeur :
+  // on le masque, le récapitulatif du lot s'affiche après l'envoi (issue #135).
+  if (enModeLot()) { bloc.style.display = 'none'; bloc.innerHTML = ''; return; }
   const badges = [];
   for (const champ of CHAMPS_ENTETE_RESUME) {
     // Lit d'abord le corps ; à défaut (PROJET/TIMEOUT désormais RETIRÉS du corps
@@ -2219,6 +2236,188 @@ function mettreAJourResumeEntete() {
   bloc.style.display = 'flex';
 }
 document.getElementById('corps').addEventListener('input', mettreAJourResumeEntete);
+
+// ─── Envoi en lot de plusieurs issues (issue #135) ────────────────────────
+// Un seul copier-coller peut contenir PLUSIEURS blocs « #Titre: … » à la
+// suite : chacun devient une issue indépendante, envoyée en séquence sans
+// validation intermédiaire. On généralise detecterTitreDansCorps, qui ne
+// traite QUE la première ligne, en appliquant la même règle à CHAQUE ligne
+// « #Titre: » (insensible à la casse, en début de ligne).
+
+// Découpe le corps en blocs, un par ligne « #Titre: ». Chaque bloc va de son
+// « #Titre: » jusqu'au « #Titre: » suivant (exclu) ou la fin du corps ; on en
+// extrait le titre (texte après « #Titre: », trim) et le reste du bloc (la
+// ligne « #Titre: » retirée), exactement comme le flux mono-issue mais appliqué
+// à un fragment. Retourne un tableau de {titre, corps} — vide si aucune ligne
+// « #Titre: » n'est trouvée (→ pas de mode lot, comportement inchangé).
+function decouperCorpsEnBlocs(corps) {
+  const texte = corps || '';
+  // Index de début de chaque ligne « #Titre: » (même règle que
+  // detecterTitreDansCorps : ancré en début de ligne, casse ignorée).
+  const debuts = [];
+  const re = /^#titre:/gim;
+  let m;
+  while ((m = re.exec(texte)) !== null) {
+    debuts.push(m.index);
+    if (re.lastIndex === m.index) re.lastIndex++;   // garde anti-boucle infinie
+  }
+  if (!debuts.length) return [];                      // aucun #Titre: → pas de lot
+
+  const blocs = [];
+  for (let i = 0; i < debuts.length; i++) {
+    const debut = debuts[i];
+    const fin   = i + 1 < debuts.length ? debuts[i + 1] : texte.length;
+    const fragment = texte.slice(debut, fin);
+    // Même découpage que detecterTitreDansCorps, appliqué au fragment : la 1re
+    // ligne porte « #Titre: … », le titre est ce qui suit (trim), le corps du
+    // bloc est le reste du fragment, cette ligne retirée.
+    const finLigne      = fragment.indexOf('\n');
+    const premiereLigne = finLigne === -1 ? fragment : fragment.slice(0, finLigne);
+    const titre = premiereLigne.replace(/^#titre:\s*/i, '').trim();
+    const corpsBloc = finLigne === -1 ? '' : fragment.slice(finLigne + 1);
+    blocs.push({titre: titre, corps: corpsBloc.trim()});
+  }
+  return blocs;
+}
+
+// Vrai dès que le corps contient 2 blocs « #Titre: » ou plus → mode lot. Sert de
+// garde-fou aux détections mono (titre/projet/timeout) et pilote le bouton.
+function enModeLot() {
+  return decouperCorpsEnBlocs(document.getElementById('corps').value).length >= 2;
+}
+
+// Bascule le bouton d'envoi entre mode mono-issue et mode lot selon le contenu
+// du corps. En lot : « Envoyer le lot (N issues) » → envoyerLot ; sinon on
+// restaure le bouton normal « Envoyer sur <projet> » → envoyerIssue (inchangé).
+function mettreAJourBoutonLot() {
+  const blocs = decouperCorpsEnBlocs(document.getElementById('corps').value);
+  const btn   = document.getElementById('btn-envoyer');
+  if (blocs.length >= 2) {
+    btn.textContent = 'Envoyer le lot (' + blocs.length + ' issues)';
+    btn.onclick = envoyerLot;
+  } else {
+    btn.textContent = 'Envoyer sur ' + document.getElementById('projet').value;
+    btn.onclick = envoyerIssue;
+  }
+}
+document.getElementById('corps').addEventListener('input', mettreAJourBoutonLot);
+
+// Récapitulatif du lot : réutilise le style de #message (zone dédiée #resume-lot).
+// Une ligne par bloc : ✓ titre → lien de l'issue créée, ou ✗ titre — erreur.
+// Signale sans bloquer les blocs partis sur un PROJET différent du formulaire.
+function afficherResumeLot(resultats, projetForm) {
+  const zone  = document.getElementById('resume-lot');
+  const ok    = resultats.filter(r => r.succes).length;
+  const total = resultats.length;
+  const lignes = resultats.map(r => {
+    const titre = escapeHtml(r.titre || '(sans titre)');
+    if (r.succes) {
+      let l = '✓ ' + titre + ' → <a href="' + escapeHtml(r.url) + '" target="_blank">'
+              + escapeHtml(r.url) + '</a>';
+      if (r.incoherence) {
+        l += ' <em>(envoyée sur « ' + escapeHtml(r.projet)
+             + ' », ≠ projet sélectionné « ' + escapeHtml(projetForm) + ' »)</em>';
+      }
+      return l;
+    }
+    return '✗ ' + titre + ' — ' + escapeHtml(r.erreur);
+  });
+  zone.className   = 'message ' + (ok === total ? 'succes' : 'erreur');
+  zone.innerHTML   = '<b>Lot terminé : ' + ok + '/' + total + ' issue(s) créée(s).</b><br>'
+                     + lignes.join('<br>');
+  zone.style.display = 'block';
+}
+
+// Envoi séquentiel du lot. Chaque bloc devient un objet data sur le modèle de
+// collecterFormulaire : titre/corps propres au bloc, PROJET/PRIORITE/TIMEOUT/
+// MODELE lus dans le bloc (repli sur le formulaire), MODE/notifs communs. Envoi
+// UN PAR UN (await entre chaque, jamais en parallèle → pas de conflit gh). AUCUNE
+// modale (issues en attente / incohérence projet) : le but du lot est d'enchaîner
+// sans validation. Un bloc en échec n'interrompt pas le lot ; tout est reporté
+// dans le résumé final. (issue #135)
+async function envoyerLot() {
+  cacherRetours();
+  const blocs = decouperCorpsEnBlocs(document.getElementById('corps').value);
+  if (blocs.length < 2) return;                 // sécurité : bouton lot masqué sinon
+
+  const base       = collecterFormulaire();     // valeurs communes/de repli
+  const projetForm = base.projet;
+
+  const btn = document.getElementById('btn-envoyer');
+  btn.disabled = true;
+
+  const resultats = [];
+  for (let i = 0; i < blocs.length; i++) {
+    const bloc = blocs[i];
+    btn.textContent = 'Envoi ' + (i + 1) + '/' + blocs.length + '…';
+
+    // Champs d'en-tête lus dans le bloc ; repli sur les valeurs du formulaire.
+    const projetBloc   = lireChampEntete(bloc.corps, 'PROJET');
+    const timeoutBloc  = lireChampEntete(bloc.corps, 'TIMEOUT');
+    const modeleBloc   = lireChampEntete(bloc.corps, 'MODELE');
+    const prioriteBloc = lireChampEntete(bloc.corps, 'PRIORITE');
+
+    const projet = projetBloc || projetForm;
+
+    // Timeout : la cellule peut porter un suffixe « s » (ex. 1200s) ; on ne
+    // conserve que les chiffres, comme detecterTimeoutDansCorps. Repli formulaire.
+    let timeout = base.timeout;
+    const mTimeout = timeoutBloc && timeoutBloc.match(/^(\d+)\s*s?$/i);
+    if (mTimeout) timeout = mTimeout[1];
+
+    // Corps du bloc : on retire les lignes d'en-tête effectivement lues (comme le
+    // flux mono-issue) pour ne pas empiler un second tableau d'en-tête.
+    let corpsBloc = bloc.corps;
+    if (projetBloc)  corpsBloc = retirerLigneEntete(corpsBloc, 'PROJET');
+    if (timeoutBloc) corpsBloc = retirerLigneEntete(corpsBloc, 'TIMEOUT');
+    if (modeleBloc)  corpsBloc = retirerLigneEntete(corpsBloc, 'MODELE');
+
+    const data = {
+      projet:          projet,
+      titre:           bloc.titre,
+      priorite:        prioriteBloc || base.priorite,
+      timeout:         timeout,
+      mode:            base.mode,
+      notifs:          base.notifs,
+      corps:           corpsBloc.trim(),
+      modele_ponctuel: modeleBloc || base.modele_ponctuel,
+    };
+
+    // PROJET du bloc ≠ projet sélectionné : on envoie quand même sur le PROJET du
+    // bloc (pas de modale bloquante en lot) et on le signale dans le résumé.
+    const incoherence = !!projetBloc &&
+      projetBloc.toLowerCase() !== (projetForm || '').toLowerCase();
+
+    try {
+      const rep = await fetch('/envoyer', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(data)
+      });
+      const json = await rep.json();
+      if (json.succes) {
+        resultats.push({succes: true, titre: bloc.titre, projet: projet,
+                        url: json.url, incoherence: incoherence});
+      } else {
+        resultats.push({succes: false, titre: bloc.titre, projet: projet,
+                        erreur: json.erreur || 'erreur inconnue'});
+      }
+    } catch(e) {
+      // Échec d'un bloc : on note et on continue le lot (ne pas interrompre).
+      resultats.push({succes: false, titre: bloc.titre, projet: projet,
+                      erreur: 'réseau : ' + e.message});
+    }
+  }
+
+  afficherResumeLot(resultats, projetForm);
+  // Vide le corps une fois le lot terminé (comme envoyerIssue après un succès),
+  // sans masquer le récapitulatif qu'on vient d'afficher.
+  viderFormulaire(false);
+  btn.disabled = false;
+  // Le corps a été vidé par programme (pas d'event « input ») : on rebascule
+  // explicitement le bouton en mode mono.
+  mettreAJourBoutonLot();
+}
 
 async function verifierStatut() {
   const nom = document.getElementById('projet').value;
