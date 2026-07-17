@@ -321,7 +321,10 @@ async function chargerListeIssues() {
     zone.innerHTML = '<div class="issue-vide">Chargement…</div>';
   }
 
-  // 2) Fetch d'arrière-plan des 5 dernières issues de chaque projet.
+  // 2) Fetch d'arrière-plan des issues de chaque projet (jusqu'à 30 côté
+  //    backend). Le nombre réellement affiché par projet est ensuite plafonné
+  //    par un quota adaptatif dans appliquerFiltresListe() (issue #136), selon
+  //    le nombre de projets actifs dans le filtre — plus de troncature ici.
   majIndicateurListe(true);
   try {
     const listes = await Promise.all(noms.map(async nom => {
@@ -329,11 +332,11 @@ async function chargerListeIssues() {
         const rep = await fetch('/issues-liste/' + encodeURIComponent(nom));
         const liste = await rep.json();
         if (!Array.isArray(liste)) return [];
-        // Les 5 plus récentes (date de création décroissante) de ce projet.
+        // Toute la liste reçue (déjà plafonnée à 30 côté backend), triée par
+        // date de création décroissante (plus récentes en premier).
         return liste
           .slice()
           .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
-          .slice(0, 5)
           .map(it => Object.assign({}, it, {projet: nom}));
       } catch(e) {
         return [];
@@ -723,10 +726,27 @@ function finRedimTitre() {
 // (filtre = display:none). Une ligne ouvrière reste masquée tant que le toggle
 // « 👷 Ouvriers » est inactif (issue #86).
 function appliquerFiltresListe() {
+  // Quota adaptatif par projet (issue #136) : au lieu d'un plafond fixe, le
+  // nombre d'issues affichées par projet dépend du nombre de projets actifs
+  // dans le filtre. 1 projet → 30 ; 2 → 15 ; 3 → 10 ; 4 → 7 ; etc.
+  const nActifs = projetsFiltresActifs.size;
+  const quota   = nActifs > 0 ? Math.max(1, Math.floor(30 / nActifs)) : 0;
+
+  // Compteur par projet, incrémenté dans l'ordre du DOM (déjà trié par date
+  // décroissante globale) uniquement pour les lignes réellement affichables
+  // (projet actif ET non masquée par le filtre ouvriers).
+  const comptes = {};
   document.querySelectorAll('#liste-issues .ligne-issue').forEach(ligne => {
-    const projetVisible  = projetsFiltresActifs.has(ligne.dataset.projet);
+    const projet         = ligne.dataset.projet;
+    const projetVisible  = projetsFiltresActifs.has(projet);
     const ouvrierMasque  = ligne.dataset.type === 'ouvrier' && !filtreOuvriersActif;
-    ligne.style.display  = (projetVisible && !ouvrierMasque) ? '' : 'none';
+    let visible = projetVisible && !ouvrierMasque;
+    if (visible) {
+      const n = comptes[projet] || 0;
+      if (n < quota) comptes[projet] = n + 1;   // dans le quota → on la garde
+      else visible = false;                     // quota atteint → masquée
+    }
+    ligne.style.display = visible ? '' : 'none';
   });
 }
 
