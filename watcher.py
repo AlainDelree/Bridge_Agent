@@ -339,7 +339,14 @@ def lister_issues():
         if res.returncode != 0:
             log.error(f"Erreur gh issue list : {res.stderr.strip()}")
             return []
-        return json.loads(res.stdout)
+        issues = json.loads(res.stdout)
+        # Tri FIFO explicite : la plus ancienne issue en premier (issue #134).
+        # createdAt est un timestamp ISO 8601 UTC (…Z), donc l'ordre
+        # lexicographique croissant équivaut à l'ordre chronologique croissant.
+        # On trie côté Python plutôt que via --order/--sort de gh pour rester
+        # robuste aux différences de version de la CLI.
+        issues.sort(key=lambda i: i.get("createdAt", ""))
+        return issues
     except Exception as e:
         log.error(f"Exception lister_issues : {e}")
         return []
