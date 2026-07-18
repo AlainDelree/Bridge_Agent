@@ -499,4 +499,37 @@ via un champ structuré dans l'en-tête :
 
 ---
 
-*Dernière mise à jour : 17 juillet 2026 — Bridge_Agent v1, 4 projets actifs. §3 « Créer une issue » : ajout de l'**envoi en lot** (issue #135) — coller plusieurs blocs `#Titre:` à la suite dans le même corps déclenche le mode lot (bouton « Envoyer le lot (N issues) »), chaque bloc étant envoyé en séquence comme une issue indépendante (avec ses `PROJET`/`TIMEOUT`/`MODELE` optionnels), sans validation intermédiaire, suivi d'un résumé listant le résultat de chacune. Ajout du projet `ecole` (AlainDelree/Ecole, ~/Ecole) aux tableaux §2 et §7 (issue #101). Section 15 « Chef + Specs MVC » : champ `SPECS` (pluriel, minuscules, combinable en une ligne) — correction du champ `SPEC` introduit par erreur (issue #97, suite #96).*
+## 16. Agent Windows CCW (en préparation)
+
+> Section prospective — provisioning phase 1 en place (issue #146), l'agent
+> lui-même n'est pas encore opérationnel.
+
+**But :** disposer d'un futur agent **Claude Code Windows (CCW)** tournant dans
+une VM Windows, pour déléguer depuis CCL les builds `.exe` (PyInstaller) qui
+exigent un environnement Windows natif. CCW jouera côté Windows le rôle que CCL
+joue côté Linux : surveiller des issues et les traiter.
+
+**Label `for-windows`** (miroir de `for-linux`, couleur `#0e8a16`) : marque les
+issues destinées à l'agent Windows. Comme `for-linux` conditionne la prise en
+charge par `watcher.py` côté Linux, `for-windows` conditionnera la prise en
+charge par le watcher côté CCW. Créer une issue for-windows :
+
+```bash
+gh issue create --repo AlainDelree/Bridge_Agent --label "bridge,for-windows" ...
+```
+
+**Provisioning** (dossier `provisioning/windows/`) :
+
+| Fichier | Rôle |
+|---------|------|
+| `creer_vm_ccw.py` | Crée la VM VirtualBox `CCW-Build` (VBoxManage : 6 Go RAM, 4 CPU, disque fixe 40 Go, dossier partagé). Flag `--recreate` pour reconstruire à l'expiration de l'éval 90 jours. |
+| `autounattend.xml` | Réponse d'installation Windows automatisée (OOBE, compte admin **local**, activation de PowerShell Remoting pour le pilotage à distance). |
+
+La VM cible **Windows 11 IoT Enterprise LTSC 2024** en évaluation 90 jours,
+d'où la recréation facile prévue. Le détail du provisioning à distance (mise en
+place du watcher côté CCW, échange de tâches CCL↔CCW) relève de la **phase 2**
+et n'est pas encore documenté ici.
+
+---
+
+*Dernière mise à jour : 18 juillet 2026 — ajout du §16 « Agent Windows CCW » et du label `for-windows` (issue #146) : provisioning phase 1 de la VM Windows CCW (`provisioning/windows/creer_vm_ccw.py` + `autounattend.xml`) destinée aux builds .exe délégués par CCL ; l'agent CCW n'est pas encore opérationnel (phase 2 à venir). Précédemment — Bridge_Agent v1, 4 projets actifs. §3 « Créer une issue » : ajout de l'**envoi en lot** (issue #135) — coller plusieurs blocs `#Titre:` à la suite dans le même corps déclenche le mode lot (bouton « Envoyer le lot (N issues) »), chaque bloc étant envoyé en séquence comme une issue indépendante (avec ses `PROJET`/`TIMEOUT`/`MODELE` optionnels), sans validation intermédiaire, suivi d'un résumé listant le résultat de chacune. Ajout du projet `ecole` (AlainDelree/Ecole, ~/Ecole) aux tableaux §2 et §7 (issue #101). Section 15 « Chef + Specs MVC » : champ `SPECS` (pluriel, minuscules, combinable en une ligne) — correction du champ `SPEC` introduit par erreur (issue #97, suite #96).*

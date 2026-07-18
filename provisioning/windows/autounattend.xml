@@ -1,0 +1,237 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  autounattend.xml — Réponse d'installation Windows automatisée pour la VM CCW.
+  Provisioning phase 1, issue #146.
+
+  Cible : Windows 11 IoT Enterprise LTSC 2024 (évaluation 90 jours), installée
+  dans la VM VirtualBox « CCW-Build » créée par creer_vm_ccw.py (même dossier).
+
+  Objectif : installation SANS intervention clavier/souris —
+    * partitionnement automatique (GPT/UEFI, disque 0) ;
+    * saut des questions OOBE (confidentialité, région, réseau, Microsoft) ;
+    * création d'un compte administrateur LOCAL (PAS de compte Microsoft) ;
+    * activation de PowerShell Remoting en post-install pour permettre le
+      provisioning à distance depuis CCL en phase 2.
+
+  ============================ VALEURS À ADAPTER ============================
+  Avant utilisation, adapter les emplacements marqués « ADAPTER » :
+
+   * Nom d'utilisateur administrateur local :   ccw-admin   (voir <DisplayName>
+     et <Name>). Le changer partout de façon cohérente si besoin.
+
+   * MOT DE PASSE : NE JAMAIS committer de mot de passe en clair.
+     Le fichier utilise le PLACEHDER  ###MOT_DE_PASSE_A_REMPLACER###
+     (dans <AdministratorPassword> et <Password>). Le remplacer LOCALEMENT
+     juste avant de graver/monter le fichier, et NE PAS re-committer la version
+     renseignée. Astuce : garder une copie « autounattend.local.xml » ignorée
+     par git avec le vrai mot de passe.
+
+   * Fuseau / langue : ici en-US + fr-BE clavier ; adapter <TimeZone>,
+     <InputLocale>, <UserLocale> au besoin.
+
+   * Disque : InstallTo Disk 0 — vérifier que c'est bien le .vdi de la VM
+     (seul disque attaché par creer_vm_ccw.py, donc disque 0 par défaut).
+  ==========================================================================
+
+  Emplacement attendu : à la RACINE d'un média secondaire (clé USB virtuelle ou
+  petite ISO) lu par le programme d'installation. Windows Setup recherche
+  automatiquement un fichier nommé « autounattend.xml » sur les médias amovibles.
+-->
+<unattend xmlns="urn:schemas-microsoft-com:unattend"
+          xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
+
+  <!-- ============================================================= -->
+  <!-- 1. windowsPE : langue, partitionnement, cible d'installation  -->
+  <!-- ============================================================= -->
+  <settings pass="windowsPE">
+    <component name="Microsoft-Windows-International-Core-WinPE"
+               processorArchitecture="amd64"
+               publicKeyToken="31bf3856ad364e35"
+               language="neutral" versionScope="nonSxS">
+      <SetupUILanguage>
+        <UILanguage>en-US</UILanguage>
+      </SetupUILanguage>
+      <InputLocale>fr-BE</InputLocale>   <!-- ADAPTER : clavier -->
+      <SystemLocale>en-US</SystemLocale>
+      <UILanguage>en-US</UILanguage>
+      <UserLocale>fr-BE</UserLocale>     <!-- ADAPTER : formats régionaux -->
+    </component>
+
+    <component name="Microsoft-Windows-Setup"
+               processorArchitecture="amd64"
+               publicKeyToken="31bf3856ad364e35"
+               language="neutral" versionScope="nonSxS">
+
+      <!-- Partitionnement automatique GPT/UEFI sur le disque 0. -->
+      <DiskConfiguration>
+        <Disk wcm:action="add"
+              xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
+          <DiskID>0</DiskID>
+          <WillWipeDisk>true</WillWipeDisk>
+          <CreatePartitions>
+            <!-- Partition système EFI (100 Mo) -->
+            <CreatePartition wcm:action="add">
+              <Order>1</Order>
+              <Type>EFI</Type>
+              <Size>100</Size>
+            </CreatePartition>
+            <!-- Partition MSR (16 Mo) -->
+            <CreatePartition wcm:action="add">
+              <Order>2</Order>
+              <Type>MSR</Type>
+              <Size>16</Size>
+            </CreatePartition>
+            <!-- Partition Windows (reste du disque) -->
+            <CreatePartition wcm:action="add">
+              <Order>3</Order>
+              <Type>Primary</Type>
+              <Extend>true</Extend>
+            </CreatePartition>
+          </CreatePartitions>
+          <ModifyPartitions>
+            <ModifyPartition wcm:action="add">
+              <Order>1</Order>
+              <PartitionID>1</PartitionID>
+              <Format>FAT32</Format>
+              <Label>System</Label>
+            </ModifyPartition>
+            <ModifyPartition wcm:action="add">
+              <Order>2</Order>
+              <PartitionID>2</PartitionID>
+            </ModifyPartition>
+            <ModifyPartition wcm:action="add">
+              <Order>3</Order>
+              <PartitionID>3</PartitionID>
+              <Format>NTFS</Format>
+              <Label>Windows</Label>
+              <Letter>C</Letter>
+            </ModifyPartition>
+          </ModifyPartitions>
+        </Disk>
+      </DiskConfiguration>
+
+      <ImageInstall>
+        <OSImage>
+          <InstallTo>
+            <DiskID>0</DiskID>
+            <PartitionID>3</PartitionID>   <!-- partition Windows créée ci-dessus -->
+          </InstallTo>
+          <!-- Édition installée : doit correspondre à l'image WIM de l'ISO.
+               Pour LTSC IoT Enterprise, le nom d'image est typiquement
+               « Windows 11 IoT Enterprise LTSC ». ADAPTER si l'ISO diffère
+               (VBoxManage / dism /Get-WimInfo permet de lister les éditions). -->
+          <InstallFrom>
+            <MetaData wcm:action="add">
+              <Key>/IMAGE/NAME</Key>
+              <Value>Windows 11 IoT Enterprise LTSC</Value>
+            </MetaData>
+          </InstallFrom>
+        </OSImage>
+      </ImageInstall>
+
+      <UserData>
+        <!-- Édition d'évaluation : pas de clé produit. Accepte le CLUF. -->
+        <ProductKey>
+          <WillShowUI>OnError</WillShowUI>
+        </ProductKey>
+        <AcceptEula>true</AcceptEula>
+      </UserData>
+    </component>
+  </settings>
+
+  <!-- ============================================================= -->
+  <!-- 2. oobeSystem : compte LOCAL, saut des questions OOBE         -->
+  <!-- ============================================================= -->
+  <settings pass="oobeSystem">
+    <component name="Microsoft-Windows-Shell-Setup"
+               processorArchitecture="amd64"
+               publicKeyToken="31bf3856ad364e35"
+               language="neutral" versionScope="nonSxS">
+
+      <OOBE>
+        <HideEULAPage>true</HideEULAPage>
+        <HideLocalAccountScreen>true</HideLocalAccountScreen>
+        <HideOnlineAccountScreens>true</HideOnlineAccountScreens>   <!-- pas de compte Microsoft -->
+        <HideWirelessSetupInOOBE>true</HideWirelessSetupInOOBE>
+        <ProtectYourPC>3</ProtectYourPC>   <!-- désactive les questions de confidentialité -->
+        <SkipMachineOOBE>true</SkipMachineOOBE>
+        <SkipUserOOBE>true</SkipUserOOBE>
+      </OOBE>
+
+      <!-- Compte administrateur LOCAL (pas de compte Microsoft). -->
+      <UserAccounts>
+        <LocalAccounts>
+          <LocalAccount wcm:action="add"
+                        xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
+            <Name>ccw-admin</Name>                <!-- ADAPTER : nom d'utilisateur -->
+            <DisplayName>CCW Admin</DisplayName>  <!-- ADAPTER -->
+            <Group>Administrators</Group>
+            <Password>
+              <!-- ADAPTER — NE PAS committer en clair. Placeholder : -->
+              <Value>###MOT_DE_PASSE_A_REMPLACER###</Value>
+              <PlainText>true</PlainText>
+            </Password>
+          </LocalAccount>
+        </LocalAccounts>
+      </UserAccounts>
+
+      <!-- Fuseau horaire. ADAPTER au besoin (ex. « Romance Standard Time »). -->
+      <TimeZone>Romance Standard Time</TimeZone>
+
+      <!-- Auto-logon une seule fois pour laisser tourner les FirstLogonCommands. -->
+      <AutoLogon>
+        <Enabled>true</Enabled>
+        <LogonCount>1</LogonCount>
+        <Username>ccw-admin</Username>            <!-- ADAPTER : idem <Name> -->
+        <Password>
+          <Value>###MOT_DE_PASSE_A_REMPLACER###</Value>  <!-- ADAPTER — idem -->
+          <PlainText>true</PlainText>
+        </Password>
+      </AutoLogon>
+
+      <!-- Commandes post-install exécutées au premier ouverture de session. -->
+      <FirstLogonCommands>
+        <!-- Active PowerShell Remoting (WinRM) pour le provisioning phase 2. -->
+        <SynchronousCommand wcm:action="add"
+                            xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
+          <Order>1</Order>
+          <Description>Enable PowerShell Remoting</Description>
+          <CommandLine>powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "Enable-PSRemoting -Force"</CommandLine>
+        </SynchronousCommand>
+        <!-- Ouvre le pare-feu WinRM pour le profil « privé » (réseau NAT VBox). -->
+        <SynchronousCommand wcm:action="add"
+                            xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
+          <Order>2</Order>
+          <Description>Autoriser WinRM dans le pare-feu</Description>
+          <CommandLine>powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "Set-NetFirewallRule -Name WINRM-HTTP-In-TCP -RemoteAddress Any"</CommandLine>
+        </SynchronousCommand>
+      </FirstLogonCommands>
+
+      <RegisteredOwner>Alain</RegisteredOwner>       <!-- ADAPTER -->
+      <RegisteredOrganization>Bridge_Agent</RegisteredOrganization>
+    </component>
+
+    <component name="Microsoft-Windows-International-Core"
+               processorArchitecture="amd64"
+               publicKeyToken="31bf3856ad364e35"
+               language="neutral" versionScope="nonSxS">
+      <InputLocale>fr-BE</InputLocale>   <!-- ADAPTER -->
+      <SystemLocale>en-US</SystemLocale>
+      <UILanguage>en-US</UILanguage>
+      <UserLocale>fr-BE</UserLocale>     <!-- ADAPTER -->
+    </component>
+  </settings>
+
+  <!-- ============================================================= -->
+  <!-- 3. specialize : nom de machine, contourne exigence compte MS  -->
+  <!-- ============================================================= -->
+  <settings pass="specialize">
+    <component name="Microsoft-Windows-Shell-Setup"
+               processorArchitecture="amd64"
+               publicKeyToken="31bf3856ad364e35"
+               language="neutral" versionScope="nonSxS">
+      <ComputerName>CCW-BUILD</ComputerName>
+    </component>
+  </settings>
+
+</unattend>
