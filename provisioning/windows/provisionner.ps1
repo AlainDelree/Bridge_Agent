@@ -1,4 +1,4 @@
-<#
+﻿<#
   provisionner.ps1 — Provisioning LOGICIEL de la VM Windows CCW (phase 2, issue #147).
 
   Ce script s'exécute DANS la VM « CCW-Build » (créée en phase 1, issue #146),
