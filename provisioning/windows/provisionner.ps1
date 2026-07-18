@@ -44,8 +44,11 @@ param(
     # Dépôt cloné (lecture seule).
     [string]$Depot = 'AlainDelree/Bridge_Agent',
     # Lettre du lecteur réseau où VirtualBox automonte le partage CCW_Share
-    # (phase 1 : sharedfolder add … --automount). Adapter si VBox choisit
-    # une autre lettre ; \\VBOXSVR\CCW_Share reste le chemin UNC de repli.
+    # (phase 1 : sharedfolder add … --automount). Conservé pour
+    # référence/documentation UNIQUEMENT : REP_TRAVAIL n'utilise PLUS cette
+    # lettre mais le chemin UNC \\VBOXSVR\CCW_Share, seul accessible depuis
+    # LocalSystem (issue #149, suite #148). Les lecteurs automontés en session
+    # interactive ne sont pas visibles pour le service tournant sous LocalSystem.
     [string]$LettrePartage = 'E:'
 )
 
@@ -111,15 +114,21 @@ if (Test-Path (Join-Path $RepDepot '.git')) {
 
 # ---------------------------------------------------------------------------
 # 5. Écriture de configs\ccw.conf.
-#    REP_TRAVAIL pointe vers le partage CCW_Share automonté (phase 1).
+#    REP_TRAVAIL pointe vers le partage CCW_Share via son chemin UNC
+#    \\VBOXSVR\CCW_Share (accessible depuis LocalSystem, contrairement au
+#    lecteur automonté en session interactive — issue #149).
 #    TOPIC_NTFY est un placeholder à renseigner (comme le mot de passe phase 1).
 # ---------------------------------------------------------------------------
 $RepConfigs = Join-Path $RepDepot 'configs'
 if (-not (Test-Path $RepConfigs)) { New-Item -ItemType Directory -Path $RepConfigs | Out-Null }
 $CheminConf = Join-Path $RepConfigs 'ccw.conf'
 
-# Chemin du répertoire de travail partagé hôte<->invité (lecteur automonté).
-$RepTravail = "$LettrePartage\Bridge_Agent_CCW_Share"
+# Chemin du répertoire de travail partagé hôte<->invité. On utilise le chemin
+# UNC direct du partage VirtualBox (NOM_PARTAGE = "CCW_Share" en phase 1,
+# creer_vm_ccw.py) plutôt que la lettre $LettrePartage : le service CCW-Watcher
+# tourne sous LocalSystem (issue #148), qui ne voit pas les lecteurs réseau
+# automontés en session interactive. \\VBOXSVR\<partage> reste, lui, accessible.
+$RepTravail = "\\VBOXSVR\CCW_Share"
 
 $contenuConf = @"
 # configs/ccw.conf — Config du watcher pour l'agent Claude Code Windows (CCW).
@@ -129,8 +138,9 @@ $contenuConf = @"
 NOM         = ccw
 DEPOT       = $Depot
 LABEL       = for-windows
-# REP_TRAVAIL : dossier partagé CCW_Share automonté par VirtualBox (phase 1).
-# Adapter la lettre si VBox monte le partage ailleurs (\\VBOXSVR\CCW_Share).
+# REP_TRAVAIL : partage CCW_Share (phase 1), via son chemin UNC \\VBOXSVR\CCW_Share.
+# Chemin UNC choisi car le service CCW-Watcher tourne sous LocalSystem (issue #148),
+# qui n'a pas accès aux lecteurs réseau automontés en session interactive.
 REP_TRAVAIL = $RepTravail
 
 # ─── ntfy ─────────────────────────────────────────────────────────────────────
