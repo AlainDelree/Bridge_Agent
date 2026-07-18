@@ -4,20 +4,21 @@
   Ce script s'exécute DANS la VM « CCW-Build » (créée en phase 1, issue #146),
   soit au premier logon, soit manuellement dans une console PowerShell élevée.
   Il installe l'outillage nécessaire à l'agent Claude Code Windows (CCW) puis
-  met en place la tâche planifiée qui lancera le watcher au démarrage.
+  met en place le service Windows (NSSM) qui lancera le watcher au démarrage.
 
   Il est POUSSÉ et EXÉCUTÉ à distance depuis CCL par lancer_provisioning.py
   (VBoxManage guestcontrol) — mais reste utilisable seul.
 
   Ce qu'il fait :
-    1. installe via winget : Git, GitHub CLI (gh), Python 3 ;
+    1. installe via winget : Git, GitHub CLI (gh), Python 3, NSSM ;
     2. installe pyinstaller (pip) — requis pour les builds .exe délégués ;
     3. installe Claude Code via l'installeur natif officiel (pas de Node.js) :
          irm https://claude.ai/install.ps1 | iex
     4. clone AlainDelree/Bridge_Agent (lecture seule) dans C:\CCW\Bridge_Agent ;
     5. écrit configs\ccw.conf (LABEL=for-windows, NOM=ccw, …) ;
-    6. enregistre une tâche planifiée qui lance le watcher à l'ouverture de
-       session, avec redémarrage automatique en cas d'échec.
+    6. enregistre un vrai service Windows (via NSSM) qui lance le watcher au
+       démarrage de la machine (sans session ouverte), avec redémarrage
+       automatique en cas d'échec.
 
   ┌─────────────────────────────────────────────────────────────────────────┐
   │ AUTHENTIFICATION CLAUDE — NE PAS committer de clé API.                    │
@@ -31,7 +32,7 @@
   └─────────────────────────────────────────────────────────────────────────┘
 
   Idempotent : relançable sans dommage (winget saute ce qui est déjà installé,
-  le clone est mis à jour par pull, la tâche planifiée est ré-enregistrée).
+  le clone est mis à jour par pull, le service est arrêté/supprimé puis recréé).
 
   Prérequis : Windows 11 (winget présent), exécution en administrateur.
 #>
@@ -76,6 +77,7 @@ if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
 Installer-Winget 'Git.Git'            'Git'
 Installer-Winget 'GitHub.cli'         'GitHub CLI (gh)'
 Installer-Winget 'Python.Python.3.12' 'Python 3'
+Installer-Winget 'NSSM.NSSM'          'NSSM'
 
 # Rafraîchir le PATH de la session pour voir git/gh/python fraîchement installés.
 $env:Path = [System.Environment]::GetEnvironmentVariable('Path', 'Machine') + ';' +
@@ -150,51 +152,47 @@ Info "Écriture de $CheminConf…"
 [System.IO.File]::WriteAllText($CheminConf, $contenuConf, (New-Object System.Text.UTF8Encoding($false)))
 
 # ---------------------------------------------------------------------------
-# 6. Tâche planifiée : lance le watcher à l'ouverture de session, avec
-#    redémarrage automatique en cas d'échec.
+# 6. Service Windows (NSSM) : lance le watcher au démarrage de la machine
+#    (sans session ouverte), avec redémarrage automatique en cas d'échec.
 #
-#    ⚠️ LIMITE vs systemd Restart=always (§13) : Task Scheduler ne propose PAS
-#    de relance infinie native. On approche le comportement avec les paramètres
-#    de répétition en cas d'échec (RestartCount / RestartInterval) : ici 999
-#    tentatives espacées d'1 minute — soit ~16 h de résilience, PAS l'infini.
+#    ✅ Équivalent DIRECT des services systemd --user du §13 : démarrage au
+#    boot sans session (SERVICE_AUTO_START), redémarrage automatique sur échec
+#    (AppExit Default Restart + AppRestartDelay), et exécution sous LocalSystem
+#    sans avoir à stocker les identifiants ccw-admin. NSSM remplace l'ancienne
+#    tâche planifiée -AtLogOn, qui ne redémarrait pas au boot sans session.
 #    Le watcher lui-même reste la première ligne de robustesse (boucle interne).
 # ---------------------------------------------------------------------------
-$NomTache  = 'CCW-Watcher'
-$pythonExe = (Get-Command python -ErrorAction SilentlyContinue).Source
+$NomService = 'CCW-Watcher'
+$pythonExe  = (Get-Command python -ErrorAction SilentlyContinue).Source
 if (-not $pythonExe) { $pythonExe = 'python' }
 
-Info "Enregistrement de la tâche planifiée « $NomTache »…"
+# Fichier de log dédié au service (stdout/stderr capturés par NSSM).
+$RepLogs = Join-Path $RepDepot 'logs'
+if (-not (Test-Path $RepLogs)) { New-Item -ItemType Directory -Path $RepLogs | Out-Null }
+$LogService = Join-Path $RepLogs 'ccw-service.log'
 
-$action = New-ScheduledTaskAction `
-    -Execute $pythonExe `
-    -Argument 'watcher.py --config configs\ccw.conf' `
-    -WorkingDirectory $RepDepot
+# Idempotence : si le service existe déjà, l'arrêter puis le supprimer avant
+# de le recréer (script relançable sans erreur).
+$svcExistant = Get-Service -Name $NomService -ErrorAction SilentlyContinue
+if ($svcExistant) {
+    Info "Service « $NomService » déjà présent — arrêt puis suppression avant recréation…"
+    nssm stop   $NomService | Out-Null
+    nssm remove $NomService confirm | Out-Null
+}
 
-# Déclencheur : à l'ouverture de session de l'utilisateur courant.
-$trigger = New-ScheduledTaskTrigger -AtLogOn
+Info "Enregistrement du service Windows « $NomService » (NSSM)…"
 
-# Paramètres : relance en cas d'échec (approximation de Restart=always).
-$settings = New-ScheduledTaskSettingsSet `
-    -RestartCount 999 `
-    -RestartInterval (New-TimeSpan -Minutes 1) `
-    -ExecutionTimeLimit (New-TimeSpan -Hours 0) `
-    -AllowStartIfOnBatteries `
-    -DontStopIfGoingOnBatteries `
-    -StartWhenAvailable
+nssm install $NomService $pythonExe 'watcher.py --config configs\ccw.conf'
+nssm set $NomService AppDirectory     $RepDepot
+nssm set $NomService Start            SERVICE_AUTO_START
+nssm set $NomService AppExit Default  Restart
+nssm set $NomService AppRestartDelay  5000
+# Rediriger stdout/stderr du service vers un fichier de log dédié.
+nssm set $NomService AppStdout        $LogService
+nssm set $NomService AppStderr        $LogService
 
-# S'exécute sous l'utilisateur connecté (ccw-admin), au plus haut niveau.
-$principal = New-ScheduledTaskPrincipal `
-    -UserId "$env:USERDOMAIN\$env:USERNAME" `
-    -LogonType Interactive `
-    -RunLevel Highest
-
-Register-ScheduledTask `
-    -TaskName $NomTache `
-    -Action $action `
-    -Trigger $trigger `
-    -Settings $settings `
-    -Principal $principal `
-    -Force | Out-Null
+# Démarrer immédiatement (le service repartira ensuite seul à chaque boot).
+nssm start $NomService | Out-Null
 
 # ---------------------------------------------------------------------------
 # Fin.
@@ -206,4 +204,4 @@ Info '  • headless : setx ANTHROPIC_API_KEY "sk-ant-…"  (NE PAS committer)'
 Info '  • interactif : claude auth login'
 Info ''
 Info "RAPPEL — renseigner TOPIC_NTFY dans $CheminConf (placeholder actuel)."
-Info "La tâche « $NomTache » lancera le watcher à la prochaine ouverture de session."
+Info "Le service « $NomService » lance le watcher au démarrage (vérif : nssm status $NomService / Get-Service $NomService)."
