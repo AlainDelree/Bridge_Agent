@@ -49,6 +49,20 @@ python3 new_issue.py --externe
 # → login mot de passe requis
 ```
 
+**Lancement supervisé avec log (recommandé, issue #150) :** le wrapper
+`lancer_new_issue.sh` fait exactement la même chose que `python3 new_issue.py`
+(mêmes arguments) mais horodate le démarrage/arrêt/code de sortie et capture
+stdout+stderr dans `logs/new_issue.log` (rotation par taille, comme les
+watchers) — utile pour diagnostiquer un plantage silencieux. La sortie reste
+affichée dans le terminal (`tee`). `python3 new_issue.py` reste valable et
+inchangé.
+
+```bash
+./lancer_new_issue.sh                 # mode local, avec log
+./lancer_new_issue.sh --externe       # mode externe, avec log
+# Après un plantage : voir les dernières lignes de logs/new_issue.log
+```
+
 **Format du corps pour copier-coller depuis Claude Chat :**
 
 La première ligne du corps peut contenir `#Titre:` — new_issue.py détecte
