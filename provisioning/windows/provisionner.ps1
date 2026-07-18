@@ -34,7 +34,9 @@
   Idempotent : relançable sans dommage (winget saute ce qui est déjà installé,
   le clone est mis à jour par pull, le service est arrêté/supprimé puis recréé).
 
-  Prérequis : Windows 11 (winget présent), exécution en administrateur.
+  Prérequis : Windows 11, exécution en administrateur. winget (App Installer)
+  est bootstrappé automatiquement s'il est absent — cas des éditions LTSC/IoT
+  sans Microsoft Store, comme la VM CCW-Build (issue #152).
 #>
 
 [CmdletBinding()]
@@ -73,8 +75,133 @@ function Installer-Winget($id, $nom) {
     }
 }
 
+# ---------------------------------------------------------------------------
+# 1bis. Bootstrap de winget (App Installer) — NÉCESSAIRE sur Windows *LTSC / IoT*.
+#
+#   Les éditions LTSC / IoT Enterprise (comme la VM CCW-Build : Windows 11 IoT
+#   Enterprise LTSC 2024) EXCLUENT délibérément le Microsoft Store. Or winget
+#   (fourni par le paquet « App Installer » = Microsoft.DesktopAppInstaller)
+#   dépend normalement du Store pour son installation et ses mises à jour
+#   automatiques. Sur ces éditions, winget est donc ABSENT au départ : il faut
+#   le déployer manuellement (msixbundle + licence) AVANT de l'utiliser pour
+#   Git/gh/Python/NSSM. C'est ce que fait cette fonction (idempotente : si winget
+#   est déjà là, elle ne fait rien — cas d'un Windows 11 « standard »).
+#
+#   Doc Microsoft Learn officielle sur winget :
+#     https://learn.microsoft.com/windows/package-manager/winget/
+#   Installation de winget sur les éditions sans Store (sideload App Installer) :
+#     https://learn.microsoft.com/windows/package-manager/winget/#install-winget-on-windows-sandbox
+#     https://learn.microsoft.com/windows/package-manager/winget/#install-winget-on-windows-server-and-non-store-editions
+# ---------------------------------------------------------------------------
+function Bootstrap-Winget {
+    # (1) Déjà disponible ? Ne rien faire (Windows 11 standard, ou relance).
+    if (Get-Command winget -ErrorAction SilentlyContinue) {
+        Info 'winget déjà présent — bootstrap non nécessaire.'
+        return
+    }
+
+    Info 'winget absent (édition LTSC/IoT sans Store) — bootstrap manuel de App Installer…'
+
+    # GitHub sert le release en HTTPS/TLS 1.2 ; PowerShell 5.1 ne le négocie pas
+    # toujours par défaut. On le force pour éviter un échec TLS opaque.
+    try {
+        [Net.ServicePointManager]::SecurityProtocol = `
+            [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+    } catch {
+        Avert "Impossible de forcer TLS 1.2 ($($_.Exception.Message)) — on tente quand même."
+    }
+
+    # Dossier temporaire dédié (nettoyé en fin de fonction).
+    $tmp = Join-Path $env:TEMP ('winget-bootstrap-' + [Guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Path $tmp -Force | Out-Null
+
+    $msixUrl    = 'https://github.com/microsoft/winget-cli/releases/latest/download/Microsoft.DesktopAppInstaller_8wekyb3d8bbwe.msixbundle'
+    $msixPath   = Join-Path $tmp 'Microsoft.DesktopAppInstaller_8wekyb3d8bbwe.msixbundle'
+    $licenseUrl = $null
+    $licensePath = $null
+
+    try {
+        # (2a) Résoudre le nom EXACT du fichier de licence. L'URL "latest/download"
+        #      du msixbundle est stable, mais le fichier de licence associé porte
+        #      un nom versionné (ex. « <id>_License1.xml ») qui change à chaque
+        #      release. On interroge donc l'API GitHub releases/latest (JSON) pour
+        #      lister les assets de CETTE release et repérer le .xml de licence.
+        #      NB : l'API GitHub exige un en-tête User-Agent.
+        Info 'Résolution de la licence App Installer via l''API GitHub releases/latest…'
+        $apiUrl = 'https://api.github.com/repos/microsoft/winget-cli/releases/latest'
+        $release = Invoke-RestMethod -Uri $apiUrl -Headers @{ 'User-Agent' = 'CCW-provisionner' } `
+                                     -UseBasicParsing
+        $licenseAsset = $release.assets |
+            Where-Object { $_.name -like '*License*.xml' -or $_.name -like '*_License*.xml' } |
+            Select-Object -First 1
+        if (-not $licenseAsset) {
+            # Repli : n'importe quel .xml de la release (la licence est le seul .xml publié).
+            $licenseAsset = $release.assets | Where-Object { $_.name -like '*.xml' } | Select-Object -First 1
+        }
+        if (-not $licenseAsset) {
+            throw "aucun fichier de licence (.xml) trouvé dans les assets de la release winget-cli."
+        }
+        $licenseUrl  = $licenseAsset.browser_download_url
+        $licensePath = Join-Path $tmp $licenseAsset.name
+        Info "Licence détectée : $($licenseAsset.name)"
+
+        # (2b) Téléchargements (msixbundle + licence).
+        Info 'Téléchargement du msixbundle App Installer (dernière version)…'
+        Invoke-WebRequest -Uri $msixUrl -OutFile $msixPath -UseBasicParsing
+        Info 'Téléchargement du fichier de licence…'
+        Invoke-WebRequest -Uri $licenseUrl -OutFile $licensePath -UseBasicParsing
+    } catch {
+        # (6) Erreur réseau (VM en NAT : accès sortant requis) — message clair,
+        #     pas de stacktrace brut.
+        throw ("Bootstrap winget échoué au TÉLÉCHARGEMENT : $($_.Exception.Message). " +
+               "La VM doit avoir un accès Internet sortant (NAT). " +
+               "Voir https://learn.microsoft.com/windows/package-manager/winget/ pour un dépannage manuel.")
+    }
+
+    # (3) Installation hors-ligne du paquet provisionné (Store non requis).
+    try {
+        Info 'Installation de App Installer (Add-AppxProvisionedPackage -Online)…'
+        Add-AppxProvisionedPackage -Online -PackagePath $msixPath -LicensePath $licensePath | Out-Null
+    } catch {
+        Avert "Add-AppxProvisionedPackage a échoué ($($_.Exception.Message)) — tentative d'enregistrement direct ensuite."
+    }
+
+    # (4) Rafraîchir le PATH (idem bloc winget existant) puis re-vérifier.
+    $env:Path = [System.Environment]::GetEnvironmentVariable('Path', 'Machine') + ';' +
+                [System.Environment]::GetEnvironmentVariable('Path', 'User')
+
+    if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
+        # 2e tentative : enregistrer le paquet pour l'utilisateur courant.
+        try {
+            Avert 'winget toujours absent après provisionnement — tentative Add-AppxPackage -RegisterByFamilyName…'
+            Add-AppxPackage -RegisterByFamilyName -MainPackage 'Microsoft.DesktopAppInstaller_8wekyb3d8bbwe'
+        } catch {
+            Avert "Add-AppxPackage -RegisterByFamilyName a échoué : $($_.Exception.Message)."
+        }
+        $env:Path = [System.Environment]::GetEnvironmentVariable('Path', 'Machine') + ';' +
+                    [System.Environment]::GetEnvironmentVariable('Path', 'User')
+    }
+
+    # Nettoyage du dossier temporaire (best-effort).
+    Remove-Item -Path $tmp -Recurse -Force -ErrorAction SilentlyContinue
+
+    # (5) Échec définitif : erreur claire, DISTINCTE de l'ancien « winget introuvable ».
+    if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
+        throw ("Bootstrap winget échoué APRÈS téléchargement + enregistrement " +
+               "(Add-AppxProvisionedPackage puis Add-AppxPackage -RegisterByFamilyName). " +
+               "winget reste introuvable. Dépannage manuel : " +
+               "https://learn.microsoft.com/windows/package-manager/winget/")
+    }
+
+    Info 'Bootstrap winget réussi — App Installer déployé.'
+}
+
+# Bootstrap AVANT le premier Installer-Winget : sur LTSC/IoT (VM CCW-Build) le
+# Store est absent, winget n'est donc pas fourni d'office (issue #152, suite #151).
+Bootstrap-Winget
+
 if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
-    throw "winget introuvable : Windows 11 attendu (App Installer). Abandon."
+    throw "winget introuvable malgré le bootstrap : App Installer indisponible. Abandon."
 }
 
 Installer-Winget 'Git.Git'            'Git'
