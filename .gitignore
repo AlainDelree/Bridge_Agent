@@ -6,3 +6,6 @@ __pycache__/
 venv/
 Notes_Perso.md
 ssl/
+# Copie locale d'autounattend.xml avec le vrai mot de passe (placeholder
+# remplacé) — ne doit JAMAIS être committée. Cf. en-tête d'autounattend.xml.
+provisioning/windows/autounattend.local.xml
