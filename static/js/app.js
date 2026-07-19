@@ -587,7 +587,8 @@ function rendreListeIssues(reset) {
     // Case à cocher libre (issue #154) : repère visuel personnel d'Alain, SANS
     // aucune signification métier. État persisté côté navigateur uniquement
     // (localStorage), jamais envoyé au serveur. On lit l'état mémorisé pour
-    // pré-cocher la case et griser la ligne dès le rendu.
+    // pré-cocher la case et marquer la ligne « traitée » dès le rendu (texte
+    // grisé + fond pâle, badges colorés préservés — voir .resultat-traite, #155).
     const dejaCoche = estResultatCoche(it.projet, numero);
     if (dejaCoche) ligne.classList.add('resultat-traite');
     // TYPE de l'issue (pattern chef/ouvriers, issue #86) porté en dataset :

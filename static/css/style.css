@@ -111,7 +111,10 @@ button.danger:hover{background:#f8d7da}
    rendu, contrairement à <option> que Firefox refuse de colorier. Les couleurs
    de survol/sélection sont portées par --bg-hover/--bg-sel, posées en inline sur
    chaque ligne pour être propres à son projet. */
-.liste-issues{max-height:280px;overflow-y:auto;border:1px solid #e0dfda;
+/* max-height relevé de 280→300px (issue #155) : compense le padding vertical
+   accru des lignes pour conserver à peu près le même nombre de lignes visibles
+   d'un coup d'œil malgré l'aération supplémentaire. */
+.liste-issues{max-height:300px;overflow-y:auto;border:1px solid #e0dfda;
   border-radius:6px;margin-bottom:6px;background:#fff}
 /* Colonne titre redimensionnée (issue #95) : dès qu'une largeur est mémorisée,
    la liste peut défiler horizontalement pour révéler la colonne titre élargie. */
@@ -126,18 +129,30 @@ button.danger:hover{background:#f8d7da}
 /* Indicateur discret de rafraîchissement en arrière-plan (cache localStorage). */
 .maj-indicateur{font-size:11px;color:#9a978f;font-style:italic;
   margin:0 2px;user-select:none}
-.ligne-issue{display:flex;align-items:center;gap:9px;padding:7px 11px;cursor:pointer;
-  font-size:13px;line-height:1.4;border-bottom:1px solid #f0efea;transition:background .12s}
+/* Confort de lecture (issue #155) : un peu plus de padding vertical (aération
+   entre lignes) et horizontal (on profite de la marge disponible à gauche/droite)
+   sans casser la densité. Le titre lui-même est légèrement agrandi via
+   .ligne-texte plus bas. */
+.ligne-issue{display:flex;align-items:center;gap:9px;padding:9px 14px;cursor:pointer;
+  font-size:13px;line-height:1.45;border-bottom:1px solid #f0efea;transition:background .12s}
 .ligne-issue:last-child{border-bottom:none}
 /* Case à cocher libre par résultat (issue #154) : repère visuel personnel, sans
    logique métier. Petite case tout à gauche de la ligne, curseur pointeur, ne
    rétrécit pas. L'état est persisté côté navigateur (localStorage). */
 .ligne-issue .coche-resultat{flex-shrink:0;margin:0;cursor:pointer}
-/* Résultat marqué comme traité/lu : ligne légèrement atténuée pour repérer d'un
-   coup d'œil ce qui est déjà traité. Le survol/sélection restent prioritaires. */
-.ligne-issue.resultat-traite{opacity:.5}
-.ligne-issue.resultat-traite:hover{opacity:.75}
+/* Résultat marqué comme traité/lu (issue #154, révisé #155) : l'ancienne règle
+   opacity:.5 délavait TOUTE la ligne, badges colorés compris (projet turquoise,
+   Diff/All, pastille), les rendant illisibles. On n'atténue désormais QUE le
+   TEXTE (titre + horodatage) via une couleur grisée directe et on pose un fond
+   très pâle comme repère « traité ». Les badges colorés gardent leur opacité
+   pleine. Le survol/sélection restent prioritaires (fond porté plus bas) et le
+   titre y redevient bien lisible. */
+.ligne-issue.resultat-traite{background:#faf8f3}
+.ligne-issue.resultat-traite .ligne-texte{color:#a5a29a}
+.ligne-issue.resultat-traite .ligne-date{color:#c2c0b8 !important}
 .ligne-issue:hover{background:var(--bg-hover)}
+.ligne-issue.resultat-traite:hover .ligne-texte{color:#444}
+.ligne-issue.resultat-traite.selectionnee .ligne-texte{color:#2a2a28}
 .ligne-issue.selectionnee{background:var(--bg-sel);font-weight:600}
 .ligne-issue.selectionnee:hover{background:var(--bg-sel)}
 .ligne-issue .ligne-gauche{display:inline-flex;align-items:center;gap:6px;flex-shrink:0}
@@ -162,8 +177,11 @@ button.danger:hover{background:#f8d7da}
 .ligne-issue .poignee-titre{flex-shrink:0;align-self:stretch;width:5px;margin:0 -2px;
   cursor:col-resize;border-left:2px solid transparent}
 .ligne-issue .poignee-titre:hover{border-left-color:#bbb}
+/* Colonne titre : flex:1 lui fait déjà occuper tout l'espace restant avant de
+   tronquer (…). Titre légèrement agrandi (issue #155) pour le confort de lecture,
+   la troncature ne survenant donc qu'une fois la place réellement épuisée. */
 .ligne-issue .ligne-texte{flex:1;min-width:0;overflow:hidden;
-  text-overflow:ellipsis;white-space:nowrap}
+  text-overflow:ellipsis;white-space:nowrap;font-size:14px}
 /* Largeur fixe de la colonne titre quand l'utilisateur l'a redimensionnée : la
    colonne prend --largeur-titre (posée en JS), ne s'étire plus (flex:0 0), et
    la liste défile horizontalement au besoin. Les autres colonnes restent fixes. */
