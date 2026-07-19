@@ -2095,6 +2095,48 @@ function afficherModalErreur(titre, message) {
   });
 }
 
+// Modale d'avertissement « watcher inactif » (issue #171). Réutilise l'overlay
+// #modal-confirmation comme afficherModalIncoherence, mais ajoute à la volée un
+// TROISIÈME bouton « Lancer le watcher puis envoyer » (le template n'en a que
+// deux) — retiré à la fermeture, comme les libellés d'origine sont restaurés.
+// Résout : 'annuler' (ne rien envoyer), 'envoyer' (envoyer quand même) ou
+// 'lancer' (démarrer le watcher puis poursuivre l'envoi côté appelant).
+function afficherModalWatcherInactif(nom) {
+  return new Promise(resolve => {
+    const overlay = document.getElementById('modal-confirmation');
+    const liste   = document.getElementById('modal-liste');
+    const btnOui  = document.getElementById('modal-oui');
+    const btnNon  = document.getElementById('modal-non');
+    const boutons = btnOui.parentElement;
+    const ouiAvant = btnOui.textContent;
+    const nonAvant = btnNon.textContent;
+    document.getElementById('modal-titre').textContent = '⚠️ Watcher inactif';
+    liste.style.display = '';
+    liste.innerHTML =
+      'Le watcher du projet « <b>' + escapeHtml(nom) + '</b> » n\'est pas actif.'
+      + '<br><br>L\'issue sera créée mais ne sera traitée que lorsque le watcher '
+      + 'sera lancé.';
+    btnOui.textContent = 'Envoyer quand même';
+    btnNon.textContent = 'Annuler';
+    // Troisième bouton, créé dynamiquement puis retiré à la fermeture.
+    const btnLancer = document.createElement('button');
+    btnLancer.textContent = 'Lancer le watcher puis envoyer';
+    boutons.insertBefore(btnLancer, btnOui);
+    function fermer(reponse) {
+      overlay.classList.remove('actif');
+      btnOui.onclick = null; btnNon.onclick = null; btnLancer.onclick = null;
+      btnOui.textContent = ouiAvant;
+      btnNon.textContent = nonAvant;
+      btnLancer.remove();
+      resolve(reponse);
+    }
+    btnNon.onclick    = () => fermer('annuler');
+    btnOui.onclick    = () => fermer('envoyer');
+    btnLancer.onclick = () => fermer('lancer');
+    overlay.classList.add('actif');
+  });
+}
+
 async function envoyerIssue() {
   cacherRetours();
   const data = collecterFormulaire();
@@ -2128,6 +2170,24 @@ async function envoyerIssue() {
     }
   } catch(e) {
     // La détection a échoué : on n'empêche pas l'envoi.
+  }
+
+  // Garde-fou (issue #171) : avertit si le watcher du projet ciblé est inactif.
+  // Sans watcher, l'issue est bien créée mais reste en attente jusqu'au prochain
+  // démarrage — autant le signaler avant l'envoi. On réutilise /statut/<projet>
+  // (même route que verifierStatut()). Même philosophie défensive que les autres
+  // gardes-fous : un échec de vérification (réseau…) ne bloque jamais l'envoi.
+  try {
+    const repStatut = await fetch('/statut/' + encodeURIComponent(data.projet));
+    const statut    = await repStatut.json();
+    if (statut && statut.actif === false) {
+      const choix = await afficherModalWatcherInactif(data.projet);
+      if (choix === 'annuler') return;          // l'utilisateur a annulé l'envoi
+      if (choix === 'lancer') await lancerWatcher();  // démarre puis poursuit
+      // 'envoyer' → on poursuit sans rien lancer
+    }
+  } catch(e) {
+    // La vérification a échoué (réseau, etc.) : on n'empêche pas l'envoi.
   }
 
   const btn = document.getElementById('btn-envoyer');
