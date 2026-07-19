@@ -2399,7 +2399,7 @@ document.getElementById('corps').addEventListener('input', detecterTimeoutDansCo
 //     qui reste pilotée par detecterIncoherenceProjet à l'envoi.
 const CHAMPS_ENTETE_RESUME = [
   'PROJET', 'PRIORITE', 'TIMEOUT', 'MODELE',
-  'TYPE', 'SPECS', 'SUITE_DE', 'FICHIER_CONTEXTE',
+  'TYPE', 'SPECS', 'SUITE_DE', 'FICHIER_CONTEXTE', 'LABELS',
 ];
 function mettreAJourResumeEntete() {
   const corps = document.getElementById('corps').value;

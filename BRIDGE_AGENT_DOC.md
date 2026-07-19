@@ -81,14 +81,34 @@ Description précise. Indiquer explicitement si LECTURE SEULE.
 Ce que CCL doit produire ou confirmer.
 ```
 
+**Champs d'en-tête optionnels reconnus (`PROJET`, `TIMEOUT`, `MODELE`, `LABELS`) :**
+au même titre que `PROJET`/`TIMEOUT`/`MODELE`, `new_issue.py` reconnaît un champ
+`| LABELS | … |` dans l'en-tête du corps collé. Sa valeur est une liste de
+labels séparés par des virgules (les espaces superflus autour de chacun sont
+ignorés) qui **s'ajoutent** aux labels standards posés automatiquement (`bridge`,
+`for-linux`, `mode_write` selon le MODE, notifications) — ils ne les remplacent
+pas. Cas d'usage concret : `| LABELS | for-windows |` pour créer, depuis le flux
+web habituel, une issue destinée à l'agent Windows CCW (label `for-windows`, cf.
+§16) sans repasser par `gh issue create` en ligne de commande. Plusieurs labels
+sont possibles : `| LABELS | for-windows,urgent |`. Aucun contrôle d'existence du
+label n'est fait ici : si le label n'existe pas sur le dépôt, `gh issue create`
+échoue avec un message clair. En mode lot, chaque bloc `#Titre:` peut porter ses
+propres `LABELS`.
+
+> ⚠️ `for-windows` **n'enlève pas** `for-linux` : une issue `| LABELS |
+> for-windows |` créée par ce flux portera *les deux* labels et sera donc vue à
+> la fois par le watcher CCL et par CCW. Pour une issue purement Windows, retirer
+> `for-linux` manuellement sur GitHub après création (ou passer par `gh issue
+> create --label "bridge,for-windows"`, cf. §16).
+
 **Envoi en lot (plusieurs issues d'un seul copier-coller) — issue #135 :**
 coller *plusieurs* blocs `#Titre:` à la suite dans le même corps déclenche
 automatiquement le **mode lot** : le bouton d'envoi devient
 « Envoyer le lot (N issues) ». Chaque bloc va de son `#Titre:` jusqu'au
 `#Titre:` suivant et est traité comme une issue indépendante, avec ses propres
-champs d'en-tête optionnels (`PROJET`, `TIMEOUT`, `MODELE`) — à défaut, les
-valeurs du formulaire (projet sélectionné, timeout, modèle) s'appliquent en
-repli. Le `MODE` (lecture/écriture) et les notifications sont communs à tout le
+champs d'en-tête optionnels (`PROJET`, `TIMEOUT`, `MODELE`, `LABELS`) — à défaut,
+les valeurs du formulaire (projet sélectionné, timeout, modèle) s'appliquent en
+repli (le champ `LABELS`, lui, est propre à chaque bloc : sans fallback). Le `MODE` (lecture/écriture) et les notifications sont communs à tout le
 lot. Les issues partent **en séquence** (une à la fois, jamais en parallèle),
 **sans validation intermédiaire** (aucune modale « issues en attente » ni
 d'incohérence projet) : un bloc dont le `PROJET` diffère du projet sélectionné
@@ -175,6 +195,10 @@ Format dans le corps :
 > ⚠️ **Claude Chat doit toujours inclure** `| PROJET | <nom> |` dans l'en-tête
 > des issues qu'il génère, avec le nom exact du projet cible
 > (`bridge_agent`, `alchess`, `ff_galerie`).
+
+> ℹ️ Le champ `| LABELS | … |` (issue #161) n'est **pas** lu par le watcher :
+> il est consommé par `new_issue.py` au moment de la création pour ajouter des
+> labels supplémentaires (ex. `for-windows`) à ceux posés d'office. Voir §3.
 
 ---
 

@@ -43,6 +43,30 @@ SEUIL_ESTIM_SUR     = 15   # au-dessus : « sûr » (vert) ; entre les deux : «
 
 # ─── Construction du body et des labels ───────────────────────────────────────
 
+# Lecture d'un champ d'en-tête « | LABELS | a,b,c | » dans le corps collé (issue
+# #161). Miroir Python de lireChampEntete (static/js/app.js) : mot-clé insensible
+# à la casse, ancré en début de ligne, la valeur étant la cellule entre le 2e et
+# le 3e « | ». On garde la MÊME logique que le parsing d'en-tête côté formulaire
+# pour éviter toute divergence de regex.
+LABELS_ENTETE_RE = re.compile(r"^\s*\|\s*LABELS\s*\|([^|]*)\|", re.IGNORECASE | re.MULTILINE)
+
+
+def _parser_labels_entete(corps: str) -> list:
+    """Labels supplémentaires lus dans le champ d'en-tête optionnel
+    « | LABELS | for-windows,urgent | » du corps collé (issue #161).
+
+    Retourne la liste des labels non vides, chacun débarrassé de ses espaces
+    superflus (trim) ; liste vide si le champ est absent. Validation minimale :
+    les entrées vides ou uniquement espaces sont ignorées silencieusement et on
+    ne vérifie PAS que le label existe sur le dépôt — gh issue create échoue de
+    lui-même avec un message clair si le label n'existe pas, et on laisse cette
+    erreur remonter normalement."""
+    m = LABELS_ENTETE_RE.search(corps or "")
+    if not m:
+        return []
+    return [lab.strip() for lab in m.group(1).split(",") if lab.strip()]
+
+
 def construire_body(data: dict) -> str:
     """Construit le body markdown depuis les champs du formulaire."""
     mode            = "ÉCRITURE" if data.get("mode") == "ecriture" else "lecture seule"
@@ -79,6 +103,13 @@ def construire_labels(data: dict) -> str:
     if isinstance(notifs, str):
         notifs = [notifs]
     labels.extend(notifs)
+    # Labels supplémentaires du champ d'en-tête optionnel « | LABELS | … | »
+    # (issue #161) : ils s'AJOUTENT aux labels standards (bridge, for-linux,
+    # mode_write, notifs) — on n'en remplace aucun. Dédoublonnage léger pour ne
+    # pas répéter un label déjà posé si Alain le liste aussi dans LABELS.
+    for extra in _parser_labels_entete(data.get("corps", "")):
+        if extra not in labels:
+            labels.append(extra)
     return ",".join(labels)
 
 
