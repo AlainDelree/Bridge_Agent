@@ -348,11 +348,35 @@
     <div class="rangee">
       <div class="champ">
         <label>GH_TOKEN</label>
-        <input type="password" id="ccw-fin-gh" autocomplete="off">
+        <!-- Anti auto-remplissage (issue #175) : autocomplete="new-password"
+             (interprété comme un nouveau champ, pas un login), pas d'attribut
+             name reconnu par les gestionnaires de mots de passe, et readonly au
+             chargement rendu editable au premier focus/clic (empêche le
+             remplissage automatique à l'ouverture). Le bouton œil est le filet
+             de sécurité fiable : voir la valeur en clair avant de finaliser. -->
+        <div style="display:flex;gap:6px;align-items:center">
+          <input type="password" id="ccw-fin-gh" autocomplete="new-password"
+                 readonly onfocus="this.removeAttribute('readonly')"
+                 onmousedown="this.removeAttribute('readonly')"
+                 style="flex:1;min-width:0">
+          <button type="button" class="oeil-token" tabindex="-1"
+                  title="Afficher / masquer la valeur (vérifier avant Finaliser)"
+                  style="padding:6px 9px;font-size:14px;line-height:1"
+                  onclick="var i=document.getElementById('ccw-fin-gh'); var m=i.type==='password'; i.type=m?'text':'password'; this.textContent=m?'🙈':'👁';">👁</button>
+        </div>
       </div>
       <div class="champ">
         <label>CLAUDE_CODE_OAUTH_TOKEN</label>
-        <input type="password" id="ccw-fin-oauth" autocomplete="off">
+        <div style="display:flex;gap:6px;align-items:center">
+          <input type="password" id="ccw-fin-oauth" autocomplete="new-password"
+                 readonly onfocus="this.removeAttribute('readonly')"
+                 onmousedown="this.removeAttribute('readonly')"
+                 style="flex:1;min-width:0">
+          <button type="button" class="oeil-token" tabindex="-1"
+                  title="Afficher / masquer la valeur (vérifier avant Finaliser)"
+                  style="padding:6px 9px;font-size:14px;line-height:1"
+                  onclick="var i=document.getElementById('ccw-fin-oauth'); var m=i.type==='password'; i.type=m?'text':'password'; this.textContent=m?'🙈':'👁';">👁</button>
+        </div>
       </div>
     </div>
     <div style="font-size:12px;color:#999;margin-bottom:8px">
