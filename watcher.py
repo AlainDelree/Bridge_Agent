@@ -349,6 +349,109 @@ def gh(*args) -> dict | list | None:
         log.error(f"gh exception : {e}")
         return None
 
+def _est_depot_git(rep: Path) -> bool:
+    """Vrai si `rep` est situé dans un arbre de travail git valide (garde-fou du
+    rafraîchissement automatique, issue #185). On sonde via
+    `git rev-parse --is-inside-work-tree` plutôt qu'en testant l'existence d'un
+    `.git` : robuste aux sous-répertoires et aux worktrees. Toute erreur (dossier
+    absent, git introuvable) est traitée comme « pas un dépôt »."""
+    try:
+        res = subprocess.run(
+            ["git", "rev-parse", "--is-inside-work-tree"],
+            cwd=rep, capture_output=True, text=True,
+            encoding="utf-8", errors="replace", timeout=10,
+        )
+        return res.returncode == 0 and res.stdout.strip() == "true"
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+def _tete_git(rep: Path) -> str | None:
+    """SHA de HEAD dans `rep`, ou None si indéterminé. Sert à détecter si un
+    `git pull` a réellement avancé l'historique, indépendamment de la locale du
+    message git (le fast-forward français « Mise à jour … » contient « à jour »,
+    ce qui rend toute détection par chaîne peu fiable — issue #185)."""
+    try:
+        res = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=rep, capture_output=True, text=True,
+            encoding="utf-8", errors="replace", timeout=10,
+        )
+        return res.stdout.strip() if res.returncode == 0 else None
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+
+def rafraichir_depot(rep: Path, dry_run: bool = False):
+    """Best-effort : rafraîchit le clone local via `git pull --ff-only` en début
+    de cycle, pour qu'un watcher (CCL/CCW) travaille automatiquement sur le code
+    le plus récent poussé sur origin, sans git pull manuel (issue #185).
+
+    Sécurité par construction — `--ff-only` ne peut RIEN écraser :
+      • historique local et distant non divergés → avance en fast-forward ;
+      • déjà à jour ou local en avance (commits locaux poussables) → « Already up
+        to date », aucune action ;
+      • historique DIVERGÉ (backup+fix commité localement par CCL/CCW, en attente
+        de push/revue par Alain) → le pull échoue proprement, RIEN n'est écrasé
+        ni perdu ; on poursuit simplement sur le code local existant.
+
+    Jamais bloquant : divergence, réseau indisponible ou dossier hors dépôt git
+    sont journalisés (message distinct selon la cause) sans faire échouer le
+    cycle — le pull est un confort de fraîcheur, pas une précondition.
+
+    En dry-run, on n'altère pas l'arbre de travail local : on se contente de
+    signaler ce qui serait fait (cohérent avec le reste du mode simulation)."""
+    if not rep.is_dir():
+        return
+    if not _est_depot_git(rep):
+        log.debug(f"  [pull] {rep} n'est pas un dépôt git — rafraîchissement ignoré.")
+        return
+
+    if dry_run:
+        log.info(f"  [DRY-RUN] [pull] git pull --ff-only serait lancé dans {rep}.")
+        return
+
+    tete_avant = _tete_git(rep)
+
+    try:
+        res = subprocess.run(
+            ["git", "pull", "--ff-only"],
+            cwd=rep, capture_output=True, text=True,
+            encoding="utf-8", errors="replace", timeout=60,
+        )
+    except subprocess.TimeoutExpired:
+        log.warning(f"  [pull] échoué : délai dépassé sur git pull dans {rep} (réseau lent ?) — poursuite sur le code local.")
+        return
+    except Exception as e:
+        log.warning(f"  [pull] échoué : {e} — poursuite sur le code local.")
+        return
+
+    if res.returncode == 0:
+        # Détection avancement locale-indépendante : comparer HEAD avant/après
+        # plutôt que le message git (« Mise à jour … » contient « à jour »).
+        tete_apres = _tete_git(rep)
+        if tete_avant and tete_apres and tete_avant != tete_apres:
+            log.info(f"  [pull] {rep} mis à jour ({tete_avant[:7]} → {tete_apres[:7]}).")
+        else:
+            log.debug(f"  [pull] {rep} déjà à jour.")
+        return
+
+    # Échec : distinguer la cause pour un message clair et actionnable.
+    err = (res.stderr + "\n" + res.stdout).strip()
+    err_bas = err.lower()
+    if "fast-forward" in err_bas or "diverg" in err_bas:
+        log.info("  [pull] ignoré : commits locaux non poussés (fast-forward impossible — "
+                 "backup/fix en attente de revue ?) — pensez à git push. Poursuite sur le code local.")
+    elif ("could not resolve host" in err_bas or "connection" in err_bas
+          or "unable to access" in err_bas or "timed out" in err_bas
+          or "network is unreachable" in err_bas):
+        premiere = err.splitlines()[0] if err else "réseau indisponible"
+        log.warning(f"  [pull] échoué : réseau indisponible ({premiere}) — poursuite sur le code local.")
+    else:
+        premiere = err.splitlines()[0] if err else "erreur inconnue"
+        log.warning(f"  [pull] échoué : {premiere} — poursuite sur le code local.")
+
+
 def lister_issues():
     """Retourne la liste des issues (label du projet) ouvertes."""
     try:
@@ -1112,6 +1215,15 @@ def main():
 
     while True:
         try:
+            # Rafraîchissement automatique du clone local en début de cycle
+            # (issue #185). Choix : au début du cycle, sur CFG.rep_travail (le
+            # clone fixe du projet), plutôt qu'avant chaque issue — c'est le
+            # dépôt propre du watcher, il ne change pas d'une issue à l'autre, et
+            # un pull par cycle suffit à la fraîcheur voulue. Les projets à
+            # périmètre dynamique (REPO_CIBLE par issue) ne sont volontairement
+            # PAS rafraîchis ici : ce sont des dépôts-cibles d'audit, pas le clone
+            # de travail du watcher. Best-effort, jamais bloquant.
+            rafraichir_depot(CFG.rep_travail, dry_run=args.dry_run)
             issues = lister_issues()
             if issues:
                 log.info(f"{len(issues)} issue(s) en attente.")
