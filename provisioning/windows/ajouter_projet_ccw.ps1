@@ -1,4 +1,4 @@
-<#
+﻿<#
   ajouter_projet_ccw.ps1 — Instancier un NOUVEAU projet CCW dans la VM (issue #170).
 
   Généralisation multi-projets de CCW, sur le modèle des watchers CCL côté

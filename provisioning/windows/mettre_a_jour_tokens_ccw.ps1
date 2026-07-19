@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Met à jour les tokens (GH_TOKEN, CLAUDE_CODE_OAUTH_TOKEN) du service
     Windows CCW-Watcher, sans manipulation manuelle de chaîne PowerShell.
