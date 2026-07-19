@@ -331,6 +331,13 @@ async function ccwChargerProjets() {
         + '<td style="padding:8px 12px;font-size:13px;color:' + etatCouleur + '">'
           + escapeHtml(p.etat || '—') + '</td>'
         + '<td style="padding:8px 12px;font-size:13px">' + topicHtml + '</td>'
+        // Bouton « Redémarrer » par ligne (issue #180) : relance le service sans
+        // toucher au topic ni aux tokens. stopPropagation pour ne PAS déclencher
+        // aussi la pré-sélection portée par le onclick de la ligne.
+        + '<td style="padding:8px 12px">'
+          + '<button onclick="event.stopPropagation(); ccwRedemarrerProjet(\''
+            + escapeHtml(p.projet) + '\', this)"'
+          + ' style="font-size:12px;padding:4px 10px">Redémarrer</button></td>'
         + '</tr>';
     }).join('');
     // Alimente le <select> du formulaire « Finaliser » : seuls les projets
@@ -360,6 +367,39 @@ function ccwPreselectionnerProjet(nom) {
   const options = selectFin.options;
   for (let i = 0; i < options.length; i++) {
     if (options[i].value === nom) { selectFin.value = nom; break; }
+  }
+}
+
+// Redémarre le service d'un projet CCW (issue #180) : simple « nssm restart »
+// côté VM, sans reposer topic ni tokens. Le bouton passé (btn) est désactivé le
+// temps de l'opération. Résultat affiché dans le bandeau + le terminal communs.
+async function ccwRedemarrerProjet(nom, btn) {
+  if (!nom) return;
+  if (!confirm('Redémarrer le service du projet « ' + nom + ' » ?\n\n'
+             + '(Redémarrage simple : ni le TOPIC_NTFY ni les tokens ne sont modifiés.)')) return;
+  const labelInitial = btn ? btn.textContent : null;
+  if (btn) { btn.disabled = true; btn.textContent = 'Redémarrage…'; }
+  ccwMessage('ccw-message', 'Redémarrage du service de « ' + nom + ' » dans la VM…', '');
+  ccwAfficherSortie('');
+  try {
+    const rep = await fetch('/ccw/redemarrer-projet', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({nom: nom})
+    });
+    const j = await rep.json();
+    ccwAfficherSortie(j.sortie);
+    if (j.succes) {
+      ccwMessage('ccw-message',
+        'Service « ' + (j.service || nom) + ' » redémarré.', 'succes');
+    } else {
+      ccwMessage('ccw-message', j.erreur || 'Échec du redémarrage.', 'erreur');
+    }
+    ccwChargerProjets();
+  } catch (e) {
+    ccwMessage('ccw-message', 'Erreur réseau : ' + e.message, 'erreur');
+  } finally {
+    if (btn) { btn.disabled = false; if (labelInitial !== null) btn.textContent = labelInitial; }
   }
 }
 

@@ -150,6 +150,24 @@ def _executer_ps(base: list[str], nom_script: str, args_ps: list[str], timeout: 
     return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
 
 
+def _executer_commande_ps(base: list[str], commande: str, timeout: int):
+    """Exécute une commande PowerShell arbitraire dans la VM (résolution PATH).
+
+    Utilisé pour lancer un exécutable déjà présent dans le PATH de la VM (ex.
+    « nssm ») sans avoir à pousser un script .ps1 pour une commande triviale.
+    Passe par powershell.exe -Command afin de bénéficier de la résolution du
+    PATH (guestcontrol run --exe exige sinon un chemin absolu vers l'exe)."""
+    cmd = base + [
+        "run",
+        "--exe", POWERSHELL_INVITE,
+        "--wait-stdout", "--wait-stderr",
+        "--",
+        "powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass",
+        "-Command", commande,
+    ]
+    return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+
+
 def _message_echec(action: str, res) -> str:
     """Message d'erreur clair à partir d'un CompletedProcess en échec.
 
@@ -243,30 +261,44 @@ def ccw_demarrer_vm():
     )
 
 
+def _lister_projets_vm(vbox: str, mot_de_passe: str):
+    """Interroge lister_projets_ccw.ps1 dans la VM (copie + exécution).
+
+    Retourne (projets, None) où projets est une liste de dicts (clés service,
+    projet, base, etat, config, topicStatut), ou (None, réponse_json_erreur).
+    Source de vérité UNIQUE pour la correspondance projet → nom de service :
+    évite de dupliquer une nouvelle fois la règle Bridge_Agent → « CCW-Watcher »
+    déjà portée par ce script et finaliser_projet_ccw_auto.ps1 (issue #180)."""
+    script = DOSSIER_WINDOWS / "lister_projets_ccw.ps1"
+    if not script.exists():
+        return None, jsonify(succes=False, erreur=f"Script introuvable : {script.name}")
+    try:
+        with _fichier_mot_de_passe(mot_de_passe) as pf:
+            base = _base_guest(vbox, pf)
+            r = _copier(base, script, TIMEOUT_COURT)
+            if r.returncode != 0:
+                return None, jsonify(succes=False, erreur=_message_echec("copie du script", r))
+            r = _executer_ps(base, script.name, [], TIMEOUT_COURT)
+    except subprocess.TimeoutExpired:
+        return None, jsonify(succes=False,
+            erreur="Délai dépassé en interrogeant la VM (guestcontrol).")
+    except subprocess.SubprocessError as e:
+        return None, jsonify(succes=False, erreur=f"Erreur guestcontrol : {e}")
+    projets = _extraire_projets(r.stdout)
+    if projets is None:
+        return None, jsonify(succes=False, erreur=_message_echec("liste des projets", r))
+    return projets, None
+
+
 def ccw_projets():
     """Liste les services CCW-Watcher* de la VM et leur état (via guestcontrol)."""
     ctx, err = _preparer()
     if err:
         return err
     vbox, mot_de_passe = ctx
-    script = DOSSIER_WINDOWS / "lister_projets_ccw.ps1"
-    if not script.exists():
-        return jsonify(succes=False, erreur=f"Script introuvable : {script.name}")
-    try:
-        with _fichier_mot_de_passe(mot_de_passe) as pf:
-            base = _base_guest(vbox, pf)
-            r = _copier(base, script, TIMEOUT_COURT)
-            if r.returncode != 0:
-                return jsonify(succes=False, erreur=_message_echec("copie du script", r))
-            r = _executer_ps(base, script.name, [], TIMEOUT_COURT)
-    except subprocess.TimeoutExpired:
-        return jsonify(succes=False,
-            erreur="Délai dépassé en interrogeant la VM (guestcontrol).")
-    except subprocess.SubprocessError as e:
-        return jsonify(succes=False, erreur=f"Erreur guestcontrol : {e}")
-    projets = _extraire_projets(r.stdout)
-    if projets is None:
-        return jsonify(succes=False, erreur=_message_echec("liste des projets", r))
+    projets, err = _lister_projets_vm(vbox, mot_de_passe)
+    if err:
+        return err
     return jsonify(succes=True, projets=projets)
 
 
@@ -383,3 +415,66 @@ def ccw_finaliser_projet():
                    "relisez les dernières lignes de log ci-dessous.")
     return jsonify(succes=False, sortie=sortie,
         erreur=f"Échec de la finalisation (code {r.returncode}).")
+
+
+def ccw_redemarrer_projet():
+    """Redémarre le service Windows d'un projet CCW, sans toucher au topic ni aux
+    tokens (issue #180).
+
+    Cas d'usage : relancer un service après une correction manuelle ou un
+    diagnostic, sans repasser par PowerShell dans la VM ni reposer topic/tokens.
+
+    Le nom EXACT du service est récupéré via lister_projets_ccw.ps1 (source de
+    vérité unique — voir _lister_projets_vm), ce qui gère de fait le spécial-cas
+    « Bridge_Agent » → « CCW-Watcher » (sans suffixe) sans dupliquer la règle.
+    Le redémarrage lui-même est un simple « nssm restart <service> » exécuté à
+    distance (nssm est déjà dans le PATH de la VM)."""
+    data = request.json or {}
+    nom  = (data.get("nom") or "").strip()
+    if not nom or re.search(r"[\\/\s]", nom):
+        return jsonify(succes=False,
+            erreur="Nom de projet requis, sans espace ni séparateur de chemin.")
+    ctx, err = _preparer()
+    if err:
+        return err
+    vbox, mot_de_passe = ctx
+
+    projets, err = _lister_projets_vm(vbox, mot_de_passe)
+    if err:
+        return err
+    service = None
+    for p in projets:
+        if isinstance(p, dict) and str(p.get("projet", "")).strip().lower() == nom.lower():
+            service = (p.get("service") or "").strip()
+            break
+    if not service:
+        return jsonify(succes=False,
+            erreur=f"Projet « {nom} » introuvable parmi les services CCW-Watcher de la VM. "
+                   f"Rafraîchissez la liste des projets.")
+    # Garde-fou : le nom vient de la liste (donc de confiance), mais on vérifie
+    # qu'il correspond bien au format attendu d'un service CCW avant de
+    # l'injecter dans la commande PowerShell.
+    if not re.match(r"^CCW-Watcher(-\w+)?$", service):
+        return jsonify(succes=False,
+            erreur=f"Nom de service inattendu (« {service} ») — abandon par précaution.")
+
+    try:
+        with _fichier_mot_de_passe(mot_de_passe) as pf:
+            base = _base_guest(vbox, pf)
+            # « exit $LASTEXITCODE » : propage le code de retour de nssm pour que
+            # l'appelant conclue sans ambiguïté (0 = redémarrage OK).
+            r = _executer_commande_ps(
+                base, f"nssm restart {service}; exit $LASTEXITCODE", TIMEOUT_LONG)
+    except subprocess.TimeoutExpired:
+        return jsonify(succes=False,
+            erreur="Délai dépassé pendant le redémarrage du service (guestcontrol).")
+    except subprocess.SubprocessError as e:
+        return jsonify(succes=False, erreur=f"Erreur guestcontrol : {e}")
+
+    return jsonify(
+        succes=(r.returncode == 0),
+        service=service,
+        sortie=_sortie_lisible(r),
+        erreur=None if r.returncode == 0
+               else f"Échec du redémarrage de « {service} » (code {r.returncode}).",
+    )
