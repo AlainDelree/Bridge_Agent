@@ -102,60 +102,112 @@ function Bootstrap-Winget {
 
     Info 'winget absent (édition LTSC/IoT sans Store) — bootstrap manuel de App Installer…'
 
-    # GitHub sert le release en HTTPS/TLS 1.2 ; PowerShell 5.1 ne le négocie pas
-    # toujours par défaut. On le force pour éviter un échec TLS opaque.
-    try {
-        [Net.ServicePointManager]::SecurityProtocol = `
-            [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
-    } catch {
-        Avert "Impossible de forcer TLS 1.2 ($($_.Exception.Message)) — on tente quand même."
+    # -----------------------------------------------------------------------
+    # CACHE PERSISTANT du msixbundle + licence (issue #158, suite #152).
+    #
+    #   Le partage CCW_Share (\\VBOXSVR\CCW_Share, monté en phase 1) vit côté
+    #   hôte Linux et SURVIT aux resets/redémarrages de la VM : c'est un
+    #   emplacement de cache idéal. Le téléchargement du msixbundle est la
+    #   partie la plus longue du bootstrap ; le mettre en cache évite de le
+    #   retélécharger à chaque test rapproché de lancer_provisioning.py.
+    #
+    #   PAS d'invalidation automatique (aucune vérification de version) : pour
+    #   forcer un nouveau téléchargement (nouvelle version d'App Installer), il
+    #   suffit de VIDER MANUELLEMENT le dossier de cache ci-dessous.
+    # -----------------------------------------------------------------------
+    $cacheDir   = '\\VBOXSVR\CCW_Share\cache\winget-bootstrap'
+    $msixName   = 'Microsoft.DesktopAppInstaller_8wekyb3d8bbwe.msixbundle'
+    $cacheMsix  = Join-Path $cacheDir $msixName
+
+    $msixPath    = $null
+    $licensePath = $null
+    # $tmp reste $null en cas de cache utilisé : pas de dossier temporaire créé,
+    # donc pas de nettoyage à faire en fin de fonction (voir plus bas).
+    $tmp         = $null
+
+    # Cache valide = le msixbundle attendu ET un fichier de licence (.xml) présents.
+    $cacheLicense = $null
+    if (Test-Path $cacheMsix) {
+        $cacheLicense = Get-ChildItem -Path $cacheDir -Filter '*.xml' -ErrorAction SilentlyContinue |
+            Select-Object -First 1
     }
 
-    # Dossier temporaire dédié (nettoyé en fin de fonction).
-    $tmp = Join-Path $env:TEMP ('winget-bootstrap-' + [Guid]::NewGuid().ToString('N'))
-    New-Item -ItemType Directory -Path $tmp -Force | Out-Null
+    if ((Test-Path $cacheMsix) -and $cacheLicense) {
+        # (2) Cache présent : on l'utilise directement, aucun accès réseau.
+        $msixPath    = $cacheMsix
+        $licensePath = $cacheLicense.FullName
+        Info 'Utilisation du cache existant (pas de téléchargement).'
+    } else {
+        # (3) Cache absent (premier run, ou dossier vidé manuellement) : on
+        #     télécharge comme avant, PUIS on peuple le cache pour le prochain test.
 
-    $msixUrl    = 'https://github.com/microsoft/winget-cli/releases/latest/download/Microsoft.DesktopAppInstaller_8wekyb3d8bbwe.msixbundle'
-    $msixPath   = Join-Path $tmp 'Microsoft.DesktopAppInstaller_8wekyb3d8bbwe.msixbundle'
-    $licenseUrl = $null
-    $licensePath = $null
-
-    try {
-        # (2a) Résoudre le nom EXACT du fichier de licence. L'URL "latest/download"
-        #      du msixbundle est stable, mais le fichier de licence associé porte
-        #      un nom versionné (ex. « <id>_License1.xml ») qui change à chaque
-        #      release. On interroge donc l'API GitHub releases/latest (JSON) pour
-        #      lister les assets de CETTE release et repérer le .xml de licence.
-        #      NB : l'API GitHub exige un en-tête User-Agent.
-        Info 'Résolution de la licence App Installer via l''API GitHub releases/latest…'
-        $apiUrl = 'https://api.github.com/repos/microsoft/winget-cli/releases/latest'
-        $release = Invoke-RestMethod -Uri $apiUrl -Headers @{ 'User-Agent' = 'CCW-provisionner' } `
-                                     -UseBasicParsing
-        $licenseAsset = $release.assets |
-            Where-Object { $_.name -like '*License*.xml' -or $_.name -like '*_License*.xml' } |
-            Select-Object -First 1
-        if (-not $licenseAsset) {
-            # Repli : n'importe quel .xml de la release (la licence est le seul .xml publié).
-            $licenseAsset = $release.assets | Where-Object { $_.name -like '*.xml' } | Select-Object -First 1
+        # GitHub sert le release en HTTPS/TLS 1.2 ; PowerShell 5.1 ne le négocie pas
+        # toujours par défaut. On le force pour éviter un échec TLS opaque.
+        try {
+            [Net.ServicePointManager]::SecurityProtocol = `
+                [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+        } catch {
+            Avert "Impossible de forcer TLS 1.2 ($($_.Exception.Message)) — on tente quand même."
         }
-        if (-not $licenseAsset) {
-            throw "aucun fichier de licence (.xml) trouvé dans les assets de la release winget-cli."
-        }
-        $licenseUrl  = $licenseAsset.browser_download_url
-        $licensePath = Join-Path $tmp $licenseAsset.name
-        Info "Licence détectée : $($licenseAsset.name)"
 
-        # (2b) Téléchargements (msixbundle + licence).
-        Info 'Téléchargement du msixbundle App Installer (dernière version)…'
-        Invoke-WebRequest -Uri $msixUrl -OutFile $msixPath -UseBasicParsing
-        Info 'Téléchargement du fichier de licence…'
-        Invoke-WebRequest -Uri $licenseUrl -OutFile $licensePath -UseBasicParsing
-    } catch {
-        # (6) Erreur réseau (VM en NAT : accès sortant requis) — message clair,
-        #     pas de stacktrace brut.
-        throw ("Bootstrap winget échoué au TÉLÉCHARGEMENT : $($_.Exception.Message). " +
-               "La VM doit avoir un accès Internet sortant (NAT). " +
-               "Voir https://learn.microsoft.com/windows/package-manager/winget/ pour un dépannage manuel.")
+        # Dossier temporaire dédié (nettoyé en fin de fonction).
+        $tmp = Join-Path $env:TEMP ('winget-bootstrap-' + [Guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $tmp -Force | Out-Null
+
+        $msixUrl    = 'https://github.com/microsoft/winget-cli/releases/latest/download/Microsoft.DesktopAppInstaller_8wekyb3d8bbwe.msixbundle'
+        $msixPath   = Join-Path $tmp $msixName
+        $licenseUrl = $null
+
+        try {
+            # (3a) Résoudre le nom EXACT du fichier de licence. L'URL "latest/download"
+            #      du msixbundle est stable, mais le fichier de licence associé porte
+            #      un nom versionné (ex. « <id>_License1.xml ») qui change à chaque
+            #      release. On interroge donc l'API GitHub releases/latest (JSON) pour
+            #      lister les assets de CETTE release et repérer le .xml de licence.
+            #      NB : l'API GitHub exige un en-tête User-Agent.
+            Info 'Résolution de la licence App Installer via l''API GitHub releases/latest…'
+            $apiUrl = 'https://api.github.com/repos/microsoft/winget-cli/releases/latest'
+            $release = Invoke-RestMethod -Uri $apiUrl -Headers @{ 'User-Agent' = 'CCW-provisionner' } `
+                                         -UseBasicParsing
+            $licenseAsset = $release.assets |
+                Where-Object { $_.name -like '*License*.xml' -or $_.name -like '*_License*.xml' } |
+                Select-Object -First 1
+            if (-not $licenseAsset) {
+                # Repli : n'importe quel .xml de la release (la licence est le seul .xml publié).
+                $licenseAsset = $release.assets | Where-Object { $_.name -like '*.xml' } | Select-Object -First 1
+            }
+            if (-not $licenseAsset) {
+                throw "aucun fichier de licence (.xml) trouvé dans les assets de la release winget-cli."
+            }
+            $licenseUrl  = $licenseAsset.browser_download_url
+            $licensePath = Join-Path $tmp $licenseAsset.name
+            Info "Licence détectée : $($licenseAsset.name)"
+
+            # (3b) Téléchargements (msixbundle + licence).
+            Info 'Téléchargement du msixbundle App Installer (dernière version)…'
+            Invoke-WebRequest -Uri $msixUrl -OutFile $msixPath -UseBasicParsing
+            Info 'Téléchargement du fichier de licence…'
+            Invoke-WebRequest -Uri $licenseUrl -OutFile $licensePath -UseBasicParsing
+        } catch {
+            # (6) Erreur réseau (VM en NAT : accès sortant requis) — message clair,
+            #     pas de stacktrace brut.
+            throw ("Bootstrap winget échoué au TÉLÉCHARGEMENT : $($_.Exception.Message). " +
+                   "La VM doit avoir un accès Internet sortant (NAT). " +
+                   "Voir https://learn.microsoft.com/windows/package-manager/winget/ pour un dépannage manuel.")
+        }
+
+        # (3c) Peupler le cache persistant pour le prochain test. Le dossier est
+        #      créé au besoin (New-Item -Force). Best-effort : un échec de copie
+        #      (partage momentanément indispo) ne doit PAS faire échouer le
+        #      provisioning — on retéléchargera simplement au run suivant.
+        try {
+            New-Item -ItemType Directory -Path $cacheDir -Force | Out-Null
+            Copy-Item -Path $msixPath    -Destination $cacheMsix -Force
+            Copy-Item -Path $licensePath -Destination (Join-Path $cacheDir (Split-Path $licensePath -Leaf)) -Force
+            Info "msixbundle + licence mis en cache dans $cacheDir."
+        } catch {
+            Avert "Impossible de peupler le cache ($($_.Exception.Message)) — le prochain run retéléchargera."
+        }
     }
 
     # (3) Installation hors-ligne du paquet provisionné (Store non requis).
@@ -182,8 +234,10 @@ function Bootstrap-Winget {
                     [System.Environment]::GetEnvironmentVariable('Path', 'User')
     }
 
-    # Nettoyage du dossier temporaire (best-effort).
-    Remove-Item -Path $tmp -Recurse -Force -ErrorAction SilentlyContinue
+    # Nettoyage du dossier temporaire de travail (best-effort). SEUL le cache
+    # persistant du partage est conservé — $tmp reste $null si le cache a été
+    # utilisé (aucun téléchargement), auquel cas il n'y a rien à nettoyer.
+    if ($tmp) { Remove-Item -Path $tmp -Recurse -Force -ErrorAction SilentlyContinue }
 
     # (5) Échec définitif : erreur claire, DISTINCTE de l'ancien « winget introuvable ».
     if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
