@@ -519,6 +519,34 @@ function avecOpacite(hex, alpha) {
        + (n & 255) + ',' + alpha + ')';
 }
 
+// ─── Case à cocher libre par résultat (issue #154) ────────────────────────
+// Repère visuel purement personnel pour Alain (« ce résultat, je l'ai déjà
+// traité/lu »), SANS aucune logique métier. L'état vit UNIQUEMENT dans le
+// localStorage du navigateur : aucun appel au serveur Flask, rien de stocké
+// côté Python/fichier. La clé est stable, dérivée de l'identité de l'issue
+// (projet + numéro), donc l'état survit aux rechargements et re-rendus.
+function cleCocheResultat(projet, numero) {
+  return 'resultat-coche:' + projet + ':' + numero;
+}
+// Vrai si l'utilisateur a coché ce résultat. Robuste si localStorage est
+// indisponible (mode privé strict) : on renvoie simplement false.
+function estResultatCoche(projet, numero) {
+  try { return localStorage.getItem(cleCocheResultat(projet, numero)) === '1'; }
+  catch (e) { return false; }
+}
+// Bascule appelée par onchange de la case : persiste l'état dans localStorage
+// et grise/dégrise instantanément la ligne (aucun rechargement de page).
+function basculerCocheResultat(event, projet, numero) {
+  const cb = event.target;
+  const ligne = cb.closest('.ligne-issue');
+  const coche = cb.checked;
+  try {
+    if (coche) localStorage.setItem(cleCocheResultat(projet, numero), '1');
+    else       localStorage.removeItem(cleCocheResultat(projet, numero));
+  } catch (e) { /* localStorage indisponible : la case reste juste visuelle */ }
+  if (ligne) ligne.classList.toggle('resultat-traite', coche);
+}
+
 // (Re)construit la liste HTML cliquable à partir de listeIssuesResultats. TOUTES
 // les issues sont rendues comme lignes ; le filtre projet ne fait que masquer
 // (display:none) les lignes des projets inactifs. Chaque ligne est coloriée à la
@@ -556,6 +584,12 @@ function rendreListeIssues(reset) {
     ligne.className = 'ligne-issue';
     ligne.dataset.projet = it.projet;
     ligne.dataset.numero = numero;
+    // Case à cocher libre (issue #154) : repère visuel personnel d'Alain, SANS
+    // aucune signification métier. État persisté côté navigateur uniquement
+    // (localStorage), jamais envoyé au serveur. On lit l'état mémorisé pour
+    // pré-cocher la case et griser la ligne dès le rendu.
+    const dejaCoche = estResultatCoche(it.projet, numero);
+    if (dejaCoche) ligne.classList.add('resultat-traite');
     // TYPE de l'issue (pattern chef/ouvriers, issue #86) porté en dataset :
     // exploité par appliquerFiltresListe() pour masquer les ouvriers au besoin.
     ligne.dataset.type = typeIssue(it);
@@ -617,7 +651,16 @@ function rendreListeIssues(reset) {
         + escapeHtml(it.projet) + '\', ' + Number(numero) + ')">All</span>';
     }
     ligne.innerHTML =
-      '<span class="ligne-date" title="' + escapeHtml(dateCreation) + '"'
+      // Case à cocher libre (issue #154), tout à gauche de la ligne. Le clic ne
+      // doit PAS sélectionner/ouvrir l'issue (stopPropagation) ; onchange délègue
+      // à basculerCocheResultat() qui persiste l'état dans localStorage.
+      '<input type="checkbox" class="coche-resultat"'
+      + (dejaCoche ? ' checked' : '')
+      + ' title="Repère personnel : marquer ce résultat comme traité/lu"'
+      + ' onclick="event.stopPropagation()"'
+      + ' onchange="basculerCocheResultat(event, \''
+      + escapeHtml(it.projet) + '\', ' + Number(numero) + ')">'
+      + '<span class="ligne-date" title="' + escapeHtml(dateCreation) + '"'
       + ' style="font-size:11px;color:#999;'
       + 'min-width:66px;font-family:monospace">' + escapeHtml(heureCreation) + '</span>'
       + '<span class="ligne-gauche">'
