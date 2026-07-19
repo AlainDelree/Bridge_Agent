@@ -11,9 +11,12 @@
        le service CCW-Watcher-<NomProjet>, le dossier C:\CCW\<NomProjet> et le
        config configs\<nom-minuscule>-ccw.conf, et VÉRIFIE que ces chemins
        existent (sinon : renvoie vers ajouter_projet_ccw.ps1).
-    2. Demande TOPIC_NTFY (Read-Host, pas un secret) et remplace le placeholder
-       ###TOPIC_NTFY_A_DEFINIR### DANS le fichier config (édition ciblée, le
-       reste du fichier est préservé à l'identique).
+    2. Demande TOPIC_NTFY (Read-Host, pas un secret) et réécrit la ligne
+       « TOPIC_NTFY = … » DANS le fichier config QUELLE QUE SOIT sa valeur
+       actuelle — placeholder ###TOPIC_NTFY_A_DEFINIR### OU topic déjà
+       renseigné (issue #176 : topic modifiable après coup). Édition ciblée
+       de la seule ligne, le reste du fichier est préservé à l'identique.
+       Un topic laissé vide à la saisie laisse le config inchangé.
     3. Rappelle la marche à suivre pour créer le token GitHub dédié (repo
        unique, permissions, expiration alignée — mêmes instructions
        qu'ajouter_projet_ccw.ps1), avec une PAUSE pour le faire.
@@ -100,28 +103,38 @@ if (-not (Get-Service -Name $NomService -ErrorAction SilentlyContinue)) {
 }
 
 # ---------------------------------------------------------------------------
-# 2. TOPIC_NTFY : saisie interactive puis remplacement CIBLÉ du placeholder
-#    dans le config (le reste du fichier reste identique octet pour octet).
+# 2. TOPIC_NTFY : saisie interactive puis réécriture CIBLÉE de la ligne
+#    « TOPIC_NTFY = … » dans le config (le reste du fichier reste identique
+#    octet pour octet). issue #176 : la ligne est remplacée QUELLE QUE SOIT
+#    sa valeur actuelle (placeholder OU topic déjà renseigné), pour que le
+#    topic reste modifiable après sa première définition — au même titre que
+#    les tokens. Un topic laissé vide à la saisie laisse le config inchangé.
 # ---------------------------------------------------------------------------
-$placeholder = '###TOPIC_NTFY_A_DEFINIR###'
 # Lecture en UTF-8 sans BOM, comme écrit par ajouter_projet_ccw.ps1.
 $contenuConf = [System.IO.File]::ReadAllText($CheminConf)
 
-if ($contenuConf.Contains($placeholder)) {
-    $topic = Read-Host "Valeur de TOPIC_NTFY pour « $NomProjet » (ex. bridge_scrabble_xxxxx)"
-    $topic = $topic.Trim()
-    if ([string]::IsNullOrWhiteSpace($topic)) {
-        throw 'TOPIC_NTFY vide — abandon, aucun changement appliqué au config.'
-    }
-    # .Replace = édition ciblée : seule l'occurrence du placeholder change, le
+# Motif ciblé sur la ligne « TOPIC_NTFY = <n'importe quoi> » (multi-lignes).
+# [^\r\n]* : on s'arrête à la fin de ligne SANS avaler le CR/LF, pour préserver
+# les fins de ligne (CRLF côté Windows). Fonctionne pour la première définition
+# (placeholder) comme pour une modification ultérieure.
+$motifTopic = '(?m)^[ \t]*TOPIC_NTFY[ \t]*=[^\r\n]*'
+
+$topic = Read-Host "Valeur de TOPIC_NTFY pour « $NomProjet » (ex. bridge_scrabble_xxxxx ; vide = laisser inchangé)"
+$topic = $topic.Trim()
+
+if ([string]::IsNullOrWhiteSpace($topic)) {
+    Avert 'TOPIC_NTFY laissé vide — config inchangé (valeur actuelle conservée).'
+} elseif ($contenuConf -match $motifTopic) {
+    # Remplacement littéral (MatchEvaluator) : aucun caractère du topic n'est
+    # interprété comme référence regex. Seule la ligne TOPIC_NTFY change, le
     # reste (commentaires, autres clés) est préservé à l'identique.
-    $contenuConf = $contenuConf.Replace($placeholder, $topic)
+    $ligneTopic  = "TOPIC_NTFY  = $topic"
+    $contenuConf = [regex]::Replace($contenuConf, $motifTopic, { $ligneTopic })
     # Réécriture en UTF-8 SANS BOM (le parseur .conf de watcher.py l'attend ainsi).
     [System.IO.File]::WriteAllText($CheminConf, $contenuConf, (New-Object System.Text.UTF8Encoding($false)))
-    Ok "TOPIC_NTFY renseigné dans $CheminConf."
+    Ok "TOPIC_NTFY (re)défini à « $topic » dans $CheminConf."
 } else {
-    Avert "Placeholder « $placeholder » absent de $CheminConf : TOPIC_NTFY semble DÉJÀ renseigné."
-    Avert 'Le fichier config n''est pas modifié. Vérifie sa valeur si nécessaire.'
+    Avert "Aucune ligne TOPIC_NTFY trouvée dans $CheminConf : config inchangé (fichier inattendu ?)."
 }
 Write-Host ''
 

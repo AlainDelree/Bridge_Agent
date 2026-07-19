@@ -13,10 +13,12 @@
     1. dérive (même logique qu'ajouter_projet_ccw.ps1) le service
        CCW-Watcher-<NomProjet>, le dossier C:\CCW\<NomProjet> et le config
        configs\<nom-minuscule>-ccw.conf, et vérifie leur existence ;
-    2. remplace le placeholder ###TOPIC_NTFY_A_DEFINIR### dans le config par
-       la valeur TOPIC_NTFY lue (édition ciblée, UTF-8 sans BOM — logique
-       identique à finaliser_projet_ccw.ps1, dupliquée à dessein : ~10 lignes,
-       pour rester exécutable seul sans dot-sourcing) ;
+    2. réécrit la ligne TOPIC_NTFY du config avec la valeur TOPIC_NTFY lue,
+       QUELLE QUE SOIT sa valeur actuelle (placeholder OU topic déjà
+       renseigné) — remplacement ciblé de la seule ligne « TOPIC_NTFY = … »,
+       UTF-8 sans BOM — logique identique à finaliser_projet_ccw.ps1,
+       dupliquée à dessein : ~10 lignes, pour rester exécutable seul sans
+       dot-sourcing) ;
     3. APPELLE mettre_a_jour_tokens_ccw.ps1 en mode -FichierTokens (aucune
        duplication de la logique métier des tokens : construction de
        AppEnvironmentExtra, nssm set/restart, vérification des logs) en lui
@@ -113,24 +115,36 @@ try {
     }
 
     # -----------------------------------------------------------------------
-    # 2. TOPIC_NTFY : remplacement CIBLÉ du placeholder dans le config
-    #    (logique identique à finaliser_projet_ccw.ps1, édition ciblée).
+    # 2. TOPIC_NTFY : réécriture CIBLÉE de la ligne « TOPIC_NTFY = … » du
+    #    config (logique identique à finaliser_projet_ccw.ps1, édition ciblée).
+    #    On remplace la ligne QUELLE QUE SOIT sa valeur actuelle (placeholder
+    #    ###TOPIC_NTFY_A_DEFINIR### OU topic déjà renseigné) — issue #176 : le
+    #    topic doit rester modifiable après sa première définition, comme les
+    #    tokens. Seul un topic vide côté formulaire laisse le config inchangé.
     # -----------------------------------------------------------------------
     $topic = Lire-ValeurFichier $FichierValeurs 'TOPIC_NTFY'
     if ($null -ne $topic) { $topic = $topic.Trim() }
 
-    $placeholder = '###TOPIC_NTFY_A_DEFINIR###'
+    # Motif ciblé sur la ligne « TOPIC_NTFY = <n'importe quoi> » (multi-lignes).
+    # [^\r\n]* : on s'arrête à la fin de ligne SANS avaler le CR/LF, pour
+    # préserver les fins de ligne (CRLF côté Windows) telles quelles. Fonctionne
+    # aussi bien pour la première définition (placeholder) que pour un changement.
+    $motifTopic = '(?m)^[ \t]*TOPIC_NTFY[ \t]*=[^\r\n]*'
     $contenuConf = [System.IO.File]::ReadAllText($CheminConf)
 
     if ([string]::IsNullOrWhiteSpace($topic)) {
         Info 'TOPIC_NTFY non fourni — étape topic ignorée (seuls les tokens seront posés).'
-    } elseif ($contenuConf.Contains($placeholder)) {
-        $contenuConf = $contenuConf.Replace($placeholder, $topic)
+    } elseif ($contenuConf -match $motifTopic) {
+        # Remplacement littéral (MatchEvaluator) : aucun caractère du topic
+        # n'est interprété comme référence regex ($1, $$…). Seule la ligne
+        # TOPIC_NTFY change, le reste du fichier est préservé à l'identique.
+        $ligneTopic  = "TOPIC_NTFY  = $topic"
+        $contenuConf = [regex]::Replace($contenuConf, $motifTopic, { $ligneTopic })
         # UTF-8 SANS BOM (le parseur .conf de watcher.py l'attend ainsi).
         [System.IO.File]::WriteAllText($CheminConf, $contenuConf, (New-Object System.Text.UTF8Encoding($false)))
-        Ok "TOPIC_NTFY renseigné dans $CheminConf."
+        Ok "TOPIC_NTFY (re)défini à « $topic » dans $CheminConf."
     } else {
-        Avert "Placeholder absent de $CheminConf : TOPIC_NTFY semble DÉJÀ renseigné — config inchangé."
+        Avert "Aucune ligne TOPIC_NTFY trouvée dans $CheminConf — config inchangé (fichier inattendu ?)."
     }
 
     # -----------------------------------------------------------------------
