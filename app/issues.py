@@ -421,8 +421,18 @@ def estimer_duree(historique: list, projet: str, type_issue: str, mode: str) -> 
 
 
 def issues_en_attente(nom_projet):
-    """Retourne les issues ouvertes portant le label for-linux (en attente de
-    traitement par le watcher). La liste peut être vide.
+    """Retourne les issues ouvertes destinées à un agent (labels for-linux OU
+    for-windows), en attente de traitement par le watcher. La liste peut être
+    vide.
+
+    Note (issue #183) : on inclut aussi for-windows (CCW), pas seulement
+    for-linux (CCL), afin que les badges de décompte et d'estimation prédictive
+    s'affichent aussi pour les issues CCW. `gh issue list --label` combine
+    plusieurs --label en ET logique ; or for-linux et for-windows sont
+    mutuellement exclusifs (§16), donc un seul appel ne peut jamais les
+    retourner ensemble. On fait donc DEUX appels gh (un par label) puis on
+    fusionne — approche simple et fiable, indépendante de la syntaxe de
+    recherche gh.
 
     Chaque issue est enrichie des champs nécessaires au calcul, côté navigateur,
     d'un temps restant estimé (issue #91), conscient du budget de retry (#106) :
@@ -444,18 +454,28 @@ def issues_en_attente(nom_projet):
     cfg = projet_par_nom(nom_projet)
     if not cfg:
         return jsonify(erreur="Projet introuvable."), 404
+    # Un appel gh par label (for-linux, for-windows) puis fusion : voir docstring.
+    issues = []
+    vus = set()
     try:
-        res = subprocess.run(
-            ["gh", "issue", "list",
-             "--repo",  cfg.depot,
-             "--label", "for-linux",
-             "--state", "open",
-             "--json",  "number,title,labels,body"],
-            capture_output=True, text=True, timeout=30
-        )
-        if res.returncode != 0:
-            return jsonify(erreur=res.stderr.strip() or "Erreur de gh."), 502
-        issues = json.loads(res.stdout or "[]")
+        for label in ("for-linux", "for-windows"):
+            res = subprocess.run(
+                ["gh", "issue", "list",
+                 "--repo",  cfg.depot,
+                 "--label", label,
+                 "--state", "open",
+                 "--json",  "number,title,labels,body"],
+                capture_output=True, text=True, timeout=30
+            )
+            if res.returncode != 0:
+                return jsonify(erreur=res.stderr.strip() or "Erreur de gh."), 502
+            for it in json.loads(res.stdout or "[]"):
+                # Dédoublonnage par numéro : une issue portant les deux labels
+                # (cas rare, non nominal) ne doit apparaître qu'une fois.
+                if it.get("number") in vus:
+                    continue
+                vus.add(it.get("number"))
+                issues.append(it)
     except subprocess.TimeoutExpired:
         return jsonify(erreur="Timeout (gh n'a pas répondu en 30s)."), 504
     except FileNotFoundError:
@@ -469,7 +489,7 @@ def issues_en_attente(nom_projet):
 
     # Enrichissement : une passe gh view par issue ouverte (nécessaire pour lire
     # les commentaires — gh issue list ne les expose pas). Les issues ouvertes
-    # for-linux sont rares (souvent 0-3), le surcoût reste modéré.
+    # for-linux/for-windows sont rares (souvent 0-3), le surcoût reste modéré.
     for it in issues:
         body = it.get("body") or ""
         titre = it.get("title") or ""
