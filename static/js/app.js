@@ -2733,14 +2733,35 @@ window.addEventListener('beforeunload', function() {
 function demarrerCycleVie() {
   // Distinction refresh / fermeture : si le drapeau est présent, c'était un
   // rechargement — on le retire et on reprend normalement. S'il est absent,
-  // c'était une vraie fermeture (mais alors le serveur est déjà coupé : le
-  // heartbeat interrompu l'a fait s'arrêter, donc ce code ne s'exécute pas).
+  // c'était une vraie fermeture (mais alors le serveur est déjà coupé : la
+  // connexion SSE tombée — et le heartbeat interrompu — l'ont fait s'arrêter,
+  // donc ce code ne s'exécute pas).
   try {
     if (sessionStorage.getItem('_refresh')) sessionStorage.removeItem('_refresh');
   } catch(e) {}
 
   envoyerHeartbeat();
   setInterval(envoyerHeartbeat, 5000);
+
+  // Résistance au throttling (issue #157) : les navigateurs ralentissent
+  // fortement le setInterval des onglets en arrière-plan, ce qui pouvait faire
+  // croire au serveur que l'onglet était fermé. Au retour au premier plan, on
+  // force un heartbeat immédiat. La détection de vraie fermeture repose surtout
+  // sur la connexion SSE /events (non throttlée), ceci n'est qu'un renfort.
+  document.addEventListener('visibilitychange', function() {
+    if (!document.hidden) envoyerHeartbeat();
+    // DIAGNOSTIC TEMPORAIRE — issue #157, à retirer : trace chaque passage
+    // avant-plan / arrière-plan (console + POST serveur) pour corréler après
+    // coup « onglet caché » avec « serveur coupé ». Retirer ce bloc (garder le
+    // envoyerHeartbeat() ci-dessus, qui fait partie du correctif).
+    var etat = document.hidden ? 'caché (arrière-plan)' : 'visible (premier plan)';
+    console.log('[DIAG #157] visibilitychange → ' + etat + ' @ ' + new Date().toISOString());
+    fetch('/diag-visibilite', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({etat: etat, horodatage: new Date().toISOString()})
+    }).catch(function() {});
+  });
 
   // Canal serveur → onglet.
   sourceEvents = new EventSource('/events');

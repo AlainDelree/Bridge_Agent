@@ -42,6 +42,9 @@ def create_app() -> Flask:
     app.config["ARRET_DEMANDE"]  = False   # positionné par un signal / le bouton Quitter
     app.config["LAST_HEARTBEAT"] = 0.0     # horodatage du dernier heartbeat reçu
     app.config["HEARTBEAT_RECU"] = False   # aucune surveillance tant qu'aucun heartbeat
+    app.config["SSE_CONNEXIONS_ACTIVES"] = 0     # nb de connexions /events ouvertes (issue #157)
+    app.config["LAST_SSE_ACTIVITE"]      = 0.0   # horodatage de la dernière activité SSE (issue #157)
+    app.config["SSE_DEJA_VU"]            = False # au moins une connexion SSE a-t-elle eu lieu (issue #157)
     app.config["PROC_TUNNEL"]    = None    # processus cloudflared (mode --externe)
 
     _enregistrer_routes(app)
@@ -65,6 +68,7 @@ def _enregistrer_routes(app: Flask) -> None:
                             fermer_issue)
     from app.journal import journal
     from app.cycle_vie import heartbeat, events, quitter
+    from app.diag_heartbeat import visibilite as diag_visibilite   # DIAGNOSTIC TEMPORAIRE — issue #157, à retirer
     from app.vues import index
 
     app.add_url_rule("/login", "login", login, methods=["GET"])
@@ -91,3 +95,4 @@ def _enregistrer_routes(app: Flask) -> None:
     app.add_url_rule("/heartbeat", "heartbeat", heartbeat, methods=["POST"])
     app.add_url_rule("/events", "events", login_requis(events))
     app.add_url_rule("/quitter", "quitter", login_requis(quitter), methods=["POST"])
+    app.add_url_rule("/diag-visibilite", "diag_visibilite", diag_visibilite, methods=["POST"])   # DIAGNOSTIC TEMPORAIRE — issue #157, à retirer
