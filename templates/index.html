@@ -335,10 +335,10 @@
     <div class="titre-section" style="margin-top:22px">Finaliser un projet</div>
     <div class="rangee">
       <div class="champ" style="max-width:220px">
-        <label>Projet (nom ou sélection)</label>
-        <input type="text" id="ccw-fin-nom" list="ccw-liste-projets"
-               placeholder="ex : Scrabble" autocomplete="off">
-        <datalist id="ccw-liste-projets"></datalist>
+        <label>Projet (sélection)</label>
+        <select id="ccw-fin-nom">
+          <option value="" disabled selected>-- Choisir un projet --</option>
+        </select>
       </div>
       <div class="champ">
         <label>TOPIC_NTFY</label>

@@ -291,7 +291,7 @@ async function ccwDemarrerVm() {
 
 async function ccwChargerProjets() {
   const corps = document.getElementById('ccw-corps-projets');
-  const liste = document.getElementById('ccw-liste-projets');
+  const selectFin = document.getElementById('ccw-fin-nom');
   ccwMessage('ccw-msg-projets', 'Interrogation de la VM…', '');
   corps.innerHTML = '';
   try {
@@ -302,9 +302,12 @@ async function ccwChargerProjets() {
       return;
     }
     const projets = j.projets || [];
+    // Mémorise la sélection courante pour la restaurer si le projet existe encore.
+    const selectionCourante = selectFin ? selectFin.value : '';
     if (projets.length === 0) {
       ccwMessage('ccw-msg-projets', 'Aucun service CCW-Watcher* enregistré dans la VM.', '');
-      liste.innerHTML = '';
+      if (selectFin)
+        selectFin.innerHTML = '<option value="" disabled selected>-- Choisir un projet --</option>';
       return;
     }
     ccwMessage('ccw-msg-projets', '', '');
@@ -318,7 +321,9 @@ async function ccwChargerProjets() {
         topicHtml = '<span style="color:#2e8b57">✓ renseigné</span>';
       else
         topicHtml = '<span style="color:#888">? inconnu</span>';
-      return '<tr style="border-bottom:1px solid #f2f2f0">'
+      return '<tr style="border-bottom:1px solid #f2f2f0;cursor:pointer"'
+        + ' title="Cliquer pour pré-sélectionner ce projet dans « Finaliser »"'
+        + ' onclick="ccwPreselectionnerProjet(\'' + escapeHtml(p.projet) + '\')">'
         + '<td style="padding:8px 12px;font-size:13px">' + escapeHtml(p.projet)
           + (p.base ? ' <span style="color:#aaa;font-size:11px">(base)</span>' : '') + '</td>'
         + '<td style="padding:8px 12px;font-size:12px;color:#777;font-family:monospace">'
@@ -328,12 +333,33 @@ async function ccwChargerProjets() {
         + '<td style="padding:8px 12px;font-size:13px">' + topicHtml + '</td>'
         + '</tr>';
     }).join('');
-    // Alimente le datalist du formulaire « Finaliser » (sélection dans la liste).
-    liste.innerHTML = projets.map(function(p) {
-      return '<option value="' + escapeHtml(p.projet) + '">';
-    }).join('');
+    // Alimente le <select> du formulaire « Finaliser » : seuls les projets
+    // réellement listés ci-dessus sont sélectionnables (plus de saisie libre).
+    if (selectFin) {
+      const noms = projets.map(function(p) { return p.projet; });
+      selectFin.innerHTML = '<option value="" disabled>-- Choisir un projet --</option>'
+        + projets.map(function(p) {
+            return '<option value="' + escapeHtml(p.projet) + '">'
+                 + escapeHtml(p.projet) + '</option>';
+          }).join('');
+      // Restaure la sélection précédente si le projet existe toujours,
+      // sinon repositionne le placeholder.
+      selectFin.value = (noms.indexOf(selectionCourante) !== -1) ? selectionCourante : '';
+    }
   } catch (e) {
     ccwMessage('ccw-msg-projets', 'Erreur réseau : ' + e.message, 'erreur');
+  }
+}
+
+// Confort : un clic sur une ligne du tableau « Projets CCW existants »
+// pré-sélectionne ce projet dans le <select> de la section « Finaliser ».
+function ccwPreselectionnerProjet(nom) {
+  const selectFin = document.getElementById('ccw-fin-nom');
+  if (!selectFin) return;
+  // Ne sélectionne que si l'option existe réellement dans le <select>.
+  const options = selectFin.options;
+  for (let i = 0; i < options.length; i++) {
+    if (options[i].value === nom) { selectFin.value = nom; break; }
   }
 }
 
@@ -374,7 +400,7 @@ async function ccwFinaliserProjet() {
   const gh    = document.getElementById('ccw-fin-gh').value;
   const oauth = document.getElementById('ccw-fin-oauth').value;
   if (!nom) {
-    ccwMessage('ccw-message', 'Nom du projet requis.', 'erreur');
+    ccwMessage('ccw-message', 'Choisissez un projet dans la liste déroulante.', 'erreur');
     return;
   }
   if (!gh || !oauth) {
