@@ -87,11 +87,125 @@ function Installer-Winget($id, $nom) {
 #   Git/gh/Python/NSSM. C'est ce que fait cette fonction (idempotente : si winget
 #   est déjà là, elle ne fait rien — cas d'un Windows 11 « standard »).
 #
+#   DÉPENDANCE SUPPLÉMENTAIRE (issue #159, suite #158) : le msixbundle App
+#   Installer exige le framework « Microsoft.WindowsAppRuntime.1.8 » (version
+#   minimale 8000.616.304.0). Sur un Windows 11 « standard » ce framework est
+#   fourni automatiquement par le Store ; sur LTSC/IoT (sans Store) il est ABSENT,
+#   et Add-AppxProvisionedPackage échoue alors avec HRESULT 0x80073CF3
+#   (dépendance manquante). On installe donc d'abord le Windows App Runtime via
+#   l'installeur autonome officiel (Install-WindowsAppRuntime, appelée plus bas)
+#   AVANT de provisionner App Installer, pour que la dépendance soit satisfaite.
+#
 #   Doc Microsoft Learn officielle sur winget :
 #     https://learn.microsoft.com/windows/package-manager/winget/
 #   Installation de winget sur les éditions sans Store (sideload App Installer) :
 #     https://learn.microsoft.com/windows/package-manager/winget/#install-winget-on-windows-sandbox
 #     https://learn.microsoft.com/windows/package-manager/winget/#install-winget-on-windows-server-and-non-store-editions
+# ---------------------------------------------------------------------------
+# 1ter. Windows App Runtime (Windows App SDK Runtime) — DÉPENDANCE d'App Installer
+#       manquante sur LTSC/IoT (issue #159, suite #158).
+#
+#   Pourquoi : le msixbundle App Installer (Microsoft.DesktopAppInstaller) déployé
+#   par Bootstrap-Winget dépend du framework « Microsoft.WindowsAppRuntime.1.8 »
+#   (version minimale 8000.616.304.0). Sur une édition LTSC/IoT sans Store, ce
+#   framework n'est PAS installé automatiquement : Add-AppxProvisionedPackage
+#   échoue alors avec HRESULT 0x80073CF3, et le repli Add-AppxPackage
+#   -RegisterByFamilyName échoue pareillement. Microsoft fournit un installeur
+#   autonome officiel (.exe) qui déploie EN UNE FOIS tous les paquets du Windows
+#   App SDK Runtime (framework, main, singleton, DDLM), silencieusement, tant
+#   qu'il est lancé en élevé — acquis sur CCW-Build depuis la désactivation d'UAC.
+#
+#   URL VÉRIFIÉE le 2026-07-19 sur la page officielle « Latest Windows App SDK
+#   downloads » + son archive (un lien figé de ce type a déjà été signalé cassé,
+#   donc confirmation à chaque évolution) — variante runtime x64, dernière 1.8
+#   stable disponible : 1.8.10 (build 1.8.260710003, publiée le 14/07/2026) :
+#     https://learn.microsoft.com/windows/apps/windows-app-sdk/downloads
+#     https://learn.microsoft.com/windows/apps/windows-app-sdk/downloads-archive
+#   Flag silencieux officiel (double tiret) : --quiet — documenté ici :
+#     https://learn.microsoft.com/windows/apps/windows-app-sdk/deploy-unpackaged-apps
+#
+#   Cache : MÊME pattern que le msixbundle (issue #158) — sous-dossier dédié du
+#   partage CCW_Share (\\VBOXSVR\CCW_Share\cache\windows-app-runtime\), réutilisé
+#   si présent, peuplé sinon. Idempotent : si les paquets sont déjà là,
+#   l'installeur ne fait rien. Pour forcer une nouvelle version : VIDER le cache.
+# ---------------------------------------------------------------------------
+function Install-WindowsAppRuntime {
+    $cacheDir   = '\\VBOXSVR\CCW_Share\cache\windows-app-runtime'
+    $exeName    = 'WindowsAppRuntimeInstall-x64.exe'
+    $cacheExe   = Join-Path $cacheDir $exeName
+    # Runtime x64, dernière 1.8 stable vérifiée le 2026-07-19 (voir commentaire ci-dessus).
+    $runtimeUrl = 'https://aka.ms/windowsappsdk/1.8/1.8.260710003/windowsappruntimeinstall-x64.exe'
+
+    $exePath = $null
+    # $tmp reste $null si le cache est utilisé : rien à nettoyer en fin de fonction.
+    $tmp     = $null
+
+    if (Test-Path $cacheExe) {
+        # (1) Cache présent : on l'utilise directement, aucun accès réseau.
+        $exePath = $cacheExe
+        Info 'Windows App Runtime : utilisation du cache existant (pas de téléchargement).'
+    } else {
+        # (2) Cache absent (premier run, ou dossier vidé manuellement) : on télécharge,
+        #     PUIS on peuple le cache pour le prochain test.
+
+        # aka.ms redirige vers un CDN HTTPS/TLS 1.2 ; PowerShell 5.1 ne le négocie pas
+        # toujours par défaut. On le force pour éviter un échec TLS opaque (idem msixbundle).
+        try {
+            [Net.ServicePointManager]::SecurityProtocol = `
+                [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+        } catch {
+            Avert "Impossible de forcer TLS 1.2 ($($_.Exception.Message)) — on tente quand même."
+        }
+
+        # Dossier temporaire dédié (nettoyé en fin de fonction).
+        $tmp     = Join-Path $env:TEMP ('winappruntime-' + [Guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $tmp -Force | Out-Null
+        $exePath = Join-Path $tmp $exeName
+
+        try {
+            Info 'Téléchargement du Windows App Runtime (installeur autonome x64, 1.8)…'
+            Invoke-WebRequest -Uri $runtimeUrl -OutFile $exePath -UseBasicParsing
+        } catch {
+            # Erreur réseau (VM en NAT : accès sortant requis) — message clair.
+            throw ("Téléchargement du Windows App Runtime échoué : $($_.Exception.Message). " +
+                   "La VM doit avoir un accès Internet sortant (NAT). " +
+                   "Voir https://learn.microsoft.com/windows/apps/windows-app-sdk/downloads pour un dépannage manuel.")
+        }
+
+        # Peupler le cache persistant (best-effort : un échec de copie ne doit PAS
+        # faire échouer le provisioning — on retéléchargera au run suivant).
+        try {
+            New-Item -ItemType Directory -Path $cacheDir -Force | Out-Null
+            Copy-Item -Path $exePath -Destination $cacheExe -Force
+            Info "Windows App Runtime mis en cache dans $cacheDir."
+        } catch {
+            Avert "Impossible de peupler le cache Windows App Runtime ($($_.Exception.Message)) — le prochain run retéléchargera."
+        }
+    }
+
+    # (3) Installation SILENCIEUSE (--quiet). Requiert l'élévation (acquise sur
+    #     CCW-Build, UAC désactivé) : sans elle, l'installeur renvoie 0x80070005.
+    #     Un .exe natif ne lève pas d'exception sur code non nul — on teste
+    #     explicitement $LASTEXITCODE (0x0 = succès).
+    try {
+        Info 'Installation du Windows App Runtime (--quiet)…'
+        & $exePath --quiet
+        $code = $LASTEXITCODE
+        if ($code -ne 0) {
+            $hex = ('0x{0:X8}' -f $code)
+            Avert ("L'installeur Windows App Runtime a renvoyé le code $hex " +
+                   "(App Installer risquera d'échouer si la dépendance n'est pas satisfaite ; " +
+                   "0x80070005 = processus non élevé — voir deploy-unpackaged-apps).")
+        } else {
+            Info 'Windows App Runtime installé (dépendance App Installer satisfaite).'
+        }
+    } catch {
+        Avert "Exécution de l'installeur Windows App Runtime échouée ($($_.Exception.Message))."
+    } finally {
+        if ($tmp) { Remove-Item -Path $tmp -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+}
+
 # ---------------------------------------------------------------------------
 function Bootstrap-Winget {
     # (1) Déjà disponible ? Ne rien faire (Windows 11 standard, ou relance).
@@ -209,6 +323,11 @@ function Bootstrap-Winget {
             Avert "Impossible de peupler le cache ($($_.Exception.Message)) — le prochain run retéléchargera."
         }
     }
+
+    # Dépendance PRÉALABLE (issue #159) : installer le Windows App Runtime AVANT
+    # de provisionner App Installer, sinon Add-AppxProvisionedPackage échoue avec
+    # 0x80073CF3 (framework Microsoft.WindowsAppRuntime.1.8 manquant sur LTSC/IoT).
+    Install-WindowsAppRuntime
 
     # (3) Installation hors-ligne du paquet provisionné (Store non requis).
     try {
