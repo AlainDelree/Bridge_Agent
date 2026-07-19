@@ -127,6 +127,27 @@ $RepConfigs = Join-Path $RepDepot 'configs'
 if (-not (Test-Path $RepConfigs)) { New-Item -ItemType Directory -Path $RepConfigs | Out-Null }
 $CheminConf = Join-Path $RepConfigs $NomConf
 
+# Préservation du TOPIC_NTFY déjà finalisé (issue #181, suite #170) : relancer ce
+# script sur un projet déjà finalisé (ex. pour appliquer un correctif) ne doit PAS
+# remettre TOPIC_NTFY au placeholder. Si le config existe déjà ET contient une
+# valeur réelle (≠ placeholder), on la réutilise dans le contenu régénéré ;
+# sinon (fichier absent ou encore au placeholder) → comportement inchangé.
+$Placeholder     = '###TOPIC_NTFY_A_DEFINIR###'
+$TopicNtfy       = $Placeholder
+$topicPreserve   = $false
+if (Test-Path $CheminConf) {
+    foreach ($ligne in [System.IO.File]::ReadAllLines($CheminConf)) {
+        if ($ligne -match '^\s*TOPIC_NTFY\s*=\s*(.+?)\s*$') {
+            $valeur = $Matches[1].Trim()
+            if ($valeur -and $valeur -ne $Placeholder) {
+                $TopicNtfy     = $valeur
+                $topicPreserve = $true
+            }
+            break
+        }
+    }
+}
+
 $contenuConf = @"
 # configs/$NomConf — Config du watcher CCW pour le projet $NomProjet.
 # Généré par ajouter_projet_ccw.ps1 (multi-projets, issue #170). Format : CLE = valeur.
@@ -141,7 +162,7 @@ REP_TRAVAIL = $RepDepot
 # ─── ntfy ─────────────────────────────────────────────────────────────────────
 # PLACEHOLDER à renseigner LOCALEMENT (comme pour ccw.conf / bridge_agent).
 # Ne PAS committer la valeur réelle du topic.
-TOPIC_NTFY  = ###TOPIC_NTFY_A_DEFINIR###
+TOPIC_NTFY  = $TopicNtfy
 
 # ─── Périmètre CCW (dossiers autorisés) ───────────────────────────────────────
 PERIMETRE   = $RepDepot
@@ -155,6 +176,9 @@ PERIMETRE   = $RepDepot
 Info "Écriture de $CheminConf…"
 # UTF-8 sans BOM pour rester lisible par le parseur .conf de watcher.py.
 [System.IO.File]::WriteAllText($CheminConf, $contenuConf, (New-Object System.Text.UTF8Encoding($false)))
+if ($topicPreserve) {
+    Info "TOPIC_NTFY existant préservé (relance sur projet déjà finalisé) — non remis au placeholder."
+}
 
 # ---------------------------------------------------------------------------
 # 3. Service Windows dédié (NSSM) : CCW-Watcher-<NomProjet>.
@@ -195,9 +219,24 @@ $LogService = Join-Path $RepLogs $NomLog
 
 # Idempotence : si le service existe déjà, l'arrêter puis le supprimer avant de
 # le recréer (même pattern que provisionner.ps1 — script relançable sans erreur).
+# Préservation des tokens déjà posés (issue #181, suite #170) : nssm remove efface
+# AppEnvironmentExtra (les tokens posés via l'onglet CCW / finaliser_projet_ccw.ps1).
+# Avant de supprimer un service existant, on lit sa valeur actuelle pour la
+# réappliquer après recréation. Première création → rien à préserver.
+$envExtra        = @()
+$tokensPreserve  = $false
 $svcExistant = Get-Service -Name $NomService -ErrorAction SilentlyContinue
 if ($svcExistant) {
     Info "Service « $NomService » déjà présent — arrêt puis suppression avant recréation…"
+    # Lire AppEnvironmentExtra AVANT le remove. nssm get renvoie chaque variable
+    # KEY=valeur sur sa propre ligne ; on ne garde que les lignes non vides.
+    $envExtra = @(nssm get $NomService AppEnvironmentExtra 2>$null |
+                  ForEach-Object { $_.Trim() } |
+                  Where-Object { $_ -ne '' })
+    if ($envExtra.Count -gt 0) {
+        $tokensPreserve = $true
+        Info "Tokens existants détectés (AppEnvironmentExtra) — seront réappliqués après recréation."
+    }
     nssm stop   $NomService | Out-Null
     nssm remove $NomService confirm | Out-Null
 }
@@ -212,6 +251,14 @@ nssm set $NomService AppRestartDelay  5000
 # Rediriger stdout/stderr du service vers un fichier de log dédié.
 nssm set $NomService AppStdout        $LogService
 nssm set $NomService AppStderr        $LogService
+
+# Réappliquer les tokens préservés (AppEnvironmentExtra) lus avant le remove, pour
+# que la relance n'efface pas les tokens déjà posés (issue #181). Chaque élément
+# de $envExtra est une entrée KEY=valeur, passée comme argument distinct à nssm set.
+if ($tokensPreserve) {
+    nssm set $NomService AppEnvironmentExtra @envExtra | Out-Null
+    Info "Tokens existants réappliqués (AppEnvironmentExtra préservé) — relance sans perte."
+}
 
 # Démarrer immédiatement (le service repartira ensuite seul à chaque boot).
 # Il tournera mais restera inactif tant que TOPIC_NTFY et le token ne sont pas
