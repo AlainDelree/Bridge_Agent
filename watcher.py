@@ -339,7 +339,8 @@ def gh(*args) -> dict | list | None:
     """Lance une commande gh et retourne le JSON parsé."""
     cmd = ["gh", *args, "--json"]
     try:
-        res = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        res = subprocess.run(cmd, capture_output=True, text=True,
+                             encoding="utf-8", errors="replace", timeout=30)
         if res.returncode != 0:
             log.error(f"gh erreur : {res.stderr.strip()}")
             return None
@@ -357,7 +358,8 @@ def lister_issues():
              "--label", CFG.label,
              "--state", "open",
              "--json", "number,title,body,labels,createdAt"],
-            capture_output=True, text=True, timeout=30
+            capture_output=True, text=True,
+            encoding="utf-8", errors="replace", timeout=30
         )
         if res.returncode != 0:
             log.error(f"Erreur gh issue list : {res.stderr.strip()}")
@@ -621,7 +623,8 @@ def ajouter_label(numero: int, label: str):
             ["gh", "issue", "edit", str(numero),
              "--repo", CFG.depot,
              "--add-label", label],
-            capture_output=True, text=True, timeout=30
+            capture_output=True, text=True,
+            encoding="utf-8", errors="replace", timeout=30
         )
     except Exception as e:
         log.error(f"Erreur ajout label '{label}' sur issue #{numero} : {e}")
@@ -633,7 +636,8 @@ def commenter_issue(numero: int, message: str):
             ["gh", "issue", "comment", str(numero),
              "--repo", CFG.depot,
              "--body", message],
-            capture_output=True, text=True, timeout=30
+            capture_output=True, text=True,
+            encoding="utf-8", errors="replace", timeout=30
         )
     except Exception as e:
         log.error(f"Erreur commentaire issue #{numero} : {e}")
@@ -643,13 +647,15 @@ def fermer_issue(numero: int):
     try:
         subprocess.run(
             ["gh", "issue", "close", str(numero), "--repo", CFG.depot],
-            capture_output=True, text=True, timeout=30
+            capture_output=True, text=True,
+            encoding="utf-8", errors="replace", timeout=30
         )
         subprocess.run(
             ["gh", "issue", "edit", str(numero),
              "--repo", CFG.depot,
              "--add-label", LABEL_FAIT],
-            capture_output=True, text=True, timeout=30
+            capture_output=True, text=True,
+            encoding="utf-8", errors="replace", timeout=30
         )
     except Exception as e:
         log.error(f"Erreur fermeture issue #{numero} : {e}")
@@ -801,6 +807,7 @@ Si la tâche échoue, remplace ✅ par ❌ et explique la cause en une ligne.
         res = subprocess.run(
             cmd,
             capture_output=True, text=True,
+            encoding="utf-8", errors="replace",
             timeout=timeout,
             cwd=cwd_effectif
         )
