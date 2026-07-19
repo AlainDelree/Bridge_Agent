@@ -27,10 +27,11 @@
   IMPORTANT — token GitHub : ce script ne configure PAS AppEnvironmentExtra.
   Chaque service CCW a son PROPRE token fine-grained (limité à SON seul dépôt),
   et TOUS les tokens partagent la MÊME date d'expiration que le token
-  Bridge_Agent (≈ mi-octobre 2026, aligné sur l'éval Windows — cf. §16). Le
-  token est posé MANUELLEMENT ensuite (rappel affiché en fin de script) :
-    powershell -File provisioning\windows\mettre_a_jour_tokens_ccw.ps1 `
-        -NomService CCW-Watcher-<NomProjet> -RepDepot C:\CCW\<NomProjet>
+  Bridge_Agent (≈ mi-octobre 2026, aligné sur l'éval Windows — cf. §16). La
+  finalisation (TOPIC_NTFY + pose du token + redémarrage + vérif) se fait
+  ENSUITE en UNE SEULE commande (issue #173, rappel affiché en fin de script) :
+    powershell -File provisioning\windows\finaliser_projet_ccw.ps1 `
+        -NomProjet <NomProjet>
 
   Prérequis : provisionner.ps1 déjà passé (Git, Python, NSSM installés).
   Exécution en administrateur, DANS la VM CCW-Build.
@@ -202,17 +203,15 @@ nssm start $NomService | Out-Null
 Info ''
 Info "Projet « $NomProjet » ajouté : clone + config + service « $NomService »."
 Info ''
-Info 'RAPPELS — à faire manuellement ensuite (le service ne travaillera pas avant) :'
-Info "  1. Renseigner TOPIC_NTFY dans $CheminConf (placeholder actuel)."
-Info "  2. Créer un token GitHub fine-grained DÉDIÉ à ce projet :"
-Info "       • Repository access → $Depot UNIQUEMENT"
-Info '       • Permissions : Issues = Read and write, Metadata = Read-only'
-Info '       • Expiration : LA MÊME DATE que le token Bridge_Agent (≈ 2026-10-17,'
-Info "         aligné sur l'éval Windows) — ne pas laisser dériver (cf. §16)."
-Info "  3. Poser le token sur le service (sans reconstruire la chaîne à la main) :"
-Info "       powershell -File provisioning\windows\mettre_a_jour_tokens_ccw.ps1 ``"
-Info "           -NomService $NomService -RepDepot $RepDepot"
-Info "     (à défaut, nssm set $NomService AppEnvironmentExtra : GH_TOKEN puis"
-Info "      CLAUDE_CODE_OAUTH_TOKEN, séparés par un saut de ligne ``n, jamais un espace)"
+Info 'RESTE UNE SEULE COMMANDE pour finaliser (le service ne travaillera pas avant) :'
+Info "     powershell -File provisioning\windows\finaliser_projet_ccw.ps1 -NomProjet $NomProjet"
+Info ''
+Info 'Elle enchaîne : saisie de TOPIC_NTFY (écrite dans le config), pause pour créer'
+Info 'le token GitHub dédié, saisie + pose des deux tokens, redémarrage du service et'
+Info 'vérification finale des logs. Rappel des réglages du token dédié à créer :'
+Info "  • Repository access → $Depot UNIQUEMENT"
+Info '  • Permissions : Issues = Read and write, Metadata = Read-only'
+Info '  • Expiration : LA MÊME DATE que le token Bridge_Agent (≈ 2026-10-17,'
+Info "    aligné sur l'éval Windows) — ne pas laisser dériver (cf. §16)."
 Info ''
 Info "Vérif : nssm status $NomService  /  Get-Service $NomService"

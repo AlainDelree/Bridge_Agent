@@ -37,6 +37,10 @@ param(
     [string]$NomService = 'CCW-Watcher',
     # Dépôt cloné dans la VM (cf. provisionner.ps1, RepCCW\Bridge_Agent).
     [string]$RepDepot = 'C:\CCW\Bridge_Agent',
+    # Nom du fichier de log du service, dans <RepDepot>\logs. Par défaut celui de
+    # CCW-Watcher (mono-projet) ; pour un service multi-projets CCW-Watcher-<Nom>,
+    # passer 'ccw-<nom>-service.log' (cf. ajouter_projet_ccw.ps1, issue #173).
+    [string]$NomLog = 'ccw-service.log',
     # Secondes d'attente avant lecture des logs (laisser le watcher démarrer).
     [int]$DelaiSecondes = 6,
     # Nombre de lignes de log à afficher pour confirmation.
@@ -73,7 +77,7 @@ if (-not (Get-Service -Name $NomService -ErrorAction SilentlyContinue)) {
     exit 1
 }
 
-$LogService = Join-Path $RepDepot 'logs\ccw-service.log'
+$LogService = Join-Path $RepDepot (Join-Path 'logs' $NomLog)
 
 # ---------------------------------------------------------------------------
 # 1. Saisie interactive des deux valeurs (masquées).
