@@ -30,6 +30,7 @@ from threading import Thread, Timer
 from app import create_app, etat
 from app.tunnel import demarrer_tunnel, arreter_tunnel
 from app.cycle_vie import surveiller_heartbeat
+from app.notifications_poller import surveiller_transitions
 
 DOSSIER_SCRIPT = Path(__file__).resolve().parent
 
@@ -130,6 +131,14 @@ def main():
     # Surveillance des heartbeats du navigateur (daemon → ne bloque jamais
     # l'arrêt du processus si le gestionnaire de signal est lent).
     Thread(target=surveiller_heartbeat, args=(app,), daemon=True).start()
+
+    # Détection serveur des transitions d'issues (issue #187) : polling GitHub
+    # périodique qui déclenche bip/notify-send/ntfy sur le ThinkPad pour toute
+    # issue fermée (succès) ou marquée needs-human (échec), y compris celles
+    # traitées par la VM Windows (CCW) — sans aucun appel réseau depuis la VM.
+    # Daemon → n'empêche jamais l'arrêt du processus. Désactivable via
+    # BRIDGE_NOTIF_SCOPE=off.
+    Thread(target=surveiller_transitions, daemon=True).start()
 
     if not args.no_browser:
         Timer(1.2, lambda: webbrowser.open(f"{schema}://localhost:{args.port}")).start()

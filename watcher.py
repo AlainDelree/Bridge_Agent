@@ -28,6 +28,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from datetime import datetime
 
+# Canaux de notification factorisés (issue #187) : partagés avec new_issue.py
+# via notifications.py, à la racine du projet. watcher.py tourne toujours avec
+# WorkingDirectory = racine du dépôt (voir systemd/watcher@.service), donc
+# l'import direct fonctionne. Les enveloppes bip()/notifier*() ci-dessous
+# délèguent à ce module en passant les valeurs du CFG courant.
+import notifications
+
 # ─── Emplacements fixes (relatifs au script, PAS au cwd du projet) ─────────────
 # Les journaux vivent à côté du watcher, quel que soit le projet piloté. Ils ne
 # doivent surtout pas atterrir dans le répertoire de travail du projet (il change).
@@ -52,7 +59,10 @@ LABEL_ECRITURE  = "mode_write"    # ARME le mode écriture (--dangerously-skip-p
 LABEL_ECHEC     = "needs-human"   # posé après échec définitif : stoppe le retraitement auto
 LABEL_FAIT      = "done"          # posé au succès
 
-# Labels de notification (opt-in, cumulatifs avec le bip).
+# Labels de notification (opt-in, cumulatifs avec le bip). Depuis l'issue #187,
+# le dispatch concret selon ces labels vit dans notifications.py (module partagé
+# avec new_issue.py) ; ces constantes restent ici comme contrat documentaire du
+# protocole bridge (valeurs miroir de notifications.LABEL_NOTIF_*).
 LABEL_NOTIF_PC   = "notif_pc"     # bip + notify-send (bulle bureau locale)
 LABEL_NOTIF_GSM  = "notif_gsm"    # bip + ntfy (push téléphone)
 LABEL_NOTIF_TOUS = "notif_tous"   # bip + notify-send + ntfy
@@ -85,7 +95,7 @@ class Config:
     timeout_claude: int   = 300
     timeout_chef: int     = 1200   # défaut plus généreux pour les issues « Chef : » sans TIMEOUT explicite (issue #106)
     timeout_diagnostic: int = 90   # timeout court et fixe de la passe diagnostique avant abandon non-critique (issue #124)
-    script_bip: Path      = field(default_factory=lambda: Path.home() / "NicLink" / "bip.py")
+    script_bip: Path      = field(default_factory=lambda: DOSSIER_SCRIPT / "scripts" / "bip.py")
     log_taille_max_mo: int = 1     # rotation quand le journal dépasse cette taille (Mo)
     log_archives: int      = 5     # nombre d'archives datées conservées
     cmd_backup: str        = ""    # commande de sauvegarde avant modif (mode écriture)
@@ -95,6 +105,7 @@ class Config:
     fichier_contexte: str  = ""    # fichier de contexte projet injecté dans le prompt (chemin relatif au rep_travail ou absolu ; vide = aucun)
     couleur: str           = ""    # couleur d'accent du projet dans l'interface (hex #RRGGBB ; vide = repli map fixe/hash côté frontend)
     perimetre_dynamique: bool = False  # périmètre fourni par l'issue (REPO_CIBLE) plutôt que figé dans le .conf — outil d'audit multi-dépôts (issue #125)
+    notifier_local: bool   = True  # ce watcher émet-il lui-même bip/notify-send/ntfy à la fin d'une issue (issue #187) ? True = comportement historique. Mettre à False sur la VM CCW (et éventuellement CCL) pour laisser new_issue.py notifier de façon centralisée sur le ThinkPad, sans doublon.
 
     @property
     def url_ntfy(self) -> str:
@@ -163,7 +174,7 @@ def charger_config(chemin: Path) -> Config:
         timeout_chef   = entier("TIMEOUT_CHEF", 1200),
         timeout_diagnostic = entier("TIMEOUT_DIAGNOSTIC", 90),
         script_bip  = Path(brut["SCRIPT_BIP"]).expanduser() if brut.get("SCRIPT_BIP")
-                      else Path.home() / "NicLink" / "bip.py",
+                      else DOSSIER_SCRIPT / "scripts" / "bip.py",
         log_taille_max_mo = entier("LOG_TAILLE_MAX_MO", 1),
         log_archives      = entier("LOG_ARCHIVES", 5),
         cmd_backup        = brut.get("CMD_BACKUP", ""),
@@ -173,6 +184,7 @@ def charger_config(chemin: Path) -> Config:
         fichier_contexte  = brut.get("FICHIER_CONTEXTE", ""),
         couleur           = brut.get("COULEUR", ""),
         perimetre_dynamique = booleen("PERIMETRE_DYNAMIQUE", False),
+        notifier_local      = booleen("NOTIFIER_LOCAL", True),
     )
 
 
@@ -268,59 +280,44 @@ def configurer_logs(cfg: Config):
 
 # ─── Utilitaires ──────────────────────────────────────────────────────────────
 
+# ─── Notifications ─────────────────────────────────────────────────────────────
+# Depuis l'issue #187, la logique concrète des canaux (bip, notify-send, ntfy)
+# vit dans notifications.py, partagé avec new_issue.py. Les fonctions ci-dessous
+# sont des ENVELOPPES minces qui délèguent à ce module en injectant les valeurs
+# du CFG courant (nom, url_ntfy, script_bip) et le logger du watcher. Les sites
+# d'appel existants (succès/échec/alerte critique) restent inchangés.
+
 def bip(fois=1):
-    """Bip sonore via bip.py."""
-    if CFG.script_bip.exists():
-        for _ in range(fois):
-            subprocess.run(["python3", str(CFG.script_bip)], capture_output=True)
-            time.sleep(0.3)
+    """Bip sonore via le script bip partagé (Bridge_Agent/scripts/bip.py)."""
+    notifications.bip(CFG.script_bip, fois)
 
 def notifier_bureau(titre: str, message: str, urgence: str = "normal"):
-    """Envoie une bulle de notification bureau via notify-send.
-    urgence : 'low', 'normal', 'critical'. 'critical' reste affichée jusqu'à
-    clic (utile pour les échecs)."""
-    try:
-        subprocess.run(
-            ["notify-send", "-a", f"Bridge {CFG.nom}", "-u", urgence, titre, message],
-            capture_output=True, timeout=5
-        )
-    except FileNotFoundError:
-        log.warning("notify-send introuvable (paquet libnotify-bin non installé ?) — notification bureau ignorée.")
-    except Exception as e:
-        log.error(f"Erreur notify-send : {e}")
+    """Bulle de notification bureau via notify-send (voir notifications.py)."""
+    notifications.notifier_bureau(CFG.nom, titre, message, urgence, log=log)
 
 def notifier_ntfy(titre: str, message: str, priorite: str = "default"):
-    """Envoie une notification push sur le topic ntfy (téléphone).
-    priorite : 'min', 'low', 'default', 'high', 'urgent'."""
-    try:
-        subprocess.run(
-            ["curl", "-s",
-             "-H", f"Title: {titre}",
-             "-H", f"Priority: {priorite}",
-             "-H", "Tags: robot",
-             "-d", message,
-             CFG.url_ntfy],
-            capture_output=True, timeout=10
-        )
-    except FileNotFoundError:
-        log.warning("curl introuvable — notification ntfy ignorée.")
-    except Exception as e:
-        log.error(f"Erreur ntfy : {e}")
+    """Notification push ntfy sur le topic du projet (voir notifications.py)."""
+    notifications.notifier_ntfy(CFG.url_ntfy, titre, message, priorite, log=log)
 
 def notifier(labels: list[str], titre: str, message: str,
              urgence_bureau: str = "normal", priorite_ntfy: str = "default",
              fois_bip: int = 1):
     """Dispatch de notification selon les labels de l'issue.
-    Le bip et les canaux additionnels (notify-send, ntfy) sont opt-in via les
-    labels notif_pc / notif_gsm / notif_tous : sans aucun de ces labels, aucun
-    signal n'est émis. fois_bip permet de renforcer le signal (ex. 3 pour une
-    alerte critique)."""
-    if LABEL_NOTIF_PC in labels or LABEL_NOTIF_GSM in labels or LABEL_NOTIF_TOUS in labels:
-        bip(fois_bip)
-    if LABEL_NOTIF_PC in labels or LABEL_NOTIF_TOUS in labels:
-        notifier_bureau(titre, message, urgence_bureau)
-    if LABEL_NOTIF_GSM in labels or LABEL_NOTIF_TOUS in labels:
-        notifier_ntfy(titre, message, priorite_ntfy)
+
+    Garde issue #187 : si `NOTIFIER_LOCAL = false` dans le .conf, ce watcher
+    n'émet AUCUN signal lui-même — la notification est laissée à new_issue.py,
+    qui détecte la transition par polling GitHub et notifie de façon centralisée
+    sur le ThinkPad d'Alain (évite les doublons, et fait remonter les transitions
+    CCW dont le bip/notify-send tomberaient sinon dans la VM). Par défaut True :
+    comportement historique préservé (notamment CCL, déjà fonctionnel)."""
+    if not CFG.notifier_local:
+        return
+    notifications.notifier(
+        labels, CFG.nom, CFG.url_ntfy, CFG.script_bip,
+        titre, message,
+        urgence_bureau=urgence_bureau, priorite_ntfy=priorite_ntfy,
+        fois_bip=fois_bip, log=log,
+    )
 
 def alerte_critique(numero, titre, tentative, labels: list[str]):
     """Alerte pour les issues haute/critique après échec."""
