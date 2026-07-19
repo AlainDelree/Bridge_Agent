@@ -160,6 +160,16 @@ Info "Écriture de $CheminConf…"
 # 3. Service Windows dédié (NSSM) : CCW-Watcher-<NomProjet>.
 #    Mêmes réglages que CCW-Watcher (provisionner.ps1) : démarrage au boot sans
 #    session, redémarrage automatique sur échec, logs dédiés.
+#
+#    IMPORTANT — séparation outillage / projet (issue #179, suite #170) :
+#    watcher.py est l'OUTILLAGE PARTAGÉ du bridge, présent UNIQUEMENT dans le
+#    clone Bridge_Agent (C:\CCW\Bridge_Agent). Le clone du projet
+#    (C:\CCW\<NomProjet>) ne contient QUE le code du projet + son config + ses
+#    logs, PAS watcher.py. On doit donc référencer watcher.py par un CHEMIN
+#    ABSOLU vers Bridge_Agent, et non relativement à AppDirectory : ce dernier
+#    reste le dossier du projet ($RepDepot) pour que REP_TRAVAIL/PERIMETRE et le
+#    chemin relatif du config (configs\<nom>-ccw.conf) se résolvent bien AU
+#    PROJET. Seul watcher.py est absolu.
 # ---------------------------------------------------------------------------
 if (-not (Get-Command nssm -ErrorAction SilentlyContinue)) {
     throw 'nssm introuvable dans le PATH — provisionner.ps1 doit avoir été exécuté au préalable.'
@@ -167,6 +177,17 @@ if (-not (Get-Command nssm -ErrorAction SilentlyContinue)) {
 
 $pythonExe = (Get-Command python -ErrorAction SilentlyContinue).Source
 if (-not $pythonExe) { $pythonExe = 'python' }
+
+# Chemin ABSOLU vers le watcher partagé, dans le clone Bridge_Agent (jamais dans
+# le clone du projet). Bridge_Agent doit avoir été provisionné au préalable
+# (provisionner.ps1) — sans lui, aucun watcher à lancer.
+$CheminWatcher = Join-Path $RepCCW 'Bridge_Agent\watcher.py'
+if (-not (Test-Path $CheminWatcher)) {
+    throw "watcher.py introuvable : « $CheminWatcher ». Le clone Bridge_Agent " +
+          "(l'outillage partagé du bridge) doit avoir été mis en place au " +
+          "préalable via provisionner.ps1. watcher.py n'existe PAS dans le " +
+          "clone du projet ($RepDepot) — il est propre à Bridge_Agent."
+}
 
 $RepLogs = Join-Path $RepDepot 'logs'
 if (-not (Test-Path $RepLogs)) { New-Item -ItemType Directory -Path $RepLogs | Out-Null }
@@ -183,7 +204,7 @@ if ($svcExistant) {
 
 Info "Enregistrement du service Windows « $NomService » (NSSM)…"
 
-nssm install $NomService $pythonExe "watcher.py --config configs\$NomConf"
+nssm install $NomService $pythonExe "`"$CheminWatcher`" --config configs\$NomConf"
 nssm set $NomService AppDirectory     $RepDepot
 nssm set $NomService Start            SERVICE_AUTO_START
 nssm set $NomService AppExit Default  Restart
