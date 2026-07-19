@@ -654,6 +654,95 @@ dernières lignes de `logs\ccw-service.log` pour confirmer l'absence
 d'erreur d'authentification. Résumé final : OK si aucune ligne `ERROR`,
 sinon invitation à vérifier manuellement (code de sortie 2).
 
+### 16.1 Maintenance périodique (renouvellement à 90 jours)
+
+> **Procédure unique à suivre le jour de l'échéance.** Cette sous-section est
+> un mode d'emploi séquentiel autonome : elle renvoie aux scripts existants
+> (détaillés plus haut dans le §16) plutôt que de réexpliquer le provisioning.
+> Rien d'autre du §16 n'est nécessaire pour l'exécuter.
+
+**Repères de dates**
+
+| Repère | Valeur | Source |
+|--------|--------|--------|
+| Date d'installation Windows | **2026-07-19** | `provisioning/windows/eval-expiration.json` (`date_installation`) |
+| Expiration éval Windows (90 j) | **2026-10-17** | idem (`date_expiration`, recalculée : install + 90 j) |
+| Expiration token GitHub | **≈ 2026-10-17** (aligné volontairement, non stocké) | *pas de métadonnée dédiée — voir note ci-dessous* |
+
+> Le token GitHub fine-grained a été créé avec une durée alignée sur l'éval
+> Windows (~90 j) pour n'avoir **qu'une seule fenêtre de maintenance** à
+> retenir : Windows et le token expirent ensemble, vers le **17 octobre 2026**.
+> Sa date exacte n'est pas conservée dans un fichier du dépôt (elle vit dans
+> les réglages GitHub du token) ; se fier à l'alignement et à l'échéance
+> Windows comme rappel commun. Si à l'avenir cette date est stockée, l'ajouter
+> à `eval-expiration.json` et à ce tableau.
+
+**Étape 0 — Vérifier où on en est (sans rien casser)**
+
+```bash
+python3 provisioning/windows/verifier_expiration_ccw.py
+```
+
+Affiche les jours restants avant l'expiration Windows. À ≤ 10 jours (ou déjà
+expiré) : avertissement + code de sortie 2. Sinon : confirmation calme (code 0).
+C'est le déclencheur de toute la procédure ci-dessous. *(Si la date d'install
+réelle a changé, ajuster `date_installation` dans `eval-expiration.json` : les
+jours restants sont recalculés à partir de cette date.)*
+
+**Étape 1 — Recréer la VM à l'expiration**
+
+À faire **avant** la date d'expiration (sans urgence) : après expiration,
+Windows redémarre toutes les heures et casse en continu le service `CCW-Watcher`.
+
+```bash
+# 1a. Détruire et recréer la coquille VM (VBoxManage) — n'attache PAS l'ISO :
+python3 provisioning/windows/creer_vm_ccw.py --recreate
+
+# 1b. Ré-attacher un ISO Windows 11 IoT Enterprise LTSC 2024 :
+#     ⚠️ si l'éval a expiré, RE-TÉLÉCHARGER un ISO frais (une nouvelle éval
+#     90 j) — l'ancien ISO redonnerait une install déjà entamée.
+VBoxManage storageattach CCW-Build --storagectl SATA \
+  --port 1 --device 0 --type dvddrive --medium /chemin/vers/windows.iso
+#     (+ placer autounattend.xml à la racine d'une clé/ISO secondaire, cf. §16)
+
+# 1c. Démarrer la VM, laisser l'installation automatisée se dérouler, puis
+#     rejouer le provisioning logiciel (phase 2, dans la VM via CCL) :
+export CCW_ADMIN_PASSWORD='…'                                   # jamais committé
+python3 provisioning/windows/lancer_provisioning.py --dry-run   # vérif
+python3 provisioning/windows/lancer_provisioning.py             # copie + exécute
+```
+
+Après recréation, mettre à jour `date_installation` (et `date_expiration`)
+dans `provisioning/windows/eval-expiration.json` avec la nouvelle date d'install
+réelle, pour que l'étape 0 reparte sur la bonne échéance.
+
+**Étape 2 — Renouveler les tokens (GitHub + Claude)**
+
+Régénérer les deux tokens côté fournisseurs :
+- **GitHub** : nouveau *fine-grained token* (réglages GitHub), durée ~90 j
+  pour rester aligné sur l'éval Windows.
+- **Claude** : nouveau `CLAUDE_CODE_OAUTH_TOKEN` via `claude setup-token`.
+
+Puis les injecter dans le service `CCW-Watcher`, **dans la VM**, sans
+reconstruire à la main la chaîne `AppEnvironmentExtra` (piège du séparateur —
+un espace au lieu du saut de ligne `` `n`` corrompt silencieusement `GH_TOKEN`
+→ « Bad credentials ») :
+
+```powershell
+# Depuis C:\CCW\Bridge_Agent, console PowerShell admin :
+powershell -ExecutionPolicy Bypass -File provisioning\windows\mettre_a_jour_tokens_ccw.ps1
+```
+
+Le script demande les deux valeurs masquées (`Read-Host -AsSecureString`),
+applique `nssm set … AppEnvironmentExtra` + `nssm restart CCW-Watcher`, puis
+affiche les 10 dernières lignes de `logs\ccw-service.log` (OK si aucune ligne
+`ERROR`, sinon code de sortie 2).
+
+**Récapitulatif express :** vérifier (`verifier_expiration_ccw.py`) → recréer
+la VM (`creer_vm_ccw.py --recreate` + ré-attacher un ISO frais +
+`lancer_provisioning.py`) → renouveler les tokens
+(`mettre_a_jour_tokens_ccw.ps1`) → mettre à jour `eval-expiration.json`.
+
 ---
 
-*Dernière mise à jour : 19 juillet 2026 — §16 « Agent Windows CCW » : ajout du script `provisioning/windows/mettre_a_jour_tokens_ccw.ps1` (issue #168) — renouvellement des tokens `GH_TOKEN`/`CLAUDE_CODE_OAUTH_TOKEN` du service `CCW-Watcher` sans reconstruire à la main la chaîne `AppEnvironmentExtra` : saisie masquée (`Read-Host -AsSecureString`), séparateur `` `n`` impératif entre les deux paires (un espace corrompt `GH_TOKEN` → « Bad credentials »), `nssm set`/`nssm restart`, puis affichage automatique des 10 dernières lignes de `logs\ccw-service.log` pour confirmer l'absence d'erreur d'auth. Précédemment — §16 « Agent Windows CCW » : alerte d'expiration de l'éval 90 jours (issue #167) — ajout de `provisioning/windows/eval-expiration.json` (date d'installation **2026-07-19**, expiration **2026-10-17**) et du script `provisioning/windows/verifier_expiration_ccw.py` (côté Linux : calcule les jours restants, alerte + code de sortie 2 à ≤ 10 j, sinon confirmation calme ; `python3 provisioning/windows/verifier_expiration_ccw.py`) ; rappel `cron` + `ntfy` hebdomadaire proposé mais laissé à l'activation d'Alain. Précédemment — §16 « Agent Windows CCW » : ajout du script `provisioning/windows/demarrer_ccw.sh` (issue #166), wrapper de démarrage de la VM `CCW-Build` depuis CCL (headless par défaut, `--gui`/`--fenetre` pour une fenêtre, `--status` pour l'état sans rien démarrer). Précédemment — §3 « Créer une issue » : ajout d'une note sur la **convention de présentation côté Claude Chat** pour l'envoi en lot (issue #153) — quand Claude Chat prépare plusieurs issues, il les présente toutes à la suite dans un seul bloc de code (pas un bloc par issue) pour un copier-coller en un clic. Précédemment — §16 « Agent Windows CCW » : `REP_TRAVAIL` généré par `provisionner.ps1` pointe désormais vers le **chemin UNC** `\\VBOXSVR\CCW_Share` (et non la lettre automontée `$LettrePartage`), seul accessible au service `CCW-Watcher` tournant sous LocalSystem (issue #149, suite #148) ; `$LettrePartage` conservé pour référence mais plus utilisé pour construire `REP_TRAVAIL`. Précédemment — le watcher CCW tourne comme **vrai service Windows** enregistré via NSSM (issue #148, suite #147) — `provisionner.ps1` installe `NSSM.NSSM` (winget) et enregistre le service `CCW-Watcher` (`SERVICE_AUTO_START` + `AppExit Default Restart` + `AppRestartDelay 5000`, stdout/stderr → `logs\ccw-service.log`, idempotent via `nssm stop`/`remove`), en remplacement de l'ancienne tâche planifiée `-AtLogOn` qui ne redémarrait pas au boot sans session ; équivalent direct des services systemd du §13. Précédemment — provisioning **phase 2** (issue #147, suite #146) — ajout de `provisioning/windows/provisionner.ps1` (installe l'outillage dans la VM via winget + Claude Code natif, clone le dépôt, écrit `ccw.conf`, enregistre la tâche planifiée `CCW-Watcher`) et `lancer_provisioning.py` (pousse/exécute ce script depuis CCL via `VBoxManage guestcontrol`) ; `watcher.py` inchangé (portable, `LABEL` paramétrable) ; limite Task Scheduler vs `Restart=always` documentée. Précédemment — ajout du §16 et du label `for-windows` (issue #146) : provisioning phase 1 de la VM Windows CCW (`provisioning/windows/creer_vm_ccw.py` + `autounattend.xml`) destinée aux builds .exe délégués par CCL. Précédemment — Bridge_Agent v1, 4 projets actifs. §3 « Créer une issue » : ajout de l'**envoi en lot** (issue #135) — coller plusieurs blocs `#Titre:` à la suite dans le même corps déclenche le mode lot (bouton « Envoyer le lot (N issues) »), chaque bloc étant envoyé en séquence comme une issue indépendante (avec ses `PROJET`/`TIMEOUT`/`MODELE` optionnels), sans validation intermédiaire, suivi d'un résumé listant le résultat de chacune. Ajout du projet `ecole` (AlainDelree/Ecole, ~/Ecole) aux tableaux §2 et §7 (issue #101). Section 15 « Chef + Specs MVC » : champ `SPECS` (pluriel, minuscules, combinable en une ligne) — correction du champ `SPEC` introduit par erreur (issue #97, suite #96).*
+*Dernière mise à jour : 19 juillet 2026 — §16 « Agent Windows CCW » : ajout de la sous-section **§16.1 Maintenance périodique (renouvellement à 90 jours)** (issue #169) — runbook séquentiel consolidé pour la fenêtre de maintenance d'octobre 2026 : tableau de repères de dates (install **2026-07-19**, expiration Windows **2026-10-17**, token GitHub aligné ~90 j mais non stocké), puis procédure en 3 étapes renvoyant aux scripts existants — vérifier (`verifier_expiration_ccw.py`), recréer la VM (`creer_vm_ccw.py --recreate` + ré-attacher un ISO frais + `lancer_provisioning.py`), renouveler les tokens (`mettre_a_jour_tokens_ccw.ps1`) — sans dupliquer le détail technique déjà présent dans le §16. Précédemment — §16 « Agent Windows CCW » : ajout du script `provisioning/windows/mettre_a_jour_tokens_ccw.ps1` (issue #168) — renouvellement des tokens `GH_TOKEN`/`CLAUDE_CODE_OAUTH_TOKEN` du service `CCW-Watcher` sans reconstruire à la main la chaîne `AppEnvironmentExtra` : saisie masquée (`Read-Host -AsSecureString`), séparateur `` `n`` impératif entre les deux paires (un espace corrompt `GH_TOKEN` → « Bad credentials »), `nssm set`/`nssm restart`, puis affichage automatique des 10 dernières lignes de `logs\ccw-service.log` pour confirmer l'absence d'erreur d'auth. Précédemment — §16 « Agent Windows CCW » : alerte d'expiration de l'éval 90 jours (issue #167) — ajout de `provisioning/windows/eval-expiration.json` (date d'installation **2026-07-19**, expiration **2026-10-17**) et du script `provisioning/windows/verifier_expiration_ccw.py` (côté Linux : calcule les jours restants, alerte + code de sortie 2 à ≤ 10 j, sinon confirmation calme ; `python3 provisioning/windows/verifier_expiration_ccw.py`) ; rappel `cron` + `ntfy` hebdomadaire proposé mais laissé à l'activation d'Alain. Précédemment — §16 « Agent Windows CCW » : ajout du script `provisioning/windows/demarrer_ccw.sh` (issue #166), wrapper de démarrage de la VM `CCW-Build` depuis CCL (headless par défaut, `--gui`/`--fenetre` pour une fenêtre, `--status` pour l'état sans rien démarrer). Précédemment — §3 « Créer une issue » : ajout d'une note sur la **convention de présentation côté Claude Chat** pour l'envoi en lot (issue #153) — quand Claude Chat prépare plusieurs issues, il les présente toutes à la suite dans un seul bloc de code (pas un bloc par issue) pour un copier-coller en un clic. Précédemment — §16 « Agent Windows CCW » : `REP_TRAVAIL` généré par `provisionner.ps1` pointe désormais vers le **chemin UNC** `\\VBOXSVR\CCW_Share` (et non la lettre automontée `$LettrePartage`), seul accessible au service `CCW-Watcher` tournant sous LocalSystem (issue #149, suite #148) ; `$LettrePartage` conservé pour référence mais plus utilisé pour construire `REP_TRAVAIL`. Précédemment — le watcher CCW tourne comme **vrai service Windows** enregistré via NSSM (issue #148, suite #147) — `provisionner.ps1` installe `NSSM.NSSM` (winget) et enregistre le service `CCW-Watcher` (`SERVICE_AUTO_START` + `AppExit Default Restart` + `AppRestartDelay 5000`, stdout/stderr → `logs\ccw-service.log`, idempotent via `nssm stop`/`remove`), en remplacement de l'ancienne tâche planifiée `-AtLogOn` qui ne redémarrait pas au boot sans session ; équivalent direct des services systemd du §13. Précédemment — provisioning **phase 2** (issue #147, suite #146) — ajout de `provisioning/windows/provisionner.ps1` (installe l'outillage dans la VM via winget + Claude Code natif, clone le dépôt, écrit `ccw.conf`, enregistre la tâche planifiée `CCW-Watcher`) et `lancer_provisioning.py` (pousse/exécute ce script depuis CCL via `VBoxManage guestcontrol`) ; `watcher.py` inchangé (portable, `LABEL` paramétrable) ; limite Task Scheduler vs `Restart=always` documentée. Précédemment — ajout du §16 et du label `for-windows` (issue #146) : provisioning phase 1 de la VM Windows CCW (`provisioning/windows/creer_vm_ccw.py` + `autounattend.xml`) destinée aux builds .exe délégués par CCL. Précédemment — Bridge_Agent v1, 4 projets actifs. §3 « Créer une issue » : ajout de l'**envoi en lot** (issue #135) — coller plusieurs blocs `#Titre:` à la suite dans le même corps déclenche le mode lot (bouton « Envoyer le lot (N issues) »), chaque bloc étant envoyé en séquence comme une issue indépendante (avec ses `PROJET`/`TIMEOUT`/`MODELE` optionnels), sans validation intermédiaire, suivi d'un résumé listant le résultat de chacune. Ajout du projet `ecole` (AlainDelree/Ecole, ~/Ecole) aux tableaux §2 et §7 (issue #101). Section 15 « Chef + Specs MVC » : champ `SPECS` (pluriel, minuscules, combinable en une ligne) — correction du champ `SPEC` introduit par erreur (issue #97, suite #96).*
