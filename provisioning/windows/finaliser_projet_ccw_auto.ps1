@@ -12,7 +12,11 @@
 
     1. dérive (même logique qu'ajouter_projet_ccw.ps1) le service
        CCW-Watcher-<NomProjet>, le dossier C:\CCW\<NomProjet> et le config
-       configs\<nom-minuscule>-ccw.conf, et vérifie leur existence ;
+       configs\<nom-minuscule>-ccw.conf, et vérifie leur existence — SAUF pour
+       le projet historique « Bridge_Agent », créé par provisionner.ps1 avant
+       la généralisation #170, dont le service s'appelle « CCW-Watcher » (sans
+       suffixe), config configs\ccw.conf, log ccw-service.log : même spécial-cas
+       que lister_projets_ccw.ps1 (issue #177) ;
     2. réécrit la ligne TOPIC_NTFY du config avec la valeur TOPIC_NTFY lue,
        QUELLE QUE SOIT sa valeur actuelle (placeholder OU topic déjà
        renseigné) — remplacement ciblé de la seule ligne « TOPIC_NTFY = … »,
@@ -89,11 +93,27 @@ try {
     $NomProjet  = $NomProjet.Trim()
     if ([string]::IsNullOrWhiteSpace($NomProjet)) { throw 'Nom de projet vide — abandon.' }
 
-    $nomMin     = $NomProjet.ToLowerInvariant()
-    $NomService = "CCW-Watcher-$NomProjet"
-    $RepDepot   = Join-Path $RepCCW $NomProjet
-    $NomConf    = "$nomMin-ccw.conf"
-    $NomLog     = "ccw-$nomMin-service.log"
+    # Cas particulier du projet historique « Bridge_Agent » (issue #177) : son
+    # service a été créé par provisionner.ps1 AVANT la généralisation
+    # multi-projets (#170), donc SANS suffixe (« CCW-Watcher » tout court) ni
+    # préfixe minuscule dans les noms de config/log. On reproduit EXACTEMENT le
+    # même spécial-cas que lister_projets_ccw.ps1, avec les valeurs littérales de
+    # provisionner.ps1 (NomService 'CCW-Watcher', config 'ccw.conf', log
+    # 'ccw-service.log', dossier C:\CCW\Bridge_Agent). Sans cela, un appel
+    # « -NomProjet Bridge_Agent » ciblerait à tort le service inexistant
+    # « CCW-Watcher-Bridge_Agent ». Comparaison insensible à la casse (-ieq).
+    if ($NomProjet -ieq 'Bridge_Agent') {
+        $NomService = 'CCW-Watcher'
+        $RepDepot   = Join-Path $RepCCW 'Bridge_Agent'
+        $NomConf    = 'ccw.conf'
+        $NomLog     = 'ccw-service.log'
+    } else {
+        $nomMin     = $NomProjet.ToLowerInvariant()
+        $NomService = "CCW-Watcher-$NomProjet"
+        $RepDepot   = Join-Path $RepCCW $NomProjet
+        $NomConf    = "$nomMin-ccw.conf"
+        $NomLog     = "ccw-$nomMin-service.log"
+    }
     $CheminConf = Join-Path (Join-Path $RepDepot 'configs') $NomConf
 
     Info "Projet      : $NomProjet"
