@@ -140,19 +140,28 @@ button.danger:hover{background:#f8d7da}
    logique métier. Petite case tout à gauche de la ligne, curseur pointeur, ne
    rétrécit pas. L'état est persisté côté navigateur (localStorage). */
 .ligne-issue .coche-resultat{flex-shrink:0;margin:0;cursor:pointer}
-/* Résultat marqué comme traité/lu (issue #154, révisé #155) : l'ancienne règle
-   opacity:.5 délavait TOUTE la ligne, badges colorés compris (projet turquoise,
-   Diff/All, pastille), les rendant illisibles. On n'atténue désormais QUE le
-   TEXTE (titre + horodatage) via une couleur grisée directe et on pose un fond
-   très pâle comme repère « traité ». Les badges colorés gardent leur opacité
-   pleine. Le survol/sélection restent prioritaires (fond porté plus bas) et le
-   titre y redevient bien lisible. */
-.ligne-issue.resultat-traite{background:#faf8f3}
-.ligne-issue.resultat-traite .ligne-texte{color:#a5a29a}
-.ligne-issue.resultat-traite .ligne-date{color:#c2c0b8 !important}
+/* Résultat marqué comme traité/lu (issue #154, révisé #155, contraste renforcé
+   #156) : l'ancienne règle opacity:.5 délavait TOUTE la ligne, badges colorés
+   compris (projet turquoise, Diff/All, pastille), les rendant illisibles. On
+   n'atténue donc QUE le TEXTE (titre + horodatage) et on pose un fond de repère
+   — les badges colorés gardent leur opacité pleine.
+   #155 avait choisi un fond (#faf8f3) et un gris (#a5a29a) trop proches des
+   couleurs par défaut : une ligne cochée ne se distinguait pas au balayage. On
+   renforce donc nettement le repère (#156) :
+   - fond gris clairement plus soutenu (#e5e3dc) visible à côté d'une ligne non
+     cochée sans être criard ;
+   - titre barré (line-through) : signal fort et immédiatement reconnaissable au
+     balayage, indépendant de la seule nuance de couleur ;
+   - gris de texte un peu plus marqué (#8d8a82) qu'auparavant, sans redevenir
+     envahissant.
+   Le survol/sélection restent prioritaires (fond porté plus bas) et le titre y
+   redevient bien lisible (le barré est retiré pour ne pas gêner la lecture). */
+.ligne-issue.resultat-traite{background:#e5e3dc}
+.ligne-issue.resultat-traite .ligne-texte{color:#8d8a82;text-decoration:line-through}
+.ligne-issue.resultat-traite .ligne-date{color:#b0ada4 !important}
 .ligne-issue:hover{background:var(--bg-hover)}
-.ligne-issue.resultat-traite:hover .ligne-texte{color:#444}
-.ligne-issue.resultat-traite.selectionnee .ligne-texte{color:#2a2a28}
+.ligne-issue.resultat-traite:hover .ligne-texte{color:#444;text-decoration:none}
+.ligne-issue.resultat-traite.selectionnee .ligne-texte{color:#2a2a28;text-decoration:none}
 .ligne-issue.selectionnee{background:var(--bg-sel);font-weight:600}
 .ligne-issue.selectionnee:hover{background:var(--bg-sel)}
 .ligne-issue .ligne-gauche{display:inline-flex;align-items:center;gap:6px;flex-shrink:0}
