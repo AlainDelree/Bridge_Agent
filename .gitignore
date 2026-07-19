@@ -9,3 +9,6 @@ ssl/
 # Copie locale d'autounattend.xml avec le vrai mot de passe (placeholder
 # remplacé) — ne doit JAMAIS être committée. Cf. en-tête d'autounattend.xml.
 provisioning/windows/autounattend.local.xml
+# Mot de passe ccw-admin lu par l'onglet CCW (issue #174) si CCW_ADMIN_PASSWORD
+# n'est pas dans l'environnement — ne doit JAMAIS être committé.
+configs/ccw_admin.secret

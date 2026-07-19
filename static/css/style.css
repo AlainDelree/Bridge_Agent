@@ -80,6 +80,7 @@ button.danger:hover{background:#f8d7da}
 .message{padding:10px 14px;border-radius:6px;font-size:13px;margin-top:12px;display:none}
 .message.succes{background:#d4edda;color:#155724}
 .message.erreur{background:#f8d7da;color:#721c24}
+.message.avertissement{background:#fff3cd;color:#856404}
 .terminal{background:#1a1a18;color:#a0a098;border-radius:8px;padding:14px;
   font-family:monospace;font-size:12px;min-height:360px;max-height:520px;
   overflow-y:auto;line-height:1.7}

@@ -66,6 +66,7 @@
     <div class="onglet" onclick="basculerOnglet('journal')">Journal watcher</div>
     <div class="onglet" onclick="basculerOnglet('config')">Configuration</div>
     <div class="onglet" onclick="basculerOnglet('watchers')">Watchers</div>
+    <div class="onglet" onclick="basculerOnglet('ccw')">CCW</div>
   </div>
 
   <!-- ─── Onglet 1 : création d'issue ──────────────────────────────────── -->
@@ -275,6 +276,100 @@
       <span id="label-journal">—</span>
       <button onclick="viderTerminal()">Vider l'affichage</button>
     </div>
+  </div>
+
+  <!-- ─── Onglet CCW : pilotage de la VM Windows et de ses projets (issue #174) ─ -->
+  <div id="panneau-ccw" class="panneau">
+
+    <!-- Section 1 : état + démarrage de la VM -->
+    <div class="titre-section">Machine virtuelle CCW-Build</div>
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;
+         padding:8px 12px;background:#f8f8f5;border:1px solid #e0dfda;border-radius:6px">
+      <span id="ccw-dot-vm" style="width:9px;height:9px;border-radius:50%;
+            background:#ccc;flex-shrink:0"></span>
+      <span id="ccw-etat-vm" style="font-size:13px;color:#666">Vérification…</span>
+      <div style="margin-left:auto;display:flex;gap:8px">
+        <button id="ccw-btn-demarrer" onclick="ccwDemarrerVm()"
+                style="display:none">Démarrer (headless)</button>
+        <button onclick="ccwRafraichirVm()">Rafraîchir</button>
+      </div>
+    </div>
+
+    <!-- Section 2 : projets CCW existants -->
+    <div class="titre-section" style="display:flex;align-items:center">
+      <span>Projets CCW existants</span>
+      <button onclick="ccwChargerProjets()"
+              style="margin-left:auto;font-size:12px;padding:4px 10px">Rafraîchir</button>
+    </div>
+    <table style="width:100%;border-collapse:collapse" id="ccw-tableau-projets">
+      <thead>
+        <tr style="border-bottom:1px solid #eee">
+          <th style="text-align:left;font-size:12px;color:#666;font-weight:500;padding:8px 12px">Projet</th>
+          <th style="text-align:left;font-size:12px;color:#666;font-weight:500;padding:8px 12px">Service</th>
+          <th style="text-align:left;font-size:12px;color:#666;font-weight:500;padding:8px 12px;width:110px">État</th>
+          <th style="text-align:left;font-size:12px;color:#666;font-weight:500;padding:8px 12px;width:150px">TOPIC_NTFY</th>
+        </tr>
+      </thead>
+      <tbody id="ccw-corps-projets"></tbody>
+    </table>
+    <div id="ccw-msg-projets" class="message" style="margin-top:10px"></div>
+
+    <!-- Section 3 : ajouter un projet -->
+    <div class="titre-section" style="margin-top:22px">Ajouter un projet</div>
+    <div class="rangee">
+      <div class="champ">
+        <label>Nom du projet</label>
+        <input type="text" id="ccw-add-nom" placeholder="ex : Scrabble" autocomplete="off">
+      </div>
+      <div class="champ">
+        <label>Dépôt GitHub (owner/repo)</label>
+        <input type="text" id="ccw-add-depot" placeholder="AlainDelree/Scrabble" autocomplete="off">
+      </div>
+    </div>
+    <div class="barre-envoi">
+      <div style="flex:1"></div>
+      <button class="primaire" id="ccw-btn-ajouter" onclick="ccwAjouterProjet()">Créer</button>
+    </div>
+
+    <!-- Section 4 : finaliser un projet (TOPIC_NTFY + tokens) -->
+    <div class="titre-section" style="margin-top:22px">Finaliser un projet</div>
+    <div class="rangee">
+      <div class="champ" style="max-width:220px">
+        <label>Projet (nom ou sélection)</label>
+        <input type="text" id="ccw-fin-nom" list="ccw-liste-projets"
+               placeholder="ex : Scrabble" autocomplete="off">
+        <datalist id="ccw-liste-projets"></datalist>
+      </div>
+      <div class="champ">
+        <label>TOPIC_NTFY</label>
+        <input type="text" id="ccw-fin-topic" placeholder="ex : bridge_scrabble_xxxxx" autocomplete="off">
+      </div>
+    </div>
+    <div class="rangee">
+      <div class="champ">
+        <label>GH_TOKEN</label>
+        <input type="password" id="ccw-fin-gh" autocomplete="off">
+      </div>
+      <div class="champ">
+        <label>CLAUDE_CODE_OAUTH_TOKEN</label>
+        <input type="password" id="ccw-fin-oauth" autocomplete="off">
+      </div>
+    </div>
+    <div style="font-size:12px;color:#999;margin-bottom:8px">
+      🔒 Les tokens ne transitent jamais en argument de commande ni dans un log :
+      fichier temporaire poussé dans la VM, lu par PowerShell, puis supprimé des
+      deux côtés. Créez d'abord le token GitHub dédié (repo unique, Issues R/W,
+      expiration alignée — cf. §16).
+    </div>
+    <div class="barre-envoi">
+      <div style="flex:1"></div>
+      <button class="primaire" id="ccw-btn-finaliser" onclick="ccwFinaliserProjet()">Finaliser</button>
+    </div>
+
+    <!-- Sortie commune (messages + terminal des scripts distants) -->
+    <div id="ccw-message" class="message"></div>
+    <div class="terminal" id="ccw-sortie"
+         style="display:none;margin-top:12px;white-space:pre-wrap;min-height:0"></div>
   </div>
 
 </div>

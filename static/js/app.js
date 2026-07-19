@@ -53,7 +53,7 @@ function appliquerAccentProjet(nom) {
 }
 
 function basculerOnglet(nom) {
-  const noms = ['creation', 'resultats', 'journal', 'config', 'watchers'];
+  const noms = ['creation', 'resultats', 'journal', 'config', 'watchers', 'ccw'];
   document.querySelectorAll('.onglet').forEach((o, i) =>
     o.classList.toggle('actif', noms[i] === nom));
   noms.forEach(n =>
@@ -68,6 +68,10 @@ function basculerOnglet(nom) {
     clearInterval(intervalWatchers);
   }
   if (nom === 'config') chargerConfig();
+  // Onglet CCW (issue #174) : chargé à l'ouverture, PAS de polling automatique
+  // (chaque requête déclenche des guestcontrol coûteux — l'utilisateur
+  // rafraîchit à la demande via les boutons dédiés).
+  if (nom === 'ccw') ccwOuvrirOnglet();
 }
 
 // reinitialiserTimeout : un changement de projet MANUEL (sélecteur, chargement
@@ -180,6 +184,233 @@ async function sauvegarderConfig(relancer) {
       body: JSON.stringify({projet: nom, relancer: true})
     });
     msg.textContent += ' Watcher relancé.';
+  }
+}
+
+// ─── Onglet CCW (issue #174) ────────────────────────────────────────────────
+// Pilotage de la VM Windows CCW-Build et de ses projets depuis Linux, via les
+// routes /ccw/* (qui exécutent VBoxManage guestcontrol côté serveur). Aucune
+// valeur de token n'est jamais journalisée ni passée en argument : la sortie
+// affichée provient des scripts distants, qui ne les affichent pas.
+
+// Affiche un message (succès/erreur/avertissement) dans un élément .message.
+function ccwMessage(idEl, texte, type) {
+  const el = document.getElementById(idEl);
+  if (!el) return;
+  el.textContent = texte || '';
+  el.className = 'message' + (type ? ' ' + type : '');
+  el.style.display = texte ? 'block' : 'none';
+}
+
+// Affiche la sortie brute d'un script distant dans le terminal CCW commun.
+function ccwAfficherSortie(sortie) {
+  const term = document.getElementById('ccw-sortie');
+  if (!term) return;
+  if (sortie && sortie.trim()) {
+    term.textContent = sortie;
+    term.style.display = 'block';
+  } else {
+    term.textContent = '';
+    term.style.display = 'none';
+  }
+}
+
+// Active/désactive un bouton pendant une opération longue (guestcontrol).
+function ccwOccupe(idBtn, occupe, labelOccupe) {
+  const b = document.getElementById(idBtn);
+  if (!b) return;
+  if (occupe) {
+    b.dataset.label = b.dataset.label || b.textContent;
+    b.textContent = labelOccupe || 'Patientez…';
+    b.disabled = true;
+  } else {
+    if (b.dataset.label) b.textContent = b.dataset.label;
+    b.disabled = false;
+  }
+}
+
+// Ouverture de l'onglet : état de la VM + liste des projets.
+function ccwOuvrirOnglet() {
+  ccwRafraichirVm();
+  ccwChargerProjets();
+}
+
+async function ccwRafraichirVm() {
+  const dot   = document.getElementById('ccw-dot-vm');
+  const texte = document.getElementById('ccw-etat-vm');
+  const btn   = document.getElementById('ccw-btn-demarrer');
+  texte.textContent = 'Vérification…';
+  dot.style.background = '#ccc';
+  btn.style.display = 'none';
+  try {
+    const rep = await fetch('/ccw/vm-statut');
+    const j   = await rep.json();
+    if (!j.succes) {
+      dot.style.background = '#c0392b';
+      texte.textContent = j.erreur || 'Erreur inconnue';
+      return;
+    }
+    if (!j.existe) {
+      dot.style.background = '#c0392b';
+      texte.textContent = 'VM introuvable (non créée).';
+      return;
+    }
+    if (j.etat === 'running') {
+      dot.style.background = '#2e8b57';
+      texte.textContent = 'VM démarrée (running).';
+    } else {
+      dot.style.background = '#e0a800';
+      texte.textContent = 'VM arrêtée (' + j.etat + ').';
+      btn.style.display = 'inline-block';
+    }
+  } catch (e) {
+    dot.style.background = '#c0392b';
+    texte.textContent = 'Erreur réseau : ' + e.message;
+  }
+}
+
+async function ccwDemarrerVm() {
+  ccwOccupe('ccw-btn-demarrer', true, 'Démarrage…');
+  ccwMessage('ccw-message', '', '');
+  try {
+    const rep = await fetch('/ccw/demarrer-vm', {method: 'POST'});
+    const j   = await rep.json();
+    ccwAfficherSortie(j.sortie);
+    if (j.succes) {
+      ccwMessage('ccw-message', 'VM démarrée.', 'succes');
+    } else {
+      ccwMessage('ccw-message', j.erreur || 'Échec du démarrage.', 'erreur');
+    }
+  } catch (e) {
+    ccwMessage('ccw-message', 'Erreur réseau : ' + e.message, 'erreur');
+  } finally {
+    ccwOccupe('ccw-btn-demarrer', false);
+    ccwRafraichirVm();
+  }
+}
+
+async function ccwChargerProjets() {
+  const corps = document.getElementById('ccw-corps-projets');
+  const liste = document.getElementById('ccw-liste-projets');
+  ccwMessage('ccw-msg-projets', 'Interrogation de la VM…', '');
+  corps.innerHTML = '';
+  try {
+    const rep = await fetch('/ccw/projets');
+    const j   = await rep.json();
+    if (!j.succes) {
+      ccwMessage('ccw-msg-projets', j.erreur || 'Erreur inconnue.', 'erreur');
+      return;
+    }
+    const projets = j.projets || [];
+    if (projets.length === 0) {
+      ccwMessage('ccw-msg-projets', 'Aucun service CCW-Watcher* enregistré dans la VM.', '');
+      liste.innerHTML = '';
+      return;
+    }
+    ccwMessage('ccw-msg-projets', '', '');
+    corps.innerHTML = projets.map(function(p) {
+      const etatCouleur = (p.etat === 'running') ? '#2e8b57'
+                        : (p.etat === 'stopped') ? '#c0392b' : '#888';
+      let topicHtml;
+      if (p.topicStatut === 'placeholder')
+        topicHtml = '<span style="color:#e0a800">⚠ à définir</span>';
+      else if (p.topicStatut === 'ok')
+        topicHtml = '<span style="color:#2e8b57">✓ renseigné</span>';
+      else
+        topicHtml = '<span style="color:#888">? inconnu</span>';
+      return '<tr style="border-bottom:1px solid #f2f2f0">'
+        + '<td style="padding:8px 12px;font-size:13px">' + escapeHtml(p.projet)
+          + (p.base ? ' <span style="color:#aaa;font-size:11px">(base)</span>' : '') + '</td>'
+        + '<td style="padding:8px 12px;font-size:12px;color:#777;font-family:monospace">'
+          + escapeHtml(p.service) + '</td>'
+        + '<td style="padding:8px 12px;font-size:13px;color:' + etatCouleur + '">'
+          + escapeHtml(p.etat || '—') + '</td>'
+        + '<td style="padding:8px 12px;font-size:13px">' + topicHtml + '</td>'
+        + '</tr>';
+    }).join('');
+    // Alimente le datalist du formulaire « Finaliser » (sélection dans la liste).
+    liste.innerHTML = projets.map(function(p) {
+      return '<option value="' + escapeHtml(p.projet) + '">';
+    }).join('');
+  } catch (e) {
+    ccwMessage('ccw-msg-projets', 'Erreur réseau : ' + e.message, 'erreur');
+  }
+}
+
+async function ccwAjouterProjet() {
+  const nom   = document.getElementById('ccw-add-nom').value.trim();
+  const depot = document.getElementById('ccw-add-depot').value.trim();
+  if (!nom || !depot) {
+    ccwMessage('ccw-message', 'Nom du projet et dépôt requis.', 'erreur');
+    return;
+  }
+  ccwOccupe('ccw-btn-ajouter', true, 'Création…');
+  ccwMessage('ccw-message', 'Création du projet dans la VM (clone + config + service)…', '');
+  ccwAfficherSortie('');
+  try {
+    const rep = await fetch('/ccw/ajouter-projet', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({nom: nom, depot: depot})
+    });
+    const j = await rep.json();
+    ccwAfficherSortie(j.sortie);
+    if (j.succes) {
+      ccwMessage('ccw-message', 'Projet « ' + nom + ' » ajouté. Finalisez-le ci-dessous (TOPIC_NTFY + tokens).', 'succes');
+      ccwChargerProjets();
+    } else {
+      ccwMessage('ccw-message', j.erreur || 'Échec de la création.', 'erreur');
+    }
+  } catch (e) {
+    ccwMessage('ccw-message', 'Erreur réseau : ' + e.message, 'erreur');
+  } finally {
+    ccwOccupe('ccw-btn-ajouter', false);
+  }
+}
+
+async function ccwFinaliserProjet() {
+  const nom   = document.getElementById('ccw-fin-nom').value.trim();
+  const topic = document.getElementById('ccw-fin-topic').value.trim();
+  const gh    = document.getElementById('ccw-fin-gh').value;
+  const oauth = document.getElementById('ccw-fin-oauth').value;
+  if (!nom) {
+    ccwMessage('ccw-message', 'Nom du projet requis.', 'erreur');
+    return;
+  }
+  if (!gh || !oauth) {
+    ccwMessage('ccw-message', 'Les deux tokens (GH_TOKEN et CLAUDE_CODE_OAUTH_TOKEN) sont requis.', 'erreur');
+    return;
+  }
+  if (!confirm('Finaliser « ' + nom + ' » : écrire TOPIC_NTFY et poser les deux tokens '
+             + 'sur le service, puis le redémarrer ?')) return;
+  ccwOccupe('ccw-btn-finaliser', true, 'Finalisation…');
+  ccwMessage('ccw-message', 'Finalisation en cours (topic + tokens + redémarrage du service)…', '');
+  ccwAfficherSortie('');
+  try {
+    const rep = await fetch('/ccw/finaliser-projet', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({nom: nom, topic: topic, gh_token: gh, oauth_token: oauth})
+    });
+    const j = await rep.json();
+    ccwAfficherSortie(j.sortie);
+    if (j.succes && !j.avertissement) {
+      ccwMessage('ccw-message', 'Projet « ' + nom + ' » finalisé : tokens posés, service redémarré.', 'succes');
+    } else if (j.avertissement) {
+      ccwMessage('ccw-message', j.erreur || 'Appliqué, mais à vérifier.', 'avertissement');
+    } else {
+      ccwMessage('ccw-message', j.erreur || 'Échec de la finalisation.', 'erreur');
+    }
+    // Effacer les champs de tokens dès la réponse reçue (ne pas les laisser en clair).
+    document.getElementById('ccw-fin-gh').value    = '';
+    document.getElementById('ccw-fin-oauth').value = '';
+    ccwChargerProjets();
+  } catch (e) {
+    ccwMessage('ccw-message', 'Erreur réseau : ' + e.message, 'erreur');
+    document.getElementById('ccw-fin-gh').value    = '';
+    document.getElementById('ccw-fin-oauth').value = '';
+  } finally {
+    ccwOccupe('ccw-btn-finaliser', false);
   }
 }
 

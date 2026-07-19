@@ -7,8 +7,12 @@
     À exécuter DANS la VM CCW-Build (issue #168). Renouvellement des tokens
     (alignés ~90 j, cf. issue d'expiration #167) :
 
-    1. Demande interactivement les deux valeurs en SecureString (elles ne
-       restent pas affichées en clair une fois collées).
+    1. Récupère les deux valeurs SANS les passer en argument de commande :
+       soit interactivement en SecureString (elles ne restent pas affichées en
+       clair une fois collées), soit — avec -FichierTokens (issue #174) — en les
+       lisant dans un fichier « clé=valeur » poussé par l'appelant. Ce second
+       mode permet à l'onglet CCW (interface web, Linux) de poser les tokens à
+       distance via guestcontrol sans saisie manuelle dans la VM.
     2. Reconstruit la chaîne AppEnvironmentExtra
        « GH_TOKEN=…`nCLAUDE_CODE_OAUTH_TOKEN=… », le saut de ligne `n séparant
        les deux valeurs. ATTENTION : un simple espace entre elles corrompt
@@ -41,6 +45,15 @@ param(
     # CCW-Watcher (mono-projet) ; pour un service multi-projets CCW-Watcher-<Nom>,
     # passer 'ccw-<nom>-service.log' (cf. ajouter_projet_ccw.ps1, issue #173).
     [string]$NomLog = 'ccw-service.log',
+    # Mode NON interactif (issue #174) : chemin d'un fichier « clé=valeur » (UTF-8)
+    # contenant les lignes GH_TOKEN=… et CLAUDE_CODE_OAUTH_TOKEN=…. Quand ce
+    # paramètre est fourni, les valeurs sont LUES depuis ce fichier au lieu d'être
+    # demandées interactivement (Read-Host) — c'est ce qui permet de piloter la
+    # pose des tokens à distance depuis l'onglet CCW de l'interface web (Linux)
+    # sans jamais passer les secrets en argument de ligne de commande. Le fichier
+    # est fourni par l'appelant (poussé via guestcontrol copyto, permissions
+    # restreintes) et supprimé par lui ; ce script ne l'écrit ni ne le supprime.
+    [string]$FichierTokens = '',
     # Secondes d'attente avant lecture des logs (laisser le watcher démarrer).
     [int]$DelaiSecondes = 6,
     # Nombre de lignes de log à afficher pour confirmation.
@@ -65,6 +78,21 @@ function ConvertFrom-SecureStringPlain([System.Security.SecureString]$secure) {
     }
 }
 
+# Lit une valeur « CLE=valeur » dans un fichier clé=valeur (mode non interactif,
+# issue #174). Renvoie la valeur brute (tout ce qui suit le premier « = », sans
+# rognage des espaces internes ; seuls le CR/LF de fin sont retirés). Renvoie
+# $null si la clé est absente. La valeur n'est jamais affichée.
+function Lire-ValeurFichier([string]$chemin, [string]$cle) {
+    foreach ($ligne in [System.IO.File]::ReadAllLines($chemin)) {
+        $idx = $ligne.IndexOf('=')
+        if ($idx -lt 1) { continue }
+        if ($ligne.Substring(0, $idx).Trim() -eq $cle) {
+            return $ligne.Substring($idx + 1).TrimEnd("`r", "`n")
+        }
+    }
+    return $null
+}
+
 # ---------------------------------------------------------------------------
 # 0. Vérifications préalables.
 # ---------------------------------------------------------------------------
@@ -80,14 +108,32 @@ if (-not (Get-Service -Name $NomService -ErrorAction SilentlyContinue)) {
 $LogService = Join-Path $RepDepot (Join-Path 'logs' $NomLog)
 
 # ---------------------------------------------------------------------------
-# 1. Saisie interactive des deux valeurs (masquées).
+# 1. Récupération des deux valeurs.
+#    Deux sources possibles, JAMAIS en argument de ligne de commande :
+#      • interactif (défaut) : Read-Host -AsSecureString (jamais affiché) ;
+#      • non interactif (-FichierTokens) : lecture d'un fichier clé=valeur
+#        poussé par l'appelant (onglet CCW, issue #174). Utile pour piloter la
+#        pose des tokens à distance sans saisie manuelle dans la VM.
 # ---------------------------------------------------------------------------
-Info 'Renouvellement des tokens du service CCW-Watcher.'
-Info 'Colle chaque valeur quand demandé (elle ne restera pas affichée en clair).'
-Write-Host ''
+if ([string]::IsNullOrWhiteSpace($FichierTokens)) {
+    Info 'Renouvellement des tokens du service CCW-Watcher.'
+    Info 'Colle chaque valeur quand demandé (elle ne restera pas affichée en clair).'
+    Write-Host ''
 
-$secGh    = Read-Host -AsSecureString 'Collez la valeur de GH_TOKEN (depuis Bitwarden) '
-$secOauth = Read-Host -AsSecureString 'Collez la valeur de CLAUDE_CODE_OAUTH_TOKEN (depuis Bitwarden) '
+    $secGh    = Read-Host -AsSecureString 'Collez la valeur de GH_TOKEN (depuis Bitwarden) '
+    $secOauth = Read-Host -AsSecureString 'Collez la valeur de CLAUDE_CODE_OAUTH_TOKEN (depuis Bitwarden) '
+
+    $gh    = ConvertFrom-SecureStringPlain $secGh
+    $oauth = ConvertFrom-SecureStringPlain $secOauth
+} else {
+    if (-not (Test-Path $FichierTokens)) {
+        Avert "Fichier de tokens introuvable : $FichierTokens — abandon."
+        exit 1
+    }
+    Info 'Lecture des tokens depuis le fichier fourni (mode non interactif)…'
+    $gh    = Lire-ValeurFichier $FichierTokens 'GH_TOKEN'
+    $oauth = Lire-ValeurFichier $FichierTokens 'CLAUDE_CODE_OAUTH_TOKEN'
+}
 
 # ---------------------------------------------------------------------------
 # 2. Construction de la chaîne AppEnvironmentExtra.
@@ -95,11 +141,8 @@ $secOauth = Read-Host -AsSecureString 'Collez la valeur de CLAUDE_CODE_OAUTH_TOK
 #    corrompt GH_TOKEN → « Bad credentials »). On travaille en clair le
 #    strict minimum, sans jamais afficher la chaîne.
 # ---------------------------------------------------------------------------
-$gh    = ConvertFrom-SecureStringPlain $secGh
-$oauth = ConvertFrom-SecureStringPlain $secOauth
-
 if ([string]::IsNullOrWhiteSpace($gh) -or [string]::IsNullOrWhiteSpace($oauth)) {
-    Avert 'Une des deux valeurs est vide — abandon, aucun changement appliqué.'
+    Avert 'Une des deux valeurs est vide (ou absente du fichier) — abandon, aucun changement appliqué.'
     exit 1
 }
 

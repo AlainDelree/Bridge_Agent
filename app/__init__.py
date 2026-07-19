@@ -67,6 +67,8 @@ def _enregistrer_routes(app: Flask) -> None:
                             diff_commit, issues_en_attente, annuler_issue,
                             fermer_issue)
     from app.journal import journal
+    from app.ccw import (ccw_vm_statut, ccw_demarrer_vm, ccw_projets,
+                         ccw_ajouter_projet, ccw_finaliser_projet)
     from app.cycle_vie import heartbeat, events, quitter
     from app.diag_heartbeat import visibilite as diag_visibilite   # DIAGNOSTIC TEMPORAIRE — issue #157, à retirer
     from app.vues import index
@@ -92,6 +94,12 @@ def _enregistrer_routes(app: Flask) -> None:
     app.add_url_rule("/lancer-watcher", "lancer_watcher", login_requis(lancer_watcher), methods=["POST"])
     app.add_url_rule("/arreter-watcher", "arreter_watcher_route", login_requis(arreter_watcher_route), methods=["POST"])
     app.add_url_rule("/statut/<nom_projet>", "statut", login_requis(statut))
+    # ─── Onglet CCW (issue #174) : pilotage de la VM Windows et de ses projets ─
+    app.add_url_rule("/ccw/vm-statut", "ccw_vm_statut", login_requis(ccw_vm_statut), methods=["GET"])
+    app.add_url_rule("/ccw/demarrer-vm", "ccw_demarrer_vm", login_requis(ccw_demarrer_vm), methods=["POST"])
+    app.add_url_rule("/ccw/projets", "ccw_projets", login_requis(ccw_projets), methods=["GET"])
+    app.add_url_rule("/ccw/ajouter-projet", "ccw_ajouter_projet", login_requis(ccw_ajouter_projet), methods=["POST"])
+    app.add_url_rule("/ccw/finaliser-projet", "ccw_finaliser_projet", login_requis(ccw_finaliser_projet), methods=["POST"])
     app.add_url_rule("/heartbeat", "heartbeat", heartbeat, methods=["POST"])
     app.add_url_rule("/events", "events", login_requis(events))
     app.add_url_rule("/quitter", "quitter", login_requis(quitter), methods=["POST"])
