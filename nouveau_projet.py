@@ -27,11 +27,12 @@ RACINE = Path(__file__).resolve().parent
 DOSSIER_CONFIGS = RACINE / "configs"
 DOC = RACINE / "BRIDGE_AGENT_DOC.md"
 
-# Les 8 labels requis par le watcher (§4 de la doc). color = hex sans '#'.
+# Les 9 labels requis par le watcher (§4 de la doc). color = hex sans '#'.
 # On les recrée à l'identique sur chaque nouveau dépôt cible ; sans eux, le
 # watcher ne voit pas les issues (for-linux) et le mode écriture reste inerte.
 LABELS = [
     ("for-linux",   "0e8a16", "Requis — le watcher ne voit que ces issues"),
+    ("for-windows", "0e8a16", "Watcher Windows (CCW) — même principe que for-linux"),
     ("bridge",      "1d76db", "Marque l'issue comme tâche bridge (traçabilité)"),
     ("mode_write",  "d93f0b", "ARME le mode écriture — CCL peut modifier des fichiers"),
     ("needs-human", "b60205", "Posé après 3 échecs — stoppe le retraitement auto"),
