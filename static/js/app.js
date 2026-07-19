@@ -258,6 +258,17 @@ function prefixeTypeIssue(it) {
   return t === 'chef' ? '🎯' : (t === 'ouvrier' ? '👷' : '');
 }
 
+// Préfixe emoji de l'OS CIBLE d'une issue : 🪟 for-windows (CCW), rien sinon.
+// Dimension DISTINCTE du type (chef/ouvrier) : les deux se cumulent (ex. un
+// ouvrier for-windows affiche 👷🪟). On ne pose pas d'icône pour for-linux :
+// c'est le cas par défaut (CCL), déjà signalé par le badge « for-linux » du
+// détail — n'ajouter une icône que pour ce qui sort de l'ordinaire (issue #165).
+function prefixeOSCible(it) {
+  const noms = ((it && it.labels) || [])
+    .map(l => ((l && l.name) || l || '').toLowerCase());
+  return noms.includes('for-windows') ? '🪟' : '';
+}
+
 // Badge coloré pour un label dans le panneau de détail.
 function badgeLabel(nom) {
   const map = {
@@ -266,6 +277,7 @@ function badgeLabel(nom) {
     'mode_write':  {cls: 'ecriture', txt: '✏️ écriture'},
     'bridge':      {cls: 'gris',     txt: 'bridge'},
     'for-linux':   {cls: 'gris',     txt: 'for-linux'},
+    'for-windows': {cls: 'bleu',     txt: '🪟 for-windows'},
   };
   const b = map[nom] || {cls: 'gris', txt: nom};
   return '<span class="badge-label ' + b.cls + '">' + escapeHtml(b.txt) + '</span>';
@@ -619,8 +631,10 @@ function rendreListeIssues(reset) {
     // Le badge ✅ des issues FERMÉES portant le label « done » (les seules qui
     // ont une réponse CCL) devient cliquable : un clic copie directement la
     // réponse CCL sans ouvrir le détail (issue #62).
-    // Préfixe visuel du TYPE (🎯 chef / 👷 ouvrier / rien) devant les badges.
-    const prefType = prefixeTypeIssue(it);
+    // Préfixe visuel du TYPE (🎯 chef / 👷 ouvrier / rien) et de l'OS CIBLE
+    // (🪟 for-windows / rien) devant les badges. Deux dimensions distinctes et
+    // cumulables : un ouvrier for-windows affiche « 👷🪟 » (issue #165).
+    const prefType = prefixeTypeIssue(it) + prefixeOSCible(it);
     let badgesHtml = (prefType ? prefType + ' ' : '') + prefixeIssue(it.labels);
     const nomsLabelsLigne = (it.labels || [])
       .map(l => ((l && l.name) || l || '').toLowerCase());
