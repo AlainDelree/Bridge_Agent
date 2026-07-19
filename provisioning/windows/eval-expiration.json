@@ -1,0 +1,9 @@
+{
+  "_commentaire": "Métadonnées de l'évaluation 90 jours de la VM CCW-Build (Windows 11 IoT Enterprise LTSC 2024). Lu par verifier_expiration_ccw.py. Voir BRIDGE_AGENT_DOC.md §16 et issue #167.",
+  "vm": "CCW-Build",
+  "windows": "Windows 11 IoT Enterprise LTSC 2024",
+  "eval_jours": 90,
+  "date_installation": "2026-07-19",
+  "date_expiration": "2026-10-17",
+  "note": "date_installation = date d'installation effective de Windows dans la VM. date_expiration = date_installation + eval_jours. Après expiration, Windows redémarre automatiquement toutes les heures, ce qui casse le service CCW-Watcher : recréer la VM avant (creer_vm_ccw.py --recreate). Si la date d'install réelle diffère, ajuster date_installation ci-dessus ; date_expiration est purement informative et recalculée par le script à partir de date_installation + eval_jours."
+}
