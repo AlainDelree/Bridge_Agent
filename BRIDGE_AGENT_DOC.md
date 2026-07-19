@@ -441,10 +441,21 @@ cp systemd/watcher@.service ~/.config/systemd/user/ && systemctl --user daemon-r
 
 ---
 
-## 14. Vision multi-agent (évolution future)
+## 14. Vision multi-agent (chef/ouvrier — utilisable aujourd'hui)
 
-> Section prospective — pas encore implémentée. Elle fixe une direction pour
-> guider les futures évolutions du bridge et ne pas perdre l'idée.
+> **Le mécanisme de base fonctionne (validé en pratique)** quand l'issue chef
+> donne des instructions explicites de délégation (`gh issue create --label …`)
+> dans son corps. Un CCL « chef » recevant une telle issue est parfaitement
+> capable d'exécuter lui-même `gh issue create` pour créer une ou plusieurs
+> issues « ouvrier » et les surveiller. **Il n'est PAS déclenché
+> automatiquement par `watcher.py`** : pas de détection auto du rôle chef (un
+> CCL ne décide jamais seul de se comporter en chef sans instruction
+> explicite), pas de gestion de timeout dédiée aux ouvriers, pas d'anti-boucle
+> codé en dur (convention documentée uniquement, cf. « Anti-boucle » plus bas —
+> pas techniquement imposée). Ce qui reste à faire, ce n'est donc pas le
+> mécanisme lui-même mais son **automatisation générique** ; les « Points à
+> concevoir » ci-dessous concernent cette automatisation, pas l'usage manuel
+> qui, lui, marche déjà.
 
 **Principe :** un CCL « chef d'orchestre » reçoit une tâche complexe,
 la découpe en sous-tâches, crée une issue GitHub par sous-tâche,
@@ -485,7 +496,30 @@ notification GSM/bureau
 - **Claude Chat génère toujours l'issue chef uniquement** — les ouvriers sont
   créés par le chef lui-même via `gh issue create`.
 
-**Points à concevoir avant implémentation :**
+**Exemple concret validé (ouvrier CCW) :** les ouvriers ne sont pas forcément
+des CCL. Le chef peut déléguer une sous-tâche à un **ouvrier CCW** (label
+`for-windows` au lieu de `for-linux`, cf. §16) lorsqu'elle exige un
+environnement Windows. Cas réel motivant : un **build Scrabble** nécessite
+qu'un dictionnaire soit déposé avant le rebuild `.exe`. Le séquençage se fait
+via un chef CCL qui, dans l'ordre, dépose le dictionnaire (côté Linux) puis
+crée l'ouvrier CCW pour le rebuild :
+
+```bash
+# Exécuté par le CCL chef, sur instruction explicite de l'issue chef
+gh issue create --repo AlainDelree/Bridge_Agent \
+  --label "bridge,for-windows,mode_write" \
+  --title "Ouvrier 1 : rebuild Scrabble .exe après dépôt du dictionnaire" \
+  --body "…"
+```
+
+Le chef surveille ensuite la fermeture de l'issue ouvrière CCW avant de livrer.
+Côté chef, la **création et le séquençage** de l'issue ouvrière `for-windows`
+fonctionnent **aujourd'hui** dès lors que l'issue chef décrit explicitement les
+commandes `gh issue create` à exécuter ; l'exécution côté ouvrier dépend de la
+mise en service de CCW (cf. §16, provisioning en place, agent pas encore
+pleinement opérationnel).
+
+**Points à concevoir avant automatisation générique :**
 
 - **Découpage** : le chef d'orchestre doit produire des sous-tâches
   indépendantes (pas de dépendances croisées entre ouvriers), sinon la
@@ -506,9 +540,13 @@ notification GSM/bureau
 
 ## 15. Pattern Chef + Specs MVC (évolution future)
 
-> Section prospective — pas encore implémentée, complémentaire au pattern
-> chef/ouvrier générique du §14 (celui-ci reste valable pour un découpage
-> ad hoc ponctuel ; celui-ci vise un découpage fixe et récurrent par couche).
+> Section prospective — ce raffinement (routage par couche MVC via le champ
+> `SPECS`) n'est **pas encore implémenté** : le watcher ne lit pas `SPECS` et
+> n'aiguille pas vers des CCL spécialisés. Il est complémentaire au pattern
+> chef/ouvrier générique du §14 — lequel, lui, est déjà **utilisable
+> manuellement** aujourd'hui (le chef découpe ad hoc via `gh issue create`).
+> Le §15 vise au contraire un découpage fixe et récurrent par couche, dont
+> l'automatisation reste à construire.
 
 **Principe :** pour un projet donné, trois CCL spécialisés permanents
 coexistent, chacun restreint à un périmètre de dossiers fixe et disposant
