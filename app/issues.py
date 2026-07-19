@@ -96,18 +96,29 @@ def construire_body(data: dict) -> str:
 
 def construire_labels(data: dict) -> str:
     """Construit la liste de labels depuis les champs du formulaire."""
-    labels = ["bridge", "for-linux"]
+    # Labels supplémentaires du champ d'en-tête optionnel « | LABELS | … | »
+    # (issue #161), lus d'abord car leur contenu conditionne la pose de
+    # for-linux (voir ci-dessous).
+    extras = _parser_labels_entete(data.get("corps", ""))
+    labels = ["bridge"]
+    # Exclusivité for-linux / for-windows (issue #164) : dans l'usage courant une
+    # tâche cible CCL OU CCW, rarement les deux. On ne pose donc le label par
+    # défaut for-linux QUE si l'en-tête LABELS ne demande pas for-windows —
+    # sinon l'issue serait vue à la fois par le watcher CCL et par CCW. Les
+    # autres labels standards (mode_write, notifs) restent posés normalement.
+    if "for-windows" not in extras:
+        labels.append("for-linux")
     if data.get("mode") == "ecriture":
         labels.append("mode_write")
     notifs = data.get("notifs", [])
     if isinstance(notifs, str):
         notifs = [notifs]
     labels.extend(notifs)
-    # Labels supplémentaires du champ d'en-tête optionnel « | LABELS | … | »
-    # (issue #161) : ils s'AJOUTENT aux labels standards (bridge, for-linux,
-    # mode_write, notifs) — on n'en remplace aucun. Dédoublonnage léger pour ne
-    # pas répéter un label déjà posé si Alain le liste aussi dans LABELS.
-    for extra in _parser_labels_entete(data.get("corps", "")):
+    # Les labels de l'en-tête s'AJOUTENT aux labels standards (bridge, for-linux,
+    # mode_write, notifs) — on n'en remplace aucun (hormis l'exclusion de
+    # for-linux ci-dessus). Dédoublonnage léger pour ne pas répéter un label déjà
+    # posé si Alain le liste aussi dans LABELS.
+    for extra in extras:
         if extra not in labels:
             labels.append(extra)
     return ",".join(labels)

@@ -95,11 +95,14 @@ label n'est fait ici : si le label n'existe pas sur le dépôt, `gh issue create
 échoue avec un message clair. En mode lot, chaque bloc `#Titre:` peut porter ses
 propres `LABELS`.
 
-> ⚠️ `for-windows` **n'enlève pas** `for-linux` : une issue `| LABELS |
-> for-windows |` créée par ce flux portera *les deux* labels et sera donc vue à
-> la fois par le watcher CCL et par CCW. Pour une issue purement Windows, retirer
-> `for-linux` manuellement sur GitHub après création (ou passer par `gh issue
-> create --label "bridge,for-windows"`, cf. §16).
+> ⚠️ `for-windows` **retire** `for-linux` (issue #164) : `for-linux` et
+> `for-windows` sont mutuellement exclusifs — une tâche cible CCL *ou* CCW,
+> rarement les deux. Une issue `| LABELS | for-windows |` créée par ce flux ne
+> portera donc *pas* `for-linux` et ne sera vue que par le watcher CCW. Les
+> autres labels standards (`bridge`, `mode_write`, notifications) restent posés
+> normalement, et tout autre label listé dans `LABELS` est ajouté tel quel. Pour
+> forcer les deux watchers sur une même issue (cas rare), ajouter `for-linux`
+> manuellement sur GitHub après création.
 
 **Envoi en lot (plusieurs issues d'un seul copier-coller) — issue #135 :**
 coller *plusieurs* blocs `#Titre:` à la suite dans le même corps déclenche
