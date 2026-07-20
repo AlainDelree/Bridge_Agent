@@ -92,6 +92,12 @@ PRIORITES_CRITIQUES = {"haute", "critique"}
 # à calculer, côté navigateur, le budget total de retry du badge (issue #106).
 PAUSE_ENTRE_TENTATIVES = 5
 
+# Backoff (secondes) entre les tentatives du COMMENTAIRE DE RÉSULTAT (issue #195).
+# Contrairement à l'ACK et au message d'échec (best-effort), la trace du résultat
+# est critique : sans elle, fermer l'issue effacerait silencieusement le travail.
+# 1 tentative initiale + 3 tentatives espacées de 5, 10 puis 20 s.
+DELAIS_RETRY_RESULTAT = (5, 10, 20)
+
 # Abréviations du dictionnaire bridge
 SOURCES = {"CC": "Claude Chat", "CCL": "Claude Code Linux", "CCW": "Claude Code Windows"}
 
@@ -748,18 +754,72 @@ def ajouter_label(numero: int, label: str):
     except Exception as e:
         log.error(f"Erreur ajout label '{label}' sur issue #{numero} : {e}")
 
-def commenter_issue(numero: int, message: str):
-    """Poste un commentaire sur une issue."""
+def commenter_issue(numero: int, message: str) -> bool:
+    """Poste un commentaire sur une issue.
+
+    Retourne True si `gh` a réussi (returncode 0), False sinon. Avant issue #195
+    le code de retour n'était jamais inspecté : `subprocess.run` retourne
+    normalement même sur exit non-zéro, donc un échec réseau intermittent de
+    `gh issue comment` restait silencieux côté Python."""
     try:
-        subprocess.run(
+        res = subprocess.run(
             ["gh", "issue", "comment", str(numero),
              "--repo", CFG.depot,
              "--body", message],
             capture_output=True, text=True,
             encoding="utf-8", errors="replace", timeout=30
         )
+        if res.returncode != 0:
+            log.error(f"Erreur commentaire issue #{numero} (code {res.returncode}) : {res.stderr.strip()}")
+            return False
+        return True
     except Exception as e:
         log.error(f"Erreur commentaire issue #{numero} : {e}")
+        return False
+
+def commenter_resultat_avec_retry(numero: int, message: str) -> bool:
+    """Poste le commentaire de RÉSULTAT avec retry/backoff (issue #195).
+
+    1 tentative initiale, puis jusqu'à 3 tentatives espacées de 5, 10 puis 20 s
+    (DELAIS_RETRY_RESULTAT). Retourne True dès qu'une tentative réussit, False si
+    toutes échouent. Réservé au commentaire de résultat : l'ACK et le message
+    d'échec restent best-effort sans retry."""
+    if commenter_issue(numero, message):
+        return True
+    for delai in DELAIS_RETRY_RESULTAT:
+        log.warning(f"  Commentaire de résultat #{numero} échoué — nouvelle tentative dans {delai}s.")
+        time.sleep(delai)
+        if commenter_issue(numero, message):
+            return True
+    log.error(f"  Commentaire de résultat #{numero} échoué après {1 + len(DELAIS_RETRY_RESULTAT)} tentatives.")
+    return False
+
+def resultat_deja_poste(numero: int) -> bool:
+    """Garde d'idempotence (issue #195) : indique si l'issue porte déjà un
+    commentaire de résultat (`## Résultat`) posté par le watcher.
+
+    Sert à éviter un retraitement complet à tort si l'issue est reprise alors
+    qu'un cycle précédent avait réussi le commentaire mais échoué la fermeture
+    (coupure réseau entre `comment` et `close`). En cas d'erreur de lecture, on
+    retourne False (comportement historique : on retraite) plutôt que de risquer
+    de sauter à tort une issue réellement non traitée."""
+    try:
+        res = subprocess.run(
+            ["gh", "issue", "view", str(numero),
+             "--repo", CFG.depot,
+             "--json", "comments"],
+            capture_output=True, text=True,
+            encoding="utf-8", errors="replace", timeout=30
+        )
+        if res.returncode != 0:
+            log.error(f"Erreur lecture commentaires issue #{numero} (code {res.returncode}) : {res.stderr.strip()}")
+            return False
+        data = json.loads(res.stdout or "{}")
+        return any("## Résultat" in (c.get("body") or "")
+                   for c in data.get("comments", []))
+    except Exception as e:
+        log.error(f"Erreur vérification idempotence issue #{numero} : {e}")
+        return False
 
 def fermer_issue(numero: int):
     """Ferme une issue et ajoute le label 'done'."""
@@ -1126,6 +1186,17 @@ def traiter_issue(issue: dict, dry_run: bool):
         log.debug(f"Issue #{numero} déjà marquée '{LABEL_ECHEC}' — ignorée (intervention humaine en attente).")
         return
 
+    # Garde d'idempotence (issue #195). Une issue peut revenir ici OUVERTE alors
+    # que son travail est déjà fait : un cycle précédent avait réussi le
+    # commentaire de résultat mais échoué la fermeture (coupure réseau entre
+    # `comment` et `close`), ou posé le label `done` sans réussir le `close`. On
+    # NE relance PAS claude à tort (double exécution d'une tâche d'écriture) : on
+    # se contente de re-tenter la fermeture, puis on rend la main.
+    if LABEL_FAIT in labels or resultat_deja_poste(numero):
+        log.info(f"  Issue #{numero} déjà traitée (résultat commenté) — finalisation de la fermeture, pas de retraitement.")
+        fermer_issue(numero)
+        return
+
     issues_en_cours.add(numero)
     priorite = extraire_priorite(body)
     critique = priorite in PRIORITES_CRITIQUES
@@ -1234,7 +1305,30 @@ def traiter_issue(issue: dict, dry_run: bool):
 
             if succes:
                 log.info(f"  ✓ Issue #{numero} traitée avec succès.")
-                commenter_issue(numero, f"## Résultat\n\n{avertissement_conflit}{sortie}")
+                # Le commentaire de résultat est critique (issue #195) : on le
+                # poste avec retry/backoff et on ne ferme l'issue QUE s'il a réussi.
+                if not commenter_resultat_avec_retry(
+                        numero, f"## Résultat\n\n{avertissement_conflit}{sortie}"):
+                    # Échec réseau persistant : fermer l'issue effacerait
+                    # silencieusement le travail. On la laisse OUVERTE (ni `close`
+                    # ni label `done`) pour reprise au prochain cycle. La garde
+                    # d'idempotence en tête de traiter_issue évitera de relancer
+                    # claude à tort si un cycle ultérieur finit par poster le
+                    # commentaire mais échoue encore la fermeture.
+                    log.error(
+                        f"  ✗ Commentaire de résultat #{numero} impossible après retries — "
+                        f"issue laissée OUVERTE pour reprise (non fermée)."
+                    )
+                    notifier(
+                        labels,
+                        titre=f"⚠️ {CFG.nom} #{numero} — résultat non posté",
+                        message=(f"'{titre}' traitée, mais le commentaire de résultat a échoué "
+                                 f"(réseau). Issue laissée ouverte pour reprise au prochain cycle."),
+                        urgence_bureau="critical",
+                        priorite_ntfy="high",
+                    )
+                    issues_en_cours.discard(numero)
+                    return
                 fermer_issue(numero)
                 issues_en_cours.discard(numero)
                 # Historique des durées (issue #108) : durée réelle ACK → fermeture,
