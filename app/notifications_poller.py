@@ -71,7 +71,7 @@ import notifications
 from app.projets import lister_projets
 
 # ─── Réglages (surchargeable par variable d'environnement) ─────────────────────
-INTERVALLE_S = int(os.environ.get("BRIDGE_NOTIF_INTERVALLE", "20"))   # période de polling
+INTERVALLE_S = int(os.environ.get("BRIDGE_NOTIF_INTERVALLE", "60"))   # période de polling (issue #188 : 20→60 s pour alléger la charge gh cumulée)
 RECENCE_MIN  = int(os.environ.get("BRIDGE_NOTIF_RECENCE_MIN", "30"))  # fenêtre de récence
 SCOPE        = os.environ.get("BRIDGE_NOTIF_SCOPE", "for-windows").strip().lower()
 # SCOPE : "for-windows" (défaut, CCW seul) | "for-linux" | "all" | "off"
@@ -85,14 +85,24 @@ def _log(msg: str):
     print(f"[notif] {msg}", flush=True)
 
 
-def _gh_list(depot: str, recherche: str, champs: str) -> list:
-    """`gh issue list --search` → liste JSON, ou [] en cas d'erreur. Best-effort :
-    aucune exception ne remonte, le poller ne doit jamais mourir sur un hoquet gh."""
+def _gh_list(depot: str, label: str, state: str, champs: str) -> list:
+    """`gh issue list --label X --state Y` → liste JSON, ou [] en cas d'erreur.
+
+    On utilise volontairement `--label`/`--state` (API REST-like standard,
+    comme partout ailleurs dans issues.py) et PAS `--search` : `--search`
+    invoque l'API Search de GraphQL, qui a un quota SÉPARÉ et bien plus strict
+    — deux requêtes Search par projet toutes les 20 s saturaient ce quota et
+    faisaient remonter « API rate limit already exceeded » jusque dans l'onglet
+    Résultats (issue #188). Le tri `sort:updated-desc` disparaît avec `--label`,
+    mais il était superflu : on ne dépend que du filtre de récence `_recent()`,
+    appliqué issue par issue quel que soit l'ordre. Best-effort : aucune
+    exception ne remonte, le poller ne doit jamais mourir sur un hoquet gh."""
     try:
         res = subprocess.run(
             ["gh", "issue", "list",
              "--repo", depot,
-             "--search", recherche,
+             "--label", label,
+             "--state", state,
              "--json", champs,
              "--limit", "40"],
             capture_output=True, text=True,
@@ -142,12 +152,12 @@ def _transitions_projet(cfg) -> list[dict]:
     forme {number, title, labels, type, horodatage}. type ∈ {done, needs-human}."""
     transitions = []
 
-    # Succès : issues fermées portant `done`, triées par mise à jour décroissante
-    # pour que les fermetures récentes remontent (indépendamment de la date de
-    # création de l'issue).
+    # Succès : issues fermées portant `done`. Pas de tri gh (le tri
+    # `sort:updated-desc` n'existe qu'avec --search) : le filtre de récence
+    # `_recent()` ci-dessous sélectionne les bonnes issues quel que soit l'ordre.
     for it in _gh_list(
         cfg.depot,
-        f"label:{LABEL_DONE} state:closed sort:updated-desc",
+        LABEL_DONE, "closed",
         "number,title,labels,closedAt,updatedAt",
     ):
         horo = it.get("closedAt") or it.get("updatedAt") or ""
@@ -160,7 +170,7 @@ def _transitions_projet(cfg) -> list[dict]:
     # Échec définitif : issues ouvertes portant `needs-human`.
     for it in _gh_list(
         cfg.depot,
-        f"label:{LABEL_NEEDS_HUMAN} state:open sort:updated-desc",
+        LABEL_NEEDS_HUMAN, "open",
         "number,title,labels,updatedAt",
     ):
         horo = it.get("updatedAt") or ""
