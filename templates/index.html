@@ -137,7 +137,7 @@
          (dossier issue-attachments/) puis référencée dans le corps ci-dessus
          via une URL raw.githubusercontent.com automatiquement insérée. -->
     <div class="rangee" style="align-items:center;gap:10px;margin-top:10px">
-      <input type="file" id="image-jointe" accept="image/png,image/jpeg"
+      <input type="file" id="image-jointe" accept="{{ formats_image.accept }}"
              style="font-size:13px;max-width:340px"
              onchange="majEtatBoutonImage()">
       <button type="button" id="btn-joindre-image" onclick="joindreImage()"
@@ -145,6 +145,12 @@
         Joindre une image
       </button>
       <span id="image-jointe-msg" style="font-size:12px;color:#888"></span>
+    </div>
+    <!-- Formats acceptés + limite, visibles avant tout upload (issue #192).
+         Texte synchronisé côté serveur depuis TYPES_IMAGE_ACCEPTES /
+         TAILLE_MAX_IMAGE via formats_image_acceptes() : aucun format en dur. -->
+    <div style="font-size:12px;color:#888;margin-top:4px">
+      Formats acceptés : {{ formats_image.texte }} — {{ formats_image.taille_max_mo }} Mo maximum.
     </div>
 
     <div id="zone-apercu" class="apercu"></div>
@@ -504,6 +510,10 @@
     {% for p in projets if p.couleur %}"{{ p.nom }}": "{{ p.couleur }}",
     {% endfor %}
   };
+  // Types MIME image acceptés (issue #192), source serveur unique
+  // (TYPES_IMAGE_ACCEPTES). Utilisé comme garde-fou côté client dans
+  // joindreImage() — évite de redupliquer la liste en dur dans app.js.
+  window.MIMES_IMAGE_ACCEPTES = {{ formats_image.mimes | tojson }};
 </script>
 <script src="{{ url_for('static', filename='js/app.js') }}"></script>
 </body>

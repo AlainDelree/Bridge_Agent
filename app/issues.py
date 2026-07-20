@@ -50,18 +50,51 @@ SEUIL_ESTIM_SUR     = 15   # au-dessus : « sûr » (vert) ; entre les deux : «
 # BRIDGE_AGENT_DOC.md pour le mécanisme complet et l'exception « push par Alain ».
 DOSSIER_PIECES_JOINTES = "issue-attachments"
 # Types MIME acceptés → extension canonique du fichier sauvegardé. On n'accepte
-# que PNG et JPEG (formats qui s'affichent nativement dans les issues GitHub).
+# que des formats image passifs qui s'affichent nativement dans les issues GitHub
+# (PNG, JPEG, GIF) — pas de code exécutable embarqué, même famille de risque
+# (issue #192 pour l'ajout du GIF).
 TYPES_IMAGE_ACCEPTES = {
     "image/png":  ".png",
     "image/jpeg": ".jpg",
+    "image/gif":  ".gif",
 }
 # Signatures binaires (magic bytes) de contrôle : on ne se fie pas au seul
 # Content-Type déclaré par le navigateur, on vérifie aussi les premiers octets.
+# Le GIF a deux signatures historiques (GIF87a / GIF89a) — on accepte les deux.
 SIGNATURES_IMAGE = {
     "image/png":  (b"\x89PNG\r\n\x1a\n",),
     "image/jpeg": (b"\xff\xd8\xff",),
+    "image/gif":  (b"GIF87a", b"GIF89a"),
 }
 TAILLE_MAX_IMAGE = 5 * 1024 * 1024   # 5 Mo — message clair si dépassée
+
+
+def formats_image_acceptes() -> dict:
+    """Descriptif des formats image acceptés, DÉRIVÉ de TYPES_IMAGE_ACCEPTES et
+    TAILLE_MAX_IMAGE, pour l'interface (issue #192).
+
+    Source unique de vérité : ce helper évite de dupliquer en dur la liste des
+    formats dans le gabarit et le JavaScript. index() le passe au template, qui
+    l'utilise pour l'attribut `accept`, le texte « Formats acceptés : … » et la
+    variable JS `window.MIMES_IMAGE_ACCEPTES` (garde-fou client). Un futur ajout
+    de format dans TYPES_IMAGE_ACCEPTES se répercute donc automatiquement partout.
+
+    Retourne :
+      - mimes         : liste des types MIME acceptés (ex. ['image/png', …])
+      - accept        : valeur prête pour l'attribut HTML accept (mimes joints)
+      - texte         : libellés lisibles joints (ex. 'PNG, JPEG, GIF')
+      - taille_max_mo : limite de taille en Mo (int)
+    """
+    mimes = list(TYPES_IMAGE_ACCEPTES.keys())
+    # Libellé lisible dérivé du sous-type MIME : image/png → PNG, image/jpeg →
+    # JPEG, image/gif → GIF.
+    libelles = [m.split("/", 1)[1].upper() for m in mimes]
+    return {
+        "mimes":         mimes,
+        "accept":        ",".join(mimes),
+        "texte":         ", ".join(libelles),
+        "taille_max_mo": TAILLE_MAX_IMAGE // (1024 * 1024),
+    }
 
 
 # ─── Construction du body et des labels ───────────────────────────────────────
@@ -302,7 +335,8 @@ def joindre_image():
     mimetype = (fichier.mimetype or "").lower()
     if mimetype not in TYPES_IMAGE_ACCEPTES:
         return jsonify(succes=False,
-                       erreur="Type non supporté : seuls PNG et JPEG sont acceptés."), 400
+                       erreur=f"Type non supporté : seuls {formats_image_acceptes()['texte']} "
+                              "sont acceptés."), 400
 
     # Lecture complète en mémoire pour vérifier taille et signature avant écriture
     # (les images d'interface restent petites : limite 5 Mo).
@@ -315,7 +349,8 @@ def joindre_image():
                        erreur=f"Image trop lourde ({mo:.1f} Mo) — limite : 5 Mo."), 400
     if not any(donnees.startswith(sig) for sig in SIGNATURES_IMAGE[mimetype]):
         return jsonify(succes=False,
-                       erreur="Le contenu du fichier ne correspond pas à une image PNG/JPEG."), 400
+                       erreur="Le contenu du fichier ne correspond pas à une image "
+                              f"{formats_image_acceptes()['texte']}."), 400
 
     # Le dépôt doit exister localement ET être un dépôt git (sinon commit/push
     # impossibles : message clair plutôt qu'un échec silencieux).

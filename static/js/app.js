@@ -2267,16 +2267,22 @@ async function joindreImage() {
   if (!input || !input.files || !input.files.length) return;
   const fichier = input.files[0];
 
-  // Garde-fou côté client (le backend revalide) : limite 5 Mo, types PNG/JPEG.
+  // Garde-fou côté client (le backend revalide) : limite 5 Mo, types image.
+  // La liste des types acceptés est injectée par le serveur dans
+  // window.MIMES_IMAGE_ACCEPTES (issue #192) depuis TYPES_IMAGE_ACCEPTES —
+  // repli défensif sur PNG/JPEG/GIF si la variable est absente.
   const TAILLE_MAX = 5 * 1024 * 1024;
   if (fichier.size > TAILLE_MAX) {
     msg.style.color = '#c0392b';
     msg.textContent = 'Image trop lourde (' + (fichier.size / 1048576).toFixed(1) + ' Mo) — limite 5 Mo.';
     return;
   }
-  if (fichier.type !== 'image/png' && fichier.type !== 'image/jpeg') {
+  const mimesAcceptes = window.MIMES_IMAGE_ACCEPTES
+    || ['image/png', 'image/jpeg', 'image/gif'];
+  if (mimesAcceptes.indexOf(fichier.type) === -1) {
+    const libelles = mimesAcceptes.map(function (m) { return m.split('/')[1].toUpperCase(); });
     msg.style.color = '#c0392b';
-    msg.textContent = 'Seuls les PNG et JPEG sont acceptés.';
+    msg.textContent = 'Seuls les ' + libelles.join(', ') + ' sont acceptés.';
     return;
   }
 
