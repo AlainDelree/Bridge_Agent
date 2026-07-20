@@ -1140,12 +1140,29 @@ function formaterDuree(s) {
 // issues ouvertes, puis rafraîchit immédiatement les badges.
 async function chargerTimingIssues() {
   const noms = nomsProjetsDisponibles();
-  const map = {};
+  // On repart de l'état COURANT, pas d'un map vide (issue #190). Avant, chaque
+  // appel reconstruisait le map à partir de zéro : dès qu'un fetch
+  // /issues-en-attente échouait ou expirait — typiquement pendant une contention
+  // réseau provoquée par un cycle du poller de notifications (12 appels gh
+  // groupés, cf. notifications_poller.py) — le projet concerné disparaissait du
+  // map et TOUS ses badges (décompte + estimation) s'effaçaient jusqu'au prochain
+  // fetch réussi. C'est la « perte intermittente des badges » constatée par
+  // Alain. Désormais, seul un fetch RÉUSSI remplace les entrées de son projet ;
+  // un échec laisse les badges existants intacts.
+  const map = Object.assign({}, timingIssues);
   await Promise.all(noms.map(async nom => {
     try {
       const rep = await fetch('/issues-en-attente/' + encodeURIComponent(nom));
       const liste = await rep.json();
+      // Erreur/timeout (réponse non-tableau : {erreur:…} en 5xx) → on NE touche
+      // pas aux entrées du projet, on garde les badges actuels.
       if (!Array.isArray(liste)) return;
+      // Succès : on purge d'abord les anciennes entrées de CE projet (pour retirer
+      // les issues désormais fermées) puis on réinjecte la liste fraîche. Le
+      // séparateur '#' évite qu'un nom soit préfixe d'un autre (ex. « ecole »).
+      for (const cle of Object.keys(map)) {
+        if (cle.startsWith(nom + '#')) delete map[cle];
+      }
       for (const it of liste) {
         map[cleTiming(nom, it.number)] = {
           timeout:     it.timeout,

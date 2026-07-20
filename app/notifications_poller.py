@@ -73,6 +73,7 @@ from app.projets import lister_projets
 # ─── Réglages (surchargeable par variable d'environnement) ─────────────────────
 INTERVALLE_S = int(os.environ.get("BRIDGE_NOTIF_INTERVALLE", "60"))   # période de polling (issue #188 : 20→60 s pour alléger la charge gh cumulée)
 RECENCE_MIN  = int(os.environ.get("BRIDGE_NOTIF_RECENCE_MIN", "30"))  # fenêtre de récence
+ESPACEMENT_S = float(os.environ.get("BRIDGE_NOTIF_ESPACEMENT", "2"))  # délai entre deux projets (issue #190 : étaler les 12 appels gh au lieu d'une rafale groupée)
 SCOPE        = os.environ.get("BRIDGE_NOTIF_SCOPE", "for-windows").strip().lower()
 # SCOPE : "for-windows" (défaut, CCW seul) | "for-linux" | "all" | "off"
 
@@ -81,8 +82,13 @@ LABEL_NEEDS_HUMAN = "needs-human"
 
 
 def _log(msg: str):
-    """Journalise sur stdout (capturé par lancer_new_issue.sh dans logs/)."""
-    print(f"[notif] {msg}", flush=True)
+    """Journalise sur stdout (capturé par lancer_new_issue.sh dans logs/).
+
+    Horodatage HH:MM:SS local (issue #190) : permet à Alain de corréler un clic
+    « Rafraîchir » ressenti comme lent avec un cycle du poller, et de vérifier
+    que l'étalement des appels (ESPACEMENT_S) supprime bien le pic de charge."""
+    heure = datetime.now().strftime("%H:%M:%S")
+    print(f"[notif {heure}] {msg}", flush=True)
 
 
 def _gh_list(depot: str, label: str, state: str, champs: str) -> list:
@@ -147,6 +153,24 @@ def _dans_la_portee(labels: list[str]) -> bool:
     return False
 
 
+# Pourquoi ce poller ne mutualise PAS ses appels gh avec issues_en_attente()
+# ----------------------------------------------------------------------------
+# (issue #190, point 2). Investigation faite : les deux mécanismes interrogent
+# des ensembles DISJOINTS et servent des besoins différents ; les fusionner
+# coûterait plus qu'il ne rapporterait.
+#   • issues_en_attente() (app/issues.py, route Flask) liste les issues OUVERTES
+#     en file (labels for-linux/for-windows) d'UN projet, à la demande du
+#     frontend, et fait EN PLUS un `gh view` par issue pour lire l'ACK (début de
+#     traitement) — données dont le poller n'a aucun besoin.
+#   • Ce poller balaie les états TERMINAUX de TOUS les projets, en tâche de fond :
+#     issues FERMÉES + `done` (jamais retournées par issues_en_attente, qui est
+#     open-only → recouvrement NUL) et issues ouvertes + `needs-human` (seul
+#     recoupement possible, un sous-ensemble marginal).
+# Le vrai gain de charge vient donc de l'ÉTALEMENT des appels (point 1 ci-dessus)
+# et de la robustesse du frontend (point 3), pas d'une source de données commune
+# qui couplerait un thread de fond à une route par-requête/par-projet et
+# forcerait chacun à récupérer des champs inutiles à l'autre. Décision : rester
+# séparés.
 def _transitions_projet(cfg) -> list[dict]:
     """Retourne les transitions terminales RÉCENTES d'un projet, chacune sous la
     forme {number, title, labels, type, horodatage}. type ∈ {done, needs-human}."""
@@ -219,14 +243,16 @@ def surveiller_transitions():
         return
 
     _log(f"détection des transitions active — portée={SCOPE}, "
-         f"intervalle={INTERVALLE_S}s, récence={RECENCE_MIN}min.")
+         f"intervalle={INTERVALLE_S}s, récence={RECENCE_MIN}min, "
+         f"espacement={ESPACEMENT_S}s/projet.")
 
     deja_vu: set[tuple] = set()
     premier_passage = True
 
     while True:
         try:
-            for cfg in lister_projets():
+            projets = lister_projets()
+            for i, cfg in enumerate(projets):
                 for tr in _transitions_projet(cfg):
                     if not _dans_la_portee(tr["labels"]):
                         continue
@@ -239,6 +265,16 @@ def surveiller_transitions():
                     _log(f"transition {tr['type']} — {cfg.nom} #{tr['number']} "
                          f"'{tr['title']}' — labels={tr['labels']}")
                     _notifier_transition(cfg, tr)
+                # Espacement inter-projets (issue #190) : au lieu de déclencher les
+                # 12 appels gh (2 par projet × 6 projets) en rafale immédiate à
+                # chaque cycle, on les étale de ESPACEMENT_S secondes par projet.
+                # Cela évite le pic de charge réseau groupé qui entrait en
+                # compétition avec les appels gh du frontend (chargerTimingIssues
+                # toutes les 15 s, clic Rafraîchir, /issues-en-attente) et rendait
+                # le bouton Rafraîchir lent + faisait « sursauter » les badges. Pas
+                # de sleep après le dernier projet (inutile — le sleep de cycle suit).
+                if ESPACEMENT_S > 0 and i < len(projets) - 1:
+                    time.sleep(ESPACEMENT_S)
             premier_passage = False
         except Exception as e:
             # Filet de sécurité : une erreur inattendue ne doit jamais tuer le
