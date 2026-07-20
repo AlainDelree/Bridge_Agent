@@ -146,6 +146,39 @@ def apercu():
     return jsonify(commande=commande)
 
 
+def _issue_ouverte_meme_titre(cfg, titre: str):
+    """Numéro d'une issue OUVERTE du dépôt au titre strictement identique à
+    `titre` (comparaison après strip des deux côtés), ou None si aucune.
+
+    Anti-doublon (issue #189) : un double-clic sur « Envoyer » (ou une création
+    manuelle) avait produit deux issues jumelles, traitées en parallèle par deux
+    claude sur le même dossier. On refuse donc de recréer une issue dont le titre
+    existe DÉJÀ sur une issue ouverte du même dépôt. On ne bloque que sur les
+    issues OUVERTES : un titre réutilisé plus tard, après fermeture, reste permis.
+
+    On liste les issues ouvertes et on filtre côté Python plutôt que via l'API
+    Search de gh (rate-limitée, cf. issue #188). Best-effort : si gh échoue
+    (réseau, timeout…), on retourne None et on laisse la création se poursuivre —
+    la garde ne doit jamais transformer une panne de vérification en blocage."""
+    try:
+        res = subprocess.run(
+            ["gh", "issue", "list",
+             "--repo",  cfg.depot,
+             "--state", "open",
+             "--limit", "200",
+             "--json",  "number,title"],
+            capture_output=True, text=True, timeout=30
+        )
+        if res.returncode != 0:
+            return None
+        for issue in json.loads(res.stdout or "[]"):
+            if (issue.get("title") or "").strip() == titre.strip():
+                return issue.get("number")
+    except Exception:
+        return None
+    return None
+
+
 def envoyer():
     data = request.json or {}
     cfg  = projet_par_nom(data.get("projet", ""))
@@ -154,6 +187,17 @@ def envoyer():
     titre  = data.get("titre", "").strip()
     if not titre:
         return jsonify(succes=False, erreur="Le titre est obligatoire.")
+
+    # Anti-doublon (issue #189) : refuser la création si une issue OUVERTE du même
+    # dépôt porte déjà exactement ce titre, plutôt que d'empiler un doublon
+    # silencieux (les deux finiraient traités en parallèle sur le même dossier).
+    doublon = _issue_ouverte_meme_titre(cfg, titre)
+    if doublon is not None:
+        return jsonify(
+            succes=False,
+            erreur=f"Une issue portant ce titre est déjà ouverte : #{doublon}"
+        )
+
     labels = construire_labels(data)
     body   = construire_body(data)
 

@@ -23,6 +23,7 @@ import sys
 import os
 import glob
 import re
+import hashlib
 from logging.handlers import RotatingFileHandler
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -47,6 +48,24 @@ DOSSIER_LOGS   = DOSSIER_SCRIPT / "logs"
 # source à versionner. Lu par app/issues.py pour estimer la durée d'une issue en
 # cours (médiane du même projet+type+mode).
 FICHIER_HISTORIQUE = DOSSIER_LOGS / "historique_durees.json"
+
+# Verrous anti-collision inter-process (issue #189). Chaque traitement pose un
+# fichier de verrou associé au répertoire de travail EFFECTIF avant de lancer
+# claude, et le libère à la fin (y compris en cas d'échec). But : garantir que
+# JAMAIS deux process claude ne travaillent simultanément sur le MÊME dossier —
+# là où l'ensemble en mémoire `issues_en_cours` ne protège qu'au sein d'un seul
+# process watcher, pas entre deux instances/relances. Le verrou vit sous logs/
+# (gitignoré), et NON dans le rep_travail lui-même : un fichier déposé dans le
+# dossier de travail serait happé par le `git add -A` de la sauvegarde que CCL
+# effectue à chaque tâche en mode écriture, puis committé par erreur.
+DOSSIER_VERROUS = DOSSIER_LOGS / "verrous"
+
+# Marge (secondes) ajoutée à la durée de traitement plausible d'une issue pour
+# décider qu'un verrou est PÉRIMÉ (orphelin d'un watcher tué brutalement sans
+# passer par le finally). Au-delà de cette péremption, aucun claude légitime ne
+# peut encore tourner (chaque subprocess a son propre timeout) : le verrou est
+# réputé abandonné et peut être repris.
+PEREMPTION_MARGE_VERROU = 120
 
 # ─── Protocole partagé (identique pour TOUS les projets) ───────────────────────
 # Ces noms de labels sont la logique commune du bridge. Les mettre en config
@@ -1001,6 +1020,96 @@ probables, sans préambule ni conclusion, et sans tenter de corriger quoi que ce
 # Mémoire des issues en cours de traitement (évite les doublons)
 issues_en_cours: set[int] = set()
 
+
+def _chemin_verrou(rep_travail: Path) -> Path:
+    """Chemin du fichier de verrou associé à un répertoire de travail donné.
+
+    La clé est le chemin RÉSOLU du rep_travail : deux instances de watcher visant
+    le même dossier (même via deux .conf différents, ou une relance) obtiennent
+    le MÊME verrou, donc s'excluent mutuellement. Le nom garde un préfixe lisible
+    (basename du dossier) suivi d'une empreinte du chemin complet pour rester
+    unique et débuggable. Le fichier vit sous DOSSIER_VERROUS (logs/, gitignoré),
+    jamais dans rep_travail (cf. commentaire de DOSSIER_VERROUS)."""
+    resolu = rep_travail.expanduser().resolve()
+    empreinte = hashlib.sha1(str(resolu).encode("utf-8")).hexdigest()[:12]
+    return DOSSIER_VERROUS / f"{resolu.name or 'racine'}-{empreinte}.lock"
+
+
+def acquerir_verrou(rep_travail: Path, timeout_projet: int) -> Path | None:
+    """Tente de poser un verrou exclusif sur `rep_travail`. Retourne le chemin du
+    verrou si acquis, ou None si un AUTRE traitement le détient déjà (verrou
+    vivant) — l'appelant doit alors s'abstenir de lancer claude.
+
+    Un verrou plus vieux que la durée de traitement plausible d'une issue est
+    considéré comme PÉRIMÉ (orphelin d'un watcher tué sans passer par le finally)
+    et repris. La borne tient compte des tentatives multiples : au pire un
+    traitement légitime dure max_essais × (timeout + pause) ; au-delà (+ marge),
+    plus aucun claude légitime ne tourne.
+
+    Création atomique via O_CREAT|O_EXCL : si un autre process gagne la course
+    entre le test de péremption et la création, l'ouverture échoue proprement et
+    on renvoie None (pas de double lancement).
+
+    Best-effort sur les erreurs d'E/S annexes : si le dossier de verrous ne peut
+    être créé ou le fichier posé (permissions…), on journalise et on renvoie le
+    chemin quand même plutôt que de bloquer indéfiniment le traitement — la
+    protection en mémoire (issues_en_cours) reste active dans ce cas dégradé."""
+    verrou = _chemin_verrou(rep_travail)
+    try:
+        DOSSIER_VERROUS.mkdir(parents=True, exist_ok=True)
+    except OSError as e:
+        log.warning(f"Dossier de verrous {DOSSIER_VERROUS} incréable ({e}) — verrou désactivé pour cette issue.")
+        return verrou   # dégradé : on poursuit, issues_en_cours protège encore dans ce process
+
+    peremption = CFG.max_essais * (timeout_projet + PAUSE_ENTRE_TENTATIVES) + PEREMPTION_MARGE_VERROU
+
+    if verrou.exists():
+        try:
+            age = time.time() - verrou.stat().st_mtime
+        except OSError:
+            age = None
+        if age is not None and age < peremption:
+            return None   # verrou vivant : un autre traitement est en cours sur ce dossier
+        # Verrou périmé (ou stat illisible) : on le reprend.
+        log.warning(
+            f"Verrou périmé sur {rep_travail} "
+            f"(âge {int(age) if age is not None else '?'}s ≥ {int(peremption)}s) — repris "
+            f"(watcher précédent probablement tué avant libération)."
+        )
+        try:
+            verrou.unlink()
+        except FileNotFoundError:
+            pass
+        except OSError as e:
+            log.warning(f"Suppression du verrou périmé {verrou} impossible ({e}).")
+
+    try:
+        fd = os.open(str(verrou), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
+    except FileExistsError:
+        return None   # course perdue : un autre process vient de poser le verrou
+    except OSError as e:
+        log.warning(f"Pose du verrou {verrou} impossible ({e}) — on poursuit sans verrou fichier.")
+        return verrou   # dégradé, comme ci-dessus
+    try:
+        os.write(fd, f"pid={os.getpid()} projet={CFG.nom} rep={rep_travail}\n".encode("utf-8"))
+    finally:
+        os.close(fd)
+    return verrou
+
+
+def liberer_verrou(verrou: Path | None):
+    """Supprime le fichier de verrou (best-effort). Appelée dans un finally pour
+    garantir la libération même en cas d'échec/exception du traitement."""
+    if not verrou:
+        return
+    try:
+        verrou.unlink()
+    except FileNotFoundError:
+        pass
+    except OSError as e:
+        log.warning(f"Libération du verrou {verrou} impossible ({e}).")
+
+
 def traiter_issue(issue: dict, dry_run: bool):
     numero = issue["number"]
     titre  = issue["title"]
@@ -1086,94 +1195,117 @@ def traiter_issue(issue: dict, dry_run: bool):
                 f"peuvent être obsolètes.\n\n"
             )
 
-    commenter_issue(
-        numero,
-        f"✅ ACK — Issue #{numero} reçue par watcher.py (agent Linux, projet {CFG.nom}). "
-        f"Mode : **{mode_txt}**. Traitement en cours..."
-    )
-    # Départ du chrono de durée réelle (ACK → fermeture), pour l'historique des
-    # durées (issue #108). monotonic() pour la mesure d'écoulement (insensible aux
-    # changements d'heure système).
-    debut_traitement = time.monotonic()
+    # Garde-fou anti-collision inter-process (issue #189) : AVANT l'ACK et tout
+    # lancement de claude, on pose un verrou exclusif sur le répertoire de travail
+    # effectif. Si un AUTRE process (autre instance/relance de watcher, ou un
+    # doublon d'issue traité en parallèle) détient déjà ce verrou, on NE lance PAS
+    # un second claude sur le même dossier : on relâche l'issue (retirée de
+    # issues_en_cours, sans ACK) pour qu'elle soit reprise au prochain cycle, une
+    # fois le verrou libéré. issues_en_cours ne protège que dans CE process ; le
+    # verrou fichier étend la protection entre process.
+    verrou = acquerir_verrou(cwd_effectif, timeout)
+    if verrou is None:
+        log.warning(
+            f"  Issue #{numero} différée : un autre traitement détient déjà le verrou "
+            f"sur {cwd_effectif} — collision évitée, reprise au prochain cycle."
+        )
+        issues_en_cours.discard(numero)
+        return
 
-    tentative = 0
-    while True:
-        tentative += 1
-        log.info(f"  Tentative {tentative}/{CFG.max_essais if not critique else '∞'}...")
+    try:
+        commenter_issue(
+            numero,
+            f"✅ ACK — Issue #{numero} reçue par watcher.py (agent Linux, projet {CFG.nom}). "
+            f"Mode : **{mode_txt}**. Traitement en cours..."
+        )
+        # Départ du chrono de durée réelle (ACK → fermeture), pour l'historique des
+        # durées (issue #108). monotonic() pour la mesure d'écoulement (insensible aux
+        # changements d'heure système).
+        debut_traitement = time.monotonic()
 
-        succes, sortie = lancer_claude(numero, titre, body, dry_run, autoriser_ecriture,
-                                       timeout, modele,
-                                       perimetre=perimetre_effectif, cwd=cwd_effectif)
+        tentative = 0
+        while True:
+            tentative += 1
+            log.info(f"  Tentative {tentative}/{CFG.max_essais if not critique else '∞'}...")
 
-        if succes:
-            log.info(f"  ✓ Issue #{numero} traitée avec succès.")
-            commenter_issue(numero, f"## Résultat\n\n{avertissement_conflit}{sortie}")
-            fermer_issue(numero)
-            issues_en_cours.discard(numero)
-            # Historique des durées (issue #108) : durée réelle ACK → fermeture,
-            # catégorisée par projet/type/mode, pour l'estimation prédictive.
-            enregistrer_duree(
-                CFG.nom,
-                deduire_type_issue(titre, body),
-                "write" if autoriser_ecriture else "read",
-                time.monotonic() - debut_traitement,
-                datetime.now().isoformat(timespec="seconds"),
-            )
-            notifier(
-                labels,
-                titre=f"✅ {CFG.nom} #{numero} — traitée",
-                message=f"'{titre}' traitée avec succès.",
-                urgence_bureau="normal",
-                priorite_ntfy="default",
-            )
-            return
+            succes, sortie = lancer_claude(numero, titre, body, dry_run, autoriser_ecriture,
+                                           timeout, modele,
+                                           perimetre=perimetre_effectif, cwd=cwd_effectif)
 
-        # Échec
-        log.warning(f"  ✗ Tentative {tentative} échouée : {sortie}")
-
-        if tentative >= CFG.max_essais:
-            if critique:
-                alerte_critique(numero, titre, tentative, labels)
-                log.warning(f"  Issue critique #{numero} — nouvelle tentative au prochain cycle.")
-                issues_en_cours.discard(numero)  # sera reprise au prochain poll
-                return
-            else:
-                log.error(f"  Issue #{numero} abandonnée après {CFG.max_essais} tentatives.")
-                # Passe diagnostique courte, en lecture seule, avant l'abandon
-                # définitif (issue #124) : quelques pistes concrètes pour éviter à
-                # Alain d'ouvrir lui-même une session juste pour comprendre le
-                # timeout. Best-effort — n'ajoute rien si elle échoue/timeout.
-                log.info(f"  Passe diagnostique courte (lecture seule, {CFG.timeout_diagnostic}s) pour #{numero}...")
-                diagnostic = diagnostiquer_echec(numero, titre, body, sortie,
-                                                 perimetre=perimetre_effectif,
-                                                 cwd=cwd_effectif)
-                message_echec = (
-                    f"❌ Échec après {CFG.max_essais} tentatives.\n\n"
-                    f"Dernière erreur : `{sortie}`\n\n"
+            if succes:
+                log.info(f"  ✓ Issue #{numero} traitée avec succès.")
+                commenter_issue(numero, f"## Résultat\n\n{avertissement_conflit}{sortie}")
+                fermer_issue(numero)
+                issues_en_cours.discard(numero)
+                # Historique des durées (issue #108) : durée réelle ACK → fermeture,
+                # catégorisée par projet/type/mode, pour l'estimation prédictive.
+                enregistrer_duree(
+                    CFG.nom,
+                    deduire_type_issue(titre, body),
+                    "write" if autoriser_ecriture else "read",
+                    time.monotonic() - debut_traitement,
+                    datetime.now().isoformat(timespec="seconds"),
                 )
-                if diagnostic:
-                    message_echec += (
-                        f"🔍 Pistes probables (diagnostic automatique) :\n\n"
-                        f"{diagnostic}\n\n"
-                    )
-                message_echec += (
-                    f"Intervention humaine requise. Label `{LABEL_ECHEC}` posé : "
-                    f"cette issue ne sera plus retraitée automatiquement tant que le "
-                    f"label n'est pas retiré (ou l'issue fermée) manuellement."
-                )
-                commenter_issue(numero, message_echec)
-                ajouter_label(numero, LABEL_ECHEC)
                 notifier(
                     labels,
-                    titre=f"❌ {CFG.nom} #{numero} — échec définitif",
-                    message=f"'{titre}' abandonnée après {CFG.max_essais} tentatives.\nDernière erreur : {sortie[:200]}",
-                    urgence_bureau="critical",
-                    priorite_ntfy="high",
+                    titre=f"✅ {CFG.nom} #{numero} — traitée",
+                    message=f"'{titre}' traitée avec succès.",
+                    urgence_bureau="normal",
+                    priorite_ntfy="default",
                 )
-                issues_en_cours.discard(numero)
                 return
 
-        time.sleep(PAUSE_ENTRE_TENTATIVES)  # backoff entre tentatives
+            # Échec
+            log.warning(f"  ✗ Tentative {tentative} échouée : {sortie}")
+
+            if tentative >= CFG.max_essais:
+                if critique:
+                    alerte_critique(numero, titre, tentative, labels)
+                    log.warning(f"  Issue critique #{numero} — nouvelle tentative au prochain cycle.")
+                    issues_en_cours.discard(numero)  # sera reprise au prochain poll
+                    return
+                else:
+                    log.error(f"  Issue #{numero} abandonnée après {CFG.max_essais} tentatives.")
+                    # Passe diagnostique courte, en lecture seule, avant l'abandon
+                    # définitif (issue #124) : quelques pistes concrètes pour éviter à
+                    # Alain d'ouvrir lui-même une session juste pour comprendre le
+                    # timeout. Best-effort — n'ajoute rien si elle échoue/timeout.
+                    log.info(f"  Passe diagnostique courte (lecture seule, {CFG.timeout_diagnostic}s) pour #{numero}...")
+                    diagnostic = diagnostiquer_echec(numero, titre, body, sortie,
+                                                     perimetre=perimetre_effectif,
+                                                     cwd=cwd_effectif)
+                    message_echec = (
+                        f"❌ Échec après {CFG.max_essais} tentatives.\n\n"
+                        f"Dernière erreur : `{sortie}`\n\n"
+                    )
+                    if diagnostic:
+                        message_echec += (
+                            f"🔍 Pistes probables (diagnostic automatique) :\n\n"
+                            f"{diagnostic}\n\n"
+                        )
+                    message_echec += (
+                        f"Intervention humaine requise. Label `{LABEL_ECHEC}` posé : "
+                        f"cette issue ne sera plus retraitée automatiquement tant que le "
+                        f"label n'est pas retiré (ou l'issue fermée) manuellement."
+                    )
+                    commenter_issue(numero, message_echec)
+                    ajouter_label(numero, LABEL_ECHEC)
+                    notifier(
+                        labels,
+                        titre=f"❌ {CFG.nom} #{numero} — échec définitif",
+                        message=f"'{titre}' abandonnée après {CFG.max_essais} tentatives.\nDernière erreur : {sortie[:200]}",
+                        urgence_bureau="critical",
+                        priorite_ntfy="high",
+                    )
+                    issues_en_cours.discard(numero)
+                    return
+
+            time.sleep(PAUSE_ENTRE_TENTATIVES)  # backoff entre tentatives
+    finally:
+        # Libération garantie du verrou (succès, échec définitif, exception,
+        # reprise critique). Sans ce finally, un crash laisserait un verrou
+        # orphelin — d'où aussi la péremption côté acquerir_verrou.
+        liberer_verrou(verrou)
 
 # ─── Boucle principale ─────────────────────────────────────────────────────────
 

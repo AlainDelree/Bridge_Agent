@@ -2435,79 +2435,91 @@ function afficherModalWatcherInactif(nom) {
 }
 
 async function envoyerIssue() {
-  cacherRetours();
-  const data = collecterFormulaire();
-  if (!data.titre) {
-    await afficherModalErreur('Titre manquant',
-      'Le titre est obligatoire pour envoyer cette issue.');
-    return;
-  }
-
-  // Avertit si des issues for-linux sont déjà en attente sur ce projet, pour
-  // éviter les conflits quand plusieurs issues mode_write s'enchaînent.
-  try {
-    const repAttente = await fetch('/issues-en-attente/' + encodeURIComponent(data.projet));
-    const enAttente  = await repAttente.json();
-    if (Array.isArray(enAttente) && enAttente.length) {
-      const confirmer = await afficherModalConfirmation(enAttente);
-      if (!confirmer) return;   // l'utilisateur a annulé l'envoi
-    }
-  } catch(e) {
-    // La vérification a échoué (réseau, gh…) : on n'empêche pas l'envoi.
-  }
-
-  // Garde-fou ciblé : alerte seulement si le champ PROJET de l'en-tête diffère
-  // du projet sélectionné (issue partie sur le mauvais dépôt).
-  try {
-    const incoherence = detecterIncoherenceProjet(data);
-    if (incoherence) {
-      const ok = await afficherModalIncoherence(
-        incoherence.projetIssue, incoherence.projetSelectionne);
-      if (!ok) return;   // l'utilisateur a annulé l'envoi
-    }
-  } catch(e) {
-    // La détection a échoué : on n'empêche pas l'envoi.
-  }
-
-  // Garde-fou (issue #171) : avertit si le watcher du projet ciblé est inactif.
-  // Sans watcher, l'issue est bien créée mais reste en attente jusqu'au prochain
-  // démarrage — autant le signaler avant l'envoi. On réutilise /statut/<projet>
-  // (même route que verifierStatut()). Même philosophie défensive que les autres
-  // gardes-fous : un échec de vérification (réseau…) ne bloque jamais l'envoi.
-  try {
-    const repStatut = await fetch('/statut/' + encodeURIComponent(data.projet));
-    const statut    = await repStatut.json();
-    if (statut && statut.actif === false) {
-      const choix = await afficherModalWatcherInactif(data.projet);
-      if (choix === 'annuler') return;          // l'utilisateur a annulé l'envoi
-      if (choix === 'lancer') await lancerWatcher();  // démarre puis poursuit
-      // 'envoyer' → on poursuit sans rien lancer
-    }
-  } catch(e) {
-    // La vérification a échoué (réseau, etc.) : on n'empêche pas l'envoi.
-  }
-
+  // Anti-double-clic (issue #189) : on désactive le bouton dès le TOUT DÉBUT,
+  // AVANT toute vérification, modale bloquante ou appel réseau — un double-clic
+  // rapide (bouton perçu comme lent) ne peut alors physiquement pas déclencher
+  // un second envoi pendant que le premier est en cours. La réactivation se fait
+  // uniquement à la toute fin (bloc finally), succès comme échec, y compris si
+  // l'utilisateur annule une modale en cours de route.
   const btn = document.getElementById('btn-envoyer');
-  btn.disabled = true; btn.textContent = 'Envoi…';
+  if (btn.disabled) return;   // envoi déjà en cours : on ignore ce clic
+  btn.disabled = true;
   try {
-    const rep = await fetch('/envoyer', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify(data)
-    });
-    const json = await rep.json();
-    if (json.succes) {
-      afficherMessage('✓ Issue créée : ' + json.url, 'succes');
-      viderFormulaire(false);
-    } else {
-      afficherMessage('Erreur : ' + json.erreur, 'erreur');
+    cacherRetours();
+    const data = collecterFormulaire();
+    if (!data.titre) {
+      await afficherModalErreur('Titre manquant',
+        'Le titre est obligatoire pour envoyer cette issue.');
+      return;
     }
-  } catch(e) {
-    afficherMessage('Erreur réseau : ' + e.message, 'erreur');
+
+    // Avertit si des issues for-linux sont déjà en attente sur ce projet, pour
+    // éviter les conflits quand plusieurs issues mode_write s'enchaînent.
+    try {
+      const repAttente = await fetch('/issues-en-attente/' + encodeURIComponent(data.projet));
+      const enAttente  = await repAttente.json();
+      if (Array.isArray(enAttente) && enAttente.length) {
+        const confirmer = await afficherModalConfirmation(enAttente);
+        if (!confirmer) return;   // l'utilisateur a annulé l'envoi
+      }
+    } catch(e) {
+      // La vérification a échoué (réseau, gh…) : on n'empêche pas l'envoi.
+    }
+
+    // Garde-fou ciblé : alerte seulement si le champ PROJET de l'en-tête diffère
+    // du projet sélectionné (issue partie sur le mauvais dépôt).
+    try {
+      const incoherence = detecterIncoherenceProjet(data);
+      if (incoherence) {
+        const ok = await afficherModalIncoherence(
+          incoherence.projetIssue, incoherence.projetSelectionne);
+        if (!ok) return;   // l'utilisateur a annulé l'envoi
+      }
+    } catch(e) {
+      // La détection a échoué : on n'empêche pas l'envoi.
+    }
+
+    // Garde-fou (issue #171) : avertit si le watcher du projet ciblé est inactif.
+    // Sans watcher, l'issue est bien créée mais reste en attente jusqu'au prochain
+    // démarrage — autant le signaler avant l'envoi. On réutilise /statut/<projet>
+    // (même route que verifierStatut()). Même philosophie défensive que les autres
+    // gardes-fous : un échec de vérification (réseau…) ne bloque jamais l'envoi.
+    try {
+      const repStatut = await fetch('/statut/' + encodeURIComponent(data.projet));
+      const statut    = await repStatut.json();
+      if (statut && statut.actif === false) {
+        const choix = await afficherModalWatcherInactif(data.projet);
+        if (choix === 'annuler') return;          // l'utilisateur a annulé l'envoi
+        if (choix === 'lancer') await lancerWatcher();  // démarre puis poursuit
+        // 'envoyer' → on poursuit sans rien lancer
+      }
+    } catch(e) {
+      // La vérification a échoué (réseau, etc.) : on n'empêche pas l'envoi.
+    }
+
+    btn.textContent = 'Envoi…';
+    try {
+      const rep = await fetch('/envoyer', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(data)
+      });
+      const json = await rep.json();
+      if (json.succes) {
+        afficherMessage('✓ Issue créée : ' + json.url, 'succes');
+        viderFormulaire(false);
+      } else {
+        afficherMessage('Erreur : ' + json.erreur, 'erreur');
+      }
+    } catch(e) {
+      afficherMessage('Erreur réseau : ' + e.message, 'erreur');
+    }
+  } finally {
+    // Réactivation garantie (succès, échec, annulation d'une modale). Restaure le
+    // libellé avec le projet cible plutôt qu'un texte générique.
+    btn.disabled = false;
+    btn.textContent = 'Envoyer sur ' + document.getElementById('projet').value;
   }
-  // Restaure le libellé avec le projet cible plutôt qu'un texte générique.
-  btn.disabled = false;
-  btn.textContent = 'Envoyer sur ' + document.getElementById('projet').value;
 }
 
 async function chargerWatchers() {
@@ -2920,108 +2932,116 @@ function afficherResumeLot(resultats, projetForm) {
 // sans validation. Un bloc en échec n'interrompt pas le lot ; tout est reporté
 // dans le résumé final. (issue #135)
 async function envoyerLot() {
-  cacherRetours();
-  const blocs = decouperCorpsEnBlocs(document.getElementById('corps').value);
-  if (blocs.length < 2) return;                 // sécurité : bouton lot masqué sinon
-
-  // Garde-fou titre : aucun bloc ne doit avoir un titre vide après « #Titre: ».
-  // Si un ou plusieurs sont fautifs, on abandonne TOUT le lot (aucun envoi) et on
-  // affiche la même modale d'erreur que le mono-issue, listant les blocs fautifs.
-  const sansTitre = [];
-  blocs.forEach((b, i) => { if (!b.titre) sansTitre.push(i + 1); });
-  if (sansTitre.length) {
-    const nums = sansTitre.map(n => 'le bloc ' + n);
-    let liste;
-    if (nums.length === 1) {
-      liste = nums[0];
-    } else {
-      liste = nums.slice(0, -1).join(', ') + ' et ' + nums[nums.length - 1];
-    }
-    const verbe = sansTitre.length === 1 ? "n'a" : "n'ont";
-    await afficherModalErreur('Titre manquant',
-      liste.charAt(0).toUpperCase() + liste.slice(1)
-      + ' ' + verbe + ' pas de titre après #Titre:. Aucune issue du lot n\'a été '
-      + 'envoyée : corrige le corps puis relance.');
-    return;
-  }
-
-  const base       = collecterFormulaire();     // valeurs communes/de repli
-  const projetForm = base.projet;
-
+  // Anti-double-clic (issue #189) : même logique que envoyerIssue() — on
+  // désactive le bouton dès le TOUT DÉBUT, avant même le découpage/validation des
+  // blocs, et on ne le réactive qu'à la toute fin (bloc finally). Un double-clic
+  // rapide ne peut donc pas relancer un second lot pendant le premier.
   const btn = document.getElementById('btn-envoyer');
+  if (btn.disabled) return;   // envoi déjà en cours : on ignore ce clic
   btn.disabled = true;
+  try {
+    cacherRetours();
+    const blocs = decouperCorpsEnBlocs(document.getElementById('corps').value);
+    if (blocs.length < 2) return;                 // sécurité : bouton lot masqué sinon
 
-  const resultats = [];
-  for (let i = 0; i < blocs.length; i++) {
-    const bloc = blocs[i];
-    btn.textContent = 'Envoi ' + (i + 1) + '/' + blocs.length + '…';
-
-    // Champs d'en-tête lus dans le bloc ; repli sur les valeurs du formulaire.
-    const projetBloc   = lireChampEntete(bloc.corps, 'PROJET');
-    const timeoutBloc  = lireChampEntete(bloc.corps, 'TIMEOUT');
-    const modeleBloc   = lireChampEntete(bloc.corps, 'MODELE');
-    const prioriteBloc = lireChampEntete(bloc.corps, 'PRIORITE');
-
-    const projet = projetEffectifBloc(bloc, projetForm);
-
-    // Timeout : la cellule peut porter un suffixe « s » (ex. 1200s) ; on ne
-    // conserve que les chiffres, comme detecterTimeoutDansCorps. Repli formulaire.
-    let timeout = base.timeout;
-    const mTimeout = timeoutBloc && timeoutBloc.match(/^(\d+)\s*s?$/i);
-    if (mTimeout) timeout = mTimeout[1];
-
-    // Corps du bloc : on retire les lignes d'en-tête effectivement lues (comme le
-    // flux mono-issue) pour ne pas empiler un second tableau d'en-tête.
-    let corpsBloc = bloc.corps;
-    if (projetBloc)  corpsBloc = retirerLigneEntete(corpsBloc, 'PROJET');
-    if (timeoutBloc) corpsBloc = retirerLigneEntete(corpsBloc, 'TIMEOUT');
-    if (modeleBloc)  corpsBloc = retirerLigneEntete(corpsBloc, 'MODELE');
-
-    const data = {
-      projet:          projet,
-      titre:           bloc.titre,
-      priorite:        prioriteBloc || base.priorite,
-      timeout:         timeout,
-      mode:            base.mode,
-      notifs:          base.notifs,
-      corps:           corpsBloc.trim(),
-      modele_ponctuel: modeleBloc || base.modele_ponctuel,
-    };
-
-    // PROJET du bloc ≠ projet sélectionné : on envoie quand même sur le PROJET du
-    // bloc (pas de modale bloquante en lot) et on le signale dans le résumé.
-    const incoherence = !!projetBloc &&
-      projetBloc.toLowerCase() !== (projetForm || '').toLowerCase();
-
-    try {
-      const rep = await fetch('/envoyer', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify(data)
-      });
-      const json = await rep.json();
-      if (json.succes) {
-        resultats.push({succes: true, titre: bloc.titre, projet: projet,
-                        url: json.url, incoherence: incoherence});
+    // Garde-fou titre : aucun bloc ne doit avoir un titre vide après « #Titre: ».
+    // Si un ou plusieurs sont fautifs, on abandonne TOUT le lot (aucun envoi) et on
+    // affiche la même modale d'erreur que le mono-issue, listant les blocs fautifs.
+    const sansTitre = [];
+    blocs.forEach((b, i) => { if (!b.titre) sansTitre.push(i + 1); });
+    if (sansTitre.length) {
+      const nums = sansTitre.map(n => 'le bloc ' + n);
+      let liste;
+      if (nums.length === 1) {
+        liste = nums[0];
       } else {
-        resultats.push({succes: false, titre: bloc.titre, projet: projet,
-                        erreur: json.erreur || 'erreur inconnue'});
+        liste = nums.slice(0, -1).join(', ') + ' et ' + nums[nums.length - 1];
       }
-    } catch(e) {
-      // Échec d'un bloc : on note et on continue le lot (ne pas interrompre).
-      resultats.push({succes: false, titre: bloc.titre, projet: projet,
-                      erreur: 'réseau : ' + e.message});
+      const verbe = sansTitre.length === 1 ? "n'a" : "n'ont";
+      await afficherModalErreur('Titre manquant',
+        liste.charAt(0).toUpperCase() + liste.slice(1)
+        + ' ' + verbe + ' pas de titre après #Titre:. Aucune issue du lot n\'a été '
+        + 'envoyée : corrige le corps puis relance.');
+      return;
     }
-  }
 
-  afficherResumeLot(resultats, projetForm);
-  // Vide le corps une fois le lot terminé (comme envoyerIssue après un succès),
-  // sans masquer le récapitulatif qu'on vient d'afficher.
-  viderFormulaire(false);
-  btn.disabled = false;
-  // Le corps a été vidé par programme (pas d'event « input ») : on rebascule
-  // explicitement le bouton en mode mono.
-  mettreAJourBoutonLot();
+    const base       = collecterFormulaire();     // valeurs communes/de repli
+    const projetForm = base.projet;
+
+    const resultats = [];
+    for (let i = 0; i < blocs.length; i++) {
+      const bloc = blocs[i];
+      btn.textContent = 'Envoi ' + (i + 1) + '/' + blocs.length + '…';
+
+      // Champs d'en-tête lus dans le bloc ; repli sur les valeurs du formulaire.
+      const projetBloc   = lireChampEntete(bloc.corps, 'PROJET');
+      const timeoutBloc  = lireChampEntete(bloc.corps, 'TIMEOUT');
+      const modeleBloc   = lireChampEntete(bloc.corps, 'MODELE');
+      const prioriteBloc = lireChampEntete(bloc.corps, 'PRIORITE');
+
+      const projet = projetEffectifBloc(bloc, projetForm);
+
+      // Timeout : la cellule peut porter un suffixe « s » (ex. 1200s) ; on ne
+      // conserve que les chiffres, comme detecterTimeoutDansCorps. Repli formulaire.
+      let timeout = base.timeout;
+      const mTimeout = timeoutBloc && timeoutBloc.match(/^(\d+)\s*s?$/i);
+      if (mTimeout) timeout = mTimeout[1];
+
+      // Corps du bloc : on retire les lignes d'en-tête effectivement lues (comme le
+      // flux mono-issue) pour ne pas empiler un second tableau d'en-tête.
+      let corpsBloc = bloc.corps;
+      if (projetBloc)  corpsBloc = retirerLigneEntete(corpsBloc, 'PROJET');
+      if (timeoutBloc) corpsBloc = retirerLigneEntete(corpsBloc, 'TIMEOUT');
+      if (modeleBloc)  corpsBloc = retirerLigneEntete(corpsBloc, 'MODELE');
+
+      const data = {
+        projet:          projet,
+        titre:           bloc.titre,
+        priorite:        prioriteBloc || base.priorite,
+        timeout:         timeout,
+        mode:            base.mode,
+        notifs:          base.notifs,
+        corps:           corpsBloc.trim(),
+        modele_ponctuel: modeleBloc || base.modele_ponctuel,
+      };
+
+      // PROJET du bloc ≠ projet sélectionné : on envoie quand même sur le PROJET du
+      // bloc (pas de modale bloquante en lot) et on le signale dans le résumé.
+      const incoherence = !!projetBloc &&
+        projetBloc.toLowerCase() !== (projetForm || '').toLowerCase();
+
+      try {
+        const rep = await fetch('/envoyer', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify(data)
+        });
+        const json = await rep.json();
+        if (json.succes) {
+          resultats.push({succes: true, titre: bloc.titre, projet: projet,
+                          url: json.url, incoherence: incoherence});
+        } else {
+          resultats.push({succes: false, titre: bloc.titre, projet: projet,
+                          erreur: json.erreur || 'erreur inconnue'});
+        }
+      } catch(e) {
+        // Échec d'un bloc : on note et on continue le lot (ne pas interrompre).
+        resultats.push({succes: false, titre: bloc.titre, projet: projet,
+                        erreur: 'réseau : ' + e.message});
+      }
+    }
+
+    afficherResumeLot(resultats, projetForm);
+    // Vide le corps une fois le lot terminé (comme envoyerIssue après un succès),
+    // sans masquer le récapitulatif qu'on vient d'afficher.
+    viderFormulaire(false);
+  } finally {
+    // Réactivation garantie du bouton (succès, échec, ou sortie anticipée).
+    btn.disabled = false;
+    // Le corps a été vidé par programme (pas d'event « input ») : on rebascule
+    // explicitement le bouton en mode mono.
+    mettreAJourBoutonLot();
+  }
 }
 
 async function verifierStatut() {
