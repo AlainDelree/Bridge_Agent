@@ -11,16 +11,19 @@ import re
 import subprocess
 import sys  # noqa: F401 (conservé pour parité avec les autres modules extraits)
 import tempfile
+from datetime import datetime
 from pathlib import Path
 
 from flask import jsonify, request
+from werkzeug.utils import secure_filename
 
 from app.projets import projet_par_nom
 from app.auth import login_requis  # noqa: F401 (exporté pour l'enregistrement des routes)
 # projet_par_nom (app.projets) a déjà inséré la racine dans sys.path : l'import
 # du watcher fonctionne. On réutilise ses primitives pour éviter toute dérive
 # entre le calcul du watcher et celui du badge (issues #91 et #106).
-from watcher import est_titre_chef, deduire_type_issue, PAUSE_ENTRE_TENTATIVES
+from watcher import (est_titre_chef, deduire_type_issue, PAUSE_ENTRE_TENTATIVES,
+                     _est_depot_git)
 
 # Racine du projet (dossier parent du package app/).
 DOSSIER_SCRIPT = Path(__file__).resolve().parent.parent
@@ -39,6 +42,26 @@ FICHIER_HISTORIQUE = DOSSIER_SCRIPT / "logs" / "historique_durees.json"
 #   n > 15  → estimation fiable (vert)
 SEUIL_ESTIM_CORRECT = 5    # en dessous : « incertain » (rouge)
 SEUIL_ESTIM_SUR     = 15   # au-dessus : « sûr » (vert) ; entre les deux : « correct » (noir)
+
+# ─── Pièces jointes image des issues (issue #191) ─────────────────────────────
+# Dossier (relatif au rep_travail du projet) où sont committées les images
+# jointes à une issue, puis référencées dans son corps via une URL
+# raw.githubusercontent.com. Voir joindre_image() plus bas et §18 de
+# BRIDGE_AGENT_DOC.md pour le mécanisme complet et l'exception « push par Alain ».
+DOSSIER_PIECES_JOINTES = "issue-attachments"
+# Types MIME acceptés → extension canonique du fichier sauvegardé. On n'accepte
+# que PNG et JPEG (formats qui s'affichent nativement dans les issues GitHub).
+TYPES_IMAGE_ACCEPTES = {
+    "image/png":  ".png",
+    "image/jpeg": ".jpg",
+}
+# Signatures binaires (magic bytes) de contrôle : on ne se fie pas au seul
+# Content-Type déclaré par le navigateur, on vérifie aussi les premiers octets.
+SIGNATURES_IMAGE = {
+    "image/png":  (b"\x89PNG\r\n\x1a\n",),
+    "image/jpeg": (b"\xff\xd8\xff",),
+}
+TAILLE_MAX_IMAGE = 5 * 1024 * 1024   # 5 Mo — message clair si dépassée
 
 
 # ─── Construction du body et des labels ───────────────────────────────────────
@@ -229,6 +252,174 @@ def envoyer():
         return jsonify(succes=False, erreur=str(e))
     finally:
         os.unlink(chemin_body)
+
+
+def _branche_courante(rep: Path) -> str | None:
+    """Nom de la branche actuellement extraite dans `rep` (ex. 'master', 'main'),
+    ou None si indéterminé (dépôt en detached HEAD, git absent…). Sert à
+    construire l'URL raw.githubusercontent.com : on déduit la branche
+    DYNAMIQUEMENT plutôt que de supposer master/main (issue #191)."""
+    try:
+        res = subprocess.run(
+            ["git", "-C", str(rep), "rev-parse", "--abbrev-ref", "HEAD"],
+            capture_output=True, text=True, timeout=10
+        )
+        nom = res.stdout.strip()
+        if res.returncode == 0 and nom and nom != "HEAD":
+            return nom
+    except (OSError, subprocess.SubprocessError):
+        pass
+    return None
+
+
+def joindre_image():
+    """Reçoit une image (PNG/JPEG), la committe dans issue-attachments/ du dépôt
+    du projet cible, la POUSSE sur origin, et retourne l'URL
+    raw.githubusercontent.com correspondante à insérer dans le corps de l'issue
+    (issue #191).
+
+    Exception « push » assumée et documentée (§18 de BRIDGE_AGENT_DOC.md) : la
+    règle « CCL ne pousse jamais » ne s'applique PAS ici. C'est ALAIN qui agit
+    via l'interface (upload manuel de sa part), exactement comme s'il committait
+    et poussait l'image lui-même en ligne de commande — CCL/le watcher n'est pas
+    l'auteur de ce push.
+
+    Reçue en multipart/form-data : champ fichier `image` + champ `projet`.
+    En cas d'échec (type invalide, taille dépassée, pas un dépôt git, push
+    refusé…) : message clair et AUCUNE URL retournée, pour ne jamais insérer une
+    URL cassée dans le corps de l'issue."""
+    nom_projet = (request.form.get("projet") or "").strip()
+    cfg = projet_par_nom(nom_projet)
+    if not cfg:
+        return jsonify(succes=False, erreur="Projet introuvable."), 404
+
+    fichier = request.files.get("image")
+    if fichier is None or not fichier.filename:
+        return jsonify(succes=False, erreur="Aucun fichier reçu."), 400
+
+    # Validation du type : Content-Type déclaré ET magic bytes (on ne se fie pas
+    # au seul en-tête du navigateur, trivial à falsifier).
+    mimetype = (fichier.mimetype or "").lower()
+    if mimetype not in TYPES_IMAGE_ACCEPTES:
+        return jsonify(succes=False,
+                       erreur="Type non supporté : seuls PNG et JPEG sont acceptés."), 400
+
+    # Lecture complète en mémoire pour vérifier taille et signature avant écriture
+    # (les images d'interface restent petites : limite 5 Mo).
+    donnees = fichier.read()
+    if not donnees:
+        return jsonify(succes=False, erreur="Fichier vide."), 400
+    if len(donnees) > TAILLE_MAX_IMAGE:
+        mo = len(donnees) / (1024 * 1024)
+        return jsonify(succes=False,
+                       erreur=f"Image trop lourde ({mo:.1f} Mo) — limite : 5 Mo."), 400
+    if not any(donnees.startswith(sig) for sig in SIGNATURES_IMAGE[mimetype]):
+        return jsonify(succes=False,
+                       erreur="Le contenu du fichier ne correspond pas à une image PNG/JPEG."), 400
+
+    # Le dépôt doit exister localement ET être un dépôt git (sinon commit/push
+    # impossibles : message clair plutôt qu'un échec silencieux).
+    rep = cfg.rep_travail
+    if not rep.is_dir():
+        return jsonify(succes=False,
+                       erreur=f"Répertoire de travail introuvable pour « {cfg.nom} »."), 400
+    if not _est_depot_git(rep):
+        return jsonify(succes=False,
+                       erreur=f"Le répertoire de « {cfg.nom} » n'est pas un dépôt git "
+                              "(commit/push impossibles)."), 400
+
+    # Nom de fichier horodaté (anti-collision) : 20260720-153045-<nom_original>.ext.
+    # secure_filename neutralise chemins et caractères douteux ; on force
+    # l'extension canonique du type MIME validé pour cohérence.
+    ext = TYPES_IMAGE_ACCEPTES[mimetype]
+    base = secure_filename(fichier.filename) or "image"
+    base = os.path.splitext(base)[0] or "image"
+    horodatage = datetime.now().strftime("%Y%m%d-%H%M%S")
+    nom_fichier = f"{horodatage}-{base}{ext}"
+
+    dossier = rep / DOSSIER_PIECES_JOINTES
+    try:
+        dossier.mkdir(parents=True, exist_ok=True)
+        (dossier / nom_fichier).write_bytes(donnees)
+    except OSError as e:
+        return jsonify(succes=False, erreur=f"Écriture du fichier impossible : {e}"), 500
+
+    chemin_relatif = f"{DOSSIER_PIECES_JOINTES}/{nom_fichier}"
+
+    # Branche courante déduite dynamiquement (master/main/autre) AVANT le push,
+    # pour construire l'URL raw ; sans elle on ne pourrait pas garantir une URL
+    # correcte, on refuse donc plutôt que de deviner.
+    branche = _branche_courante(rep)
+    if not branche:
+        _nettoyer_fichier(dossier / nom_fichier)
+        return jsonify(succes=False,
+                       erreur="Branche git indéterminée (detached HEAD ?) — "
+                              "impossible de construire l'URL de l'image."), 400
+
+    # git add + commit. Un échec ici laisse le fichier sur disque non suivi :
+    # on le retire pour ne pas polluer le répertoire de travail.
+    try:
+        res_add = subprocess.run(
+            ["git", "-C", str(rep), "add", "--", chemin_relatif],
+            capture_output=True, text=True, timeout=30
+        )
+        if res_add.returncode != 0:
+            _nettoyer_fichier(dossier / nom_fichier)
+            return jsonify(succes=False,
+                           erreur=f"git add a échoué : {res_add.stderr.strip()}"), 500
+        res_commit = subprocess.run(
+            ["git", "-C", str(rep), "commit",
+             "-m", f"Pièce jointe issue : {nom_fichier}", "--", chemin_relatif],
+            capture_output=True, text=True, timeout=30
+        )
+        if res_commit.returncode != 0:
+            return jsonify(succes=False,
+                           erreur=f"git commit a échoué : "
+                                  f"{res_commit.stderr.strip() or res_commit.stdout.strip()}"), 500
+    except subprocess.TimeoutExpired:
+        return jsonify(succes=False, erreur="Timeout git (add/commit).")
+    except FileNotFoundError:
+        return jsonify(succes=False, erreur="git introuvable dans le PATH."), 500
+    except Exception as e:
+        return jsonify(succes=False, erreur=str(e)), 500
+
+    # git push — l'action « exceptionnelle » assumée (voir docstring). En cas
+    # d'échec (réseau, conflit, pas de remote, pas de droits), on NE retourne
+    # PAS d'URL : elle serait cassée tant que le commit n'est pas sur origin.
+    # Le commit reste en local (comme un backup), Alain peut le pousser plus tard.
+    try:
+        res_push = subprocess.run(
+            ["git", "-C", str(rep), "push", "origin", f"HEAD:{branche}"],
+            capture_output=True, text=True, timeout=120
+        )
+        if res_push.returncode != 0:
+            return jsonify(
+                succes=False,
+                erreur="Image committée localement mais push refusé — "
+                       "aucune URL insérée (l'image ne s'afficherait pas). "
+                       f"Détail git : {res_push.stderr.strip() or 'échec du push'}"
+            ), 502
+    except subprocess.TimeoutExpired:
+        return jsonify(succes=False,
+                       erreur="Timeout du push git (>120s) — aucune URL insérée."), 504
+    except FileNotFoundError:
+        return jsonify(succes=False, erreur="git introuvable dans le PATH."), 500
+    except Exception as e:
+        return jsonify(succes=False, erreur=str(e)), 500
+
+    # Push réussi : l'URL raw pointe vers le fichier désormais présent sur origin.
+    url = (f"https://raw.githubusercontent.com/{cfg.depot}/"
+           f"{branche}/{chemin_relatif}")
+    return jsonify(succes=True, url=url, nom_fichier=nom_fichier)
+
+
+def _nettoyer_fichier(chemin: Path) -> None:
+    """Supprime best-effort un fichier qu'on renonce à committer (échec en amont),
+    pour ne pas laisser de fichier non suivi dans le répertoire de travail."""
+    try:
+        chemin.unlink(missing_ok=True)
+    except OSError:
+        pass
 
 
 def issues_liste(nom_projet):

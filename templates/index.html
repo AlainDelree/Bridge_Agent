@@ -132,6 +132,21 @@
     <div class="titre-section">Corps de la tâche</div>
     <textarea id="corps" placeholder="## Contexte&#10;…&#10;&#10;Ou coller directement avec #Titre: mon titre en première ligne."></textarea>
 
+    <!-- Pièce jointe image (issue #191) : upload optionnel d'un PNG/JPEG.
+         L'image est committée + poussée sur le dépôt du projet sélectionné
+         (dossier issue-attachments/) puis référencée dans le corps ci-dessus
+         via une URL raw.githubusercontent.com automatiquement insérée. -->
+    <div class="rangee" style="align-items:center;gap:10px;margin-top:10px">
+      <input type="file" id="image-jointe" accept="image/png,image/jpeg"
+             style="font-size:13px;max-width:340px"
+             onchange="majEtatBoutonImage()">
+      <button type="button" id="btn-joindre-image" onclick="joindreImage()"
+              disabled title="Committe l'image sur le dépôt et insère son lien dans le corps">
+        Joindre une image
+      </button>
+      <span id="image-jointe-msg" style="font-size:12px;color:#888"></span>
+    </div>
+
     <div id="zone-apercu" class="apercu"></div>
     <div id="message" class="message"></div>
     <!-- Récapitulatif de l'envoi en lot (issue #135) : une ligne par bloc

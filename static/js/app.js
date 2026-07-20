@@ -2227,6 +2227,90 @@ function afficherMessage(texte, type) {
   el.style.display = 'block';
 }
 
+// ─── Pièce jointe image (issue #191) ──────────────────────────────────────────
+// Active le bouton « Joindre une image » seulement quand un fichier est choisi.
+function majEtatBoutonImage() {
+  const input = document.getElementById('image-jointe');
+  const btn   = document.getElementById('btn-joindre-image');
+  if (!input || !btn) return;
+  btn.disabled = !(input.files && input.files.length);
+}
+
+// Insère un texte à la position du curseur dans le champ Corps (ou en fin de
+// corps à défaut de sélection connue). Préfixe d'un saut de ligne si la ligne
+// courante n'est pas vide, pour que le Markdown de l'image tienne sur sa
+// propre ligne.
+function insererDansCorps(texte) {
+  const corps = document.getElementById('corps');
+  const debut = (typeof corps.selectionStart === 'number') ? corps.selectionStart : corps.value.length;
+  const fin   = (typeof corps.selectionEnd === 'number') ? corps.selectionEnd : corps.value.length;
+  const avant = corps.value.slice(0, debut);
+  const apres = corps.value.slice(fin);
+  const prefixe = (avant === '' || avant.endsWith('\n')) ? '' : '\n';
+  const suffixe = (apres === '' || apres.startsWith('\n')) ? '' : '\n';
+  const insert = prefixe + texte + suffixe;
+  corps.value = avant + insert + apres;
+  const pos = (avant + insert).length;
+  corps.selectionStart = corps.selectionEnd = pos;
+  corps.focus();
+  // Notifie les écouteurs « input » (résumé d'en-tête, détection de titre…).
+  corps.dispatchEvent(new Event('input', {bubbles: true}));
+}
+
+// Upload de l'image vers /joindre-image : le backend committe + pousse l'image
+// sur le dépôt du projet sélectionné, puis renvoie l'URL raw.githubusercontent
+// qu'on insère automatiquement dans le corps sous forme de ![nom](url).
+async function joindreImage() {
+  const input = document.getElementById('image-jointe');
+  const btn   = document.getElementById('btn-joindre-image');
+  const msg   = document.getElementById('image-jointe-msg');
+  if (!input || !input.files || !input.files.length) return;
+  const fichier = input.files[0];
+
+  // Garde-fou côté client (le backend revalide) : limite 5 Mo, types PNG/JPEG.
+  const TAILLE_MAX = 5 * 1024 * 1024;
+  if (fichier.size > TAILLE_MAX) {
+    msg.style.color = '#c0392b';
+    msg.textContent = 'Image trop lourde (' + (fichier.size / 1048576).toFixed(1) + ' Mo) — limite 5 Mo.';
+    return;
+  }
+  if (fichier.type !== 'image/png' && fichier.type !== 'image/jpeg') {
+    msg.style.color = '#c0392b';
+    msg.textContent = 'Seuls les PNG et JPEG sont acceptés.';
+    return;
+  }
+
+  const projet = document.getElementById('projet').value;
+  const form = new FormData();
+  form.append('image', fichier);
+  form.append('projet', projet);
+
+  btn.disabled = true;
+  const libelle = btn.textContent;
+  btn.textContent = 'Envoi…';
+  msg.style.color = '#888';
+  msg.textContent = 'Commit + push en cours…';
+  try {
+    const rep  = await fetch('/joindre-image', {method: 'POST', body: form});
+    const json = await rep.json();
+    if (json.succes) {
+      insererDansCorps('![' + json.nom_fichier + '](' + json.url + ')');
+      msg.style.color = '#2e7d32';
+      msg.textContent = '✓ Image jointe et lien inséré dans le corps.';
+      input.value = '';           // réinitialise le champ (bouton se redésactive)
+    } else {
+      msg.style.color = '#c0392b';
+      msg.textContent = 'Erreur : ' + (json.erreur || 'échec inconnu');
+    }
+  } catch (e) {
+    msg.style.color = '#c0392b';
+    msg.textContent = 'Erreur réseau : ' + e.message;
+  } finally {
+    btn.textContent = libelle;
+    majEtatBoutonImage();
+  }
+}
+
 function cacherRetours() {
   document.getElementById('message').style.display = 'none';
   document.getElementById('zone-apercu').style.display = 'none';
@@ -3250,6 +3334,13 @@ function viderFormulaire(cacherMsg=true) {
   // notif_pc revient à l'état mémorisé (coché par défaut), pas à décoché.
   appliquerNotifPc();
   document.getElementById('modele-ponctuel').value = '';
+  // Réinitialise le champ de pièce jointe image (issue #191) : fichier choisi,
+  // bouton (redésactivé) et message d'état.
+  const inputImage = document.getElementById('image-jointe');
+  if (inputImage) inputImage.value = '';
+  const msgImage = document.getElementById('image-jointe-msg');
+  if (msgImage) msgImage.textContent = '';
+  majEtatBoutonImage();
   // Réinitialise l'état des détections d'en-tête (issues #117/#129) : sans ça,
   // un ancien PROJET/TIMEOUT mémorisé empêcherait de redétecter la même valeur
   // au prochain collage, et le résumé afficherait des champs d'une issue passée.
