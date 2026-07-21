@@ -26,6 +26,7 @@ CLES_EDITABLES = {
     "TOPIC_NTFY", "LABEL", "INTERVALLE", "MAX_ESSAIS",
     "TIMEOUT_CLAUDE", "SCRIPT_BIP", "LOG_TAILLE_MAX_MO", "LOG_ARCHIVES",
     "MODELE_CCL", "MOT_DE_PASSE", "FICHIER_CONTEXTE", "COULEUR",
+    "DELAI_INACTIVITE_MIN",
 }
 
 
@@ -132,6 +133,7 @@ def get_config(nom_projet):
         log_archives   = cfg.log_archives,
         modele_ccl     = cfg.modele_ccl,
         couleur        = cfg.couleur,
+        delai_inactivite_min = cfg.delai_inactivite_min,
     )
 
 

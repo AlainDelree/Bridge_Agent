@@ -670,6 +670,10 @@ SCRIPT_BIP        = {script_bip}
 LOG_TAILLE_MAX_MO = 1
 LOG_ARCHIVES      = 5
 
+# ─── Auto-extinction du watcher après inactivité (issue #200) ─────────────────
+# Minutes sans aucune issue traitable avant arrêt propre. 0 = désactivé (permanent).
+DELAI_INACTIVITE_MIN = 20
+
 # ─── Modèle CCL forcé (vide = défaut) ─────────────────────────────────────────
 MODELE_CCL        =
 

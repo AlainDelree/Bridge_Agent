@@ -145,6 +145,8 @@ async function chargerConfig() {
     document.getElementById('conf-MODELE_CCL').value        = cfg.modele_ccl        || '';
     document.getElementById('conf-LOG_TAILLE_MAX_MO').value = cfg.log_taille_max_mo || 1;
     document.getElementById('conf-LOG_ARCHIVES').value      = cfg.log_archives      || 5;
+    // ?? et non || : 0 est une valeur valide (auto-extinction désactivée).
+    document.getElementById('conf-DELAI_INACTIVITE_MIN').value = cfg.delai_inactivite_min ?? 20;
     document.getElementById('msg-config').style.display = 'none';
   } catch(e) {
     const msg = document.getElementById('msg-config');
@@ -166,6 +168,7 @@ async function sauvegarderConfig(relancer) {
     MODELE_CCL:        document.getElementById('conf-MODELE_CCL').value,
     LOG_TAILLE_MAX_MO: document.getElementById('conf-LOG_TAILLE_MAX_MO').value,
     LOG_ARCHIVES:      document.getElementById('conf-LOG_ARCHIVES').value,
+    DELAI_INACTIVITE_MIN: document.getElementById('conf-DELAI_INACTIVITE_MIN').value,
   };
   const rep  = await fetch('/config/' + encodeURIComponent(nom), {
     method: 'POST',

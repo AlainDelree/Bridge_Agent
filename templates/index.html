@@ -280,6 +280,11 @@
         <label>Archives journal</label>
         <input type="number" id="conf-LOG_ARCHIVES" min="1" step="1">
       </div>
+      <div class="champ" style="max-width:220px">
+        <label title="Le watcher s'arrête proprement après ce délai sans aucune issue traitable. 0 = désactivé (watcher permanent).">Auto-extinction (min, 0 = désactivé)</label>
+        <input type="number" id="conf-DELAI_INACTIVITE_MIN" min="0" step="1"
+               title="Le watcher s'arrête proprement après ce délai sans aucune issue traitable. 0 = désactivé (watcher permanent).">
+      </div>
     </div>
 
     <div id="msg-config" class="message"></div>
