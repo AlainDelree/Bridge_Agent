@@ -425,55 +425,61 @@ ps aux | grep watcher
 git log --oneline origin/master..HEAD
 ```
 
-### Watchers en services systemd utilisateur (démarrage auto + auto-restart)
+### Cycle de vie des watchers (démarrage manuel, démarrage auto, extinction auto)
 
-Depuis l'issue #119, les watchers des projets actifs tournent en services
-`systemd --user` : ils **démarrent automatiquement** (à l'ouverture de session,
-et dès le boot grâce au linger) et se **relancent automatiquement** en cas de
-crash (`Restart=always`, `RestartSec=10`). Plus besoin de cliquer « Lancer
-watcher » après un redémarrage du PC ou un crash.
+Les watchers ne tournent **pas** en permanence : ils s'allument à la demande et
+s'éteignent d'eux-mêmes après une période d'inactivité. Trois mécanismes se
+combinent.
 
-Gabarit : `systemd/watcher@.service` (une instance par projet via `%i`).
-Le nom du projet paramètre le fichier de config : `watcher@alchess` lance
-`watcher.py --config configs/alchess.conf`.
+**1. Démarrage manuel.** Le bouton « Lancer watcher » de l'onglet « Watchers »
+(ou `python3 watcher.py --config configs/<projet>.conf` en terminal, cf. bloc
+ci-dessus) démarre le watcher d'un projet. L'interface suit le process via un
+fichier PID (`logs/watcher-<nom>.pid`).
 
-```bash
-# Installation / réinstallation (copie le gabarit, daemon-reload,
-# enable --now des 4 instances, active le linger utilisateur)
-cd ~/Bridge_Agent && ./installer_services.sh
+**2. Démarrage automatique à la création d'une issue** (issues #198 / #202).
+Créer une issue **for-linux** depuis l'interface **rallume automatiquement** le
+watcher du projet concerné (`app/issues.py` → `demarrer_watcher(cfg,
+forcer=False)`, idempotent : no-op si le watcher tourne déjà). Plus besoin de
+cliquer « Lancer watcher » avant d'envoyer une tâche : le watcher qui s'était
+éteint pour inactivité est relancé au moment où il redevient utile. La garde ne
+démarre **que** pour les issues `for-linux` (une issue `for-windows` est traitée
+par CCW, rien à lancer côté Linux) ; un échec de démarrage n'invalide jamais la
+création d'issue, qui reste réussie.
 
-# État d'un watcher / de tous
-systemctl --user status watcher@alchess
-systemctl --user list-units 'watcher@*'
+**3. Extinction automatique après inactivité** (issues #199 / #200, réglable
+#201). En tête de chaque cycle, avant de lister les issues, le watcher mesure le
+temps écoulé depuis la dernière issue **traitable** (ni `done`, ni
+`needs-human`). Au-delà de `DELAI_INACTIVITE_MIN` minutes (défaut **20**), il
+s'arrête proprement (`sys.exit(0)`) et nettoie son fichier PID. Le test se fait
+uniquement **entre** deux cycles complets : un cycle de retry en cours (jusqu'à
+~20 min, cf. #183) n'est jamais interrompu. `DELAI_INACTIVITE_MIN = 0` **désactive**
+le mécanisme → watcher permanent (comportement historique). Le réglage est
+exposé par projet dans l'onglet « Configuration » (issue #201) et vit dans le
+`.conf` du projet.
 
-# Suivre le journal en direct (filet de sécurité si le crash survient AVANT
-# que le log fichier logs/watcher-<nom>.log soit configuré, p. ex. .conf illisible)
-journalctl --user -u watcher@alchess -f
+**Cycle complet.** Watcher éteint pour inactivité → on crée une issue for-linux
+→ le watcher est rallumé automatiquement (#202) → il traite la tâche → après
+`DELAI_INACTIVITE_MIN` minutes sans nouvelle issue traitable, il se rééteint
+(#200). Aucun process ne tourne inutilement, et aucune étape manuelle n'est
+requise pour le flux normal.
 
-# Arrêter / relancer / désactiver une instance
-systemctl --user restart watcher@alchess
-systemctl --user stop watcher@alchess
-systemctl --user disable --now watcher@alchess
-
-# Après édition du gabarit systemd/watcher@.service
-cp systemd/watcher@.service ~/.config/systemd/user/ && systemctl --user daemon-reload
-```
-
-> ⚠️ **Le bouton « Lancer watcher » de l'interface devient un filet de secours,
-> pas le mode de démarrage normal.** systemd est désormais la source de vérité.
-> Les deux mécanismes ne se voient pas : systemd suit son process via son
-> cgroup, l'interface via un fichier PID (`logs/watcher-<nom>.pid`) que le
-> service n'écrit jamais. Conséquences :
-> - un watcher lancé par systemd s'affiche « inactif » dans l'onglet
->   « Watchers » (pas de fichier PID) ;
-> - cliquer « Lancer watcher » démarrerait un **second** process pour le même
->   projet (doublon, doubles commentaires possibles sur les issues) ;
-> - « Arrêter watcher » ne tue pas l'instance systemd, et `Restart=always` la
->   relancerait de toute façon.
+> **Historique : services systemd (abandonnés).** L'issue #119 avait déployé les
+> watchers en services `systemd --user` (`systemd/watcher@.service`,
+> `installer_services.sh`) pour un démarrage au boot et un auto-restart
+> (`Restart=always`, `RestartSec=10`). **Ce mécanisme n'est plus déployé** :
+> aucune unité `watcher@*.service` n'existe dans `~/.config/systemd/user/`
+> (`systemctl --user list-unit-files 'watcher@*'` → 0 unité). Le gabarit et le
+> script sont conservés dans le dépôt à titre de référence historique
+> uniquement.
 >
-> Pour un arrêt/relance propre, passer par `systemctl --user …`. La
-> neutralisation éventuelle du bouton côté interface (`app/watchers.py` +
-> templates) reste à trancher — voir l'en-tête de `installer_services.sh`.
+> ⚠️ **Ne pas réactiver `installer_services.sh` sans le retravailler d'abord.**
+> `Restart=always` + `RestartSec=10` est **incompatible** avec l'auto-extinction
+> après inactivité (#199/#200) : systemd relancerait au bout de 10 s tout
+> watcher qui vient de s'éteindre pour inactivité, produisant une boucle sans
+> fin (allumage/extinction toutes les ~20 min + 10 s) et annulant tout l'intérêt
+> du mécanisme. Une éventuelle réintroduction de systemd devrait retirer
+> `Restart=always` (ou passer en `Restart=on-failure` avec un code de sortie
+> d'inactivité distinct traité en `SuccessExitStatus`).
 
 ---
 
