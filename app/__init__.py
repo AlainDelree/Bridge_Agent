@@ -69,7 +69,8 @@ def _enregistrer_routes(app: Flask) -> None:
     from app.journal import journal
     from app.ccw import (ccw_vm_statut, ccw_demarrer_vm, ccw_projets,
                          ccw_ajouter_projet, ccw_finaliser_projet,
-                         ccw_redemarrer_projet)
+                         ccw_redemarrer_projet, ccw_demarrer_projet,
+                         ccw_arreter_projet)
     from app.cycle_vie import heartbeat, events, quitter
     from app.diag_heartbeat import visibilite as diag_visibilite   # DIAGNOSTIC TEMPORAIRE — issue #157, à retirer
     from app.vues import index
@@ -103,6 +104,8 @@ def _enregistrer_routes(app: Flask) -> None:
     app.add_url_rule("/ccw/ajouter-projet", "ccw_ajouter_projet", login_requis(ccw_ajouter_projet), methods=["POST"])
     app.add_url_rule("/ccw/finaliser-projet", "ccw_finaliser_projet", login_requis(ccw_finaliser_projet), methods=["POST"])
     app.add_url_rule("/ccw/redemarrer-projet", "ccw_redemarrer_projet", login_requis(ccw_redemarrer_projet), methods=["POST"])
+    app.add_url_rule("/ccw/demarrer-projet", "ccw_demarrer_projet", login_requis(ccw_demarrer_projet), methods=["POST"])
+    app.add_url_rule("/ccw/arreter-projet", "ccw_arreter_projet", login_requis(ccw_arreter_projet), methods=["POST"])
     app.add_url_rule("/heartbeat", "heartbeat", heartbeat, methods=["POST"])
     app.add_url_rule("/events", "events", login_requis(events))
     app.add_url_rule("/quitter", "quitter", login_requis(quitter), methods=["POST"])

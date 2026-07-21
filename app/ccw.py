@@ -417,18 +417,20 @@ def ccw_finaliser_projet():
         erreur=f"Échec de la finalisation (code {r.returncode}).")
 
 
-def ccw_redemarrer_projet():
-    """Redémarre le service Windows d'un projet CCW, sans toucher au topic ni aux
-    tokens (issue #180).
+def _piloter_service_ccw(action_nssm: str, verbe: str):
+    """Exécute « nssm <action_nssm> <service> » sur le service Windows d'un projet
+    CCW, sans toucher au topic ni aux tokens (issues #180 / #203).
 
-    Cas d'usage : relancer un service après une correction manuelle ou un
-    diagnostic, sans repasser par PowerShell dans la VM ni reposer topic/tokens.
+    Facteur commun de redemarrer/demarrer/arreter-projet : validation du nom de
+    projet reçu, résolution du nom EXACT du service via lister_projets_ccw.ps1
+    (source de vérité unique — voir _lister_projets_vm), ce qui gère de fait le
+    spécial-cas « Bridge_Agent » → « CCW-Watcher » (sans suffixe) sans dupliquer la
+    règle, garde-fou sur le format du service, puis exécution à distance (nssm est
+    déjà dans le PATH de la VM).
 
-    Le nom EXACT du service est récupéré via lister_projets_ccw.ps1 (source de
-    vérité unique — voir _lister_projets_vm), ce qui gère de fait le spécial-cas
-    « Bridge_Agent » → « CCW-Watcher » (sans suffixe) sans dupliquer la règle.
-    Le redémarrage lui-même est un simple « nssm restart <service> » exécuté à
-    distance (nssm est déjà dans le PATH de la VM)."""
+    action_nssm : sous-commande nssm (« restart », « start », « stop »).
+    verbe       : nom de l'action pour les messages (« redémarrage », « démarrage »,
+                  « arrêt »)."""
     data = request.json or {}
     nom  = (data.get("nom") or "").strip()
     if not nom or re.search(r"[\\/\s]", nom):
@@ -462,12 +464,12 @@ def ccw_redemarrer_projet():
         with _fichier_mot_de_passe(mot_de_passe) as pf:
             base = _base_guest(vbox, pf)
             # « exit $LASTEXITCODE » : propage le code de retour de nssm pour que
-            # l'appelant conclue sans ambiguïté (0 = redémarrage OK).
+            # l'appelant conclue sans ambiguïté (0 = opération OK).
             r = _executer_commande_ps(
-                base, f"nssm restart {service}; exit $LASTEXITCODE", TIMEOUT_LONG)
+                base, f"nssm {action_nssm} {service}; exit $LASTEXITCODE", TIMEOUT_LONG)
     except subprocess.TimeoutExpired:
         return jsonify(succes=False,
-            erreur="Délai dépassé pendant le redémarrage du service (guestcontrol).")
+            erreur=f"Délai dépassé — {verbe} du service interrompu (guestcontrol).")
     except subprocess.SubprocessError as e:
         return jsonify(succes=False, erreur=f"Erreur guestcontrol : {e}")
 
@@ -476,5 +478,31 @@ def ccw_redemarrer_projet():
         service=service,
         sortie=_sortie_lisible(r),
         erreur=None if r.returncode == 0
-               else f"Échec du redémarrage de « {service} » (code {r.returncode}).",
+               else f"Échec — {verbe} de « {service} » (code {r.returncode}).",
     )
+
+
+def ccw_redemarrer_projet():
+    """Redémarre le service Windows d'un projet CCW (issue #180).
+
+    Cas d'usage : relancer un service après une correction manuelle ou un
+    diagnostic, sans repasser par PowerShell dans la VM ni reposer topic/tokens.
+    Simple « nssm restart <service> » — voir _piloter_service_ccw."""
+    return _piloter_service_ccw("restart", "redémarrage")
+
+
+def ccw_demarrer_projet():
+    """Démarre le service Windows d'un projet CCW (issue #203).
+
+    Contrôle indépendant du redémarrage : « nssm start <service> ». Utile pour
+    relancer un service précédemment arrêté. Voir _piloter_service_ccw."""
+    return _piloter_service_ccw("start", "démarrage")
+
+
+def ccw_arreter_projet():
+    """Arrête le service Windows d'un projet CCW (issue #203).
+
+    Contrôle indépendant du redémarrage : « nssm stop <service> ». Utile pour
+    arrêter temporairement un service (économie de ressources VM) sans le
+    relancer aussitôt. Voir _piloter_service_ccw."""
+    return _piloter_service_ccw("stop", "arrêt")

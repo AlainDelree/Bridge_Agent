@@ -334,13 +334,26 @@ async function ccwChargerProjets() {
         + '<td style="padding:8px 12px;font-size:13px;color:' + etatCouleur + '">'
           + escapeHtml(p.etat || '—') + '</td>'
         + '<td style="padding:8px 12px;font-size:13px">' + topicHtml + '</td>'
-        // Bouton « Redémarrer » par ligne (issue #180) : relance le service sans
-        // toucher au topic ni aux tokens. stopPropagation pour ne PAS déclencher
+        // Actions par ligne : « Redémarrer » (issue #180) toujours dispo, plus
+        // « Démarrer » / « Arrêter » indépendants (issue #203) affichés selon
+        // l'état — Démarrer seulement si stopped, Arrêter seulement si running,
+        // comme pour les watchers Linux. stopPropagation pour ne PAS déclencher
         // aussi la pré-sélection portée par le onclick de la ligne.
-        + '<td style="padding:8px 12px">'
+        + '<td style="padding:8px 12px;white-space:nowrap">'
           + '<button onclick="event.stopPropagation(); ccwRedemarrerProjet(\''
             + escapeHtml(p.projet) + '\', this)"'
-          + ' style="font-size:12px;padding:4px 10px">Redémarrer</button></td>'
+          + ' style="font-size:12px;padding:4px 10px">Redémarrer</button>'
+          + (p.etat !== 'running'
+              ? ' <button onclick="event.stopPropagation(); ccwDemarrerProjet(\''
+                  + escapeHtml(p.projet) + '\', this)"'
+                + ' style="font-size:12px;padding:4px 10px">Démarrer</button>'
+              : '')
+          + (p.etat !== 'stopped'
+              ? ' <button onclick="event.stopPropagation(); ccwArreterProjet(\''
+                  + escapeHtml(p.projet) + '\', this)"'
+                + ' style="font-size:12px;padding:4px 10px">Arrêter</button>'
+              : '')
+          + '</td>'
         + '</tr>';
     }).join('');
     // Alimente le <select> du formulaire « Finaliser » : seuls les projets
@@ -397,6 +410,68 @@ async function ccwRedemarrerProjet(nom, btn) {
         'Service « ' + (j.service || nom) + ' » redémarré.', 'succes');
     } else {
       ccwMessage('ccw-message', j.erreur || 'Échec du redémarrage.', 'erreur');
+    }
+    ccwChargerProjets();
+  } catch (e) {
+    ccwMessage('ccw-message', 'Erreur réseau : ' + e.message, 'erreur');
+  } finally {
+    if (btn) { btn.disabled = false; if (labelInitial !== null) btn.textContent = labelInitial; }
+  }
+}
+
+// Démarre le service d'un projet CCW (issue #203) : « nssm start » côté VM,
+// contrôle indépendant du redémarrage. Même pattern que ccwRedemarrerProjet.
+async function ccwDemarrerProjet(nom, btn) {
+  if (!nom) return;
+  const labelInitial = btn ? btn.textContent : null;
+  if (btn) { btn.disabled = true; btn.textContent = 'Démarrage…'; }
+  ccwMessage('ccw-message', 'Démarrage du service de « ' + nom + ' » dans la VM…', '');
+  ccwAfficherSortie('');
+  try {
+    const rep = await fetch('/ccw/demarrer-projet', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({nom: nom})
+    });
+    const j = await rep.json();
+    ccwAfficherSortie(j.sortie);
+    if (j.succes) {
+      ccwMessage('ccw-message',
+        'Service « ' + (j.service || nom) + ' » démarré.', 'succes');
+    } else {
+      ccwMessage('ccw-message', j.erreur || 'Échec du démarrage.', 'erreur');
+    }
+    ccwChargerProjets();
+  } catch (e) {
+    ccwMessage('ccw-message', 'Erreur réseau : ' + e.message, 'erreur');
+  } finally {
+    if (btn) { btn.disabled = false; if (labelInitial !== null) btn.textContent = labelInitial; }
+  }
+}
+
+// Arrête le service d'un projet CCW (issue #203) : « nssm stop » côté VM, pour
+// libérer des ressources sans le relancer aussitôt. Confirmation demandée.
+async function ccwArreterProjet(nom, btn) {
+  if (!nom) return;
+  if (!confirm('Arrêter le service du projet « ' + nom + ' » ?\n\n'
+             + '(Le service restera arrêté jusqu\'à un « Démarrer » ou « Redémarrer ».)')) return;
+  const labelInitial = btn ? btn.textContent : null;
+  if (btn) { btn.disabled = true; btn.textContent = 'Arrêt…'; }
+  ccwMessage('ccw-message', 'Arrêt du service de « ' + nom + ' » dans la VM…', '');
+  ccwAfficherSortie('');
+  try {
+    const rep = await fetch('/ccw/arreter-projet', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({nom: nom})
+    });
+    const j = await rep.json();
+    ccwAfficherSortie(j.sortie);
+    if (j.succes) {
+      ccwMessage('ccw-message',
+        'Service « ' + (j.service || nom) + ' » arrêté.', 'succes');
+    } else {
+      ccwMessage('ccw-message', j.erreur || 'Échec de l\'arrêt.', 'erreur');
     }
     ccwChargerProjets();
   } catch (e) {
