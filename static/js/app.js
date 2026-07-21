@@ -3602,7 +3602,8 @@ async function soumettreNouveauProjet() {
 // Pas de persistance : l'encart n'a de sens que pour la création qui vient
 // d'avoir lieu et disparaît à la prochaine ouverture du modal (issue #118).
 function afficherRappelGit(nom) {
-  const cmds = 'git add BRIDGE_AGENT_DOC.md\n'
+  const cmds = 'cd ~/Bridge_Agent\n'
+             + 'git add BRIDGE_AGENT_DOC.md\n'
              + 'git commit -m "Ajout du projet ' + nom + ' (§2)"\n'
              + 'git push';
   const box = document.getElementById('np-rappel-git');
