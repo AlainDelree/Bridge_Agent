@@ -300,6 +300,20 @@ curl -sL https://raw.githubusercontent.com/AlainDelree/Bridge_Agent/master/BRIDG
 Si l'outil terminal n'est pas disponible dans la conversation, se rabattre
 sur web_fetch en étant conscient du risque de contenu obsolète.
 
+⚠️ **Cache CDN après un push très récent.** Même `curl` peut, dans les
+toutes premières minutes suivant un `git push`, servir une version encore
+mise en cache par le CDN GitHub (raw.githubusercontent.com), avant que
+l'invalidation ne se propage. Si un `git push` sur `BRIDGE_AGENT_DOC.md`
+vient d'avoir lieu (il y a quelques minutes) et que le contenu lu ne semble
+pas refléter ce changement, ajouter un paramètre anti-cache à l'URL **avant
+de conclure à une absence réelle du contenu** :
+```bash
+curl -sL "https://raw.githubusercontent.com/AlainDelree/Bridge_Agent/master/BRIDGE_AGENT_DOC.md?nocache=$(date +%s)"
+```
+Ce contournement n'est utile qu'en cas de push très récent (quelques
+minutes) ; dans le cas général, un `curl` simple sans paramètre reste la
+méthode par défaut recommandée.
+
 ---
 
 ## 10. Structure du dépôt Bridge_Agent
