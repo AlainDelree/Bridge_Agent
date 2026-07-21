@@ -131,6 +131,7 @@ class Config:
     couleur: str           = ""    # couleur d'accent du projet dans l'interface (hex #RRGGBB ; vide = repli map fixe/hash côté frontend)
     perimetre_dynamique: bool = False  # périmètre fourni par l'issue (REPO_CIBLE) plutôt que figé dans le .conf — outil d'audit multi-dépôts (issue #125)
     notifier_local: bool   = True  # ce watcher émet-il lui-même bip/notify-send/ntfy à la fin d'une issue (issue #187) ? True = comportement historique. Mettre à False sur la VM CCW (et éventuellement CCL) pour laisser new_issue.py notifier de façon centralisée sur le ThinkPad, sans doublon.
+    delai_inactivite_min: int = 20  # auto-extinction : minutes sans aucune issue traitable avant que le watcher ne s'arrête proprement (issue #200). 0 = désactivé (le watcher tourne indéfiniment, comportement historique).
 
     @property
     def url_ntfy(self) -> str:
@@ -210,6 +211,7 @@ def charger_config(chemin: Path) -> Config:
         couleur           = brut.get("COULEUR", ""),
         perimetre_dynamique = booleen("PERIMETRE_DYNAMIQUE", False),
         notifier_local      = booleen("NOTIFIER_LOCAL", True),
+        delai_inactivite_min = entier("DELAI_INACTIVITE_MIN", 20),
     )
 
 
@@ -500,6 +502,18 @@ def lister_issues():
     except Exception as e:
         log.error(f"Exception lister_issues : {e}")
         return []
+
+def issue_traitable(issue: dict) -> bool:
+    """Vrai si l'issue déclenchera un vrai travail ce cycle : ni déjà 'done'
+    (finalisation de fermeture seulement, issue #195), ni 'needs-human' (échec
+    définitif, ignorée jusqu'à intervention humaine). Sert de définition de
+    l'« activité » pour l'auto-extinction (issue #200) : une issue bloquée en
+    needs-human ne doit jamais empêcher l'extinction de se déclencher. On se
+    fonde uniquement sur les labels (pas d'appel réseau supplémentaire par
+    issue) ; le cas 'résultat déjà posté sans label done' reste rare et sera de
+    toute façon traité idempotemment par traiter_issue()."""
+    labels = [l.get("name", "") for l in issue.get("labels", [])]
+    return LABEL_ECHEC not in labels and LABEL_FAIT not in labels
 
 def extraire_priorite(body: str) -> str:
     """Extrait la priorité depuis le body de l'issue (en-tête bridge)."""
@@ -1436,7 +1450,34 @@ def main():
     if args.dry_run:
         log.info("[DRY-RUN] Mode simulation activé — Claude Code ne sera pas lancé.")
 
+    if CFG.delai_inactivite_min > 0:
+        log.info(f"Auto-extinction activée : arrêt après {CFG.delai_inactivite_min} min sans issue traitable.")
+    else:
+        log.info("Auto-extinction désactivée (DELAI_INACTIVITE_MIN = 0) — watcher permanent.")
+
+    # Horloge monotone d'inactivité (issue #200). Initialisée AVANT la boucle
+    # pour qu'un watcher fraîchement démarré ne s'éteigne pas au premier cycle,
+    # puis réarmée à chaque cycle comportant au moins une issue traitable.
+    derniere_activite = time.monotonic()
+
     while True:
+        # Test d'inactivité en tête de cycle, AVANT lister_issues() et AVANT tout
+        # traitement (issue #200). Rester dans la boucle synchrone garantit qu'un
+        # cycle de retry en cours (ex. #183, jusqu'à ~20 min) n'est jamais
+        # interrompu : on ne teste qu'entre deux cycles complets. delai 0 =
+        # mécanisme désactivé.
+        if CFG.delai_inactivite_min > 0:
+            inactif_s = time.monotonic() - derniere_activite
+            if inactif_s > CFG.delai_inactivite_min * 60:
+                log.info(f"⏻ Auto-extinction : aucune issue traitable depuis "
+                         f"{CFG.delai_inactivite_min} min — arrêt propre du watcher.")
+                # Nettoyage du fichier PID, par cohérence avec arreter_watcher()
+                # (app/watchers.py) : sans ça l'interface afficherait un PID
+                # orphelin au lieu de « inactif ».
+                pid_file = DOSSIER_LOGS / f"watcher-{CFG.nom}.pid"
+                pid_file.unlink(missing_ok=True)
+                sys.exit(0)
+
         try:
             # Rafraîchissement automatique du clone local en début de cycle
             # (issue #185). Choix : au début du cycle, sur CFG.rep_travail (le
@@ -1448,6 +1489,12 @@ def main():
             # de travail du watcher. Best-effort, jamais bloquant.
             rafraichir_depot(CFG.rep_travail, dry_run=args.dry_run)
             issues = lister_issues()
+            # Activité = présence d'au moins une issue réellement traitable (ni
+            # done, ni needs-human). On réarme AVANT le traitement : le cycle qui
+            # suit ne testera l'inactivité qu'une fois ce traitement terminé, donc
+            # un retry long n'est jamais interrompu (issue #200).
+            if any(issue_traitable(i) for i in issues):
+                derniere_activite = time.monotonic()
             if issues:
                 log.info(f"{len(issues)} issue(s) en attente.")
                 for issue in issues:
