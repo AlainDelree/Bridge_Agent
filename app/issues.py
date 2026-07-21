@@ -274,7 +274,30 @@ def envoyer():
             capture_output=True, text=True, timeout=30
         )
         if res.returncode == 0:
-            return jsonify(succes=True, url=res.stdout.strip())
+            # Démarrage automatique du watcher (issue #202). Avec l'auto-extinction
+            # après inactivité (#200/#201), le watcher du projet peut être éteint au
+            # moment où l'on crée une issue : on le rallume ici pour que la tâche
+            # soit prise en charge sans étape manuelle. demarrer_watcher(forcer=False)
+            # est idempotent (no-op si le watcher tourne déjà). Import différé pour
+            # éviter tout cycle d'import entre app.issues et app.watchers.
+            #
+            # Garde sur les labels : on ne démarre QUE pour les issues for-linux —
+            # une issue for-windows est traitée par CCW, rien à lancer côté Linux.
+            # watcher_demarre : True = watcher effectivement (re)démarré (il était
+            # éteint), False = tournait déjà, None = non applicable (for-windows) ou
+            # échec silencieux du démarrage. Un échec ici ne doit JAMAIS transformer
+            # une création d'issue réussie en erreur : try/except large qui retombe
+            # sur None.
+            watcher_demarre = None
+            if "for-linux" in labels.split(","):
+                try:
+                    from app.watchers import demarrer_watcher
+                    demarre, _pid = demarrer_watcher(cfg, forcer=False)
+                    watcher_demarre = demarre
+                except Exception:
+                    watcher_demarre = None
+            return jsonify(succes=True, url=res.stdout.strip(),
+                           watcher_demarre=watcher_demarre)
         else:
             return jsonify(succes=False, erreur=res.stderr.strip() or "Erreur inconnue de gh.")
     except subprocess.TimeoutExpired:

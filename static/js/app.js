@@ -2230,6 +2230,30 @@ function afficherMessage(texte, type) {
   el.style.display = 'block';
 }
 
+// Bandeau temporaire non bloquant (issue #202) : information éphémère qui ne doit
+// PAS interrompre le flux (contrairement à une modale) ni écraser le message
+// principal (#message). Créé à la volée en bas de l'écran, il s'efface tout seul
+// après quelques secondes. Sert notamment à signaler « Watcher démarré
+// automatiquement » après la création d'une issue.
+function afficherToast(texte) {
+  let toast = document.getElementById('toast-info');
+  if (!toast) {
+    toast = document.createElement('div');
+    toast.id = 'toast-info';
+    toast.style.cssText =
+      'position:fixed;bottom:24px;left:50%;transform:translateX(-50%);'
+      + 'background:#333;color:#fff;padding:10px 18px;border-radius:6px;'
+      + 'font-size:13px;box-shadow:0 2px 8px rgba(0,0,0,.25);z-index:9999;'
+      + 'opacity:0;transition:opacity .25s;pointer-events:none;';
+    document.body.appendChild(toast);
+  }
+  toast.textContent = texte;
+  // Deux images pour relancer la transition même si le toast existe déjà.
+  requestAnimationFrame(() => { toast.style.opacity = '1'; });
+  clearTimeout(toast._timer);
+  toast._timer = setTimeout(() => { toast.style.opacity = '0'; }, 4000);
+}
+
 // ─── Pièce jointe image (issue #191) ──────────────────────────────────────────
 // Active le bouton « Joindre une image » seulement quand un fichier est choisi.
 function majEtatBoutonImage() {
@@ -2502,47 +2526,12 @@ function afficherModalErreur(titre, message) {
   });
 }
 
-// Modale d'avertissement « watcher inactif » (issue #171). Réutilise l'overlay
-// #modal-confirmation comme afficherModalIncoherence, mais ajoute à la volée un
-// TROISIÈME bouton « Lancer le watcher puis envoyer » (le template n'en a que
-// deux) — retiré à la fermeture, comme les libellés d'origine sont restaurés.
-// Résout : 'annuler' (ne rien envoyer), 'envoyer' (envoyer quand même) ou
-// 'lancer' (démarrer le watcher puis poursuivre l'envoi côté appelant).
-function afficherModalWatcherInactif(nom) {
-  return new Promise(resolve => {
-    const overlay = document.getElementById('modal-confirmation');
-    const liste   = document.getElementById('modal-liste');
-    const btnOui  = document.getElementById('modal-oui');
-    const btnNon  = document.getElementById('modal-non');
-    const boutons = btnOui.parentElement;
-    const ouiAvant = btnOui.textContent;
-    const nonAvant = btnNon.textContent;
-    document.getElementById('modal-titre').textContent = '⚠️ Watcher inactif';
-    liste.style.display = '';
-    liste.innerHTML =
-      'Le watcher du projet « <b>' + escapeHtml(nom) + '</b> » n\'est pas actif.'
-      + '<br><br>L\'issue sera créée mais ne sera traitée que lorsque le watcher '
-      + 'sera lancé.';
-    btnOui.textContent = 'Envoyer quand même';
-    btnNon.textContent = 'Annuler';
-    // Troisième bouton, créé dynamiquement puis retiré à la fermeture.
-    const btnLancer = document.createElement('button');
-    btnLancer.textContent = 'Lancer le watcher puis envoyer';
-    boutons.insertBefore(btnLancer, btnOui);
-    function fermer(reponse) {
-      overlay.classList.remove('actif');
-      btnOui.onclick = null; btnNon.onclick = null; btnLancer.onclick = null;
-      btnOui.textContent = ouiAvant;
-      btnNon.textContent = nonAvant;
-      btnLancer.remove();
-      resolve(reponse);
-    }
-    btnNon.onclick    = () => fermer('annuler');
-    btnOui.onclick    = () => fermer('envoyer');
-    btnLancer.onclick = () => fermer('lancer');
-    overlay.classList.add('actif');
-  });
-}
+// La modale bloquante « watcher inactif » (afficherModalWatcherInactif, issue
+// #171) a été retirée avec l'issue #202 : le backend démarre désormais le watcher
+// automatiquement à la création d'une issue for-linux (voir envoyer() dans
+// app/issues.py). L'avertissement pré-envoi n'a donc plus lieu d'être — un simple
+// bandeau discret (afficherToast) informe a posteriori que le watcher a été
+// rallumé, sans interrompre le flux.
 
 async function envoyerIssue() {
   // Anti-double-clic (issue #189) : on désactive le bouton dès le TOUT DÉBUT,
@@ -2589,23 +2578,13 @@ async function envoyerIssue() {
       // La détection a échoué : on n'empêche pas l'envoi.
     }
 
-    // Garde-fou (issue #171) : avertit si le watcher du projet ciblé est inactif.
-    // Sans watcher, l'issue est bien créée mais reste en attente jusqu'au prochain
-    // démarrage — autant le signaler avant l'envoi. On réutilise /statut/<projet>
-    // (même route que verifierStatut()). Même philosophie défensive que les autres
-    // gardes-fous : un échec de vérification (réseau…) ne bloque jamais l'envoi.
-    try {
-      const repStatut = await fetch('/statut/' + encodeURIComponent(data.projet));
-      const statut    = await repStatut.json();
-      if (statut && statut.actif === false) {
-        const choix = await afficherModalWatcherInactif(data.projet);
-        if (choix === 'annuler') return;          // l'utilisateur a annulé l'envoi
-        if (choix === 'lancer') await lancerWatcher();  // démarre puis poursuit
-        // 'envoyer' → on poursuit sans rien lancer
-      }
-    } catch(e) {
-      // La vérification a échoué (réseau, etc.) : on n'empêche pas l'envoi.
-    }
+    // Plus de garde-fou bloquant « watcher inactif » ici (issue #202) : le backend
+    // démarre désormais le watcher automatiquement à la création d'une issue
+    // for-linux (voir envoyer() dans app/issues.py). L'ancienne modale
+    // afficherModalWatcherInactif() serait contradictoire — elle avertirait que
+    // l'issue « ne sera traitée que plus tard » juste avant que le backend ne
+    // rallume le watcher tout seul. On envoie donc directement ; si le watcher a
+    // été (re)démarré, la réponse le signale par un message discret non bloquant.
 
     btn.textContent = 'Envoi…';
     try {
@@ -2617,6 +2596,13 @@ async function envoyerIssue() {
       const json = await rep.json();
       if (json.succes) {
         afficherMessage('✓ Issue créée : ' + json.url, 'succes');
+        // Info discrète non bloquante (issue #202) : le backend a rallumé le
+        // watcher pour cette issue for-linux (il était éteint). watcher_demarre
+        // vaut false s'il tournait déjà et null si non applicable (for-windows) ou
+        // échec silencieux — dans ces cas on n'affiche rien.
+        if (json.watcher_demarre === true) {
+          afficherToast('Watcher démarré automatiquement pour cette issue');
+        }
         viderFormulaire(false);
       } else {
         afficherMessage('Erreur : ' + json.erreur, 'erreur');
@@ -3079,6 +3065,11 @@ async function envoyerLot() {
     const projetForm = base.projet;
 
     const resultats = [];
+    // Comme en mono-issue (issue #202), le backend démarre le watcher des blocs
+    // for-linux dont le watcher était éteint. On note simplement s'il y a eu au
+    // moins un démarrage pour l'annoncer discrètement en fin de lot, sans jamais
+    // bloquer l'envoi (aucune modale « watcher inactif » n'existait ici).
+    let watcherDemarre = false;
     for (let i = 0; i < blocs.length; i++) {
       const bloc = blocs[i];
       btn.textContent = 'Envoi ' + (i + 1) + '/' + blocs.length + '…';
@@ -3128,6 +3119,7 @@ async function envoyerLot() {
         });
         const json = await rep.json();
         if (json.succes) {
+          if (json.watcher_demarre === true) watcherDemarre = true;
           resultats.push({succes: true, titre: bloc.titre, projet: projet,
                           url: json.url, incoherence: incoherence});
         } else {
@@ -3142,6 +3134,9 @@ async function envoyerLot() {
     }
 
     afficherResumeLot(resultats, projetForm);
+    if (watcherDemarre) {
+      afficherToast('Watcher démarré automatiquement pour au moins une issue du lot');
+    }
     // Vide le corps une fois le lot terminé (comme envoyerIssue après un succès),
     // sans masquer le récapitulatif qu'on vient d'afficher.
     viderFormulaire(false);
