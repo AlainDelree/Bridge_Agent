@@ -43,6 +43,10 @@ Bridge_Agent se développe lui-même par ses propres issues (dogfooding).
   création, sinon PowerShell 5.1 plante sur les accents.
 
 ## État d'avancement (récent, cf. changelog en bas du DOC)
+- §12.1 (#209) : dossier `consignes/` injecté dans le CORPS de chaque issue
+  (`app/issues.py`), 3 couches globales/type/projet (ordre : en-tête → globales
+  → type → projet → corps). `globales.md` non-optionnel (sécurité), `type_*.md`
+  et `projet_*.md` facultatifs (créés à la demande, aucune maintenance forcée).
 - §18 (#191) : pièces jointes image PNG/JPEG dans les issues → commit+push dans
   `issue-attachments/` + URL raw insérée. #192 : support GIF + affichage des
   formats/limite dans l'UI.
