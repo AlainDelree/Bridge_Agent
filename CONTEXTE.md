@@ -43,10 +43,14 @@ Bridge_Agent se développe lui-même par ses propres issues (dogfooding).
   création, sinon PowerShell 5.1 plante sur les accents.
 
 ## État d'avancement (récent, cf. changelog en bas du DOC)
-- §12.1 (#209) : dossier `consignes/` injecté dans le CORPS de chaque issue
-  (`app/issues.py`), 3 couches globales/type/projet (ordre : en-tête → globales
-  → type → projet → corps). `globales.md` non-optionnel (sécurité), `type_*.md`
-  et `projet_*.md` facultatifs (créés à la demande, aucune maintenance forcée).
+- §12.1 (#209/#211) : dossier `consignes/` (3 couches globales/type/projet)
+  injecté dans le PROMPT CCL par `watcher.py` (`lancer_claude` →
+  `_consignes_injectees`), au moment du traitement — comme `CONTEXTE.md`. Depuis
+  #211 c'est le point de passage UNIQUE : couvre tous les chemins de création
+  (formulaire web, `gh issue create` d'un chef, création manuelle GitHub) ;
+  `app/issues.py` n'écrit plus les consignes dans le corps GitHub. Bloc placé
+  après CONTEXTE, avant le périmètre/garde-fou. `globales.md` non-optionnel
+  (sécurité), `type_*.md`/`projet_*.md` facultatifs (créés à la demande).
 - §18 (#191) : pièces jointes image PNG/JPEG dans les issues → commit+push dans
   `issue-attachments/` + URL raw insérée. #192 : support GIF + affichage des
   formats/limite dans l'UI.

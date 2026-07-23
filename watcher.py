@@ -42,6 +42,21 @@ import notifications
 DOSSIER_SCRIPT = Path(__file__).resolve().parent
 DOSSIER_LOGS   = DOSSIER_SCRIPT / "logs"
 
+# Consignes injectées dans le PROMPT donné à CCL (architecture à trois couches,
+# issues #209 puis #211). Vivent à côté du watcher (racine du dépôt), PAS dans le
+# rep_travail du projet piloté : elles sont communes à tous les projets. Trois
+# couches, de la plus générale à la plus spécifique (§12.1 de BRIDGE_AGENT_DOC.md) :
+#   - consignes/globales.md          : NON-optionnel, injecté pour TOUTE issue
+#                                       (rappels de sécurité transversaux) ;
+#   - consignes/type_<type>.md       : optionnel, selon le TYPE déduit de l'issue
+#                                       (ex. type_chef.md) ;
+#   - consignes/projet_<projet>.md   : optionnel, selon le projet piloté.
+# Depuis #211 l'injection se fait dans le prompt CCL (via lancer_claude), et NON
+# plus dans le corps de l'issue GitHub : couverture universelle quel que soit le
+# chemin de création (formulaire web, `gh issue create` d'un chef, création
+# manuelle GitHub) — même modèle que FICHIER_CONTEXTE/CONTEXTE.md.
+DOSSIER_CONSIGNES = DOSSIER_SCRIPT / "consignes"
+
 # Historique des durées réelles de traitement (issue #108) : un fichier commun,
 # une entrée par issue fermée {projet, type, mode, duree, date}. Vit dans logs/
 # (déjà gitignoré, cohérent avec les .conf) : donnée de télémétrie locale, pas de
@@ -576,6 +591,73 @@ def deduire_type_issue(titre: str, body: str) -> str:
     return "normal"
 
 
+# ─── Consignes à trois couches injectées dans le prompt CCL (issues #209/#211) ──
+# Auparavant (#209) ces consignes étaient injectées dans le CORPS de l'issue par
+# app/issues.py::_consignes_injectees, uniquement pour les issues créées via le
+# formulaire web. #211 déplace la logique ICI, dans le point d'assemblage unique
+# du prompt CCL (lancer_claude), pour couvrir AUSSI les issues créées hors
+# formulaire (`gh issue create` par un chef §14, création manuelle GitHub §3).
+
+def _lire_consigne(chemin: Path) -> str | None:
+    """Contenu texte d'un fichier de consignes (strippé), ou None s'il est absent
+    ou illisible. Best-effort : un fichier manquant n'est pas une erreur ici (les
+    couches type/projet sont facultatives), c'est l'appelant qui décide s'il faut
+    logger l'absence (cas de globales.md uniquement)."""
+    try:
+        if chemin.is_file():
+            texte = chemin.read_text(encoding="utf-8").strip()
+            return texte or None
+    except OSError:
+        pass
+    return None
+
+
+def _consignes_injectees(nom_projet: str, titre: str, corps: str) -> str:
+    """Bloc de consignes à trois couches à injecter dans le prompt CCL (issue #211,
+    logique reprise de #209).
+
+    Ordre : globales → type (si présent) → projet (si présent). Chaîne vide si
+    aucune couche n'a de contenu. Garde-fous (identiques à #209) :
+      - globales.md manquant → log.warning clair, mais on N'échoue PAS (le reste
+        de l'injection et le traitement de l'issue se poursuivent) ;
+      - type_<type>.md / projet_<projet>.md absents → comportement NORMAL, aucune
+        injection pour cette couche, sans log ni avertissement bruyant.
+
+    Le TYPE est déduit via deduire_type_issue sur le titre ET le corps RÉELS de
+    l'issue traitée — peu importe qui l'a créée (formulaire, chef en CLI, GitHub) —
+    donc le nom de fichier attendu est consignes/type_<type>.md (ex. type_chef.md).
+    Le projet est celui piloté par ce watcher (CFG.nom)."""
+    blocs = []
+
+    # 1. Couche globale — NON-optionnelle (rappels de sécurité transversaux).
+    globales = _lire_consigne(DOSSIER_CONSIGNES / "globales.md")
+    if globales:
+        blocs.append(globales)
+    else:
+        log.warning(
+            "consignes/globales.md introuvable (%s) : consignes globales non "
+            "injectées dans le prompt CCL — traitement poursuivi malgré tout.",
+            DOSSIER_CONSIGNES / "globales.md",
+        )
+
+    # 2. Couche par TYPE — facultative. deduire_type_issue renvoie toujours une
+    # valeur (repli « normal ») ; on n'injecte que si le fichier correspondant
+    # existe réellement, donc « normal » (sans type_normal.md) n'injecte rien.
+    type_issue = deduire_type_issue(titre, corps)
+    if type_issue:
+        consigne_type = _lire_consigne(DOSSIER_CONSIGNES / f"type_{type_issue}.md")
+        if consigne_type:
+            blocs.append(consigne_type)
+
+    # 3. Couche par projet — facultative (aucun fichier créé par défaut, #209).
+    if nom_projet:
+        consigne_projet = _lire_consigne(DOSSIER_CONSIGNES / f"projet_{nom_projet}.md")
+        if consigne_projet:
+            blocs.append(consigne_projet)
+
+    return "\n\n".join(blocs)
+
+
 def enregistrer_duree(projet: str, type_issue: str, mode: str,
                       duree_s: float, date_iso: str):
     """Ajoute une mesure de durée réelle (ACK → fermeture) à l'historique commun
@@ -938,6 +1020,21 @@ fichier, n'exécute aucune commande modifiant l'état du système ou du dépôt.
         else:
             log.warning(f"Fichier de contexte '{chemin_ctx}' introuvable — rien injecté.")
 
+    # Consignes à trois couches (globales/type/projet) injectées dans le prompt
+    # CCL (issue #211). Placées APRÈS le bloc CONTEXTE et AVANT la clause de
+    # périmètre / le garde-fou : choix assumé de regrouper toutes les « règles »
+    # (consignes de sécurité globales, spécificités de type/projet, périmètre,
+    # garde-fou mode écriture) en fin de prompt, zone la mieux suivie par le
+    # modèle. Couverture universelle : quel que soit le chemin de création de
+    # l'issue (formulaire web, `gh issue create` d'un chef, création manuelle
+    # GitHub), le point de passage unique reste ce prompt. Mêmes garde-fous que
+    # #209 (globales.md manquant → warning sans bloquer ; type/projet absents →
+    # silencieux) — voir _consignes_injectees.
+    bloc_consignes = ""
+    consignes = _consignes_injectees(CFG.nom, titre, body)
+    if consignes:
+        bloc_consignes = f"\nCONSIGNES (injectées automatiquement) :\n---\n{consignes}\n---\n"
+
     if perimetre_effectif:
         clause_perimetre = (
             f"\nPÉRIMÈTRE STRICT — tu ne dois lire, modifier ou exécuter des commandes "
@@ -958,7 +1055,7 @@ TITRE : {titre}
 
 BODY :
 {body}
-{bloc_contexte}{clause_perimetre}{garde_fou}
+{bloc_contexte}{bloc_consignes}{clause_perimetre}{garde_fou}
 Instructions :
 1. Lis attentivement la tâche demandée
 2. Effectue le travail demandé (dans les limites du mode ci-dessus)

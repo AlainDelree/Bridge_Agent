@@ -6,7 +6,6 @@ aux issues : aperçu de la commande gh, envoi, listes et détail.
 """
 
 import json
-import logging
 import os
 import re
 import subprocess
@@ -29,20 +28,13 @@ from watcher import (est_titre_chef, deduire_type_issue, PAUSE_ENTRE_TENTATIVES,
 # Racine du projet (dossier parent du package app/).
 DOSSIER_SCRIPT = Path(__file__).resolve().parent.parent
 
-# ─── Consignes injectées (architecture à trois couches, issue #209) ───────────
-# Dossier des consignes injectées automatiquement en tête de chaque corps d'issue,
-# entre le tableau d'en-tête et le corps rédigé par Claude Chat. Trois couches,
-# de la plus générale à la plus spécifique (§12 de BRIDGE_AGENT_DOC.md) :
-#   - consignes/globales.md          : NON-optionnel, injecté dans TOUTE issue
-#                                       (rappels de sécurité transversaux) ;
-#   - consignes/type_<type>.md       : optionnel, selon le TYPE déduit de l'issue
-#                                       (ex. type_chef.md) ;
-#   - consignes/projet_<projet>.md   : optionnel, selon le projet ciblé.
-# Les couches type/projet sont FACULTATIVES : un fichier absent n'est pas une
-# anomalie (aucun log), on n'injecte simplement rien pour cette couche. Seul
-# globales.md manquant justifie un logging.warning — sans jamais faire échouer la
-# création d'issue (voir _consignes_injectees).
-DOSSIER_CONSIGNES = DOSSIER_SCRIPT / "consignes"
+# Consignes injectées (architecture à trois couches, issues #209/#211) : depuis
+# #211 la lecture des consignes (consignes/globales.md, type_<type>.md,
+# projet_<projet>.md) et leur injection ont été DÉPLACÉES dans watcher.py, où
+# elles sont ajoutées au prompt CCL au moment du traitement (couverture
+# universelle, tous chemins de création). app/issues.py ne les réinjecte donc
+# plus dans le corps de l'issue GitHub. Voir watcher.py::_consignes_injectees et
+# §12.1 de BRIDGE_AGENT_DOC.md.
 
 # Historique des durées réelles alimenté par le watcher (issue #108). Même
 # emplacement que watcher.FICHIER_HISTORIQUE — on le recalcule ici plutôt que de
@@ -139,80 +131,23 @@ def _parser_labels_entete(corps: str) -> list:
     return [lab.strip() for lab in m.group(1).split(",") if lab.strip()]
 
 
-def _lire_consigne(chemin: Path) -> str | None:
-    """Contenu texte d'un fichier de consignes (strippé), ou None s'il est absent
-    ou illisible. Best-effort : un fichier manquant n'est pas une erreur ici (les
-    couches type/projet sont facultatives), c'est l'appelant qui décide s'il faut
-    logger l'absence (cas de globales.md uniquement)."""
-    try:
-        if chemin.is_file():
-            texte = chemin.read_text(encoding="utf-8").strip()
-            return texte or None
-    except OSError:
-        pass
-    return None
-
-
-def _consignes_injectees(nom_projet: str, titre: str, corps: str) -> str:
-    """Bloc de consignes à injecter entre le tableau d'en-tête et le corps rédigé
-    par Claude Chat (architecture à trois couches, issue #209).
-
-    Ordre : globales → type (si présent) → projet (si présent). Chaîne vide si
-    aucune couche n'a de contenu. Garde-fous :
-      - globales.md manquant → logging.warning clair, mais on N'échoue PAS (le
-        reste de l'injection et la création d'issue se poursuivent) ;
-      - type_<type>.md / projet_<projet>.md absents → comportement NORMAL, aucune
-        injection pour cette couche, sans log ni avertissement bruyant.
-
-    Le TYPE est déduit via watcher.deduire_type_issue (même logique que le reste
-    du bridge : champ « | TYPE | … | » du corps sinon préfixe du titre), donc le
-    nom de fichier attendu est consignes/type_<type>.md (ex. type_chef.md). Vaut
-    aussi bien en mono-issue qu'en mode lot : chaque bloc appelle construire_body
-    avec son propre titre/corps/projet, donc son propre TYPE."""
-    blocs = []
-
-    # 1. Couche globale — NON-optionnelle (rappels de sécurité transversaux).
-    globales = _lire_consigne(DOSSIER_CONSIGNES / "globales.md")
-    if globales:
-        blocs.append(globales)
-    else:
-        logging.warning(
-            "consignes/globales.md introuvable (%s) : consignes globales non "
-            "injectées dans l'issue — création poursuivie malgré tout.",
-            DOSSIER_CONSIGNES / "globales.md",
-        )
-
-    # 2. Couche par TYPE — facultative. deduire_type_issue renvoie toujours une
-    # valeur (repli « normal ») ; on n'injecte que si le fichier correspondant
-    # existe réellement, donc « normal » (sans type_normal.md) n'injecte rien.
-    type_issue = deduire_type_issue(titre, corps)
-    if type_issue:
-        consigne_type = _lire_consigne(DOSSIER_CONSIGNES / f"type_{type_issue}.md")
-        if consigne_type:
-            blocs.append(consigne_type)
-
-    # 3. Couche par projet — facultative (aucun fichier créé par défaut, #209).
-    if nom_projet:
-        consigne_projet = _lire_consigne(DOSSIER_CONSIGNES / f"projet_{nom_projet}.md")
-        if consigne_projet:
-            blocs.append(consigne_projet)
-
-    return "\n\n".join(blocs)
-
-
 def construire_body(data: dict) -> str:
-    """Construit le body markdown depuis les champs du formulaire.
+    """Construit le body markdown depuis les champs du formulaire : tableau
+    d'en-tête + corps rédigé par Claude Chat.
 
-    Injecte les consignes à trois couches (globales / type / projet, issue #209)
-    entre le tableau d'en-tête et le corps rédigé par Claude Chat — voir
-    _consignes_injectees."""
+    Note (issue #211) : les consignes à trois couches (globales / type / projet)
+    ne sont PLUS injectées dans le corps de l'issue ici. Elles le sont désormais
+    dans le PROMPT donné à CCL par watcher.py::_consignes_injectees (au moment du
+    traitement), sur le modèle de FICHIER_CONTEXTE/CONTEXTE.md — couverture
+    universelle quel que soit le chemin de création de l'issue (formulaire web,
+    `gh issue create` d'un chef, création manuelle GitHub). Source unique de
+    vérité côté watcher, plus de double injection. Voir §12.1 du DOC."""
     mode            = "ÉCRITURE" if data.get("mode") == "ecriture" else "lecture seule"
     priorite        = data.get("priorite", "normale")
     timeout         = data.get("timeout", "300")
     modele_ponctuel = data.get("modele_ponctuel", "").strip()
     corps           = data.get("corps", "").strip()
     nom_projet      = data.get("projet", "").strip()
-    titre           = data.get("titre", "").strip()
 
     lignes = [
         "## En-tête\n",
@@ -229,11 +164,11 @@ def construire_body(data: dict) -> str:
     if modele_ponctuel:
         lignes.append(f"| MODELE   | {modele_ponctuel} |")
 
-    entete    = "\n".join(lignes)
-    consignes = _consignes_injectees(nom_projet, titre, corps)
-    # Ordre final : en-tête → globales → type → projet → corps. Les parties vides
-    # (consignes absentes) sont omises pour ne pas empiler de lignes blanches.
-    parties = [p for p in (entete, consignes, corps) if p]
+    entete = "\n".join(lignes)
+    # Ordre final : en-tête → corps. Les consignes ne sont plus empilées ici
+    # (déplacées dans le prompt CCL, issue #211). Corps vide omis pour ne pas
+    # laisser de ligne blanche superflue.
+    parties = [p for p in (entete, corps) if p]
     return "\n\n".join(parties)
 
 
