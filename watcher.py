@@ -1590,7 +1590,8 @@ def main():
             # done, ni needs-human). On réarme AVANT le traitement : le cycle qui
             # suit ne testera l'inactivité qu'une fois ce traitement terminé, donc
             # un retry long n'est jamais interrompu (issue #200).
-            if any(issue_traitable(i) for i in issues):
+            travail_a_faire = any(issue_traitable(i) for i in issues)
+            if travail_a_faire:
                 derniere_activite = time.monotonic()
             if issues:
                 log.info(f"{len(issues)} issue(s) en attente.")
@@ -1598,6 +1599,20 @@ def main():
                     traiter_issue(issue, dry_run=args.dry_run)
             else:
                 log.debug("Aucune issue en attente.")
+            # Réarmement APRÈS traitement (issue #217). Le réarme d'avant-cycle
+            # (ci-dessus) date le DÉBUT du travail, pas sa fin : le traitement
+            # d'une (ou plusieurs) issue(s) peut s'étirer bien au-delà du délai
+            # d'inactivité — plusieurs timeouts de 300s + retries en cascade, cf.
+            # log watcher-scrabble 24/07/2026 : ~23 min pour une seule issue. Sans
+            # ce second réarme, l'horloge resterait « périmée » (figée au début du
+            # cycle) et le test d'extinction en tête du cycle SUIVANT se
+            # déclencherait immédiatement après un travail réel qui vient tout
+            # juste de se terminer (extinction ~14 s après un succès). On réarme
+            # donc de nouveau ICI, avec l'instant réel de fin de traitement, dès
+            # qu'au moins une issue traitable a été traitée ce cycle. L'extinction
+            # reste possible quand plus rien n'est traitable (le flag est faux).
+            if travail_a_faire:
+                derniere_activite = time.monotonic()
         except KeyboardInterrupt:
             log.info("Watcher arrêté par l'utilisateur.")
             sys.exit(0)
