@@ -722,6 +722,7 @@ def estimer_duree(historique: list, projet: str, type_issue: str, mode: str) -> 
         and r.get("type") == type_issue
         and r.get("mode") == mode
         and isinstance(r.get("duree"), (int, float))
+        and r.get("expiree") is not True
     ]
     n = len(durees)
     if n == 0:
