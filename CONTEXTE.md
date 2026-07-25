@@ -43,6 +43,15 @@ Bridge_Agent se développe lui-même par ses propres issues (dogfooding).
   création, sinon PowerShell 5.1 plante sur les accents.
 
 ## État d'avancement (récent, cf. changelog en bas du DOC)
+- #221 (calibration TIMEOUT, 2/3) : `watcher.py` maintient `logs/etat_timeout.json`
+  (EWMA duree_typique/variabilite par combinaison projet+TYPE+mode, demi-vie 15
+  issues, k=4, backoff ×1.5 par timeout, reset après 3 succès rapides consécutifs)
+  et `logs/etat_ambiance.json` (F_reseau/F_local, EWMA temporelle demi-vie 4h,
+  GLOBAL à tous les projets, écriture atomique + verrou fichier anti-collision).
+  `TIMEOUT_suggéré = (duree_typique + k×variabilite) × F × backoff` journalisé à
+  chaque clôture d'issue (`maj_calibration_timeout`) — n'affecte PAS encore le
+  TIMEOUT réellement appliqué (celui de l'en-tête reste seul décisif ; exposition
+  = 3e issue séparée à venir).
 - §12.1 (#209/#211) : dossier `consignes/` (3 couches globales/type/projet)
   injecté dans le PROMPT CCL par `watcher.py` (`lancer_claude` →
   `_consignes_injectees`), au moment du traitement — comme `CONTEXTE.md`. Depuis

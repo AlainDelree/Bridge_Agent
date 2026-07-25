@@ -64,6 +64,40 @@ DOSSIER_CONSIGNES = DOSSIER_SCRIPT / "consignes"
 # cours (médiane du même projet+type+mode).
 FICHIER_HISTORIQUE = DOSSIER_LOGS / "historique_durees.json"
 
+# ─── Calibration automatique du TIMEOUT (issue #221) ───────────────────────────
+# Deux fichiers d'état JSON, tous deux sous DOSSIER_LOGS (donc déjà gitignorés,
+# et déjà PARTAGÉS entre tous les process watcher — DOSSIER_LOGS est fixe,
+# relatif au script, pas au projet piloté, cf. commentaire en tête de fichier) :
+#   - etat_timeout.json  : par combinaison (projet, TYPE, mode), l'EWMA de la
+#     durée typique et de sa variabilité (issues réussies uniquement), plus le
+#     multiplicateur de backoff (issues en timeout) — cf. maj_calibration_timeout.
+#   - etat_ambiance.json : facteur d'ambiance F (F_reseau/F_local), EWMA à
+#     demi-vie TEMPORELLE, GLOBAL à tous les projets — cf. _maj_ambiance.
+# Formule (inspirée de l'algorithme RTO TCP, Jacobson/Karels), validée avec
+# Alain :  TIMEOUT_suggéré = (duree_typique + k × variabilite) × F × backoff.
+# Cette issue calcule et journalise TIMEOUT_suggéré à chaque clôture d'issue,
+# mais NE modifie PAS le TIMEOUT réellement appliqué (celui de l'en-tête de
+# l'issue reste seul décisif) — l'exposition/consultation est une 3e issue.
+FICHIER_ETAT_TIMEOUT   = DOSSIER_LOGS / "etat_timeout.json"
+FICHIER_ETAT_AMBIANCE  = DOSSIER_LOGS / "etat_ambiance.json"
+
+K_VARIABILITE               = 4     # constante de départ de la formule (à backtester plus tard)
+DEMI_VIE_ISSUES             = 15    # demi-vie de l'EWMA duree_typique/variabilite, EN NOMBRE D'ISSUES
+ALPHA_EWMA_ISSUES           = 1 - 0.5 ** (1 / DEMI_VIE_ISSUES)
+DEMI_VIE_AMBIANCE_HEURES    = 4.0   # demi-vie de l'EWMA F_reseau/F_local, TEMPORELLE (pas en nb d'issues)
+SEUIL_SUCCES_RAPIDE         = 0.7   # succès compté « rapide » si duree_reelle < SEUIL × TIMEOUT courant
+SUCCES_RAPIDES_POUR_RESET   = 3     # nb de succès rapides consécutifs pour réinitialiser le backoff
+FACTEUR_BACKOFF             = 1.5   # multiplicateur appliqué à chaque timeout de la combinaison
+# Plancher minimum du TIMEOUT_suggéré (secondes). Proposition à valider avec
+# Alain : dans historique_durees.json actuel (546 issues réussies, aucun
+# timeout encore enregistré au 2026-07-25), le 5e percentile des durées
+# réelles est ~32s — 30s reste juste sous ce seuil, assez bas pour ne jamais
+# gêner une issue légitimement courte, assez haut pour éviter qu'une suite de
+# quelques échantillons atypiques (issues de 1-3s, probablement des échecs
+# immédiats) ne fasse suggérer un TIMEOUT dérisoire pour une combinaison encore
+# peu observée.
+TIMEOUT_SUGGERE_PLANCHER    = 30
+
 # Verrous anti-collision inter-process (issue #189). Chaque traitement pose un
 # fichier de verrou associé au répertoire de travail EFFECTIF avant de lancer
 # claude, et le libère à la fin (y compris en cas d'échec). But : garantir que
@@ -724,6 +758,270 @@ def enregistrer_duree(projet: str, type_issue: str, mode: str,
             json.dumps(historique, ensure_ascii=False, indent=2), encoding="utf-8")
     except Exception as e:
         log.error(f"Erreur enregistrement historique durée : {e}")
+
+
+# ─── Calibration automatique du TIMEOUT — mécanique EWMA (issue #221) ──────────
+# Fichiers d'état partagés par tous les process watcher (voir constantes en tête
+# de fichier). Deux garde-fous communs :
+#   - lecture/écriture protégées par un verrou fichier court + écriture atomique
+#     (tempfile + os.replace) : plusieurs watchers de projets différents peuvent
+#     clore une issue quasi simultanément, AUCUN écrasement concurrent ne doit
+#     corrompre l'état ;
+#   - best-effort intégral : toute erreur est journalisée sans jamais faire
+#     échouer le traitement de l'issue (même contrat que enregistrer_duree).
+
+VERROU_ETAT_PEREMPTION = 30  # secondes — la section critique (lecture JSON + calcul + écriture) dure quelques ms ; au-delà, verrou orphelin (process tué)
+
+
+def _verrou_etat(chemin_etat: Path) -> Path:
+    return chemin_etat.with_name(chemin_etat.name + ".lock")
+
+
+def _acquerir_verrou_etat(chemin_etat: Path, essais: int = 50, attente_s: float = 0.1) -> bool:
+    """Verrou court par création atomique O_CREAT|O_EXCL (portable, même
+    mécanisme que acquerir_verrou pour les répertoires de travail — mais durée
+    de rétention bien plus courte, cf. VERROU_ETAT_PEREMPTION). Attente active
+    bornée (5s max par défaut) : la section critique est toujours brève, pas de
+    raison de faire attendre le cycle du watcher longtemps."""
+    verrou = _verrou_etat(chemin_etat)
+    for _ in range(essais):
+        try:
+            chemin_etat.parent.mkdir(parents=True, exist_ok=True)
+            fd = os.open(str(verrou), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
+            os.close(fd)
+            return True
+        except FileExistsError:
+            try:
+                age = time.time() - verrou.stat().st_mtime
+            except OSError:
+                age = None
+            if age is not None and age > VERROU_ETAT_PEREMPTION:
+                try:
+                    verrou.unlink()
+                except OSError:
+                    pass
+                continue
+            time.sleep(attente_s)
+        except OSError as e:
+            log.warning(f"Verrou d'état {verrou} inobtenable ({e}).")
+            return False
+    return False
+
+
+def _liberer_verrou_etat(chemin_etat: Path):
+    try:
+        _verrou_etat(chemin_etat).unlink()
+    except FileNotFoundError:
+        pass
+    except OSError as e:
+        log.warning(f"Libération du verrou d'état {chemin_etat} impossible ({e}).")
+
+
+def _lire_json_best_effort(chemin: Path) -> dict:
+    if not chemin.exists():
+        return {}
+    try:
+        return json.loads(chemin.read_text(encoding="utf-8")) or {}
+    except (json.JSONDecodeError, OSError):
+        return {}   # fichier absent/corrompu : on repart d'un état vide
+
+
+def _ecrire_json_atomique(chemin: Path, donnees: dict):
+    chemin.parent.mkdir(parents=True, exist_ok=True)
+    tmp = chemin.with_name(chemin.name + f".tmp{os.getpid()}")
+    tmp.write_text(json.dumps(donnees, ensure_ascii=False, indent=2), encoding="utf-8")
+    os.replace(tmp, chemin)   # atomique sur un même système de fichiers (POSIX et Windows)
+
+
+def _maj_etat_json(chemin: Path, fonction_maj):
+    """Lecture-modification-écriture protégée d'un fichier d'état JSON partagé.
+    `fonction_maj(donnees)` reçoit le dict courant (vide si absent/corrompu) et
+    le modifie en place ; sa valeur de retour, si non None, remplace `donnees`
+    avant l'écriture atomique. Verrou non obtenu ou exception : la mise à jour
+    est abandonnée pour ce cycle (journalisée), jamais propagée à l'appelant."""
+    if not _acquerir_verrou_etat(chemin):
+        log.warning(f"Verrou d'état {chemin.name} non obtenu — mise à jour ignorée pour ce cycle.")
+        return
+    try:
+        donnees = _lire_json_best_effort(chemin)
+        resultat = fonction_maj(donnees)
+        _ecrire_json_atomique(chemin, resultat if resultat is not None else donnees)
+    except Exception as e:
+        log.error(f"Erreur mise à jour état {chemin.name} : {e}")
+    finally:
+        _liberer_verrou_etat(chemin)
+
+
+def _ewma_maj(valeur_precedente: float | None, nouvelle_valeur: float, alpha: float) -> float:
+    """EWMA classique à alpha fixe (mise à jour PAR ISSUE, pas temporelle).
+    Sans valeur précédente, la série démarre à la première observation."""
+    if valeur_precedente is None:
+        return nouvelle_valeur
+    return alpha * nouvelle_valeur + (1 - alpha) * valeur_precedente
+
+
+def _alpha_temporel(delta_heures: float, demi_vie_heures: float) -> float:
+    """Poids de la nouvelle observation pour une EWMA à demi-vie TEMPORELLE
+    (issue #221, F_reseau/F_local) : plus l'écart depuis la dernière mise à
+    jour est grand, plus l'ancienne valeur est oubliée. delta_heures <= 0
+    (observations quasi simultanées, ou horloge en recul) : traité comme une
+    observation fraîche (alpha = 1), plutôt que de produire un poids négatif
+    ou nul incohérent."""
+    if delta_heures <= 0:
+        return 1.0
+    return 1 - 0.5 ** (delta_heures / demi_vie_heures)
+
+
+def _cle_combinaison(projet: str, type_issue: str, mode: str) -> str:
+    return f"{projet}|{type_issue}|{mode}"
+
+
+def _maj_combinaison_timeout(donnees: dict, cle: str, *, duree_s: float,
+                              timeout_courant: int, expiree: bool) -> tuple[float | None, dict]:
+    """Met à jour, DANS `donnees` (le dict complet d'etat_timeout.json), l'entrée
+    de la combinaison `cle`. Retourne (duree_typique_AVANT_maj, etat_APRES_maj).
+
+    Sur timeout (expiree=True) : multiplicateur_backoff *= FACTEUR_BACKOFF
+    immédiatement, compteur de succès rapides consécutifs remis à zéro. AUCUNE
+    mise à jour de duree_typique/variabilite (ces EWMA ne portent que sur les
+    issues RÉUSSIES, cf. §1 de l'issue #221 — un timeout ne mesure pas une
+    durée réelle de traitement, seulement le plafond atteint).
+
+    Sur succès (expiree=False) : variabilite d'abord (écart absolu à
+    duree_typique AVANT cette observation, sinon la mise à jour de
+    duree_typique fausserait l'écart mesuré), puis duree_typique. Si la durée
+    réelle est < SEUIL_SUCCES_RAPIDE × timeout_courant, incrémente le compteur
+    de succès rapides consécutifs ; au bout de SUCCES_RAPIDES_POUR_RESET,
+    réinitialise le backoff à 1.0. Un succès non « rapide » remet le compteur à
+    zéro sans toucher au backoff lui-même."""
+    combinaisons = donnees.setdefault("combinaisons", {})
+    etat = combinaisons.setdefault(cle, {
+        "duree_typique": None,
+        "variabilite": None,
+        "multiplicateur_backoff": 1.0,
+        "succes_rapides_consecutifs": 0,
+        "n_observations": 0,
+    })
+
+    duree_typique_avant = etat.get("duree_typique")
+
+    if expiree:
+        etat["multiplicateur_backoff"] = etat.get("multiplicateur_backoff", 1.0) * FACTEUR_BACKOFF
+        etat["succes_rapides_consecutifs"] = 0
+    else:
+        ecart = abs(duree_s - duree_typique_avant) if duree_typique_avant is not None else 0.0
+        etat["variabilite"] = _ewma_maj(etat.get("variabilite"), ecart, ALPHA_EWMA_ISSUES)
+        etat["duree_typique"] = _ewma_maj(duree_typique_avant, duree_s, ALPHA_EWMA_ISSUES)
+        etat["n_observations"] = etat.get("n_observations", 0) + 1
+
+        if timeout_courant and duree_s < SEUIL_SUCCES_RAPIDE * timeout_courant:
+            etat["succes_rapides_consecutifs"] = etat.get("succes_rapides_consecutifs", 0) + 1
+            if etat["succes_rapides_consecutifs"] >= SUCCES_RAPIDES_POUR_RESET:
+                etat["multiplicateur_backoff"] = 1.0
+                etat["succes_rapides_consecutifs"] = 0
+        else:
+            etat["succes_rapides_consecutifs"] = 0
+
+    return duree_typique_avant, etat
+
+
+def _maj_ambiance(donnees: dict, cle_f: str, ratio: float, date_iso: str):
+    """Met à jour (dans `donnees`, le dict complet d'etat_ambiance.json) l'EWMA
+    à demi-vie temporelle de `cle_f` ('F_reseau' ou 'F_local') avec la nouvelle
+    observation `ratio`. Sans horodatage précédent exploitable, la série
+    démarre à `ratio` (alpha effectif = 1)."""
+    bloc = donnees.setdefault(cle_f, {"valeur_ewma": None, "derniere_maj": None})
+    delta_h = None
+    if bloc.get("valeur_ewma") is not None and bloc.get("derniere_maj"):
+        try:
+            avant = datetime.fromisoformat(bloc["derniere_maj"])
+            maintenant = datetime.fromisoformat(date_iso)
+            delta_h = (maintenant - avant).total_seconds() / 3600
+        except (ValueError, TypeError):
+            delta_h = None
+    if delta_h is None:
+        bloc["valeur_ewma"] = ratio
+    else:
+        alpha = _alpha_temporel(delta_h, DEMI_VIE_AMBIANCE_HEURES)
+        bloc["valeur_ewma"] = alpha * ratio + (1 - alpha) * bloc["valeur_ewma"]
+    bloc["derniere_maj"] = date_iso
+
+
+def maj_calibration_timeout(*, projet: str, type_issue: str, mode: str,
+                            duree_s: float, timeout_courant: int, expiree: bool,
+                            body: str, date_iso: str) -> float | None:
+    """Point d'entrée de la calibration automatique du TIMEOUT (issue #221),
+    appelé après CHAQUE clôture d'issue (succès ou timeout), au même site que
+    enregistrer_duree. Met à jour etat_timeout.json (combinaison projet/TYPE/
+    mode) et, sur succès avec tag_reseau connu, etat_ambiance.json (F_reseau/
+    F_local, global à tous les projets). Journalise et retourne le
+    TIMEOUT_suggéré (secondes, plancher appliqué) pour cette combinaison, ou
+    None si le calcul n'a pas pu aboutir (verrou d'état non obtenu, ou aucune
+    observation de succès encore enregistrée pour cette combinaison).
+
+    N'APPLIQUE RIEN au comportement d'exécution actuel : le TIMEOUT réellement
+    utilisé pour lancer claude reste exclusivement celui de extraire_timeout()
+    — cette fonction ne fait que calculer et journaliser."""
+    cle = _cle_combinaison(projet, type_issue, mode)
+    capture = {}
+
+    def _maj_timeout(donnees):
+        duree_typique_avant, etat = _maj_combinaison_timeout(
+            donnees, cle, duree_s=duree_s, timeout_courant=timeout_courant, expiree=expiree)
+        capture["duree_typique_avant"] = duree_typique_avant
+        capture["etat"] = dict(etat)
+        return donnees
+
+    _maj_etat_json(FICHIER_ETAT_TIMEOUT, _maj_timeout)
+
+    etat = capture.get("etat")
+    if etat is None:
+        log.warning(f"Calibration TIMEOUT [{cle}] : état inobtenable ce cycle — TIMEOUT_suggéré non calculé.")
+        return None
+
+    # F n'est alimenté QUE par les succès (comme duree_typique, §1 de l'issue) :
+    # un timeout est plafonné à la valeur configurée, pas une mesure de la durée
+    # réelle nécessaire — l'inclure biaiserait F vers le haut artificiellement.
+    # Et seulement si tag_reseau est explicitement connu (jamais deviné, §2).
+    tag_reseau = _detecter_tag_reseau(body)
+    duree_typique_avant = capture.get("duree_typique_avant")
+    if not expiree and tag_reseau is not None and duree_typique_avant:
+        ratio = duree_s / duree_typique_avant
+        cle_f = "F_reseau" if tag_reseau else "F_local"
+
+        def _maj_f(donnees, cle_f=cle_f, ratio=ratio):
+            _maj_ambiance(donnees, cle_f, ratio, date_iso)
+            return donnees
+
+        _maj_etat_json(FICHIER_ETAT_AMBIANCE, _maj_f)
+
+    duree_typique = etat.get("duree_typique")
+    if duree_typique is None:
+        log.info(f"Calibration TIMEOUT [{cle}] : aucun succès encore enregistré — TIMEOUT_suggéré non calculable.")
+        return None
+
+    # F_pertinent pour la SUGGESTION : F_reseau si CETTE issue est taguée réseau,
+    # F_local sinon (par défaut en l'absence de tag — hypothèse la moins
+    # généreuse). Lecture indépendante de la mise à jour ci-dessus : même une
+    # observation qui n'a pas pu alimenter F (tag inconnu) doit pouvoir lire le
+    # F déjà établi par d'autres observations.
+    ambiance = _lire_json_best_effort(FICHIER_ETAT_AMBIANCE)
+    cle_f_lecture = "F_reseau" if tag_reseau else "F_local"
+    f_brut = (ambiance.get(cle_f_lecture) or {}).get("valeur_ewma")
+    f_pertinent = max(1.0, f_brut) if f_brut is not None else 1.0   # plancher F >= 1.0 : n'allonge jamais, ne raccourcit jamais
+
+    variabilite = etat.get("variabilite") or 0.0
+    backoff = etat.get("multiplicateur_backoff", 1.0)
+    suggere = max((duree_typique + K_VARIABILITE * variabilite) * f_pertinent * backoff,
+                  TIMEOUT_SUGGERE_PLANCHER)
+
+    log.info(
+        f"Calibration TIMEOUT [{cle}] : duree_typique={duree_typique:.1f}s "
+        f"variabilite={variabilite:.1f}s F({cle_f_lecture})={f_pertinent:.3f} "
+        f"backoff={backoff:.3f} → TIMEOUT_suggéré={suggere:.0f}s"
+        + (" [issue expirée]" if expiree else "")
+    )
+    return suggere
 
 
 def extraire_timeout(body: str, titre: str = "") -> int:
@@ -1498,14 +1796,32 @@ def traiter_issue(issue: dict, dry_run: bool):
                 issues_en_cours.discard(numero)
                 # Historique des durées (issue #108) : durée réelle ACK → fermeture,
                 # catégorisée par projet/type/mode, pour l'estimation prédictive.
+                type_issue_close = deduire_type_issue(titre, body)
+                mode_close        = "write" if autoriser_ecriture else "read"
+                duree_reelle      = time.monotonic() - debut_traitement
+                date_iso_close    = datetime.now().isoformat(timespec="seconds")
                 enregistrer_duree(
                     CFG.nom,
-                    deduire_type_issue(titre, body),
-                    "write" if autoriser_ecriture else "read",
-                    time.monotonic() - debut_traitement,
-                    datetime.now().isoformat(timespec="seconds"),
+                    type_issue_close,
+                    mode_close,
+                    duree_reelle,
+                    date_iso_close,
                     body=body,
                     nb_projets_actifs=nb_projets_actifs_debut,
+                )
+                # Calibration automatique du TIMEOUT (issue #221) : met à jour les
+                # EWMA duree_typique/variabilite/backoff (par combinaison) et F
+                # (global), puis journalise le TIMEOUT_suggéré — sans effet sur le
+                # TIMEOUT réellement appliqué (extraire_timeout reste seul décisif).
+                maj_calibration_timeout(
+                    projet=CFG.nom,
+                    type_issue=type_issue_close,
+                    mode=mode_close,
+                    duree_s=duree_reelle,
+                    timeout_courant=timeout,
+                    expiree=False,
+                    body=body,
+                    date_iso=date_iso_close,
                 )
                 notifier(
                     labels,
@@ -1529,15 +1845,32 @@ def traiter_issue(issue: dict, dry_run: bool):
             # compris pour les issues critiques en retry infini, qui n'atteignent
             # jamais la branche d'abandon ci-dessous.
             if sortie.startswith("Timeout après"):
+                type_issue_expire = deduire_type_issue(titre, body)
+                mode_expire        = "write" if autoriser_ecriture else "read"
+                duree_expiree      = time.monotonic() - debut_traitement
+                date_iso_expire    = datetime.now().isoformat(timespec="seconds")
                 enregistrer_duree(
                     CFG.nom,
-                    deduire_type_issue(titre, body),
-                    "write" if autoriser_ecriture else "read",
-                    time.monotonic() - debut_traitement,
-                    datetime.now().isoformat(timespec="seconds"),
+                    type_issue_expire,
+                    mode_expire,
+                    duree_expiree,
+                    date_iso_expire,
                     body=body,
                     nb_projets_actifs=nb_projets_actifs_debut,
                     expiree=True,
+                )
+                # Calibration automatique du TIMEOUT (issue #221) : sur timeout,
+                # multiplicateur_backoff *= FACTEUR_BACKOFF immédiatement pour cette
+                # combinaison (par tentative expirée, même logique que ci-dessus).
+                maj_calibration_timeout(
+                    projet=CFG.nom,
+                    type_issue=type_issue_expire,
+                    mode=mode_expire,
+                    duree_s=duree_expiree,
+                    timeout_courant=timeout,
+                    expiree=True,
+                    body=body,
+                    date_iso=date_iso_expire,
                 )
 
             if tentative >= CFG.max_essais:
