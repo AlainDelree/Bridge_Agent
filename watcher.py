@@ -1024,6 +1024,58 @@ def maj_calibration_timeout(*, projet: str, type_issue: str, mode: str,
     return suggere
 
 
+def lire_timeout_suggere(projet: str, type_issue: str, mode: str) -> float | None:
+    """Lit (sans écrire ni verrouiller) le TIMEOUT_suggéré actuellement en
+    vigueur pour la combinaison (projet, TYPE, mode), à partir de l'état déjà
+    persisté par maj_calibration_timeout (issue #221).
+
+    Sert au commentaire de clôture d'une issue en ÉCHEC définitif (issue
+    #222) : contrairement au cas succès, l'appel à maj_calibration_timeout
+    pour CET échec a déjà eu lieu (une fois par tentative expirée, dans la
+    boucle de retry) — le rappeler ici biaiserait l'EWMA en comptant deux
+    fois la même observation. Une simple lecture de l'état déjà à jour suffit.
+    Best-effort : retourne None si l'état est illisible ou si aucun succès n'a
+    encore été enregistré pour cette combinaison (mêmes conditions que
+    maj_calibration_timeout)."""
+    try:
+        cle = _cle_combinaison(projet, type_issue, mode)
+        combo = _lire_json_best_effort(FICHIER_ETAT_TIMEOUT).get(cle)
+        if not combo:
+            return None
+        duree_typique = combo.get("duree_typique")
+        if duree_typique is None:
+            return None
+        variabilite = combo.get("variabilite") or 0.0
+        backoff = combo.get("multiplicateur_backoff", 1.0)
+
+        # F_local par défaut (hypothèse la moins généreuse) : cette lecture
+        # est hors contexte d'une issue précise, donc sans tag_reseau connu —
+        # même choix par défaut que maj_calibration_timeout en l'absence de tag.
+        f_brut = (_lire_json_best_effort(FICHIER_ETAT_AMBIANCE).get("F_local") or {}).get("valeur_ewma")
+        f_pertinent = max(1.0, f_brut) if f_brut is not None else 1.0
+
+        return max((duree_typique + K_VARIABILITE * variabilite) * f_pertinent * backoff,
+                    TIMEOUT_SUGGERE_PLANCHER)
+    except Exception as e:
+        log.warning(f"Lecture TIMEOUT_suggéré [{projet}/{type_issue}/{mode}] impossible : {e}")
+        return None
+
+
+def formater_bloc_calibration(duree_s: float, timeout_courant: int, suggere: float | None) -> str:
+    """Bloc lisible à ajouter au commentaire de clôture GitHub d'une issue
+    (issue #222) : durée réelle de traitement et TIMEOUT_suggéré calculé par
+    la calibration automatique (issue #221).
+
+    Seul canal fiable pour transmettre cette information calculée localement
+    à Claude Chat, qui n'a pas accès direct aux fichiers d'état du ThinkPad
+    (etat_timeout.json, etat_ambiance.json, historique_durees.json — tous
+    gitignorés)."""
+    bloc = f"\n\n---\n⏱️ Durée réelle : {duree_s:.0f}s (TIMEOUT courant : {timeout_courant}s)"
+    if suggere is not None:
+        bloc += f"\n📊 TIMEOUT_suggéré (calibration automatique, issue #221) : {suggere:.0f}s"
+    return bloc
+
+
 def extraire_timeout(body: str, titre: str = "") -> int:
     """Extrait le TIMEOUT (en secondes) depuis le body de l'issue (en-tête bridge).
     Si absent ou mal formé, retombe sur le défaut du projet — mais un défaut plus
@@ -1219,6 +1271,33 @@ def commenter_issue(numero: int, message: str) -> bool:
         return True
     except Exception as e:
         log.error(f"Erreur commentaire issue #{numero} : {e}")
+        return False
+
+def editer_dernier_commentaire(numero: int, message: str) -> bool:
+    """Édite le dernier commentaire posté par le watcher sur l'issue
+    (`gh issue comment --edit-last`), au lieu d'en poster un nouveau.
+
+    Sert à enrichir le commentaire de résultat déjà posté avec le bloc de
+    calibration TIMEOUT (issue #222) : la durée réelle et le TIMEOUT_suggéré
+    ne sont connus qu'APRÈS la fermeture de l'issue (maj_calibration_timeout
+    a besoin de duree_reelle), donc après le premier `commenter_resultat_avec_
+    retry`. Best-effort : un échec ici n'affecte ni la clôture déjà effectuée
+    ni le commentaire déjà en place (juste privé de son bloc calibration)."""
+    try:
+        res = subprocess.run(
+            ["gh", "issue", "comment", str(numero),
+             "--repo", CFG.depot,
+             "--edit-last",
+             "--body", message],
+            capture_output=True, text=True,
+            encoding="utf-8", errors="replace", timeout=30
+        )
+        if res.returncode != 0:
+            log.error(f"Erreur édition dernier commentaire issue #{numero} (code {res.returncode}) : {res.stderr.strip()}")
+            return False
+        return True
+    except Exception as e:
+        log.error(f"Erreur édition dernier commentaire issue #{numero} : {e}")
         return False
 
 def commenter_resultat_avec_retry(numero: int, message: str) -> bool:
@@ -1768,10 +1847,10 @@ def traiter_issue(issue: dict, dry_run: bool):
 
             if succes:
                 log.info(f"  ✓ Issue #{numero} traitée avec succès.")
+                message_resultat = f"## Résultat\n\n{avertissement_conflit}{sortie}"
                 # Le commentaire de résultat est critique (issue #195) : on le
                 # poste avec retry/backoff et on ne ferme l'issue QUE s'il a réussi.
-                if not commenter_resultat_avec_retry(
-                        numero, f"## Résultat\n\n{avertissement_conflit}{sortie}"):
+                if not commenter_resultat_avec_retry(numero, message_resultat):
                     # Échec réseau persistant : fermer l'issue effacerait
                     # silencieusement le travail. On la laisse OUVERTE (ni `close`
                     # ni label `done`) pour reprise au prochain cycle. La garde
@@ -1813,7 +1892,7 @@ def traiter_issue(issue: dict, dry_run: bool):
                 # EWMA duree_typique/variabilite/backoff (par combinaison) et F
                 # (global), puis journalise le TIMEOUT_suggéré — sans effet sur le
                 # TIMEOUT réellement appliqué (extraire_timeout reste seul décisif).
-                maj_calibration_timeout(
+                suggere = maj_calibration_timeout(
                     projet=CFG.nom,
                     type_issue=type_issue_close,
                     mode=mode_close,
@@ -1823,6 +1902,16 @@ def traiter_issue(issue: dict, dry_run: bool):
                     body=body,
                     date_iso=date_iso_close,
                 )
+                # Exposition du TIMEOUT_suggéré dans le commentaire de clôture
+                # GitHub (issue #222) : seul canal fiable pour transmettre cette
+                # info calculée localement à Claude Chat (pas d'accès direct aux
+                # fichiers d'état gitignorés du ThinkPad). Connue seulement APRÈS
+                # la fermeture (dépend de duree_reelle) : on édite le commentaire
+                # de résultat déjà posté (gh --edit-last) plutôt que d'en poster
+                # un second. Best-effort — n'affecte pas la clôture déjà faite.
+                if not editer_dernier_commentaire(
+                        numero, message_resultat + formater_bloc_calibration(duree_reelle, timeout, suggere)):
+                    log.warning(f"  Ajout du bloc calibration au commentaire #{numero} échoué (best-effort, non bloquant).")
                 notifier(
                     labels,
                     titre=f"✅ {CFG.nom} #{numero} — traitée",
@@ -1903,6 +1992,17 @@ def traiter_issue(issue: dict, dry_run: bool):
                         f"cette issue ne sera plus retraitée automatiquement tant que le "
                         f"label n'est pas retiré (ou l'issue fermée) manuellement."
                     )
+                    # Exposition du TIMEOUT_suggéré dans le commentaire de clôture
+                    # GitHub, ici aussi côté échec (issue #222). Simple LECTURE de
+                    # l'état (lire_timeout_suggere), pas un nouvel appel à
+                    # maj_calibration_timeout : chaque tentative expirée l'a déjà
+                    # mis à jour ci-dessus — le rappeler ici compterait deux fois la
+                    # même observation dans l'EWMA.
+                    type_issue_echec = deduire_type_issue(titre, body)
+                    mode_echec        = "write" if autoriser_ecriture else "read"
+                    duree_echec       = time.monotonic() - debut_traitement
+                    suggere_echec     = lire_timeout_suggere(CFG.nom, type_issue_echec, mode_echec)
+                    message_echec += formater_bloc_calibration(duree_echec, timeout, suggere_echec)
                     commenter_issue(numero, message_echec)
                     ajouter_label(numero, LABEL_ECHEC)
                     notifier(
