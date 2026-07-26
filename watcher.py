@@ -26,6 +26,7 @@ import re
 import hashlib
 import tempfile
 import platform
+import signal
 from logging.handlers import RotatingFileHandler
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -1486,6 +1487,96 @@ def fermer_issue(numero: int) -> bool:
         log.error(f"Erreur fermeture issue #{numero} : {e}")
         return False
 
+def _lister_processus_pgid(pgid: int, exclure_pid: int | None = None) -> list[tuple[int, str]]:
+    """POSIX uniquement. Liste (pid, ligne de commande) des process actuellement
+    vivants dont le pgid vaut exactement pgid, hors exclure_pid. Lecture directe
+    de /proc, sans dépendance externe (psutil). Best-effort : un process qui
+    disparaît pendant l'énumération (race normale) est simplement ignoré."""
+    resultat = []
+    proc_dir = Path("/proc")
+    if not proc_dir.is_dir():
+        return resultat
+    for entree in proc_dir.iterdir():
+        if not entree.name.isdigit():
+            continue
+        pid = int(entree.name)
+        if pid == exclure_pid:
+            continue
+        try:
+            if os.getpgid(pid) != pgid:
+                continue
+            cmdline = entree.joinpath("cmdline").read_bytes().replace(b"\0", b" ").decode("utf-8", "replace").strip()
+        except (ProcessLookupError, FileNotFoundError, PermissionError):
+            continue
+        resultat.append((pid, cmdline or "(cmdline indisponible)"))
+    return resultat
+
+
+def _nettoyer_arbre_claude(proc: subprocess.Popen) -> None:
+    """Garantit qu'aucun process de l'arbre engendré par CE claude (proc.pid) ne
+    survive au retour de lancer_claude (issue #247). Appelée depuis un `finally` :
+    couvre indifféremment succès, échec, TimeoutExpired et exception.
+
+    Cas réel à l'origine de l'issue : un `cmd.exe` lancé par un script de build
+    Windows (pushd + .bat) survivait à la fermeture de l'issue et gardait un
+    verrou sur le partage réseau utilisé comme répertoire courant, rendant
+    l'exécutable produit injouable jusqu'à un `taskkill` manuel — sans le
+    moindre signal dans le journal.
+
+    Solution retenue : terminaison de l'arbre de process après coup (taskkill
+    /T /F sous Windows, groupe de process POSIX sous Linux), plutôt qu'un objet
+    Job Windows. Un Job Object est plus robuste (pas de fenêtre de course) mais
+    est une API Windows pure (ctypes/pywin32) : il aurait fallu une branche
+    entièrement différente, sans équivalent côté Linux, dans un script UNIQUE
+    partagé par CCL et CCW. La fenêtre de course de l'option retenue est
+    négligeable en pratique (quelques millisecondes entre la fin de
+    `communicate()`/l'expiration du timeout et cet appel).
+
+    Ne cible QUE la descendance du PID claude de CETTE tâche, jamais par nom
+    d'exécutable — point critique (#247 point 4) : une erreur ici tuerait le
+    watcher lui-même ou un watcher frère sur la même machine.
+    - POSIX : proc a été lancé avec start_new_session=True, donc son pgid ==
+      son propre pid — un groupe forcément neuf et distinct de celui du
+      watcher (et de tout autre watcher). os.killpg cible ce seul groupe.
+    - Windows : `taskkill /PID <pid> /T /F` ne parcourt que l'arbre
+      généalogique de ce PID précis, jamais un process par son nom.
+    """
+    pid = proc.pid
+    if os.name == "nt":
+        try:
+            res = subprocess.run(
+                ["taskkill", "/PID", str(pid), "/T", "/F"],
+                capture_output=True, text=True, timeout=15,
+            )
+            sortie = f"{res.stdout} {res.stderr}".upper()
+            if res.returncode == 0 and "SUCCESS" in sortie:
+                log.warning(
+                    f"Arbre de process claude (PID {pid}) nettoyé via "
+                    f"'taskkill /PID {pid} /T /F' : un ou plusieurs process de "
+                    f"cette tâche ont survécu au retour de lancer_claude et ont "
+                    f"été terminés."
+                )
+        except Exception as e:
+            log.warning(f"Nettoyage taskkill de l'arbre claude (PID {pid}) impossible : {e}")
+    else:
+        orphelins = _lister_processus_pgid(pid, exclure_pid=pid)
+        encore_vivant = proc.poll() is None
+        for pid_orphelin, cmdline in orphelins:
+            log.warning(
+                f"Descendant orphelin de claude (PID {pid}) tué : PID {pid_orphelin} — {cmdline}"
+            )
+        if orphelins or encore_vivant:
+            try:
+                os.killpg(pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass  # déjà mort entre l'énumération et le kill : rien à faire
+
+    try:
+        proc.wait(timeout=5)
+    except Exception:
+        pass  # best-effort : ne jamais faire échouer lancer_claude sur ce nettoyage
+
+
 def lancer_claude(numero: int, titre: str, body: str, dry_run: bool,
                   autoriser_ecriture: bool = False,
                   timeout: int = None,
@@ -1644,24 +1735,41 @@ Si la tâche échoue, remplace ✅ par ❌ et explique la cause en une ligne.
         cmd.append("--dangerously-skip-permissions")
     cmd.append(prompt)
 
+    # Popen (plutôt que subprocess.run) pour garder la main sur le PID : le
+    # nettoyage de l'arbre de process (issue #247) doit s'exécuter dans un
+    # finally, quel que soit le mode de sortie (succès, échec, timeout,
+    # exception), et a besoin du PID pour ne cibler QUE la descendance de CE
+    # claude. start_new_session=True (POSIX) / CREATE_NEW_PROCESS_GROUP
+    # (Windows) donnent à ce process un groupe/une session à lui, préalable
+    # nécessaire à un nettoyage sûr — voir _nettoyer_arbre_claude.
+    kwargs_popen = dict(
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        text=True, encoding="utf-8", errors="replace",
+        cwd=cwd_effectif,
+    )
+    if os.name == "nt":
+        kwargs_popen["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
+    else:
+        kwargs_popen["start_new_session"] = True
+
+    proc = None
     try:
-        res = subprocess.run(
-            cmd,
-            capture_output=True, text=True,
-            encoding="utf-8", errors="replace",
-            timeout=timeout,
-            cwd=cwd_effectif
-        )
-        if res.returncode == 0:
-            return True, res.stdout.strip()
-        else:
-            return False, res.stderr.strip() or "Erreur inconnue"
-    except subprocess.TimeoutExpired:
-        return False, f"Timeout après {timeout}s"
+        proc = subprocess.Popen(cmd, **kwargs_popen)
+        try:
+            stdout, stderr = proc.communicate(timeout=timeout)
+            if proc.returncode == 0:
+                return True, stdout.strip()
+            else:
+                return False, stderr.strip() or "Erreur inconnue"
+        except subprocess.TimeoutExpired:
+            return False, f"Timeout après {timeout}s"
     except FileNotFoundError:
         return False, "Claude Code introuvable (claude non trouvé dans PATH)"
     except Exception as e:
         return False, str(e)
+    finally:
+        if proc is not None:
+            _nettoyer_arbre_claude(proc)
 
 
 def diagnostiquer_echec(numero: int, titre: str, body: str,
