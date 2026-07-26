@@ -25,6 +25,7 @@ import glob
 import re
 import hashlib
 import tempfile
+import platform
 from logging.handlers import RotatingFileHandler
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -190,6 +191,7 @@ class Config:
     perimetre_dynamique: bool = False  # périmètre fourni par l'issue (REPO_CIBLE) plutôt que figé dans le .conf — outil d'audit multi-dépôts (issue #125)
     notifier_local: bool   = True  # ce watcher émet-il lui-même bip/notify-send/ntfy à la fin d'une issue (issue #187) ? True = comportement historique. Mettre à False sur la VM CCW (et éventuellement CCL) pour laisser new_issue.py notifier de façon centralisée sur le ThinkPad, sans doublon.
     delai_inactivite_min: int = 20  # auto-extinction : minutes sans aucune issue traitable avant que le watcher ne s'arrête proprement (issue #200). 0 = désactivé (le watcher tourne indéfiniment, comportement historique).
+    libelle_agent: str     = ""    # libellé de l'agent affiché dans l'ACK (ex. "agent Linux", "agent Windows") — vide = déduit automatiquement de la plateforme (issue #239)
 
     @property
     def url_ntfy(self) -> str:
@@ -198,6 +200,17 @@ class Config:
     @property
     def fichier_log(self) -> Path:
         return DOSSIER_LOGS / f"watcher-{self.nom}.log"
+
+    @property
+    def libelle_agent_effectif(self) -> str:
+        """Libellé d'agent à afficher dans l'ACK. Priorité : LIBELLE_AGENT du
+        .conf s'il est déclaré, sinon détection de plateforme (issue #239) —
+        un même watcher.py tourne sur CCL (Linux) et CCW (Windows), et le
+        libellé doit refléter la machine qui a réellement traité l'issue plutôt
+        qu'un texte figé "agent Linux" trompeur côté Windows."""
+        if self.libelle_agent:
+            return self.libelle_agent
+        return "agent Windows" if platform.system() == "Windows" else "agent Linux"
 
 
 CHAMPS_REQUIS = ("NOM", "DEPOT", "REP_TRAVAIL", "TOPIC_NTFY")
@@ -270,6 +283,7 @@ def charger_config(chemin: Path) -> Config:
         perimetre_dynamique = booleen("PERIMETRE_DYNAMIQUE", False),
         notifier_local      = booleen("NOTIFIER_LOCAL", True),
         delai_inactivite_min = entier("DELAI_INACTIVITE_MIN", 20),
+        libelle_agent       = brut.get("LIBELLE_AGENT", ""),
     )
 
 
@@ -1935,7 +1949,7 @@ def traiter_issue(issue: dict, dry_run: bool):
     try:
         commenter_issue(
             numero,
-            f"✅ ACK — Issue #{numero} reçue par watcher.py (agent Linux, projet {CFG.nom}). "
+            f"✅ ACK — Issue #{numero} reçue par watcher.py ({CFG.libelle_agent_effectif}, projet {CFG.nom}). "
             f"Mode : **{mode_txt}**. Traitement en cours..."
         )
         # Départ du chrono de durée réelle (ACK → fermeture), pour l'historique des

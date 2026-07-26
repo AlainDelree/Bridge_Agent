@@ -715,8 +715,23 @@ de l'expiration — à activer par Alain s'il le souhaite (cf. proposition issue
 Windows installé (pas encore exécuté contre une VM réelle). À noter :
 `watcher.py` n'a nécessité **aucune modification** — il est déjà portable et
 son `LABEL` est paramétrable par config, donc `LABEL=for-windows` dans
-`ccw.conf` suffit à ce qu'il ne prenne que les issues Windows. Le watcher
-tourne comme **vrai service Windows** enregistré via NSSM (issue #148) —
+`ccw.conf` suffit à ce qu'il ne prenne que les issues Windows.
+
+**Libellé d'agent dans l'ACK (issue #239).** Le message d'ACK posté à la
+réception d'une issue (`✅ ACK — Issue #N reçue par watcher.py (…, projet
+<nom>)`) affiche un libellé d'agent déduit automatiquement de la plateforme
+(`platform.system()`) : « agent Linux » côté CCL, « agent Windows » côté CCW.
+Aucune action requise sur les `.conf` existants (repli inchangé). Champ
+optionnel `LIBELLE_AGENT` disponible dans n'importe quel `.conf` pour forcer
+un libellé explicite si la détection automatique ne convient pas (ex.
+exécution dans un conteneur ou un environnement où `platform.system()` ne
+reflète pas l'agent réel) :
+
+```
+LIBELLE_AGENT = agent Windows
+```
+
+Le watcher tourne comme **vrai service Windows** enregistré via NSSM (issue #148) —
 équivalent direct des services systemd du §13 : démarrage au boot **sans
 session ouverte** (`SERVICE_AUTO_START`) et redémarrage automatique sur
 échec (`AppExit Default Restart` + `AppRestartDelay 5000`), sous LocalSystem
