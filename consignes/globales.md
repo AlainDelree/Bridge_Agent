@@ -21,11 +21,16 @@
   progrès, pas la durée en elle-même — attends sa fin (voir la contrainte
   d'exécution ci-dessous pour la façon d'attendre correctement).
 - **Contrainte d'exécution : accomplis la TOTALITÉ de ta tâche en une seule
-  exécution synchrone et bloquante.** Ne lance jamais une commande en
-  arrière-plan, ne recours jamais à un « monitor », une notification, un
-  rappel programmé, ou une formulation du type « je répondrai/poursuivrai
-  quand… » / « j'attends la fin de… ». Si une opération dépasse le timeout
-  d'un appel d'outil, relance-la avec un timeout explicite plus long, ou
-  boucle sur sa sortie DANS cette même exécution jusqu'à complétion réelle —
-  ne conclus jamais ton tour de parole sur une attente. Le watcher ferme
+  exécution synchrone et bloquante.** Ce qui est interdit, c'est de CONCLURE
+  ton tour de parole avant que l'opération soit réellement terminée et son
+  résultat vérifié — pas l'arrière-plan en tant que technique : l'outil Bash
+  a lui-même un timeout maximum par appel (de l'ordre de dix minutes) qu'aucun
+  paramètre ne permet de dépasser. Si une opération dépasse le timeout d'un
+  appel d'outil, deux voies sont permises : relance-la avec un timeout
+  explicite plus long tant que le plafond de l'outil le permet, OU lance-la
+  en arrière-plan À CONDITION IMPÉRATIVE d'interroger sa sortie en boucle DANS
+  cette même exécution jusqu'à complétion réelle. Restent formellement
+  interdits, sans changement : un « monitor », une notification, un rappel
+  programmé, et toute formulation du type « je répondrai/poursuivrai quand… »
+  / « j'attends la fin de… » en guise de conclusion. Le watcher ferme
   l'issue dès ta réponse postée : il n'existe AUCUNE reprise possible.
