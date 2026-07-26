@@ -24,6 +24,7 @@ import os
 import glob
 import re
 import hashlib
+import tempfile
 from logging.handlers import RotatingFileHandler
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -146,6 +147,14 @@ PAUSE_ENTRE_TENTATIVES = 5
 # est critique : sans elle, fermer l'issue effacerait silencieusement le travail.
 # 1 tentative initiale + 3 tentatives espacées de 5, 10 puis 20 s.
 DELAIS_RETRY_RESULTAT = (5, 10, 20)
+
+# Marqueur non ambigu identifiant un commentaire de RÉSULTAT posté par le
+# watcher (issue #237). Ligne HTML invisible sur GitHub, placée en tête du
+# commentaire. Remplace le repérage par sous-chaîne "## Résultat", qui matchait
+# aussi "## Résultat attendu" (titre de section présent dans quasi toutes les
+# issues) — un faux positif aurait fermé une issue sans rien traiter si ce
+# texte apparaissait un jour dans un commentaire.
+MARQUEUR_RESULTAT = "<!-- bridge:resultat -->"
 
 # Abréviations du dictionnaire bridge
 SOURCES = {"CC": "Claude Chat", "CCL": "Claude Code Linux", "CCW": "Claude Code Windows"}
@@ -1256,12 +1265,25 @@ def commenter_issue(numero: int, message: str) -> bool:
     Retourne True si `gh` a réussi (returncode 0), False sinon. Avant issue #195
     le code de retour n'était jamais inspecté : `subprocess.run` retourne
     normalement même sur exit non-zéro, donc un échec réseau intermittent de
-    `gh issue comment` restait silencieux côté Python."""
+    `gh issue comment` restait silencieux côté Python.
+
+    Passe le message via `--body-file` (fichier temporaire UTF-8) plutôt que
+    `--body <message>` (issue #237) : sous Windows la ligne de commande est
+    plafonnée à 32767 caractères, dépassés par un rapport de build
+    multi-étapes — `gh` retournait alors un exit code 0 sans avoir rien posté
+    (troncature silencieuse en amont). `--body-file` supprime aussi tout
+    problème d'échappement de shell."""
+    fichier_tmp = None
     try:
+        with tempfile.NamedTemporaryFile(
+                mode="w", suffix=".md", delete=False,
+                encoding="utf-8") as f:
+            f.write(message)
+            fichier_tmp = f.name
         res = subprocess.run(
             ["gh", "issue", "comment", str(numero),
              "--repo", CFG.depot,
-             "--body", message],
+             "--body-file", fichier_tmp],
             capture_output=True, text=True,
             encoding="utf-8", errors="replace", timeout=30
         )
@@ -1272,6 +1294,12 @@ def commenter_issue(numero: int, message: str) -> bool:
     except Exception as e:
         log.error(f"Erreur commentaire issue #{numero} : {e}")
         return False
+    finally:
+        if fichier_tmp:
+            try:
+                Path(fichier_tmp).unlink(missing_ok=True)
+            except OSError:
+                pass
 
 def editer_dernier_commentaire(numero: int, message: str) -> bool:
     """Édite le dernier commentaire posté par le watcher sur l'issue
@@ -1282,13 +1310,22 @@ def editer_dernier_commentaire(numero: int, message: str) -> bool:
     ne sont connus qu'APRÈS la fermeture de l'issue (maj_calibration_timeout
     a besoin de duree_reelle), donc après le premier `commenter_resultat_avec_
     retry`. Best-effort : un échec ici n'affecte ni la clôture déjà effectuée
-    ni le commentaire déjà en place (juste privé de son bloc calibration)."""
+    ni le commentaire déjà en place (juste privé de son bloc calibration).
+
+    Passe le message via `--body-file` pour la même raison que
+    `commenter_issue` (issue #237)."""
+    fichier_tmp = None
     try:
+        with tempfile.NamedTemporaryFile(
+                mode="w", suffix=".md", delete=False,
+                encoding="utf-8") as f:
+            f.write(message)
+            fichier_tmp = f.name
         res = subprocess.run(
             ["gh", "issue", "comment", str(numero),
              "--repo", CFG.depot,
              "--edit-last",
-             "--body", message],
+             "--body-file", fichier_tmp],
             capture_output=True, text=True,
             encoding="utf-8", errors="replace", timeout=30
         )
@@ -1299,33 +1336,21 @@ def editer_dernier_commentaire(numero: int, message: str) -> bool:
     except Exception as e:
         log.error(f"Erreur édition dernier commentaire issue #{numero} : {e}")
         return False
+    finally:
+        if fichier_tmp:
+            try:
+                Path(fichier_tmp).unlink(missing_ok=True)
+            except OSError:
+                pass
 
-def commenter_resultat_avec_retry(numero: int, message: str) -> bool:
-    """Poste le commentaire de RÉSULTAT avec retry/backoff (issue #195).
+def _commentaire_marque_present(numero: int, marqueur: str = MARQUEUR_RESULTAT) -> bool:
+    """Relit l'issue et indique si un commentaire portant `marqueur` est bien
+    présent (issue #237). Sert à VÉRIFIER qu'un commentaire a réellement été
+    créé plutôt que de faire confiance au seul code de retour de `gh` (celui-ci
+    peut rendre 0 sans qu'aucun commentaire n'existe, cf. issue #236).
 
-    1 tentative initiale, puis jusqu'à 3 tentatives espacées de 5, 10 puis 20 s
-    (DELAIS_RETRY_RESULTAT). Retourne True dès qu'une tentative réussit, False si
-    toutes échouent. Réservé au commentaire de résultat : l'ACK et le message
-    d'échec restent best-effort sans retry."""
-    if commenter_issue(numero, message):
-        return True
-    for delai in DELAIS_RETRY_RESULTAT:
-        log.warning(f"  Commentaire de résultat #{numero} échoué — nouvelle tentative dans {delai}s.")
-        time.sleep(delai)
-        if commenter_issue(numero, message):
-            return True
-    log.error(f"  Commentaire de résultat #{numero} échoué après {1 + len(DELAIS_RETRY_RESULTAT)} tentatives.")
-    return False
-
-def resultat_deja_poste(numero: int) -> bool:
-    """Garde d'idempotence (issue #195) : indique si l'issue porte déjà un
-    commentaire de résultat (`## Résultat`) posté par le watcher.
-
-    Sert à éviter un retraitement complet à tort si l'issue est reprise alors
-    qu'un cycle précédent avait réussi le commentaire mais échoué la fermeture
-    (coupure réseau entre `comment` et `close`). En cas d'erreur de lecture, on
-    retourne False (comportement historique : on retraite) plutôt que de risquer
-    de sauter à tort une issue réellement non traitée."""
+    En cas d'erreur de lecture, retourne False (on ne peut pas confirmer la
+    présence => la tentative est traitée comme un échec, quitte à reposter)."""
     try:
         res = subprocess.run(
             ["gh", "issue", "view", str(numero),
@@ -1338,11 +1363,67 @@ def resultat_deja_poste(numero: int) -> bool:
             log.error(f"Erreur lecture commentaires issue #{numero} (code {res.returncode}) : {res.stderr.strip()}")
             return False
         data = json.loads(res.stdout or "{}")
-        return any("## Résultat" in (c.get("body") or "")
+        return any(marqueur in (c.get("body") or "")
                    for c in data.get("comments", []))
     except Exception as e:
-        log.error(f"Erreur vérification idempotence issue #{numero} : {e}")
+        log.error(f"Erreur vérification présence commentaire issue #{numero} : {e}")
         return False
+
+def commenter_resultat_avec_retry(numero: int, message: str) -> bool:
+    """Poste le commentaire de RÉSULTAT avec retry/backoff (issue #195).
+
+    1 tentative initiale, puis jusqu'à 3 tentatives espacées de 5, 10 puis 20 s
+    (DELAIS_RETRY_RESULTAT). Retourne True dès qu'une tentative réussit, False si
+    toutes échouent. Réservé au commentaire de résultat : l'ACK et le message
+    d'échec restent best-effort sans retry.
+
+    VÉRIFICATION post-publication (issue #236/#237) : un exit code 0 de `gh`
+    ne suffit plus à conclure au succès — l'incident #236 a montré un
+    commentaire jamais créé malgré un code de retour 0 (dépassement de la
+    limite argv Windows, cf. `commenter_issue`). Après chaque tentative
+    rendant 0, on relit l'issue et on exige la présence effective du
+    commentaire (marqueur `MARQUEUR_RESULTAT`, ajouté par l'appelant en tête
+    de `message`) avant de retourner True. Si la relecture ne le trouve pas,
+    la tentative est traitée comme un échec et on enchaîne sur la suivante."""
+    def _tentative() -> bool:
+        if not commenter_issue(numero, message):
+            return False
+        if not _commentaire_marque_present(numero):
+            log.error(
+                f"  Commentaire de résultat #{numero} : `gh` a rendu 0 mais aucun "
+                f"commentaire correspondant n'a été retrouvé à la relecture — "
+                f"traité comme un échec (issue #236)."
+            )
+            return False
+        return True
+
+    if _tentative():
+        return True
+    for delai in DELAIS_RETRY_RESULTAT:
+        log.warning(f"  Commentaire de résultat #{numero} échoué — nouvelle tentative dans {delai}s.")
+        time.sleep(delai)
+        if _tentative():
+            return True
+    log.error(f"  Commentaire de résultat #{numero} échoué après {1 + len(DELAIS_RETRY_RESULTAT)} tentatives.")
+    return False
+
+def resultat_deja_poste(numero: int) -> bool:
+    """Garde d'idempotence (issue #195) : indique si l'issue porte déjà un
+    commentaire de résultat posté par le watcher.
+
+    Repère le commentaire par `MARQUEUR_RESULTAT` (issue #237), une ligne HTML
+    invisible ajoutée en tête du message de résultat — et non plus par la
+    sous-chaîne "## Résultat", qui matchait aussi "## Résultat attendu" (titre
+    de section présent dans quasi toutes nos issues) : si ce texte atterrissait
+    un jour dans un commentaire, l'ancienne garde fermait l'issue sans rien
+    traiter.
+
+    Sert à éviter un retraitement complet à tort si l'issue est reprise alors
+    qu'un cycle précédent avait réussi le commentaire mais échoué la fermeture
+    (coupure réseau entre `comment` et `close`). En cas d'erreur de lecture, on
+    retourne False (comportement historique : on retraite) plutôt que de risquer
+    de sauter à tort une issue réellement non traitée."""
+    return _commentaire_marque_present(numero)
 
 def fermer_issue(numero: int):
     """Ferme une issue et ajoute le label 'done'."""
@@ -1847,7 +1928,7 @@ def traiter_issue(issue: dict, dry_run: bool):
 
             if succes:
                 log.info(f"  ✓ Issue #{numero} traitée avec succès.")
-                message_resultat = f"## Résultat\n\n{avertissement_conflit}{sortie}"
+                message_resultat = f"{MARQUEUR_RESULTAT}\n## Résultat\n\n{avertissement_conflit}{sortie}"
                 # Le commentaire de résultat est critique (issue #195) : on le
                 # poste avec retry/backoff et on ne ferme l'issue QUE s'il a réussi.
                 if not commenter_resultat_avec_retry(numero, message_resultat):
