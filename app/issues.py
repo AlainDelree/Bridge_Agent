@@ -51,12 +51,22 @@ FICHIER_HISTORIQUE = DOSSIER_SCRIPT / "logs" / "historique_durees.json"
 SEUIL_ESTIM_CORRECT = 5    # en dessous : « incertain » (rouge)
 SEUIL_ESTIM_SUR     = 15   # au-dessus : « sûr » (vert) ; entre les deux : « correct » (noir)
 
-# ─── Pièces jointes image des issues (issue #191) ─────────────────────────────
-# Dossier (relatif au rep_travail du projet) où sont committées les images
-# jointes à une issue, puis référencées dans son corps via une URL
-# raw.githubusercontent.com. Voir joindre_image() plus bas et §18 de
-# BRIDGE_AGENT_DOC.md pour le mécanisme complet et l'exception « push par Alain ».
+# ─── Pièces jointes image des issues (issue #191, isolation #248) ─────────────
+# Dossier (à la racine de la branche dédiée NOM_BRANCHE_PIECES_JOINTES, PAS de
+# la branche de travail) où sont committées les images jointes à une issue,
+# puis référencées dans son corps via une URL raw.githubusercontent.com. Voir
+# joindre_image() plus bas et §18 de BRIDGE_AGENT_DOC.md pour le mécanisme
+# complet et l'exception « push par Alain ».
 DOSSIER_PIECES_JOINTES = "issue-attachments"
+# Branche ORPHELINE (aucun ancêtre commun avec master/main) dédiée aux pièces
+# jointes (issue #248) : le push de joindre_image() ne publie QUE cette
+# référence, jamais la branche de travail — un push sur HEAD:<branche> aurait
+# emporté avec lui tout commit local non relu par Alain (violation du
+# garde-fou « CCL ne pousse jamais »). Le commit est construit par plomberie
+# git (hash-object/read-tree/update-index/write-tree/commit-tree) SANS toucher
+# à l'arbre de travail ni à HEAD du dépôt courant : un watcher peut être en
+# train d'y exécuter une tâche mode_write au même moment.
+NOM_BRANCHE_PIECES_JOINTES = "pieces-jointes"
 # Types MIME acceptés → extension canonique du fichier sauvegardé. On n'accepte
 # que des formats image passifs qui s'affichent nativement dans les issues GitHub
 # (PNG, JPEG, GIF) — pas de code exécutable embarqué, même famille de risque
@@ -332,35 +342,30 @@ def envoyer():
         os.unlink(chemin_body)
 
 
-def _branche_courante(rep: Path) -> str | None:
-    """Nom de la branche actuellement extraite dans `rep` (ex. 'master', 'main'),
-    ou None si indéterminé (dépôt en detached HEAD, git absent…). Sert à
-    construire l'URL raw.githubusercontent.com : on déduit la branche
-    DYNAMIQUEMENT plutôt que de supposer master/main (issue #191)."""
-    try:
-        res = subprocess.run(
-            ["git", "-C", str(rep), "rev-parse", "--abbrev-ref", "HEAD"],
-            capture_output=True, text=True, timeout=10
-        )
-        nom = res.stdout.strip()
-        if res.returncode == 0 and nom and nom != "HEAD":
-            return nom
-    except (OSError, subprocess.SubprocessError):
-        pass
-    return None
-
-
 def joindre_image():
-    """Reçoit une image (PNG/JPEG), la committe dans issue-attachments/ du dépôt
-    du projet cible, la POUSSE sur origin, et retourne l'URL
-    raw.githubusercontent.com correspondante à insérer dans le corps de l'issue
-    (issue #191).
+    """Reçoit une image (PNG/JPEG/GIF) et la publie sur la branche ORPHELINE
+    dédiée `NOM_BRANCHE_PIECES_JOINTES` (« pieces-jointes »), sans aucun lien
+    d'ancêtre avec master/main et sans jamais toucher à l'arbre de travail ni à
+    HEAD du dépôt du projet cible. Retourne l'URL raw.githubusercontent.com
+    correspondante à insérer dans le corps de l'issue (issues #191, #248).
 
-    Exception « push » assumée et documentée (§18 de BRIDGE_AGENT_DOC.md) : la
-    règle « CCL ne pousse jamais » ne s'applique PAS ici. C'est ALAIN qui agit
-    via l'interface (upload manuel de sa part), exactement comme s'il committait
-    et poussait l'image lui-même en ligne de commande — CCL/le watcher n'est pas
-    l'auteur de ce push.
+    Isolation du push (issue #248) : la version initiale (#191) poussait sur
+    `HEAD:<branche_courante>` — or git ne peut pas publier un commit sans ses
+    ancêtres, ce qui emportait TOUS les commits locaux non encore relus par
+    Alain sur la branche de travail (brèche dans « CCL ne pousse jamais »).
+    Le commit est désormais construit par PLOMBERIE git (hash-object, puis
+    read-tree/update-index/write-tree sur un index temporaire isolé via
+    GIT_INDEX_FILE, puis commit-tree) sur une branche qui ne contient QUE
+    `issue-attachments/` : aucun commit de code ne peut être emporté, par
+    construction. Le fichier n'est jamais écrit dans rep_travail (le blob est
+    créé directement en base git depuis un fichier temporaire hors dépôt) : un
+    watcher peut être en train d'exécuter une tâche mode_write dans ce même
+    clone au moment de l'upload.
+
+    Exception « push » assumée et documentée (§18.2 de BRIDGE_AGENT_DOC.md) :
+    c'est ALAIN qui agit via l'interface (upload manuel de sa part), et ce push
+    ne publie plus jamais de code — seulement des images sur une branche sans
+    aucun rapport avec le travail de l'agent.
 
     Reçue en multipart/form-data : champ fichier `image` + champ `projet`.
     En cas d'échec (type invalide, taille dépassée, pas un dépôt git, push
@@ -416,66 +421,138 @@ def joindre_image():
     base = os.path.splitext(base)[0] or "image"
     horodatage = datetime.now().strftime("%Y%m%d-%H%M%S")
     nom_fichier = f"{horodatage}-{base}{ext}"
-
-    dossier = rep / DOSSIER_PIECES_JOINTES
-    try:
-        dossier.mkdir(parents=True, exist_ok=True)
-        (dossier / nom_fichier).write_bytes(donnees)
-    except OSError as e:
-        return jsonify(succes=False, erreur=f"Écriture du fichier impossible : {e}"), 500
-
     chemin_relatif = f"{DOSSIER_PIECES_JOINTES}/{nom_fichier}"
 
-    # Branche courante déduite dynamiquement (master/main/autre) AVANT le push,
-    # pour construire l'URL raw ; sans elle on ne pourrait pas garantir une URL
-    # correcte, on refuse donc plutôt que de deviner.
-    branche = _branche_courante(rep)
-    if not branche:
-        _nettoyer_fichier(dossier / nom_fichier)
-        return jsonify(succes=False,
-                       erreur="Branche git indéterminée (detached HEAD ?) — "
-                              "impossible de construire l'URL de l'image."), 400
-
-    # git add + commit. Un échec ici laisse le fichier sur disque non suivi :
-    # on le retire pour ne pas polluer le répertoire de travail.
+    # Fichier TEMPORAIRE hors du dépôt (jamais écrit dans rep_travail) : sert
+    # uniquement de source à `git hash-object`, qui écrit le blob directement
+    # dans la base git sans passer par l'arbre de travail.
     try:
-        res_add = subprocess.run(
-            ["git", "-C", str(rep), "add", "--", chemin_relatif],
-            capture_output=True, text=True, timeout=30
+        tmp_fd, tmp_chemin = tempfile.mkstemp(prefix="piece-jointe-", suffix=ext)
+        with os.fdopen(tmp_fd, "wb") as f:
+            f.write(donnees)
+    except OSError as e:
+        return jsonify(succes=False, erreur=f"Écriture du fichier temporaire impossible : {e}"), 500
+
+    try:
+        return _publier_piece_jointe(rep, cfg, tmp_chemin, chemin_relatif, nom_fichier)
+    finally:
+        _nettoyer_fichier(Path(tmp_chemin))
+
+
+def _publier_piece_jointe(rep: Path, cfg, tmp_chemin: str, chemin_relatif: str,
+                          nom_fichier: str):
+    """Construit par plomberie git un commit contenant uniquement
+    `chemin_relatif` (blob lu depuis `tmp_chemin`) sur la branche orpheline
+    NOM_BRANCHE_PIECES_JOINTES, le pousse, et retourne la réponse Flask
+    (URL raw si succès, erreur explicite sinon). N'écrit jamais dans l'arbre de
+    travail de `rep` ni ne change HEAD (issue #248) : seuls `.git/objects` (via
+    hash-object/write-tree/commit-tree) et un fichier d'index TEMPORAIRE
+    (GIT_INDEX_FILE, jamais l'index réel du dépôt) sont utilisés."""
+    # 1. Tip actuel de la branche pieces-jointes sur origin, si elle existe déjà
+    # (fetch d'une seule réf nommée : ne touche à aucune référence locale, à
+    # l'inverse d'un `git pull`). Si la branche n'existe pas encore côté
+    # origin, le fetch échoue et on part d'un commit RACINE (sans parent) —
+    # c'est la création de la branche à la première pièce jointe publiée.
+    try:
+        res_fetch = subprocess.run(
+            ["git", "-C", str(rep), "fetch", "origin", NOM_BRANCHE_PIECES_JOINTES],
+            capture_output=True, text=True, timeout=60
         )
-        if res_add.returncode != 0:
-            _nettoyer_fichier(dossier / nom_fichier)
-            return jsonify(succes=False,
-                           erreur=f"git add a échoué : {res_add.stderr.strip()}"), 500
-        res_commit = subprocess.run(
-            ["git", "-C", str(rep), "commit",
-             "-m", f"Pièce jointe issue : {nom_fichier}", "--", chemin_relatif],
-            capture_output=True, text=True, timeout=30
-        )
-        if res_commit.returncode != 0:
-            return jsonify(succes=False,
-                           erreur=f"git commit a échoué : "
-                                  f"{res_commit.stderr.strip() or res_commit.stdout.strip()}"), 500
     except subprocess.TimeoutExpired:
-        return jsonify(succes=False, erreur="Timeout git (add/commit).")
+        return jsonify(succes=False, erreur="Timeout du fetch git (branche "
+                       f"{NOM_BRANCHE_PIECES_JOINTES})."), 504
     except FileNotFoundError:
         return jsonify(succes=False, erreur="git introuvable dans le PATH."), 500
-    except Exception as e:
-        return jsonify(succes=False, erreur=str(e)), 500
 
-    # git push — l'action « exceptionnelle » assumée (voir docstring). En cas
-    # d'échec (réseau, conflit, pas de remote, pas de droits), on NE retourne
-    # PAS d'URL : elle serait cassée tant que le commit n'est pas sur origin.
-    # Le commit reste en local (comme un backup), Alain peut le pousser plus tard.
+    parent_sha = None
+    if res_fetch.returncode == 0:
+        res_rev = subprocess.run(
+            ["git", "-C", str(rep), "rev-parse", "FETCH_HEAD"],
+            capture_output=True, text=True, timeout=10
+        )
+        if res_rev.returncode == 0 and res_rev.stdout.strip():
+            parent_sha = res_rev.stdout.strip()
+
+    # 2. Blob écrit directement dans .git/objects, PAS dans l'arbre de travail.
+    try:
+        res_hash = subprocess.run(
+            ["git", "-C", str(rep), "hash-object", "-w", "--", tmp_chemin],
+            capture_output=True, text=True, timeout=30
+        )
+        if res_hash.returncode != 0:
+            return jsonify(succes=False,
+                           erreur=f"git hash-object a échoué : {res_hash.stderr.strip()}"), 500
+        blob_sha = res_hash.stdout.strip()
+    except subprocess.TimeoutExpired:
+        return jsonify(succes=False, erreur="Timeout git (hash-object)."), 504
+
+    # 3. Arbre construit sur un index TEMPORAIRE (GIT_INDEX_FILE) — on part du
+    # tree du commit parent (read-tree) pour conserver les pièces jointes déjà
+    # publiées, puis on ajoute la nouvelle sans jamais toucher à l'index réel
+    # du dépôt (donc sans conflit avec un watcher qui y travaillerait).
+    tmp_index_fd, tmp_index_chemin = tempfile.mkstemp(prefix="index-pieces-jointes-")
+    os.close(tmp_index_fd)
+    os.unlink(tmp_index_chemin)  # l'index doit être ABSENT : git le (re)crée au premier accès
+    env_index = dict(os.environ, GIT_INDEX_FILE=tmp_index_chemin)
+    try:
+        if parent_sha:
+            res_read = subprocess.run(
+                ["git", "-C", str(rep), "read-tree", parent_sha],
+                capture_output=True, text=True, timeout=30, env=env_index
+            )
+            if res_read.returncode != 0:
+                return jsonify(succes=False,
+                               erreur=f"git read-tree a échoué : {res_read.stderr.strip()}"), 500
+        res_upd = subprocess.run(
+            ["git", "-C", str(rep), "update-index", "--add", "--cacheinfo",
+             f"100644,{blob_sha},{chemin_relatif}"],
+            capture_output=True, text=True, timeout=30, env=env_index
+        )
+        if res_upd.returncode != 0:
+            return jsonify(succes=False,
+                           erreur=f"git update-index a échoué : {res_upd.stderr.strip()}"), 500
+        res_tree = subprocess.run(
+            ["git", "-C", str(rep), "write-tree"],
+            capture_output=True, text=True, timeout=30, env=env_index
+        )
+        if res_tree.returncode != 0:
+            return jsonify(succes=False,
+                           erreur=f"git write-tree a échoué : {res_tree.stderr.strip()}"), 500
+        tree_sha = res_tree.stdout.strip()
+    except subprocess.TimeoutExpired:
+        return jsonify(succes=False, erreur="Timeout git (read-tree/update-index/write-tree)."), 504
+    finally:
+        _nettoyer_fichier(Path(tmp_index_chemin))
+
+    # 4. Commit-tree : commit racine si première publication, sinon enfant du
+    # tip actuel de la branche (parent_sha) — jamais de lien avec master/main.
+    args_commit = ["git", "-C", str(rep), "commit-tree", tree_sha]
+    if parent_sha:
+        args_commit += ["-p", parent_sha]
+    args_commit += ["-m", f"Pièce jointe issue : {nom_fichier}"]
+    try:
+        res_commit = subprocess.run(args_commit, capture_output=True, text=True, timeout=30)
+        if res_commit.returncode != 0:
+            return jsonify(succes=False,
+                           erreur=f"git commit-tree a échoué : {res_commit.stderr.strip()}"), 500
+        commit_sha = res_commit.stdout.strip()
+    except subprocess.TimeoutExpired:
+        return jsonify(succes=False, erreur="Timeout git (commit-tree)."), 504
+
+    # 5. Push de CETTE SEULE référence — jamais HEAD, jamais la branche de
+    # travail. Si `parent_sha` a bougé entre temps côté origin (course), ce
+    # push est rejeté nativement comme non-fast-forward : aucune écrasement
+    # silencieux possible.
     try:
         res_push = subprocess.run(
-            ["git", "-C", str(rep), "push", "origin", f"HEAD:{branche}"],
+            ["git", "-C", str(rep), "push", "origin",
+             f"{commit_sha}:refs/heads/{NOM_BRANCHE_PIECES_JOINTES}"],
             capture_output=True, text=True, timeout=120
         )
         if res_push.returncode != 0:
             return jsonify(
                 succes=False,
-                erreur="Image committée localement mais push refusé — "
+                erreur=f"Push refusé sur la branche {NOM_BRANCHE_PIECES_JOINTES} — "
                        "aucune URL insérée (l'image ne s'afficherait pas). "
                        f"Détail git : {res_push.stderr.strip() or 'échec du push'}"
             ), 502
@@ -484,12 +561,11 @@ def joindre_image():
                        erreur="Timeout du push git (>120s) — aucune URL insérée."), 504
     except FileNotFoundError:
         return jsonify(succes=False, erreur="git introuvable dans le PATH."), 500
-    except Exception as e:
-        return jsonify(succes=False, erreur=str(e)), 500
 
-    # Push réussi : l'URL raw pointe vers le fichier désormais présent sur origin.
+    # Push réussi : l'URL raw pointe vers la branche pieces-jointes (fixe),
+    # jamais vers la branche de travail du projet.
     url = (f"https://raw.githubusercontent.com/{cfg.depot}/"
-           f"{branche}/{chemin_relatif}")
+           f"{NOM_BRANCHE_PIECES_JOINTES}/{chemin_relatif}")
     return jsonify(succes=True, url=url, nom_fichier=nom_fichier)
 
 
