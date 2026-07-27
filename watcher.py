@@ -27,6 +27,8 @@ import hashlib
 import tempfile
 import platform
 import signal
+import ctypes
+import ctypes.wintypes
 from logging.handlers import RotatingFileHandler
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -1512,10 +1514,123 @@ def _lister_processus_pgid(pgid: int, exclure_pid: int | None = None) -> list[tu
     return resultat
 
 
-def _nettoyer_arbre_claude(proc: subprocess.Popen) -> None:
+_JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x00002000
+_JobObjectExtendedLimitInformation = 9
+_PROCESS_ALL_ACCESS = 0x1F0FFF
+
+
+class _JOBOBJECT_BASIC_LIMIT_INFORMATION(ctypes.Structure):
+    _fields_ = [
+        ("PerProcessUserTimeLimit", ctypes.c_int64),
+        ("PerJobUserTimeLimit", ctypes.c_int64),
+        ("LimitFlags", ctypes.wintypes.DWORD),
+        ("MinimumWorkingSetSize", ctypes.c_size_t),
+        ("MaximumWorkingSetSize", ctypes.c_size_t),
+        ("ActiveProcessLimit", ctypes.wintypes.DWORD),
+        ("Affinity", ctypes.c_size_t),
+        ("PriorityClass", ctypes.wintypes.DWORD),
+        ("SchedulingClass", ctypes.wintypes.DWORD),
+    ]
+
+
+class _IO_COUNTERS(ctypes.Structure):
+    _fields_ = [
+        ("ReadOperationCount", ctypes.c_uint64),
+        ("WriteOperationCount", ctypes.c_uint64),
+        ("OtherOperationCount", ctypes.c_uint64),
+        ("ReadTransferCount", ctypes.c_uint64),
+        ("WriteTransferCount", ctypes.c_uint64),
+        ("OtherTransferCount", ctypes.c_uint64),
+    ]
+
+
+class _JOBOBJECT_EXTENDED_LIMIT_INFORMATION(ctypes.Structure):
+    _fields_ = [
+        ("BasicLimitInformation", _JOBOBJECT_BASIC_LIMIT_INFORMATION),
+        ("IoInfo", _IO_COUNTERS),
+        ("ProcessMemoryLimit", ctypes.c_size_t),
+        ("JobMemoryLimit", ctypes.c_size_t),
+        ("PeakProcessMemoryUsed", ctypes.c_size_t),
+        ("PeakJobMemoryUsed", ctypes.c_size_t),
+    ]
+
+
+def _creer_job_windows_kill_on_close():
+    """Windows uniquement. Crée un objet Job noyau avec le flag
+    JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE : fermer son handle (CloseHandle)
+    termine immédiatement TOUT process qui y est encore assigné, sans avoir
+    besoin de connaître le moindre PID à cet instant-là — à la différence de
+    `taskkill /PID <pid> /T /F`, qui doit reparcourir l'arbre généalogique du
+    PID au moment de l'appel et échoue donc dès que ce PID n'existe plus
+    (voir _nettoyer_arbre_claude). Retourne le handle du job en cas de
+    succès, sinon None (chaque échec est journalisé par l'appelant)."""
+    job = ctypes.windll.kernel32.CreateJobObjectW(None, None)
+    if not job:
+        return None
+
+    info = _JOBOBJECT_EXTENDED_LIMIT_INFORMATION()
+    info.BasicLimitInformation.LimitFlags = _JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+    ok = ctypes.windll.kernel32.SetInformationJobObject(
+        job, _JobObjectExtendedLimitInformation,
+        ctypes.byref(info), ctypes.sizeof(info),
+    )
+    if not ok:
+        ctypes.windll.kernel32.CloseHandle(job)
+        return None
+    return job
+
+
+def _assigner_job_windows(job, pid: int) -> bool:
+    """Windows uniquement. Assigne le process `pid` au job `job` — doit être
+    appelé pendant que ce process est encore vivant (juste après son
+    démarrage), condition nécessaire et suffisante : une fois assigné, un
+    process reste dans le job jusqu'à sa mort ou la fermeture du job, qu'il
+    ait ou non survécu à claude entre-temps."""
+    handle = ctypes.windll.kernel32.OpenProcess(_PROCESS_ALL_ACCESS, False, pid)
+    if not handle:
+        return False
+    try:
+        return bool(ctypes.windll.kernel32.AssignProcessToJobObject(job, handle))
+    finally:
+        ctypes.windll.kernel32.CloseHandle(handle)
+
+
+def _preparer_job_windows(pid: int):
+    """Windows uniquement. Crée l'objet Job et y assigne immédiatement `pid`
+    (voir _creer_job_windows_kill_on_close / _assigner_job_windows). À
+    appeler juste après le Popen du process claude, PENDANT qu'il est
+    vivant — c'est le seul moment où l'assignation est possible. Retourne
+    le handle à conserver jusqu'à _nettoyer_arbre_claude (qui le fermera),
+    ou None si la préparation a échoué à une étape ou l'autre ; chaque échec
+    est journalisé ici (issue #249 point 3 : ne jamais rester silencieux)."""
+    job = _creer_job_windows_kill_on_close()
+    if job is None:
+        log.warning(
+            f"Objet Job Windows non créé pour claude (PID {pid}) : le "
+            f"nettoyage de fin de tâche ne pourra pas garantir la "
+            f"terminaison de sa descendance si elle survit (issue #249)."
+        )
+        return None
+    if not _assigner_job_windows(job, pid):
+        log.warning(
+            f"Échec d'assignation du process claude (PID {pid}) à l'objet "
+            f"Job Windows : le nettoyage de fin de tâche ne pourra pas "
+            f"garantir la terminaison de sa descendance si elle survit "
+            f"(issue #249)."
+        )
+        try:
+            ctypes.windll.kernel32.CloseHandle(job)
+        except Exception:
+            pass
+        return None
+    return job
+
+
+def _nettoyer_arbre_claude(proc: subprocess.Popen, job_windows=None) -> None:
     """Garantit qu'aucun process de l'arbre engendré par CE claude (proc.pid) ne
-    survive au retour de lancer_claude (issue #247). Appelée depuis un `finally` :
-    couvre indifféremment succès, échec, TimeoutExpired et exception.
+    survive au retour de lancer_claude (issue #247, révisé #249). Appelée
+    depuis un `finally` : couvre indifféremment succès, échec, TimeoutExpired
+    et exception.
 
     Cas réel à l'origine de l'issue : un `cmd.exe` lancé par un script de build
     Windows (pushd + .bat) survivait à la fermeture de l'issue et gardait un
@@ -1523,14 +1638,20 @@ def _nettoyer_arbre_claude(proc: subprocess.Popen) -> None:
     l'exécutable produit injouable jusqu'à un `taskkill` manuel — sans le
     moindre signal dans le journal.
 
-    Solution retenue : terminaison de l'arbre de process après coup (taskkill
-    /T /F sous Windows, groupe de process POSIX sous Linux), plutôt qu'un objet
-    Job Windows. Un Job Object est plus robuste (pas de fenêtre de course) mais
-    est une API Windows pure (ctypes/pywin32) : il aurait fallu une branche
-    entièrement différente, sans équivalent côté Linux, dans un script UNIQUE
-    partagé par CCL et CCW. La fenêtre de course de l'option retenue est
-    négligeable en pratique (quelques millisecondes entre la fin de
-    `communicate()`/l'expiration du timeout et cet appel).
+    Pourquoi `taskkill /PID <pid> /T /F` NE SUFFIT PAS (issue #249) : cette
+    fonction s'exécute dans le `finally` de lancer_claude, donc APRÈS le
+    retour de `proc.communicate()` — à cet instant le process claude est déjà
+    terminé et réapé par l'OS. Or taskkill a besoin que le PID cible EXISTE
+    ENCORE pour remonter son arbre généalogique ; sur un PID mort, il échoue
+    immédiatement (« process not found ») sans toucher un seul descendant.
+    C'est exactement le scénario d'origine : le `cmd.exe` orphelin survit à
+    `claude`, donc au moment du nettoyage son PID parent n'est plus
+    traçable. `CREATE_NEW_PROCESS_GROUP` ne comble pas l'écart : sous
+    Windows les groupes de process ne servent qu'au routage de
+    Ctrl+C/Ctrl+Break, pas à la terminaison d'une arborescence. Seul un objet
+    Job — assigné AVANT que le process ne meure, voir _preparer_job_windows,
+    appelé juste après le Popen dans lancer_claude — garantit la terminaison
+    de toute la descendance, PID vivant ou non au moment de l'appel.
 
     Ne cible QUE la descendance du PID claude de CETTE tâche, jamais par nom
     d'exécutable — point critique (#247 point 4) : une erreur ici tuerait le
@@ -1538,43 +1659,78 @@ def _nettoyer_arbre_claude(proc: subprocess.Popen) -> None:
     - POSIX : proc a été lancé avec start_new_session=True, donc son pgid ==
       son propre pid — un groupe forcément neuf et distinct de celui du
       watcher (et de tout autre watcher). os.killpg cible ce seul groupe.
-    - Windows : `taskkill /PID <pid> /T /F` ne parcourt que l'arbre
-      généalogique de ce PID précis, jamais un process par son nom.
-    """
-    pid = proc.pid
-    if os.name == "nt":
-        try:
-            res = subprocess.run(
-                ["taskkill", "/PID", str(pid), "/T", "/F"],
-                capture_output=True, text=True, timeout=15,
-            )
-            sortie = f"{res.stdout} {res.stderr}".upper()
-            if res.returncode == 0 and "SUCCESS" in sortie:
-                log.warning(
-                    f"Arbre de process claude (PID {pid}) nettoyé via "
-                    f"'taskkill /PID {pid} /T /F' : un ou plusieurs process de "
-                    f"cette tâche ont survécu au retour de lancer_claude et ont "
-                    f"été terminés."
-                )
-        except Exception as e:
-            log.warning(f"Nettoyage taskkill de l'arbre claude (PID {pid}) impossible : {e}")
-    else:
-        orphelins = _lister_processus_pgid(pid, exclure_pid=pid)
-        encore_vivant = proc.poll() is None
-        for pid_orphelin, cmdline in orphelins:
-            log.warning(
-                f"Descendant orphelin de claude (PID {pid}) tué : PID {pid_orphelin} — {cmdline}"
-            )
-        if orphelins or encore_vivant:
-            try:
-                os.killpg(pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass  # déjà mort entre l'énumération et le kill : rien à faire
+      Inchangé par #249 : correct et déjà couvert par
+      tests/test_nettoyage_arbre_247.py.
+    - Windows : fermeture du handle de l'objet Job créé/assigné par
+      _preparer_job_windows au démarrage de claude (voir lancer_claude).
 
+    Point 4 (#249) : l'intégralité du corps est enveloppée dans un
+    garde-fou — _lister_processus_pgid peut lever une OSError (iterdir sur
+    /proc), os.killpg une PermissionError, et l'appel ctypes Windows
+    n'importe quelle exception. Aucune de ces exceptions ne doit s'échapper
+    de cette fonction : elle est appelée depuis un `finally`, et une
+    exception à cet endroit remonterait à travers lancer_claude et
+    masquerait sa valeur de retour.
+    """
+    pid = getattr(proc, "pid", None)
     try:
-        proc.wait(timeout=5)
-    except Exception:
-        pass  # best-effort : ne jamais faire échouer lancer_claude sur ce nettoyage
+        if os.name == "nt":
+            if job_windows is None:
+                log.warning(
+                    f"Nettoyage de l'arbre claude (PID {pid}) impossible : "
+                    f"aucun objet Job disponible (échec de préparation "
+                    f"journalisé au démarrage — voir _preparer_job_windows). "
+                    f"Un taskkill de repli n'aurait de toute façon pas pu "
+                    f"aider : le PID {pid} est déjà mort à ce stade."
+                )
+            else:
+                ok = False
+                try:
+                    ok = bool(ctypes.windll.kernel32.CloseHandle(job_windows))
+                except Exception as e:
+                    log.warning(
+                        f"Exception lors de la fermeture de l'objet Job "
+                        f"Windows pour le nettoyage de l'arbre claude "
+                        f"(PID {pid}) : {e}"
+                    )
+                if ok:
+                    log.warning(
+                        f"Arbre de process claude (PID {pid}) nettoyé via "
+                        f"fermeture de l'objet Job Windows : tout process "
+                        f"encore assigné (y compris ceux ayant survécu à "
+                        f"claude) a été terminé."
+                    )
+                else:
+                    log.warning(
+                        f"Échec de fermeture de l'objet Job Windows pour le "
+                        f"nettoyage de l'arbre claude (PID {pid}) : "
+                        f"CloseHandle a échoué — la descendance a pu "
+                        f"survivre."
+                    )
+        else:
+            orphelins = _lister_processus_pgid(pid, exclure_pid=pid)
+            encore_vivant = proc.poll() is None
+            for pid_orphelin, cmdline in orphelins:
+                log.warning(
+                    f"Descendant orphelin de claude (PID {pid}) tué : PID {pid_orphelin} — {cmdline}"
+                )
+            if orphelins or encore_vivant:
+                try:
+                    os.killpg(pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass  # déjà mort entre l'énumération et le kill : rien à faire
+                except PermissionError as e:
+                    log.warning(f"os.killpg refusé pour l'arbre claude (PID {pid}) : {e}")
+
+        try:
+            proc.wait(timeout=5)
+        except Exception:
+            pass  # best-effort : ne jamais faire échouer lancer_claude sur ce nettoyage
+    except Exception as e:
+        log.warning(
+            f"Nettoyage de l'arbre de process claude (PID {pid}) a levé une "
+            f"exception inattendue et a été abandonné : {e}"
+        )
 
 
 def lancer_claude(numero: int, titre: str, body: str, dry_run: bool,
@@ -1736,12 +1892,17 @@ Si la tâche échoue, remplace ✅ par ❌ et explique la cause en une ligne.
     cmd.append(prompt)
 
     # Popen (plutôt que subprocess.run) pour garder la main sur le PID : le
-    # nettoyage de l'arbre de process (issue #247) doit s'exécuter dans un
-    # finally, quel que soit le mode de sortie (succès, échec, timeout,
-    # exception), et a besoin du PID pour ne cibler QUE la descendance de CE
-    # claude. start_new_session=True (POSIX) / CREATE_NEW_PROCESS_GROUP
-    # (Windows) donnent à ce process un groupe/une session à lui, préalable
-    # nécessaire à un nettoyage sûr — voir _nettoyer_arbre_claude.
+    # nettoyage de l'arbre de process (issue #247, révisé #249) doit
+    # s'exécuter dans un finally, quel que soit le mode de sortie (succès,
+    # échec, timeout, exception), et a besoin du PID pour ne cibler QUE la
+    # descendance de CE claude.
+    # - POSIX : start_new_session=True donne à ce process une session/un
+    #   pgid à lui, préalable nécessaire à os.killpg — voir
+    #   _nettoyer_arbre_claude.
+    # - Windows : CREATE_NEW_PROCESS_GROUP isole le routage Ctrl+Break de ce
+    #   process de celui du watcher (sans rapport avec la terminaison de
+    #   l'arbre, assurée par l'objet Job créé/assigné juste après le Popen
+    #   ci-dessous — voir _preparer_job_windows).
     kwargs_popen = dict(
         stdout=subprocess.PIPE, stderr=subprocess.PIPE,
         text=True, encoding="utf-8", errors="replace",
@@ -1753,8 +1914,15 @@ Si la tâche échoue, remplace ✅ par ❌ et explique la cause en une ligne.
         kwargs_popen["start_new_session"] = True
 
     proc = None
+    job_windows = None
     try:
         proc = subprocess.Popen(cmd, **kwargs_popen)
+        if os.name == "nt":
+            # Doit être fait ICI, pendant que proc est vivant : l'assignation
+            # au job est la seule chose qui rend le nettoyage fiable (issue
+            # #249) — un `taskkill` tenté plus tard, depuis le `finally`,
+            # arrive systématiquement trop tard (PID déjà mort et réapé).
+            job_windows = _preparer_job_windows(proc.pid)
         try:
             stdout, stderr = proc.communicate(timeout=timeout)
             if proc.returncode == 0:
@@ -1769,7 +1937,7 @@ Si la tâche échoue, remplace ✅ par ❌ et explique la cause en une ligne.
         return False, str(e)
     finally:
         if proc is not None:
-            _nettoyer_arbre_claude(proc)
+            _nettoyer_arbre_claude(proc, job_windows)
 
 
 def diagnostiquer_echec(numero: int, titre: str, body: str,
