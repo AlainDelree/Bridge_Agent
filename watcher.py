@@ -1516,7 +1516,13 @@ def _lister_processus_pgid(pgid: int, exclure_pid: int | None = None) -> list[tu
 
 _JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x00002000
 _JobObjectExtendedLimitInformation = 9
-_PROCESS_ALL_ACCESS = 0x1F0FFF
+# Seuls droits requis par AssignProcessToJobObject (documentation Microsoft) :
+# PROCESS_SET_QUOTA + PROCESS_TERMINATE — plutôt que l'ancien
+# _PROCESS_ALL_ACCESS = 0x1F0FFF (valeur pré-Vista, toujours fonctionnelle
+# mais bien plus large que nécessaire ; issue #251).
+_PROCESS_SET_QUOTA = 0x0100
+_PROCESS_TERMINATE = 0x0001
+_PROCESS_ACCES_JOB = _PROCESS_SET_QUOTA | _PROCESS_TERMINATE
 
 
 class _JOBOBJECT_BASIC_LIMIT_INFORMATION(ctypes.Structure):
@@ -1555,6 +1561,41 @@ class _JOBOBJECT_EXTENDED_LIMIT_INFORMATION(ctypes.Structure):
     ]
 
 
+def _declarer_prototypes_kernel32_windows():
+    """Windows uniquement — appelée une seule fois, à l'import du module,
+    depuis la garde `if os.name == "nt"` ci-dessous. Déclare restype/argtypes
+    des fonctions kernel32 utilisées pour l'objet Job (issue #251, suite
+    #249) : sans cela, ctypes suppose par défaut un retour c_int (32 bits
+    signés) alors que CreateJobObjectW/OpenProcess retournent un HANDLE — 64
+    bits sur Windows x64. La valeur est alors tronquée silencieusement ; ça
+    fonctionne tant que le handle noyau reste une petite valeur, mais rien
+    ne le garantit, et le handle tronqué est ensuite repassé en argument à
+    SetInformationJobObject/AssignProcessToJobObject/CloseHandle où il subit
+    une seconde troncature à l'appel. Ne pas exécuter sous Linux : accède à
+    ctypes.windll, absent hors Windows."""
+    wt = ctypes.wintypes
+    k32 = ctypes.windll.kernel32
+
+    k32.CreateJobObjectW.restype = wt.HANDLE
+    k32.CreateJobObjectW.argtypes = (wt.LPVOID, wt.LPCWSTR)
+
+    k32.SetInformationJobObject.restype = wt.BOOL
+    k32.SetInformationJobObject.argtypes = (wt.HANDLE, ctypes.c_int, wt.LPVOID, wt.DWORD)
+
+    k32.OpenProcess.restype = wt.HANDLE
+    k32.OpenProcess.argtypes = (wt.DWORD, wt.BOOL, wt.DWORD)
+
+    k32.AssignProcessToJobObject.restype = wt.BOOL
+    k32.AssignProcessToJobObject.argtypes = (wt.HANDLE, wt.HANDLE)
+
+    k32.CloseHandle.restype = wt.BOOL
+    k32.CloseHandle.argtypes = (wt.HANDLE,)
+
+
+if os.name == "nt":
+    _declarer_prototypes_kernel32_windows()
+
+
 def _creer_job_windows_kill_on_close():
     """Windows uniquement. Crée un objet Job noyau avec le flag
     JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE : fermer son handle (CloseHandle)
@@ -1586,7 +1627,7 @@ def _assigner_job_windows(job, pid: int) -> bool:
     démarrage), condition nécessaire et suffisante : une fois assigné, un
     process reste dans le job jusqu'à sa mort ou la fermeture du job, qu'il
     ait ou non survécu à claude entre-temps."""
-    handle = ctypes.windll.kernel32.OpenProcess(_PROCESS_ALL_ACCESS, False, pid)
+    handle = ctypes.windll.kernel32.OpenProcess(_PROCESS_ACCES_JOB, False, pid)
     if not handle:
         return False
     try:
