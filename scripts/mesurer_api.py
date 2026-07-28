@@ -12,7 +12,7 @@ Usage :
 
 `gh api rate_limit` est un appel REST qui ne consomme NI le quota `core` NI
 le quota `graphql` (vérifié empiriquement — voir rapport issue #263) : la
-mesure elle-même n'ausse donc pas le résultat, quel que soit l'intervalle
+mesure elle-même ne fausse donc pas le résultat, quel que soit l'intervalle
 choisi. L'intervalle par défaut (30s) est un compromis résolution/bruit, pas
 une contrainte de quota.
 """
