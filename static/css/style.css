@@ -49,6 +49,14 @@ textarea{width:100%;padding:10px;border:1px solid #ddd;border-radius:6px;
 .np-rappel-git{margin-top:14px;padding:10px 12px;border:1px solid #ffe08a;border-left:4px solid #f0ad4e;border-radius:6px;background:#fff3cd;color:#856404}
 .np-rappel-git .titre{font-size:13px;font-weight:600;margin-bottom:8px}
 .np-rappel-git pre{margin:0;padding:8px 10px;background:#fffaf0;border:1px solid #ffe08a;border-radius:4px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;color:#5a4a00;white-space:pre;overflow-x:auto;cursor:pointer}
+/* Rappels côté PROJET créé — CONTEXTE.md vide + init git manuelle éventuelle
+   (issue #257). Bordure bleue, délibérément distincte de .np-rappel-git
+   (bordure orange, dépôt Bridge_Agent) : la confusion entre les deux dépôts
+   est précisément ce qui avait fait passer inaperçu le bug de cette issue. */
+.np-rappel-projet{margin-top:14px;padding:10px 12px;border:1px solid #b6d4f0;border-left:4px solid #4a90d9;border-radius:6px;background:#eaf2fb;color:#1d4a76}
+.np-rappel-projet .titre{font-size:13px;font-weight:600;margin-bottom:8px}
+.np-rappel-projet div{margin-bottom:6px}
+.np-rappel-projet pre{margin:0;padding:8px 10px;background:#f5f9fd;border:1px solid #b6d4f0;border-radius:4px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;color:#1d4a76;white-space:pre;overflow-x:auto;cursor:pointer}
 /* Sélecteur de couleur d'accent du modal « Nouveau projet » (issue #121) :
    une pastille cliquable par couleur disponible, la choisie entourée d'un anneau. */
 .np-couleurs{display:flex;flex-wrap:wrap;gap:10px;padding:2px 0}

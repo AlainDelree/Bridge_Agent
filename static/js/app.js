@@ -3454,6 +3454,7 @@ function ouvrirNouveauProjet() {
   document.getElementById('np-compte-rendu').style.display = 'none';
   document.getElementById('np-message').style.display = 'none';
   document.getElementById('np-rappel-git').style.display = 'none';
+  document.getElementById('np-rappel-projet').style.display = 'none';
   const btn = document.getElementById('np-creer');
   btn.disabled = false; btn.textContent = 'Créer le projet';
   document.getElementById('np-fermer').textContent = 'Fermer';
@@ -3604,6 +3605,7 @@ async function soumettreNouveauProjet() {
   document.getElementById('np-message').style.display = 'none';
   cr.style.display = 'none';
   document.getElementById('np-rappel-git').style.display = 'none';
+  document.getElementById('np-rappel-projet').style.display = 'none';
   if (!nom) { npMsg('Un nom de projet est requis.', 'erreur'); return; }
 
   const btn = document.getElementById('np-creer');
@@ -3659,6 +3661,10 @@ async function soumettreNouveauProjet() {
     // CLI — Alain vérifie puis pousse). Sans push, la doc reste invisible pour
     // Claude Chat. Encart distinct du compte-rendu, sélectionnable en un clic.
     afficherRappelGit(res.nom);
+    // Rappels propres au PROJET créé (dépôt distinct de Bridge_Agent) : issue
+    // #257 — sans eux l'encart ci-dessus, seul affiché jusque-là, laissait
+    // croire à tort que rien d'autre n'était à faire.
+    afficherRappelProjet(res);
     // Création réussie : on verrouille « Créer » (évite un double envoi) et on
     // renomme « Fermer » en « Terminé ».
     btn.disabled = true;
@@ -3681,11 +3687,44 @@ function afficherRappelGit(nom) {
              + 'git push';
   const box = document.getElementById('np-rappel-git');
   box.innerHTML =
-    '<div class="titre">⚠ Action requise — pousser la doc sur GitHub</div>'
+    '<div class="titre">⚠ Action requise — dépôt Bridge_Agent : pousser la doc</div>'
     + 'Le projet est créé, mais la mise à jour de <b>BRIDGE_AGENT_DOC.md</b> (§2) '
     + "n'est que locale. Tant qu'elle n'est pas poussée, le projet reste invisible "
     + 'pour Claude Chat. Exécute (clic pour sélectionner) :'
     + '<pre onclick="npSelectionnerTexte(this)">' + escapeHtml(cmds) + '</pre>';
+  box.style.display = 'block';
+}
+
+// Rappels propres au PROJET créé (dépôt distinct de Bridge_Agent, cf.
+// afficherRappelGit ci-dessus) — issue #257. Deux points, jamais mentionnés
+// nulle part avant cette issue :
+//  1. CONTEXTE.md est créé VIDE (injecté dans chaque prompt CCL, plafonné à
+//     4000 caractères) — toujours à rappeler, quel que soit le cas git.
+//  2. Si l'initialisation git du répertoire de travail n'a pas pu se
+//     terminer (push initial échoué, ou init entièrement absente sur un
+//     backend plus ancien), les commandes manuelles nécessaires.
+// Encart visuellement distinct (bordure bleue) de celui de afficherRappelGit
+// (bordure orange) : c'est précisément la confusion entre « dépôt
+// Bridge_Agent » et « dépôt du projet créé » qui a fait passer inaperçu le
+// bug d'origine de cette issue.
+function afficherRappelProjet(res) {
+  const box = document.getElementById('np-rappel-projet');
+  let html = '<div class="titre">ℹ Côté projet « ' + escapeHtml(res.nom) + ' » créé</div>';
+  html += '<div>CONTEXTE.md est créé <b>VIDE</b> — à rédiger avant de compter sur '
+        + 'le projet : c\'est ce fichier qui est injecté dans chaque prompt CCL '
+        + '(plafonné à 4000 caractères).</div>';
+  if (res.git_deja_git) {
+    html += '<div>Dépôt git local : déjà un dépôt git existant, inchangé.</div>';
+  } else if (res.git_push_ok) {
+    html += '<div>Dépôt git local : initialisé (branche master, remote HTTPS) '
+          + 'et poussé sur origin/master.</div>';
+  } else if (res.git_commande_manuelle) {
+    html += '<div>⚠ Initialisation git incomplète — à terminer à la main '
+          + '(clic pour sélectionner) :</div>'
+          + '<pre onclick="npSelectionnerTexte(this)">'
+          + escapeHtml(res.git_commande_manuelle) + '</pre>';
+  }
+  box.innerHTML = html;
   box.style.display = 'block';
 }
 

@@ -10,8 +10,13 @@ met à jour BRIDGE_AGENT_DOC.md automatiquement.
 Usage :
     python3 nouveau_projet.py
 
-Zéro dépendance externe (stdlib + la commande `gh`). Aucun `git push` n'est
-effectué : Alain pousse lui-même après vérification.
+Zéro dépendance externe (stdlib + les commandes `gh` et `git`). Cas dépôt
+existant : comportement inchangé, aucun `git push`. Cas dépôt neuf (issue
+#257) : le répertoire de travail est initialisé (git init + remote HTTPS +
+commit) puis **poussé** — exception documentée à la règle « Alain pousse
+lui-même » (§18.2 de la doc) : c'est Alain qui déclenche la création de
+projet, jamais un agent. Le reste (configs/, doc Bridge_Agent) n'est
+toujours jamais poussé automatiquement.
 """
 
 import re
@@ -71,6 +76,15 @@ OWNER_DEFAUT = "AlainDelree"
 
 # Fichiers Specs MVC (§15) créés en plus de CONTEXTE.md quand l'option est active.
 FICHIERS_SPECS = ("CONTEXTE_VUE.md", "CONTEXTE_METIER.md", "CONTEXTE_PERSISTANCE.md")
+
+# .gitignore minimal écrit à l'initialisation git d'un répertoire de travail
+# neuf (issue #257), seulement s'il n'en existe pas déjà un.
+GITIGNORE_MINIMAL = """venv/
+__pycache__/
+*.pyc
+*.log
+.env
+"""
 
 MOIS_FR = ["", "janvier", "février", "mars", "avril", "mai", "juin", "juillet",
            "août", "septembre", "octobre", "novembre", "décembre"]
@@ -272,6 +286,86 @@ def creer_fichiers_contexte(rep: str, avec_specs: bool) -> dict:
     return {"crees": crees, "existants": existants, "rep_cree": rep_cree}
 
 
+def _url_https(depot: str) -> str:
+    """URL HTTPS du dépôt (jamais SSH — toute l'installation gh/bridge est en
+    HTTPS avec authentification `gh`, cf. §9 de la doc)."""
+    return f"https://github.com/{depot}.git"
+
+
+def _commandes_git_manuelles(rep_path: Path, depot: str, complet: bool) -> str:
+    """Bloc de commandes à exécuter à la main. `complet` : bloc entier
+    (init+remote+commit+push, cas refusé/échoué dès `git init`) ou juste le
+    push (init déjà fait, seul le push a échoué)."""
+    if not complet:
+        return f"cd {rep_path} && git push -u origin master"
+    url = _url_https(depot)
+    return (f"cd {rep_path}\n"
+            f"git init -b master\n"
+            f"git remote add origin {url}\n"
+            f'git add -A && git commit -m "Initialisation du projet"\n'
+            f"git push -u origin master")
+
+
+def initialiser_git(rep: str, depot: str) -> dict:
+    """Initialise le dépôt git local du répertoire de travail (issue #257) :
+    `git init` sur la branche `master`, `git remote add origin` en **HTTPS**
+    (jamais SSH), `.gitignore` minimal s'il est absent, commit initial, puis
+    push. Si REP_TRAVAIL est déjà un dépôt git (installation sur un projet
+    existant — le cas de tous les projets actuels), ne fait strictement rien.
+
+    Exception documentée à la règle « CCL ne pousse jamais » (§18.2 de la
+    doc, même raisonnement que la route pièces jointes) : c'est Alain qui
+    déclenche la création de projet — jamais un agent — donc ce push initial
+    n'est pas soumis à cette règle. Un échec du push (réseau, droits) ne fait
+    PAS échouer l'étape : le commit reste local et `commande_manuelle`
+    indique la commande à relancer à la main.
+
+    Renvoie {ok, deja_git, push_ok, detail, commande_manuelle}."""
+    rep_path = Path(rep).expanduser()
+    if (rep_path / ".git").exists():
+        return {"ok": True, "deja_git": True, "push_ok": None,
+                "detail": "déjà un dépôt git — inchangé.",
+                "commande_manuelle": None}
+
+    def _git(*args: str) -> subprocess.CompletedProcess:
+        return subprocess.run(["git", *args], cwd=rep_path,
+                              capture_output=True, text=True)
+
+    res_init = _git("init", "-b", "master")
+    if res_init.returncode != 0:
+        return {"ok": False, "deja_git": False, "push_ok": None,
+                "detail": f"échec de git init : {res_init.stderr.strip()}",
+                "commande_manuelle": _commandes_git_manuelles(rep_path, depot,
+                                                               complet=True)}
+
+    url = _url_https(depot)
+    _git("remote", "add", "origin", url)
+
+    gitignore = rep_path / ".gitignore"
+    if not gitignore.exists():
+        gitignore.write_text(GITIGNORE_MINIMAL, encoding="utf-8")
+
+    _git("add", "-A")
+    _git("commit", "-m", "Initialisation du projet", "--allow-empty")
+
+    res_push = _git("push", "-u", "origin", "master")
+    push_ok = res_push.returncode == 0
+
+    detail = (f"git init (branche master), remote origin {url} (HTTPS), "
+              ".gitignore minimal, commit initial")
+    commande_manuelle = None
+    if push_ok:
+        detail += ", poussé sur origin/master."
+    else:
+        detail += (" — ⚠ push initial échoué (commit resté local) : "
+                   + res_push.stderr.strip())
+        commande_manuelle = _commandes_git_manuelles(rep_path, depot,
+                                                       complet=False)
+
+    return {"ok": True, "deja_git": False, "push_ok": push_ok,
+            "detail": detail, "commande_manuelle": commande_manuelle}
+
+
 def mettre_a_jour_doc(nom: str, depot: str, rep: str, perimetre: str) -> dict:
     """Insère le projet dans les tableaux §2 et §7 de BRIDGE_AGENT_DOC.md et
     rafraîchit la date en bas. Renvoie {existe, ok2, ok7, ok_date}."""
@@ -384,7 +478,14 @@ def creer_projet(nom: str, depot: str = "", rep: str = "", perimetre: str = "",
         detail_ctx = f"répertoire {rep} créé ; " + detail_ctx
     etapes.append({"etape": "Fichiers contexte", "ok": True, "detail": detail_ctx})
 
-    # 5. Mise à jour de BRIDGE_AGENT_DOC.md (§2, §7, date).
+    # 5. Dépôt git local du répertoire de travail (issue #257) — sans quoi le
+    # projet est inutilisable (git pull --ff-only et commit de sauvegarde du
+    # watcher échouent). Rien à faire si déjà un dépôt git.
+    git_res = initialiser_git(rep, depot)
+    etapes.append({"etape": "Dépôt git local", "ok": git_res["ok"],
+                   "detail": git_res["detail"]})
+
+    # 6. Mise à jour de BRIDGE_AGENT_DOC.md (§2, §7, date).
     doc = mettre_a_jour_doc(nom, depot, rep, perimetre)
     if not doc["existe"]:
         etapes.append({"etape": "Documentation", "ok": False,
@@ -397,7 +498,10 @@ def creer_projet(nom: str, depot: str = "", rep: str = "", perimetre: str = "",
 
     return {"succes": True, "nom": nom, "depot": depot, "rep": rep,
             "perimetre": perimetre, "depot_existait": depot_existait,
-            "couleur": couleur, "etapes": etapes, "erreur": None}
+            "couleur": couleur, "etapes": etapes, "erreur": None,
+            "git_deja_git": git_res["deja_git"],
+            "git_push_ok": git_res["push_ok"],
+            "git_commande_manuelle": git_res["commande_manuelle"]}
 
 
 def etape_nom() -> str:
@@ -558,6 +662,47 @@ def etape_contexte(rep: str, avec_specs: bool) -> list[Path]:
     return crees
 
 
+def etape_git(depot: str, rep: str) -> dict:
+    """Initialise le dépôt git local du répertoire de travail (issue #257),
+    après confirmation — cohérent avec les autres étapes, qui demandent
+    toutes. Rien n'est demandé si REP_TRAVAIL est déjà un dépôt git (cas
+    laissé strictement inchangé). Renvoie le même dict que initialiser_git()."""
+    titre("8. Dépôt git local")
+    rep_path = Path(rep).expanduser()
+    if (rep_path / ".git").exists():
+        print(f"   ✓ {rep_path} est déjà un dépôt git — inchangé.")
+        return {"ok": True, "deja_git": True, "push_ok": None,
+                "detail": "déjà un dépôt git — inchangé.",
+                "commande_manuelle": None}
+
+    url = _url_https(depot)
+    print(f"   {rep_path} n'est pas encore un dépôt git.")
+    print("   Sans initialisation, « git pull --ff-only » (watcher) et le "
+          "commit de sauvegarde (mode écriture) échoueront systématiquement.")
+    if not demander_oui_non(
+            f"Initialiser git (init sur master, remote origin {url} en "
+            "HTTPS, .gitignore, commit initial, PUIS push)", defaut=True):
+        cmd = _commandes_git_manuelles(rep_path, depot, complet=True)
+        print("   ⚠️  Non initialisé — reste à faire à la main avant tout usage :")
+        for ligne in cmd.splitlines():
+            print(f"      {ligne}")
+        return {"ok": False, "deja_git": False, "push_ok": None,
+                "detail": "non initialisé (refusé) — à faire à la main.",
+                "commande_manuelle": cmd}
+
+    resultat = initialiser_git(rep, depot)
+    if resultat["push_ok"]:
+        print("   ✓ dépôt initialisé (branche master, remote HTTPS) et poussé "
+              "sur origin/master.")
+    elif resultat["ok"]:
+        print("   ✓ dépôt initialisé, commit local créé.")
+        print(f"   ⚠️  push initial échoué — à relancer à la main : "
+              f"{resultat['commande_manuelle']}")
+    else:
+        print(f"   ❌ {resultat['detail']}")
+    return resultat
+
+
 # ─── Mise à jour de la documentation (§2, §7, date) ───────────────────────────
 
 def _inserer_ligne_tableau(lignes: list[str], titre_section: str,
@@ -596,7 +741,7 @@ def _afficher_rep(rep: str) -> str:
 
 
 def etape_doc(nom: str, depot: str, rep: str, perimetre: str) -> bool:
-    titre("8. Mise à jour de BRIDGE_AGENT_DOC.md")
+    titre("9. Mise à jour de BRIDGE_AGENT_DOC.md")
     if not DOC.exists():
         print(f"   ⚠️  {DOC.name} introuvable — mise à jour ignorée.")
         return False
@@ -705,9 +850,10 @@ def main() -> None:
     if demander_oui_non("Mettre en place le pattern Specs MVC", defaut=False):
         fichiers_contexte += etape_contexte(rep, avec_specs=True)
 
+    git_res = etape_git(depot, rep)
     doc_ok = etape_doc(nom, depot, rep, perimetre)
 
-    # 9. Résumé final.
+    # 10. Résumé final.
     titre("✅ Résumé")
     print(f"   Projet          : {nom}")
     print(f"   Dépôt GitHub    : {depot} "
@@ -721,14 +867,32 @@ def main() -> None:
     if fichiers_contexte:
         print("   Contexte        : " +
               ", ".join(str(f) for f in fichiers_contexte))
+    if git_res["deja_git"]:
+        print("   Dépôt git local : déjà un dépôt git — inchangé")
+    elif git_res["push_ok"]:
+        print("   Dépôt git local : initialisé (master, remote HTTPS) et "
+              "poussé sur origin/master")
+    elif git_res["ok"]:
+        print("   Dépôt git local : initialisé, commit local — push manuel requis")
+    else:
+        print("   Dépôt git local : NON initialisé — le projet est inutilisable "
+              "en l'état")
     print(f"   Documentation   : {'§2/§7/date mis à jour' if doc_ok else 'à vérifier'}")
 
     print("\n\033[1mReste à faire manuellement :\033[0m")
+    print(f"   Côté projet {nom} créé :")
+    print(f"   • Rédiger {rep}/CONTEXTE.md — créé VIDE, injecté dans chaque "
+          "prompt CCL (plafonné à 4000 caractères).")
+    if git_res.get("commande_manuelle"):
+        print("   • Initialisation git incomplète — à terminer à la main :")
+        for ligne in git_res["commande_manuelle"].splitlines():
+            print(f"       {ligne}")
     print(f"   • Lancer le watcher : "
           f"python3 watcher.py --config configs/{nom}.conf")
-    print(f"   • Vérifier puis committer/pousser les changements du dépôt "
-          "Bridge_Agent (configs/, doc).")
     print("   • (Optionnel) Piloter le watcher depuis l'interface new_issue.py.")
+    print(f"   Côté dépôt Bridge_Agent (distinct du projet {nom}) :")
+    print("   • Vérifier puis committer/pousser les changements locaux "
+          "(configs/, doc).")
 
     rappel_projet_claude(nom)
 
