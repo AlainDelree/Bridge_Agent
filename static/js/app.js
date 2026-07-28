@@ -832,7 +832,6 @@ function construireBoutonsFiltre(noms) {
       + couleurProjetResultats(nom) + '"></span>' + escapeHtml(nom);
     zone.appendChild(btn);
   }
-  majClassesBoutonsFiltre();
   // Toggle « 👷 Ouvriers » (issue #86), après les boutons projet. Inactif par
   // défaut : les issues de type ouvrier restent masquées jusqu'à un clic.
   const ouv = document.createElement('span');
@@ -846,8 +845,12 @@ function construireBoutonsFiltre(noms) {
   const tous = document.createElement('span');
   tous.className = 'filtre-projet tous';
   tous.textContent = 'Tous';
-  tous.onclick = reactiverTousLesFiltres;
+  tous.onclick = basculerTousLesFiltres;
   zone.appendChild(tous);
+  // Appelé ici, une fois TOUS les boutons créés (dont « Tous ») : sinon la
+  // mise à jour de son état visuel (issue #262) n'aurait rien à trouver dans
+  // le DOM, ce bouton étant créé après les boutons projet.
+  majClassesBoutonsFiltre();
   // Bouton rafraîchir déplacé ici, juste après « Tous » (issue #57). Recréé à
   // chaque reconstruction de la ligne car zone.innerHTML est vidé au début.
   const rafr = document.createElement('button');
@@ -872,20 +875,28 @@ function basculerFiltreProjet(nom) {
   if (!sel || sel.style.display === 'none') selectionnerPremiereVisible();
 }
 
-// Remet tous les projets à l'état actif ET efface la mémoire localStorage
-// (retour au comportement par défaut : tous actifs au prochain chargement).
-function reactiverTousLesFiltres() {
+// Bascule « Tous » entre deux états (issue #262) : un vrai toggle, pas une
+// simple remise à zéro. Si au moins un projet est masqué → tout afficher ;
+// si tout est déjà affiché → tout masquer. Seul l'état « tout affiché »
+// bascule vers « tout masqué » ; tout état partiel revient à « tout affiché ».
+// L'ensemble vide (tout masqué) est un état légitime et volontaire — l'ancien
+// garde-fou de l'issue #259, qui l'interdisait, a été retiré : il contredisait
+// désormais l'intention même de la fonction.
+// Persistance localStorage asymétrique, à dessein : « tout affiché » efface
+// la mémoire (retour au défaut au prochain chargement, comme avant #262) ;
+// « tout masqué » est au contraire persisté via sauvegarderFiltresProjets
+// (comme basculerFiltreProjet), sans quoi un rechargement de page annulerait
+// silencieusement le masquage volontaire de l'utilisateur.
+function basculerTousLesFiltres() {
   const noms = nomsProjetsDisponibles();
-  // Garde-fou (issue #259) : nomsProjetsDisponibles() est déjà une source
-  // stable (le <select> global, indépendant de l'état d'affichage/filtre de
-  // l'onglet Résultats), donc ce cas ne devrait normalement jamais se
-  // produire ici. On le blinde quand même : un ensemble vide masquerait
-  // TOUTE la liste, un état sans usage dont on ne sort qu'en recliquant
-  // chaque projet un par un. En cas de liste vide, on laisse l'état inchangé
-  // plutôt que de tout masquer.
-  if (!noms.length) return;
-  projetsFiltresActifs = new Set(noms);
-  try { localStorage.removeItem(CLE_FILTRES_RESULTATS); } catch(e) {}
+  const tousAffiches = noms.every(nom => projetsFiltresActifs.has(nom));
+  if (tousAffiches) {
+    projetsFiltresActifs = new Set();
+    sauvegarderFiltresProjets(noms);
+  } else {
+    projetsFiltresActifs = new Set(noms);
+    try { localStorage.removeItem(CLE_FILTRES_RESULTATS); } catch(e) {}
+  }
   majClassesBoutonsFiltre();
   appliquerFiltresListe();
   const sel = document.querySelector('#liste-issues .ligne-issue.selectionnee');
@@ -903,6 +914,15 @@ function majClassesBoutonsFiltre() {
       btn.style.color       = actif ? btn.dataset.couleur : '';
       btn.style.borderColor = actif ? btn.dataset.couleur : '';
     });
+  // Bouton « Tous » (issue #262) : reflète l'action du PROCHAIN clic, pas
+  // l'état courant — grisé (.inactif) tant qu'au moins un projet est masqué,
+  // ce qui correspond à « le prochain clic affichera tout ».
+  const boutonTous = document.querySelector('#filtres-projets .filtre-projet.tous');
+  if (boutonTous) {
+    const tousAffiches = nomsProjetsDisponibles().every(nom => projetsFiltresActifs.has(nom));
+    boutonTous.classList.toggle('inactif', !tousAffiches);
+    boutonTous.title = tousAffiches ? 'Tout masquer' : 'Tout afficher';
+  }
 }
 
 // Convertit une couleur hexadécimale #RRGGBB en rgba() avec l'alpha demandé.
@@ -1447,6 +1467,15 @@ function selectionnerPremiereVisible() {
   if (premiere) {
     selectionnerLigne(premiere.dataset.projet, premiere.dataset.numero);
   } else {
+    // Aucune ligne visible (ex. issue #262 : toggle « Tous » à l'état tout
+    // masqué) : on retire aussi la classe .selectionnee de la ligne masquée,
+    // sinon elle reste marquée sélectionnée en coulisse — un futur retour à
+    // l'affichage la retrouverait "déjà sélectionnée" et sauterait la
+    // resynchronisation (zone de détail restée sur ce message).
+    document.querySelectorAll('#liste-issues .ligne-issue.selectionnee')
+      .forEach(ligne => ligne.classList.remove('selectionnee'));
+    projetCourant = null;
+    numeroCourant = null;
     document.getElementById('zone-issue').innerHTML =
       '<div class="issue-vide">Aucune issue à afficher</div>';
   }
