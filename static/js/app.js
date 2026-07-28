@@ -875,7 +875,16 @@ function basculerFiltreProjet(nom) {
 // Remet tous les projets à l'état actif ET efface la mémoire localStorage
 // (retour au comportement par défaut : tous actifs au prochain chargement).
 function reactiverTousLesFiltres() {
-  projetsFiltresActifs = new Set(nomsProjetsDisponibles());
+  const noms = nomsProjetsDisponibles();
+  // Garde-fou (issue #259) : nomsProjetsDisponibles() est déjà une source
+  // stable (le <select> global, indépendant de l'état d'affichage/filtre de
+  // l'onglet Résultats), donc ce cas ne devrait normalement jamais se
+  // produire ici. On le blinde quand même : un ensemble vide masquerait
+  // TOUTE la liste, un état sans usage dont on ne sort qu'en recliquant
+  // chaque projet un par un. En cas de liste vide, on laisse l'état inchangé
+  // plutôt que de tout masquer.
+  if (!noms.length) return;
+  projetsFiltresActifs = new Set(noms);
   try { localStorage.removeItem(CLE_FILTRES_RESULTATS); } catch(e) {}
   majClassesBoutonsFiltre();
   appliquerFiltresListe();
