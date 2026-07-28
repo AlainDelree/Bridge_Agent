@@ -86,6 +86,18 @@ __pycache__/
 .env
 """
 
+# Timeouts (secondes) des appels git de initialiser_git() (issue #258) : courts
+# pour les opérations locales (init/remote/add/commit, jamais de réseau), plus
+# généreux pour le push (le seul appel réseau du lot — cohérent avec les 30s/120s
+# déjà en place ailleurs dans le bridge pour commenter_issue/pièces jointes).
+TIMEOUT_GIT_LOCAL = 15
+TIMEOUT_GIT_PUSH = 60
+
+# Fichiers que le script crée lui-même dans le répertoire de travail (contexte
+# + gitignore auto) : exclus de la détection de contenu préexistant (issue
+# #258) — leur seule présence ne doit pas bloquer le push automatique.
+FICHIERS_CREES_PAR_SCRIPT = frozenset({"CONTEXTE.md", ".gitignore", *FICHIERS_SPECS})
+
 MOIS_FR = ["", "janvier", "février", "mars", "avril", "mai", "juin", "juillet",
            "août", "septembre", "octobre", "novembre", "décembre"]
 
@@ -306,6 +318,23 @@ def _commandes_git_manuelles(rep_path: Path, depot: str, complet: bool) -> str:
             f"git push -u origin master")
 
 
+def _fichiers_preexistants(rep_path: Path) -> list[str]:
+    """Fichiers présents dans rep_path AUTRES que ceux que le script vient de
+    créer lui-même (CONTEXTE.md, fichiers Specs, .gitignore) — issue #258.
+    Une liste non vide signale un répertoire qui contenait déjà du contenu
+    avant l'initialisation git : le dépôt étant créé **public**, ce contenu
+    ne doit pas être publié sans relecture. Chemins relatifs à rep_path,
+    triés, pour un affichage stable côté CLI/web."""
+    trouves = []
+    for chemin in rep_path.rglob("*"):
+        if chemin.is_dir():
+            continue
+        if chemin.name in FICHIERS_CREES_PAR_SCRIPT:
+            continue
+        trouves.append(str(chemin.relative_to(rep_path)))
+    return sorted(trouves)
+
+
 def initialiser_git(rep: str, depot: str) -> dict:
     """Initialise le dépôt git local du répertoire de travail (issue #257) :
     `git init` sur la branche `master`, `git remote add origin` en **HTTPS**
@@ -316,24 +345,49 @@ def initialiser_git(rep: str, depot: str) -> dict:
     Exception documentée à la règle « CCL ne pousse jamais » (§18.2 de la
     doc, même raisonnement que la route pièces jointes) : c'est Alain qui
     déclenche la création de projet — jamais un agent — donc ce push initial
-    n'est pas soumis à cette règle. Un échec du push (réseau, droits) ne fait
-    PAS échouer l'étape : le commit reste local et `commande_manuelle`
-    indique la commande à relancer à la main.
+    n'est pas soumis à cette règle. Un échec du push (réseau, droits, ou
+    timeout — issue #258) ne fait PAS échouer l'étape : le commit reste
+    local et `commande_manuelle` indique la commande à relancer à la main.
 
-    Renvoie {ok, deja_git, push_ok, detail, commande_manuelle}."""
+    Second garde-fou (issue #258) : cette exception ne repose que sur le
+    fait que le dépôt DISTANT vient d'être créé et ne contient encore aucun
+    travail d'un tiers — elle ne dit rien du contenu LOCAL du répertoire. Si
+    REP_TRAVAIL désigne un dossier préexistant non versionné contenant déjà
+    des fichiers (cas explicitement couvert par ce script), le push n'est
+    donc PAS déclenché automatiquement : init/remote/.gitignore/commit sont
+    faits, mais le push reste à lancer à la main après relecture.
+
+    Renvoie {ok, deja_git, push_ok, contenu_preexistant, detail,
+    commande_manuelle}. `contenu_preexistant` est la liste (triée, chemins
+    relatifs) des fichiers détectés ; `push_ok` vaut None aussi bien en cas
+    d'échec avant le push (git init raté) qu'en cas de retenue volontaire
+    (contenu préexistant) — c'est `contenu_preexistant` qui distingue les
+    deux côté appelant."""
     rep_path = Path(rep).expanduser()
     if (rep_path / ".git").exists():
         return {"ok": True, "deja_git": True, "push_ok": None,
+                "contenu_preexistant": [],
                 "detail": "déjà un dépôt git — inchangé.",
                 "commande_manuelle": None}
 
-    def _git(*args: str) -> subprocess.CompletedProcess:
-        return subprocess.run(["git", *args], cwd=rep_path,
-                              capture_output=True, text=True)
+    # Détection AVANT toute écriture (le futur .gitignore ne doit pas fausser
+    # le constat) : c'est le contenu tel qu'il existait avant que ce script
+    # n'y touche.
+    preexistants = _fichiers_preexistants(rep_path)
+
+    def _git(*args: str, timeout: float = TIMEOUT_GIT_LOCAL) -> subprocess.CompletedProcess:
+        try:
+            return subprocess.run(["git", *args], cwd=rep_path,
+                                  capture_output=True, text=True, timeout=timeout)
+        except subprocess.TimeoutExpired:
+            return subprocess.CompletedProcess(
+                args=["git", *args], returncode=124, stdout="",
+                stderr=f"timeout dépassé ({timeout}s)")
 
     res_init = _git("init", "-b", "master")
     if res_init.returncode != 0:
         return {"ok": False, "deja_git": False, "push_ok": None,
+                "contenu_preexistant": [],
                 "detail": f"échec de git init : {res_init.stderr.strip()}",
                 "commande_manuelle": _commandes_git_manuelles(rep_path, depot,
                                                                complet=True)}
@@ -348,11 +402,23 @@ def initialiser_git(rep: str, depot: str) -> dict:
     _git("add", "-A")
     _git("commit", "-m", "Initialisation du projet", "--allow-empty")
 
-    res_push = _git("push", "-u", "origin", "master")
-    push_ok = res_push.returncode == 0
-
     detail = (f"git init (branche master), remote origin {url} (HTTPS), "
               ".gitignore minimal, commit initial")
+
+    if preexistants:
+        detail += (f" — ⚠ push automatique retenu : {len(preexistants)} "
+                   "fichier(s) préexistant(s) détecté(s) dans le répertoire "
+                   f"({', '.join(preexistants[:10])}"
+                   f"{', …' if len(preexistants) > 10 else ''}) ; le dépôt "
+                   "est public et ce contenu n'a pas été relu.")
+        return {"ok": True, "deja_git": False, "push_ok": None,
+                "contenu_preexistant": preexistants, "detail": detail,
+                "commande_manuelle": _commandes_git_manuelles(rep_path, depot,
+                                                               complet=False)}
+
+    res_push = _git("push", "-u", "origin", "master", timeout=TIMEOUT_GIT_PUSH)
+    push_ok = res_push.returncode == 0
+
     commande_manuelle = None
     if push_ok:
         detail += ", poussé sur origin/master."
@@ -363,7 +429,8 @@ def initialiser_git(rep: str, depot: str) -> dict:
                                                        complet=False)
 
     return {"ok": True, "deja_git": False, "push_ok": push_ok,
-            "detail": detail, "commande_manuelle": commande_manuelle}
+            "contenu_preexistant": [], "detail": detail,
+            "commande_manuelle": commande_manuelle}
 
 
 def mettre_a_jour_doc(nom: str, depot: str, rep: str, perimetre: str) -> dict:
@@ -501,6 +568,7 @@ def creer_projet(nom: str, depot: str = "", rep: str = "", perimetre: str = "",
             "couleur": couleur, "etapes": etapes, "erreur": None,
             "git_deja_git": git_res["deja_git"],
             "git_push_ok": git_res["push_ok"],
+            "git_contenu_preexistant": git_res["contenu_preexistant"],
             "git_commande_manuelle": git_res["commande_manuelle"]}
 
 
@@ -694,6 +762,17 @@ def etape_git(depot: str, rep: str) -> dict:
     if resultat["push_ok"]:
         print("   ✓ dépôt initialisé (branche master, remote HTTPS) et poussé "
               "sur origin/master.")
+    elif resultat["contenu_preexistant"]:
+        print("   ✓ dépôt initialisé, commit local créé.")
+        print("   ⚠️  push NON déclenché : le dépôt est public et le "
+              "répertoire contenait déjà du contenu non relu. Fichiers "
+              "préexistants détectés :")
+        for f in resultat["contenu_preexistant"][:10]:
+            print(f"      - {f}")
+        if len(resultat["contenu_preexistant"]) > 10:
+            print(f"      … et {len(resultat['contenu_preexistant']) - 10} "
+                  "autre(s).")
+        print(f"   Après vérification, lancer : {resultat['commande_manuelle']}")
     elif resultat["ok"]:
         print("   ✓ dépôt initialisé, commit local créé.")
         print(f"   ⚠️  push initial échoué — à relancer à la main : "
@@ -872,6 +951,10 @@ def main() -> None:
     elif git_res["push_ok"]:
         print("   Dépôt git local : initialisé (master, remote HTTPS) et "
               "poussé sur origin/master")
+    elif git_res["contenu_preexistant"]:
+        print(f"   Dépôt git local : initialisé, commit local — push NON "
+              f"automatique ({len(git_res['contenu_preexistant'])} fichier(s) "
+              "préexistant(s), dépôt public non relu)")
     elif git_res["ok"]:
         print("   Dépôt git local : initialisé, commit local — push manuel requis")
     else:
@@ -884,7 +967,17 @@ def main() -> None:
     print(f"   • Rédiger {rep}/CONTEXTE.md — créé VIDE, injecté dans chaque "
           "prompt CCL (plafonné à 4000 caractères).")
     if git_res.get("commande_manuelle"):
-        print("   • Initialisation git incomplète — à terminer à la main :")
+        if git_res.get("contenu_preexistant"):
+            print("   • Push initial volontairement NON déclenché — dépôt "
+                  "public, contenu suivant non relu :")
+            for f in git_res["contenu_preexistant"][:10]:
+                print(f"       - {f}")
+            if len(git_res["contenu_preexistant"]) > 10:
+                print(f"       … et {len(git_res['contenu_preexistant']) - 10} "
+                      "autre(s).")
+            print("     Après vérification, lancer :")
+        else:
+            print("   • Initialisation git incomplète — à terminer à la main :")
         for ligne in git_res["commande_manuelle"].splitlines():
             print(f"       {ligne}")
     print(f"   • Lancer le watcher : "

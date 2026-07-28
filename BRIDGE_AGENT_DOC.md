@@ -563,20 +563,40 @@ deux, mêmes étapes, mêmes messages, comportement idempotent identique :
 4. **Fichier(s) de contexte** : `CONTEXTE.md` (+ les 3 fichiers Specs MVC §15 si
    demandé) créés **vides** dans le répertoire de travail, qui est créé au
    besoin.
-5. **Dépôt git local du répertoire de travail** (issue #257) : si déjà un
-   dépôt git (cas de tous les projets installés jusqu'ici), rien n'est fait.
-   Sinon — projet réellement neuf — `git init` sur la branche `master`,
-   `git remote add origin` en **HTTPS** (`https://github.com/<owner>/<repo>.git`,
-   jamais SSH), `.gitignore` minimal s'il est absent, commit initial, puis
-   **push**. Sans cette étape le projet livré était inutilisable : ni
-   `git pull --ff-only` (début de cycle du watcher) ni le commit de
-   sauvegarde obligatoire en mode écriture ne peuvent s'exécuter sur un
-   répertoire non versionné. Ce push est une **exception documentée** à la
-   règle « Alain pousse lui-même » (voir §18.2, même raisonnement que la
-   route pièces jointes) : c'est Alain qui déclenche la création de projet,
-   jamais un agent. Un échec du push (réseau, droits) ne fait pas échouer la
+5. **Dépôt git local du répertoire de travail** (issue #257, garde-fous
+   complétés #258) : si déjà un dépôt git (cas de tous les projets installés
+   jusqu'ici), rien n'est fait. Sinon — répertoire non versionné — `git init`
+   sur la branche `master`, `git remote add origin` en **HTTPS**
+   (`https://github.com/<owner>/<repo>.git`, jamais SSH), `.gitignore`
+   minimal s'il est absent, commit initial. Sans cette étape le projet livré
+   était inutilisable : ni `git pull --ff-only` (début de cycle du watcher)
+   ni le commit de sauvegarde obligatoire en mode écriture ne peuvent
+   s'exécuter sur un répertoire non versionné. Chaque appel git est borné
+   par un **timeout** (15s pour les opérations locales, 60s pour le push —
+   issue #258) : un dépassement est traité comme un échec normal de l'étape,
+   jamais comme une exception qui remonterait et ferait échouer la création.
+
+   **Push automatique — mais seulement si le répertoire était réellement
+   vide.** Ce push est une **exception documentée** à la règle « Alain
+   pousse lui-même » (voir §18.2, même raisonnement que la route pièces
+   jointes) : c'est Alain qui déclenche la création de projet, jamais un
+   agent. Un échec du push (réseau, droits, timeout) ne fait pas échouer la
    création : le commit reste local, le compte-rendu indique la commande
    manuelle à relancer (`git push -u origin master`).
+
+   **Garde-fou supplémentaire (issue #258)** : ce raisonnement ne couvre que
+   le dépôt **distant**, tout juste créé — il ne dit rien du contenu
+   **local** du répertoire. Or ce script gère explicitement le cas d'un
+   `REP_TRAVAIL` **préexistant et non versionné** : avant le push, le
+   contenu du répertoire est comparé aux seuls fichiers que le script vient
+   lui-même de créer (`CONTEXTE.md`, fichiers Specs, `.gitignore`). S'il ne
+   reste rien d'autre → comportement ci-dessus, push automatique. S'il reste
+   d'autres fichiers → **le push n'est PAS déclenché** : `git init`, le
+   remote, le `.gitignore` et le commit initial sont faits normalement, mais
+   le push est laissé à Alain après relecture (le dépôt étant **public**, ce
+   contenu ne doit pas être publié sans vérification). Le compte-rendu (CLI
+   et web) liste alors les fichiers préexistants détectés (tronquée à une
+   dizaine) et la commande manuelle à lancer une fois la relecture faite.
 6. **`BRIDGE_AGENT_DOC.md`** (§2 Projets actifs, §7 Périmètre, date en bas)
    mis à jour **localement** — jamais poussé automatiquement : reste à
    committer/pousser à la main (dépôt Bridge_Agent, distinct du projet créé).
@@ -1516,8 +1536,23 @@ par un fichier temporaire hors dépôt, le temps de calculer son blob.
 > raisonnement : c'est Alain qui déclenche la création de projet, jamais un
 > agent. Contrairement aux pièces jointes, ce push n'est pas confiné à une
 > branche orpheline sans code : c'est le commit initial normal (`master`) du
-> nouveau dépôt, ce qui reste sûr car ce dépôt vient d'être créé et ne
-> contient encore aucun travail d'un tiers susceptible d'être emporté.
+> nouveau dépôt, ce qui reste sûr **côté dépôt distant**, puisque ce dépôt
+> vient d'être créé et ne contient encore aucun travail d'un tiers
+> susceptible d'être emporté.
+>
+> **Précision (issue #258), ce raisonnement était incomplet** : il couvrait
+> le dépôt distant (rien à emporter, puisqu'il vient de naître) mais pas le
+> contenu **local** de `REP_TRAVAIL` — ce script gère explicitement le cas
+> d'un répertoire préexistant non versionné, dont le contenu n'a alors
+> jamais été relu par Alain avant la création du projet. Le push distant
+> serait sûr en lui-même, mais publierait sans confirmation tout ce que
+> contenait déjà ce répertoire. Depuis #258, ce cas est détecté : si le
+> répertoire contient autre chose que les fichiers que le script vient
+> lui-même de créer (`CONTEXTE.md`, fichiers Specs, `.gitignore`), le push
+> n'est **pas** déclenché automatiquement — seuls `git init`/remote/
+> `.gitignore`/commit le sont, le push restant à la main après relecture.
+> L'exception ne s'applique donc en pratique qu'aux répertoires réellement
+> vides (ou ne contenant que les fichiers créés par le script lui-même).
 
 ### 18.3 Fonctionnement concret
 

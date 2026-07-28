@@ -3696,17 +3696,22 @@ function afficherRappelGit(nom) {
 }
 
 // Rappels propres au PROJET créé (dépôt distinct de Bridge_Agent, cf.
-// afficherRappelGit ci-dessus) — issue #257. Deux points, jamais mentionnés
-// nulle part avant cette issue :
+// afficherRappelGit ci-dessus) — issue #257, complété #258. Deux points,
+// jamais mentionnés nulle part avant l'issue #257 :
 //  1. CONTEXTE.md est créé VIDE (injecté dans chaque prompt CCL, plafonné à
 //     4000 caractères) — toujours à rappeler, quel que soit le cas git.
 //  2. Si l'initialisation git du répertoire de travail n'a pas pu se
-//     terminer (push initial échoué, ou init entièrement absente sur un
-//     backend plus ancien), les commandes manuelles nécessaires.
+//     terminer (push initial échoué), OU si le push a été VOLONTAIREMENT
+//     retenu parce que le répertoire contenait déjà du contenu non relu
+//     (issue #258 — le dépôt est public), les commandes manuelles
+//     nécessaires. Les deux cas partagent commande_manuelle mais doivent
+//     rester des messages distincts : le premier est un échec, le second une
+//     retenue délibérée — les confondre laisserait croire à une erreur là où
+//     rien n'a raté.
 // Encart visuellement distinct (bordure bleue) de celui de afficherRappelGit
 // (bordure orange) : c'est précisément la confusion entre « dépôt
 // Bridge_Agent » et « dépôt du projet créé » qui a fait passer inaperçu le
-// bug d'origine de cette issue.
+// bug d'origine de l'issue #257.
 function afficherRappelProjet(res) {
   const box = document.getElementById('np-rappel-projet');
   let html = '<div class="titre">ℹ Côté projet « ' + escapeHtml(res.nom) + ' » créé</div>';
@@ -3718,6 +3723,19 @@ function afficherRappelProjet(res) {
   } else if (res.git_push_ok) {
     html += '<div>Dépôt git local : initialisé (branche master, remote HTTPS) '
           + 'et poussé sur origin/master.</div>';
+  } else if (res.git_contenu_preexistant && res.git_contenu_preexistant.length) {
+    const noms = res.git_contenu_preexistant.slice(0, 10);
+    const reste = res.git_contenu_preexistant.length - noms.length;
+    html += '<div>⚠ Push <b>volontairement non déclenché</b> : le dépôt est '
+          + '<b>public</b> et le répertoire contenait déjà '
+          + res.git_contenu_preexistant.length + ' fichier(s) non relu(s) — '
+          + "ce n'est pas un échec, rien n'a été publié :</div>"
+          + '<pre>' + escapeHtml(noms.join('\n'))
+          + (reste > 0 ? '\n… et ' + reste + ' autre(s).' : '') + '</pre>'
+          + '<div>Après vérification de ce contenu, lance (clic pour '
+          + 'sélectionner) :</div>'
+          + '<pre onclick="npSelectionnerTexte(this)">'
+          + escapeHtml(res.git_commande_manuelle) + '</pre>';
   } else if (res.git_commande_manuelle) {
     html += '<div>⚠ Initialisation git incomplète — à terminer à la main '
           + '(clic pour sélectionner) :</div>'
