@@ -584,19 +584,29 @@ deux, mêmes étapes, mêmes messages, comportement idempotent identique :
    création : le commit reste local, le compte-rendu indique la commande
    manuelle à relancer (`git push -u origin master`).
 
-   **Garde-fou supplémentaire (issue #258)** : ce raisonnement ne couvre que
-   le dépôt **distant**, tout juste créé — il ne dit rien du contenu
-   **local** du répertoire. Or ce script gère explicitement le cas d'un
-   `REP_TRAVAIL` **préexistant et non versionné** : avant le push, le
-   contenu du répertoire est comparé aux seuls fichiers que le script vient
-   lui-même de créer (`CONTEXTE.md`, fichiers Specs, `.gitignore`). S'il ne
-   reste rien d'autre → comportement ci-dessus, push automatique. S'il reste
-   d'autres fichiers → **le push n'est PAS déclenché** : `git init`, le
-   remote, le `.gitignore` et le commit initial sont faits normalement, mais
-   le push est laissé à Alain après relecture (le dépôt étant **public**, ce
-   contenu ne doit pas être publié sans vérification). Le compte-rendu (CLI
-   et web) liste alors les fichiers préexistants détectés (tronquée à une
-   dizaine) et la commande manuelle à lancer une fois la relecture faite.
+   **Garde-fou supplémentaire (issue #258, affiné #260)** : ce raisonnement
+   ne couvre que le dépôt **distant**, tout juste créé — il ne dit rien du
+   contenu **local** du répertoire. Or ce script gère explicitement le cas
+   d'un `REP_TRAVAIL` **préexistant et non versionné** : après `git init`,
+   remote et écriture du `.gitignore` minimal, `git add -A` est exécuté,
+   puis ce que git a **réellement indexé** (`git diff --cached --name-only`)
+   est comparé aux seuls fichiers que le script vient lui-même de créer
+   (`CONTEXTE.md`, fichiers Specs, `.gitignore`) — la détection porte sur ce
+   que git **suivrait**, pas sur un simple inventaire du disque : un `venv/`
+   ou `__pycache__/` préexistant, exclu par ce `.gitignore`, n'atteint
+   jamais l'index et ne compte donc pas comme contenu préexistant (issue
+   #260 — l'ancienne détection, faite par inventaire brut du répertoire
+   avant même l'écriture du `.gitignore`, remontait à tort ce genre de
+   contenu jamais destiné à être commité, sur le cas pourtant le plus
+   fréquent d'un `REP_TRAVAIL` préexistant : un projet Python déjà entamé).
+   S'il ne reste rien d'autre → comportement ci-dessus, push automatique.
+   S'il reste d'autres fichiers **suivis** → **le push n'est PAS
+   déclenché** : `git init`, le remote, le `.gitignore` et le commit
+   initial sont faits normalement, mais le push est laissé à Alain après
+   relecture (le dépôt étant **public**, ce contenu ne doit pas être publié
+   sans vérification). Le compte-rendu (CLI et web) liste alors les
+   fichiers préexistants détectés (tronquée à une dizaine) et la commande
+   manuelle à lancer une fois la relecture faite.
 6. **`BRIDGE_AGENT_DOC.md`** (§2 Projets actifs, §7 Périmètre, date en bas)
    mis à jour **localement** — jamais poussé automatiquement : reste à
    committer/pousser à la main (dépôt Bridge_Agent, distinct du projet créé).

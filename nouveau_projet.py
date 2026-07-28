@@ -318,21 +318,27 @@ def _commandes_git_manuelles(rep_path: Path, depot: str, complet: bool) -> str:
             f"git push -u origin master")
 
 
-def _fichiers_preexistants(rep_path: Path) -> list[str]:
-    """Fichiers présents dans rep_path AUTRES que ceux que le script vient de
-    créer lui-même (CONTEXTE.md, fichiers Specs, .gitignore) — issue #258.
-    Une liste non vide signale un répertoire qui contenait déjà du contenu
-    avant l'initialisation git : le dépôt étant créé **public**, ce contenu
-    ne doit pas être publié sans relecture. Chemins relatifs à rep_path,
-    triés, pour un affichage stable côté CLI/web."""
-    trouves = []
-    for chemin in rep_path.rglob("*"):
-        if chemin.is_dir():
-            continue
-        if chemin.name in FICHIERS_CREES_PAR_SCRIPT:
-            continue
-        trouves.append(str(chemin.relative_to(rep_path)))
-    return sorted(trouves)
+def _fichiers_suivis_preexistants(rep_path: Path, git_runner) -> list[str]:
+    """Fichiers que git suivrait RÉELLEMENT, autres que ceux que le script
+    vient de créer lui-même (CONTEXTE.md, fichiers Specs, .gitignore) —
+    issue #260, corrige #258. Se fonde sur l'index git (`git diff --cached
+    --name-only`), interrogé APRÈS écriture du `.gitignore` minimal et
+    `git add -A` : contrairement à un scan brut du disque (`rglob`, version
+    #258), un contenu exclu par ce `.gitignore` (`venv/`, `__pycache__/`,
+    `*.pyc`, `*.log`, `.env`) n'a jamais atteint l'index et n'apparaît donc
+    plus ici — c'est ce que git commit/push emporterait réellement. Une
+    liste non vide signale un répertoire qui contenait déjà du contenu
+    SUIVI avant l'initialisation git : le dépôt étant créé **public**, ce
+    contenu ne doit pas être publié sans relecture. `git_runner` est le
+    point d'entrée `_git()` de l'appelant, déjà borné par TIMEOUT_GIT_LOCAL
+    et tolérant au dépassement — réutilisé tel quel, pas de second timeout à
+    gérer ici. Chemins relatifs à rep_path, triés, pour un affichage stable
+    côté CLI/web."""
+    res = git_runner("diff", "--cached", "--name-only")
+    if res.returncode != 0:
+        return []
+    fichiers = [ligne for ligne in res.stdout.splitlines() if ligne.strip()]
+    return sorted(f for f in fichiers if Path(f).name not in FICHIERS_CREES_PAR_SCRIPT)
 
 
 def initialiser_git(rep: str, depot: str) -> dict:
@@ -349,13 +355,19 @@ def initialiser_git(rep: str, depot: str) -> dict:
     timeout — issue #258) ne fait PAS échouer l'étape : le commit reste
     local et `commande_manuelle` indique la commande à relancer à la main.
 
-    Second garde-fou (issue #258) : cette exception ne repose que sur le
-    fait que le dépôt DISTANT vient d'être créé et ne contient encore aucun
-    travail d'un tiers — elle ne dit rien du contenu LOCAL du répertoire. Si
-    REP_TRAVAIL désigne un dossier préexistant non versionné contenant déjà
-    des fichiers (cas explicitement couvert par ce script), le push n'est
-    donc PAS déclenché automatiquement : init/remote/.gitignore/commit sont
-    faits, mais le push reste à lancer à la main après relecture.
+    Second garde-fou (issue #258, affiné #260) : cette exception ne repose
+    que sur le fait que le dépôt DISTANT vient d'être créé et ne contient
+    encore aucun travail d'un tiers — elle ne dit rien du contenu LOCAL du
+    répertoire. Si REP_TRAVAIL désigne un dossier préexistant non versionné
+    contenant déjà des fichiers que git SUIVRAIT (donc hors de ce
+    qu'exclurait le `.gitignore` minimal — cas explicitement couvert par ce
+    script), le push n'est donc PAS déclenché automatiquement :
+    init/remote/.gitignore/commit sont faits, mais le push reste à lancer à
+    la main après relecture. Un `venv/` ou `__pycache__/` préexistant, lui,
+    n'a jamais atteint l'index git et ne déclenche pas cette retenue
+    (issue #260 : la détection portait auparavant sur le contenu brut du
+    disque, avant même l'écriture du `.gitignore`, ce qui faisait remonter
+    des milliers d'entrées jamais destinées à être commitées).
 
     Renvoie {ok, deja_git, push_ok, contenu_preexistant, detail,
     commande_manuelle}. `contenu_preexistant` est la liste (triée, chemins
@@ -369,11 +381,6 @@ def initialiser_git(rep: str, depot: str) -> dict:
                 "contenu_preexistant": [],
                 "detail": "déjà un dépôt git — inchangé.",
                 "commande_manuelle": None}
-
-    # Détection AVANT toute écriture (le futur .gitignore ne doit pas fausser
-    # le constat) : c'est le contenu tel qu'il existait avant que ce script
-    # n'y touche.
-    preexistants = _fichiers_preexistants(rep_path)
 
     def _git(*args: str, timeout: float = TIMEOUT_GIT_LOCAL) -> subprocess.CompletedProcess:
         try:
@@ -400,6 +407,13 @@ def initialiser_git(rep: str, depot: str) -> dict:
         gitignore.write_text(GITIGNORE_MINIMAL, encoding="utf-8")
 
     _git("add", "-A")
+
+    # Détection APRÈS `.gitignore` + `git add -A` (issue #260, corrige #258) :
+    # on regarde ce que git a réellement indexé, pas le contenu brut du
+    # disque — un `venv/`/`__pycache__/` exclu par le `.gitignore` minimal
+    # n'a jamais atteint l'index et ne compte donc pas comme préexistant.
+    preexistants = _fichiers_suivis_preexistants(rep_path, _git)
+
     _git("commit", "-m", "Initialisation du projet", "--allow-empty")
 
     detail = (f"git init (branche master), remote origin {url} (HTTPS), "

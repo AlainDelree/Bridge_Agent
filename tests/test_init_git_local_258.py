@@ -1,12 +1,16 @@
 #!/usr/bin/env python3
-"""Test de `initialiser_git()` (`nouveau_projet.py`) — issue #257, étendu #258.
+"""Test de `initialiser_git()` (`nouveau_projet.py`) — issue #257, étendu
+#258, affiné #260.
 
 L'issue #257 avait été vérifiée manuellement sur des répertoires jetables
 sous `/tmp` (deux cas : répertoire neuf, déjà-git), puis ces répertoires
 supprimés — rien n'était resté sous `tests/`. L'issue #258 ajoute un
 troisième cas (répertoire non versionné avec contenu préexistant → pas de
 push automatique) et demande de garder trace des trois : ce fichier
-persiste désormais les trois scénarios.
+persiste désormais ces scénarios. L'issue #260 corrige la façon dont ce
+contenu préexistant est détecté (ce que git suivrait réellement après
+`git add -A`, pas un scan brut du disque via `rglob`) et ajoute le
+scénario `venv/`/`__pycache__/` qui en est la motivation directe.
 
 Aucun vrai dépôt GitHub n'est créé ni contacté : `depot` pointe vers un
 dépôt qui n'existe pas, si bien que `git push` échoue proprement (dépôt
@@ -141,6 +145,53 @@ def scenario_contenu_preexistant_pas_de_push():
             "commande_manuelle": res["commande_manuelle"]}
 
 
+def scenario_venv_ignore_par_gitignore_pas_de_retenue():
+    """Cœur de l'issue #260 : répertoire non versionné contenant un `venv/`
+    (avec un fichier dedans) et un `__pycache__/`, mais AUCUN fichier
+    réellement suivi par git — le `.gitignore` minimal écrit par le script
+    exclut justement ces deux dossiers. `contenu_preexistant` doit rester
+    VIDE (rien de tout ça n'atteint jamais l'index git) et le push doit être
+    tenté normalement, comme sur un répertoire vide. Sur le code d'avant
+    #260 (scan brut du disque via `rglob`, avant même l'écriture du
+    `.gitignore`), ce scénario échoue : `venv/lib/module.py` et
+    `__pycache__/module.cpython.pyc` remontent tous les deux comme contenu
+    préexistant et le push est retenu à tort."""
+    with tempfile.TemporaryDirectory() as tmp:
+        rep = Path(tmp)
+        venv_lib = rep / "venv" / "lib"
+        venv_lib.mkdir(parents=True)
+        (venv_lib / "module.py").write_text("# faux paquet installé\n", encoding="utf-8")
+        pycache = rep / "__pycache__"
+        pycache.mkdir()
+        (pycache / "module.cpython-311.pyc").write_bytes(b"\x00\x01\x02")
+
+        res = np.initialiser_git(str(rep), DEPOT_INEXISTANT)
+
+        assert res["ok"], f"l'initialisation aurait dû réussir : {res}"
+        assert res["deja_git"] is False
+        assert res["contenu_preexistant"] == [], (
+            f"un venv/__pycache__ exclu par le .gitignore minimal ne doit "
+            f"jamais compter comme contenu préexistant : {res['contenu_preexistant']}")
+        # Aucune retenue volontaire → le push est tenté normalement (et
+        # échoue proprement, dépôt distant inexistant — pas un push_ok=None).
+        assert res["push_ok"] is False, (
+            f"push_ok attendu False (tentative normale, dépôt distant "
+            f"inexistant), pas None (retenue) : {res}")
+        assert res["commande_manuelle"] == f"cd {rep} && git push -u origin master"
+
+        assert (rep / ".git").exists(), "git init n'a pas créé .git"
+        # venv/ et __pycache__/ ne doivent pas être suivis par git.
+        suivis = subprocess.run(
+            ["git", "ls-files"], cwd=rep,
+            capture_output=True, text=True).stdout.splitlines()
+        assert not any(f.startswith("venv/") or f.startswith("__pycache__/")
+                      for f in suivis), (
+            f"venv/__pycache__ ne devraient pas être suivis par git : {suivis}")
+
+    return {"contenu_preexistant": res["contenu_preexistant"],
+            "push_ok": res["push_ok"]}
+
+
 def scenario_timeout_git_ne_fait_pas_echouer_la_creation():
     """Point 1 de l'issue #258 : un `git push` qui dépasse son timeout doit
     être traité comme un échec normal de l'étape (comme un push refusé par
@@ -196,6 +247,9 @@ def main():
         ("contenu préexistant (issue #258) → init/commit locaux, "
          "aucun push tenté, commande manuelle renvoyée",
          scenario_contenu_preexistant_pas_de_push),
+        ("venv/__pycache__ préexistants mais ignorés par .gitignore "
+         "(issue #260) → aucune retenue, push tenté normalement",
+         scenario_venv_ignore_par_gitignore_pas_de_retenue),
         ("timeout de git push (issue #258) → échec normal de l'étape, "
          "pas d'exception, création non bloquée",
          scenario_timeout_git_ne_fait_pas_echouer_la_creation),
