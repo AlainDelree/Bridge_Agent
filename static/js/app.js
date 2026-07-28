@@ -946,8 +946,9 @@ function basculerCocheResultat(event, projet, numero) {
 // (Re)construit la liste HTML cliquable à partir de listeIssuesResultats. TOUTES
 // les issues sont rendues comme lignes ; le filtre projet ne fait que masquer
 // (display:none) les lignes des projets inactifs. Chaque ligne est coloriée à la
-// couleur de son projet et déclenche afficherIssue() au clic. Si reset=true, on
-// sélectionne et affiche la première issue visible.
+// couleur de son projet ; le clic simple sélectionne (selectionnerLigne), le
+// double-clic charge et affiche le détail (afficherIssue, issue #261). Si
+// reset=true, on sélectionne (sans charger) la première issue visible.
 function rendreListeIssues(reset) {
   const zone = document.getElementById('liste-issues');
   zone.innerHTML = '';
@@ -995,21 +996,32 @@ function rendreListeIssues(reset) {
     ligne.style.color = couleur;
     ligne.style.setProperty('--bg-hover', avecOpacite(couleur, 0.10));
     ligne.style.setProperty('--bg-sel',   avecOpacite(couleur, 0.20));
-    // Clic simple : sélectionne et affiche l'issue. Ctrl+clic : idem, puis
+    // Clic simple : sélectionne SEULEMENT la ligne, sans charger son détail —
+    // geste réflexe qui ne doit pas coûter un aller-retour réseau (issue #261).
+    // Ctrl+clic : demande explicite de détail (comme le double-clic), puis
     // défile automatiquement jusqu'au bloc résultat CCL (dans cette UI, le
     // résultat est rendu EN PREMIER via .commentaire.resultat ; on le vise
-    // donc explicitement, avec repli sur .commentaire:last-child).
+    // donc explicitement, avec repli sur .commentaire:last-child). Double-clic :
+    // charge et affiche le détail (voir ondblclick ci-dessous).
     ligne.onclick = async (event) => {
       event.preventDefault();
-      await afficherIssue(it.projet, numero);
       if (event.ctrlKey) {
+        await afficherIssue(it.projet, numero);
         setTimeout(() => {
           const cible = document.querySelector('#zone-issue .commentaire.resultat')
                      || document.querySelector('#zone-issue .commentaire:last-child');
           if (cible) cible.scrollIntoView({behavior: 'smooth', block: 'start'});
         }, 100);
+      } else {
+        selectionnerLigne(it.projet, numero);
       }
     };
+    // Double-clic : seul geste qui charge explicitement le détail (issue #261).
+    ligne.ondblclick = async (event) => {
+      event.preventDefault();
+      await afficherIssue(it.projet, numero);
+    };
+    ligne.title = 'Double-cliquez pour afficher le détail de cette issue';
     // Gauche : badges emoji (✅ ✏️ ⚠️ ○) + pastille ● colorée du projet.
     // Centre : #N — titre [état].
     // Le badge ✅ des issues FERMÉES portant le label « done » (les seules qui
@@ -1424,12 +1436,16 @@ function arreterTempsRestant() {
   if (intervalFetchTiming)  { clearInterval(intervalFetchTiming);  intervalFetchTiming  = null; }
 }
 
-// Sélectionne et affiche la première ligne encore visible (ou vide le détail).
+// Sélectionne la première ligne encore visible SANS charger son détail (voir
+// selectionnerLigne, issue #261) ; vide le détail s'il n'y a plus rien à
+// afficher. Appelée à l'ouverture de l'onglet, à chaque changement de filtre
+// projet et après chaque rafraîchissement de liste — aucun de ces gestes ne
+// doit déclencher de fetch réseau.
 function selectionnerPremiereVisible() {
   const premiere = [...document.querySelectorAll('#liste-issues .ligne-issue')]
     .find(ligne => ligne.style.display !== 'none');
   if (premiere) {
-    afficherIssue(premiere.dataset.projet, premiere.dataset.numero);
+    selectionnerLigne(premiere.dataset.projet, premiere.dataset.numero);
   } else {
     document.getElementById('zone-issue').innerHTML =
       '<div class="issue-vide">Aucune issue à afficher</div>';
@@ -1469,10 +1485,18 @@ function rendreHtmlRestreint(t) {
 // donc le cache que s'il a moins de TTL_DETAIL_MS.
 const CLE_CACHE_DETAIL = 'bridge_cache_detail_';
 
-// Issue actuellement affichée dans #zone-issue (null si aucune). Permet au
-// bouton rafraîchir (issue #56) de la recharger depuis GitHub.
+// Projet/numéro actuellement SÉLECTIONNÉ dans la liste (ligne en surbrillance),
+// que son détail ait été chargé ou non. Permet au bouton rafraîchir (issue #56)
+// de recharger l'issue affichée.
 let projetCourant = null;
 let numeroCourant = null;
+// true seulement si le détail de projetCourant/numeroCourant a réellement été
+// chargé (double-clic ou Ctrl+clic — voir afficherIssue), PAS pour une simple
+// sélection (clic simple, sélection automatique — voir selectionnerLigne).
+// Distingue « ligne mise en évidence » de « détail effectivement demandé »,
+// pour que le rafraîchissement (issue #56) ne force pas un fetch que
+// l'utilisateur n'a jamais explicitement demandé (issue #261).
+let detailCourantCharge = false;
 const TTL_DETAIL_MS = 60000;
 // Jeton anti-course : chaque appel à afficherIssue l'incrémente ; un fetch qui
 // revient alors qu'une autre issue a été demandée entre-temps est ignoré.
@@ -1630,11 +1654,17 @@ function construireHtmlIssue(it, nom) {
   return html;
 }
 
-async function afficherIssue(nom, numero) {
+// Sélectionne visuellement une ligne (fond coloré persistant, classe
+// .selectionnee) et mémorise projetCourant/numeroCourant, SANS charger son
+// détail. Utilisée par le clic simple et la sélection automatique (issue
+// #261) : contrairement à afficherIssue(), aucun fetch n'est déclenché — la
+// zone de détail affiche un état neutre invitant au double-clic. Invalide au
+// passage tout fetch de détail encore en vol (afficherIssueSeq) pour qu'il ne
+// vienne pas écraser cet état neutre après coup.
+function selectionnerLigne(nom, numero) {
   numero = numero == null ? '' : String(numero);
-  const seq = ++afficherIssueSeq;
-  // Met en évidence la ligne sélectionnée (fond coloré persistant) et retire la
-  // sélection des autres lignes.
+  ++afficherIssueSeq;
+  detailCourantCharge = false;
   document.querySelectorAll('#liste-issues .ligne-issue.selectionnee')
     .forEach(ligne => ligne.classList.remove('selectionnee'));
   const ligneSel = [...document.querySelectorAll('#liste-issues .ligne-issue')]
@@ -1647,9 +1677,18 @@ async function afficherIssue(nom, numero) {
     zone.innerHTML = '<div class="issue-vide">Aucune issue à afficher</div>';
     return;
   }
-  // Mémorise l'issue affichée pour le bouton rafraîchir (issue #56).
   projetCourant = nom;
   numeroCourant = numero;
+  zone.innerHTML = '<div class="issue-vide">Double-cliquez une issue pour afficher son détail.</div>';
+}
+
+async function afficherIssue(nom, numero) {
+  numero = numero == null ? '' : String(numero);
+  selectionnerLigne(nom, numero);
+  if (!numero || !nom) return;
+  const seq = ++afficherIssueSeq;
+  detailCourantCharge = true;
+  const zone = document.getElementById('zone-issue');
 
   // 1) Cache frais (< TTL) : affichage immédiat. Passé le TTL, on force le fetch
   //    pour ne montrer que du frais (état/commentaires évoluent vite).
@@ -1695,9 +1734,14 @@ async function afficherIssue(nom, numero) {
 // qui peut montrer une issue « ouverte » alors que le watcher l'a fermée.
 async function rafraichirResultats() {
   // Mémorise l'issue affichée AVANT le rechargement : chargerListeIssues()
-  // réécrit projetCourant/numeroCourant en auto-sélectionnant la première ligne.
+  // réécrit projetCourant/numeroCourant en auto-sélectionnant la première ligne
+  // (sans charger son détail, voir selectionnerLigne). On mémorise aussi si ce
+  // détail avait été explicitement chargé (double-clic/Ctrl+clic) — sélection
+  // automatique et clic simple ne comptent pas (issue #261) : sans ça, on
+  // rechargerait de force un détail que personne n'a demandé.
   const projet = projetCourant;
   const numero = numeroCourant;
+  const etaitCharge = detailCourantCharge;
   // 1) Cache de la liste.
   try { localStorage.removeItem(CLE_CACHE_ISSUES); } catch(e) {}
   // 2) Toutes les clés de cache détail « bridge_cache_detail_* ».
@@ -1711,8 +1755,9 @@ async function rafraichirResultats() {
   } catch(e) {}
   // 3) Recharge la liste depuis GitHub.
   await chargerListeIssues();
-  // 4) Recharge l'issue qui était affichée, si elle l'était.
-  if (projet && numero) {
+  // 4) Ne recharge l'issue affichée que si son détail avait été explicitement
+  //    chargé — pas seulement sélectionnée (issue #261).
+  if (etaitCharge && projet && numero) {
     await afficherIssue(projet, numero);
   }
 }
