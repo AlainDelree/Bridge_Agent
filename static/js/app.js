@@ -1239,11 +1239,24 @@ function appliquerFiltresListe() {
 // la route /issues-en-attente la retrouve via l'horodatage du commentaire ACK
 // (champ `debut`). Le compte à rebours est ensuite PUREMENT client : une fois
 // debut+timeout connus, un intervalle JS recalcule le restant chaque seconde
-// sans re-solliciter le serveur. Un re-fetch plus espacé (fetchTiming) capte
-// les issues nouvellement démarrées ou terminées.
+// sans re-solliciter le serveur.
+// Mise à jour des données elles-mêmes (issue #269) : PLUS de re-fetch
+// périodique — l'interface web laissée ouverte avec plusieurs projets
+// configurés interrogeait GitHub en continu (~3840 pts/h mesurés, premier
+// poste de consommation du quota GraphQL, cf. issue #263) pour un gain
+// (voir apparaître un badge 15s plus tôt) jugé insuffisant par Alain.
+// chargerTimingIssues() n'est donc plus appelée qu'à la demande : au
+// chargement initial de l'onglet Résultats (demarrerTempsRestant) et par le
+// bouton rafraîchir (rafraichirResultats), qui met à jour liste ET badges
+// d'un même geste. Conséquence assumée : une issue qui se termine pendant
+// que l'onglet reste ouvert garde son décompte affiché (y compris en
+// dépassement, cf. formaterBadgeTempsRestant) jusqu'au prochain
+// rafraîchissement manuel — comportement jugé moins trompeur qu'un badge qui
+// disparaîtrait ou se figerait sans explication, et cohérent avec le fait
+// que la LISTE elle-même (chargerListeIssues) suit déjà ce même modèle
+// « à la demande » et ne se rafraîchit pas non plus toute seule.
 let timingIssues = {};              // clé "projet#numero" → {timeout, max_essais, backoff, debut, sans_limite}
-let intervalTempsRestant = null;    // recalcul 1 s du compte à rebours (client seul)
-let intervalFetchTiming  = null;    // re-fetch périodique des débuts/timeouts
+let intervalTempsRestant = null;    // recalcul 1 s du compte à rebours (client seul, aucun appel réseau)
 
 function cleTiming(projet, numero) { return projet + '#' + numero; }
 
@@ -1442,18 +1455,18 @@ function majBadgesTempsRestant() {
 }
 
 // Démarre le suivi du temps restant (à l'ouverture de l'onglet Résultats) :
-// fetch initial des débuts/timeouts, recalcul chaque seconde, re-fetch espacé.
+// fetch initial des débuts/timeouts puis recalcul chaque seconde (client
+// seul). Plus de re-fetch périodique (issue #269) : les données ne sont
+// ensuite rafraîchies qu'explicitement, via rafraichirResultats().
 function demarrerTempsRestant() {
   chargerTimingIssues();
   arreterTempsRestant();
   intervalTempsRestant = setInterval(majBadgesTempsRestant, 1000);
-  intervalFetchTiming  = setInterval(chargerTimingIssues, 15000);
 }
 
-// Stoppe les intervalles de temps restant (en quittant l'onglet Résultats).
+// Stoppe l'intervalle de temps restant (en quittant l'onglet Résultats).
 function arreterTempsRestant() {
   if (intervalTempsRestant) { clearInterval(intervalTempsRestant); intervalTempsRestant = null; }
-  if (intervalFetchTiming)  { clearInterval(intervalFetchTiming);  intervalFetchTiming  = null; }
 }
 
 // Sélectionne la première ligne encore visible SANS charger son détail (voir
@@ -1784,6 +1797,11 @@ async function rafraichirResultats() {
   } catch(e) {}
   // 3) Recharge la liste depuis GitHub.
   await chargerListeIssues();
+  // 3bis) Recharge aussi les badges de temps restant (issue #269) : depuis la
+  // suppression du re-fetch périodique, c'est le SEUL geste qui les remet à
+  // jour — sans cet appel, le bouton actualiserait les états d'issues en
+  // laissant les badges figés, une incohérence pire que l'ancien comportement.
+  await chargerTimingIssues();
   // 4) Ne recharge l'issue affichée que si son détail avait été explicitement
   //    chargé — pas seulement sélectionnée (issue #261).
   if (etaitCharge && projet && numero) {
