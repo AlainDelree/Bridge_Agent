@@ -5,6 +5,76 @@ Alain peut modifier ce fichier directement, sans passer par une issue.
 
 ---
 
+## Calibration automatique du TIMEOUT — trois défauts à corriger
+
+**Contexte** : la formule du §19 est
+`TIMEOUT_suggéré = max((duree_typique + k × variabilite) × F × backoff, plancher)`
+— EWMA par `projet|TYPE|mode`, demi-vie 15 issues, k=4, plancher 30 s,
+facteur d'ambiance `F` de demi-vie 4 h. Cette valeur reste purement
+INDICATIVE : le TIMEOUT réellement appliqué est celui de l'en-tête de
+l'issue (`extraire_timeout`).
+
+**Trois défauts identifiés le 29/07/2026** :
+1. `F` n'est jamais alimenté — `_detecter_tag_reseau()` retourne toujours
+   `None`, donc `F_reseau`/`F_local` restent à 1.0 et le facteur
+   d'ambiance n'influence rien (déjà listé dans les limitations du §19).
+2. Même si le tag existait, `maj_calibration_timeout` retombe toujours sur
+   `F_local` par défaut sans le lire — c'est un second bug, distinct du
+   premier.
+3. La clé `projet|TYPE|mode` mélange des populations incompatibles : une
+   édition de doc de 250 s et une refonte de `watcher.py` avec tests de
+   1800 s finissent dans la même case. La médiane qui en sort n'a pas de
+   sens (observé : 2794 s suggérés pour une issue qui en a pris 351).
+
+**Idée** : séparer explicitement le coût de la TÂCHE et l'état de la
+MACHINE (réseau, RAM, congestion) — c'est déjà la structure de la formule,
+mais les deux moitiés sont mal alimentées. La composition doit rester un
+PRODUIT, pas une somme : un agent enchaîne les allers-retours réseau, donc
+une latence dégradée étire la durée proportionnellement au travail au lieu
+d'ajouter un forfait fixe. Exemple : wifi à +40 % → une doc passe de 250 à
+350 s, une refonte de 1800 à 2520 s ; une somme unique surestimerait la
+première et sous-estimerait gravement la seconde.
+
+**Deux signaux à capter, faciles et probablement les plus discriminants** :
+- le TIMEOUT déclaré dans l'en-tête, comme proxy de complexité — Claude
+  Chat estime déjà la difficulté au moment de rédiger ; segmenter la
+  calibration là-dessus séparerait mécaniquement les deux populations,
+  sans nouvelle donnée à collecter ;
+- une mesure de latence réseau au démarrage du traitement, pour alimenter
+  enfin `tag_reseau` et corriger du même coup le défaut 2.
+
+**Statut** : diagnostic établi le 29/07/2026, aucune implémentation
+lancée. À reprendre à froid — le sujet touche des EWMA et des choix de
+modélisation qu'on prendrait mal à la légère.
+
+---
+
+## Archivage de logs/historique_durees.json
+
+**Contexte** : le fichier accumule depuis mai sans jamais être purgé —
+682 entrées, 112 Ko au 29/07/2026 — et il est relu puis réécrit à chaque
+clôture d'issue. Répartition : scrabble 284, bridge_agent 237, alchess 58,
+rummikub 24, actualise 22, bloc_score 21, ecole 18, ff_galerie 13,
+diagnostique_programme 5. Les entrées `ff_galerie` datent de mai et ne
+correspondent pas à un usage réel du bridge (projet piloté par EmailJS) ;
+elles ne polluent aucun calcul — la calibration filtre par combinaison —
+mais brouillent la lecture manuelle.
+
+**Idée** : archiver les vieilles entrées pour contenir la taille du
+fichier et rendre son contenu lisible.
+
+**Point à concevoir avant implémentation, impératif** : ne PAS archiver
+naïvement par mois. L'EWMA de la calibration a une demi-vie de 15 issues ;
+une bascule mensuelle ferait repartir le calcul de zéro à chaque nouveau
+mois, précisément pour les projets les plus actifs. Il faut soit archiver
+sans rendre les entrées invisibles au calcul, soit assumer explicitement
+la remise à zéro.
+
+**Statut** : aucune urgence à 112 Ko. À traiter avant que le fichier
+n'atteigne plusieurs Mo. Lié à l'entrée sur la calibration ci-dessus.
+
+---
+
 ## Concurrence limitée aux issues mode_lecture
 
 **Contexte** : `watcher.py` est aujourd'hui strictement séquentiel (une issue à
