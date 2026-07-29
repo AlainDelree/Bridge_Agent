@@ -1240,21 +1240,22 @@ function appliquerFiltresListe() {
 // (champ `debut`). Le compte à rebours est ensuite PUREMENT client : une fois
 // debut+timeout connus, un intervalle JS recalcule le restant chaque seconde
 // sans re-solliciter le serveur.
-// Mise à jour des données elles-mêmes (issue #269) : PLUS de re-fetch
-// périodique — l'interface web laissée ouverte avec plusieurs projets
-// configurés interrogeait GitHub en continu (~3840 pts/h mesurés, premier
-// poste de consommation du quota GraphQL, cf. issue #263) pour un gain
-// (voir apparaître un badge 15s plus tôt) jugé insuffisant par Alain.
+// Mise à jour des données elles-mêmes (issue #270, suite #269) : PLUS de
+// re-fetch périodique — l'interface web laissée ouverte avec plusieurs
+// projets configurés interrogeait GitHub en continu (~3840 pts/h mesurés,
+// premier poste de consommation du quota GraphQL, cf. issue #263) pour un
+// gain (voir apparaître un badge 15s plus tôt) jugé insuffisant par Alain.
 // chargerTimingIssues() n'est donc plus appelée qu'à la demande : au
 // chargement initial de l'onglet Résultats (demarrerTempsRestant) et par le
 // bouton rafraîchir (rafraichirResultats), qui met à jour liste ET badges
 // d'un même geste. Conséquence assumée : une issue qui se termine pendant
-// que l'onglet reste ouvert garde son décompte affiché (y compris en
-// dépassement, cf. formaterBadgeTempsRestant) jusqu'au prochain
-// rafraîchissement manuel — comportement jugé moins trompeur qu'un badge qui
-// disparaîtrait ou se figerait sans explication, et cohérent avec le fait
-// que la LISTE elle-même (chargerListeIssues) suit déjà ce même modèle
-// « à la demande » et ne se rafraîchit pas non plus toute seule.
+// que l'onglet reste ouvert garde son décompte affiché jusqu'au prochain
+// rafraîchissement manuel. Décompte figé à zéro une fois le budget épuisé
+// (cf. formaterBadgeTempsRestant) : jamais de valeur négative, jamais de
+// message spéculatif du type « terminé ? » — sans re-fetch, cette
+// information n'est pas connue côté client. Cohérent avec le fait que la
+// LISTE elle-même (chargerListeIssues) suit déjà ce même modèle « à la
+// demande » et ne se rafraîchit pas non plus toute seule.
 let timingIssues = {};              // clé "projet#numero" → {timeout, max_essais, backoff, debut, sans_limite}
 let intervalTempsRestant = null;    // recalcul 1 s du compte à rebours (client seul, aucun appel réseau)
 
@@ -1271,7 +1272,6 @@ function formaterDuree(s) {
 // Récupère, pour tous les projets, les débuts de traitement + timeouts des
 // issues ouvertes, puis rafraîchit immédiatement les badges.
 async function chargerTimingIssues() {
-  console.error('[DEBUG-269-TRACE]', new Error().stack);
   const noms = nomsProjetsDisponibles();
   // On repart de l'état COURANT, pas d'un map vide (issue #190). Avant, chaque
   // appel reconstruisait le map à partir de zéro : dès qu'un fetch
@@ -1432,12 +1432,22 @@ function formaterBadgeTempsRestant(badge, t) {
     badge.title = 'Le 1er cycle TIMEOUT (' + t.timeout + 's) a été dépassé, mais '
                 + 'le watcher dispose de ' + essais + ' tentatives. Reste ~'
                 + formaterDuree(restant) + ' sur le budget total ; pas encore un échec.';
-  } else {                               // budget total (toutes tentatives) épuisé
-    badge.textContent = '⌛ dépassement +' + formaterDuree(-restant);
+  } else {
+    // Budget total (toutes tentatives) épuisé : décompte figé à zéro (issue
+    // #270), jamais de valeur négative ni de compteur de dépassement qui
+    // grossirait indéfiniment. Sans re-fetch périodique, on ne sait pas si
+    // l'issue est toujours bloquée, retentée ou déjà fermée — un « dépassement
+    // +Xs » qui continue à monter suggérerait un suivi en temps réel qu'on
+    // n'a plus, et un message du type « terminé ? » serait une pure
+    // spéculation. Le badge reste donc affiché, figé, jusqu'au prochain
+    // rafraîchissement manuel (rafraichirResultats).
+    badge.textContent = '⌛ 0s — budget épuisé';
     badge.classList.add('tr-depasse');
     badge.title = 'Budget total épuisé (' + essais + ' tentatives × ' + t.timeout
                 + 's' + (backoff ? ' + backoffs' : '') + ') ; intervention '
-                + 'humaine probable (label needs-human).';
+                + 'humaine probable (label needs-human). Décompte figé à zéro : '
+                + "l'état réel (toujours bloquée, retentée, ou déjà fermée) "
+                + "n'est connu qu'au prochain rafraîchissement manuel.";
   }
 }
 
@@ -1457,7 +1467,7 @@ function majBadgesTempsRestant() {
 
 // Démarre le suivi du temps restant (à l'ouverture de l'onglet Résultats) :
 // fetch initial des débuts/timeouts puis recalcul chaque seconde (client
-// seul). Plus de re-fetch périodique (issue #269) : les données ne sont
+// seul). Plus de re-fetch périodique (issue #270) : les données ne sont
 // ensuite rafraîchies qu'explicitement, via rafraichirResultats().
 function demarrerTempsRestant() {
   chargerTimingIssues();
@@ -1798,7 +1808,7 @@ async function rafraichirResultats() {
   } catch(e) {}
   // 3) Recharge la liste depuis GitHub.
   await chargerListeIssues();
-  // 3bis) Recharge aussi les badges de temps restant (issue #269) : depuis la
+  // 3bis) Recharge aussi les badges de temps restant (issue #270) : depuis la
   // suppression du re-fetch périodique, c'est le SEUL geste qui les remet à
   // jour — sans cet appel, le bouton actualiserait les états d'issues en
   // laissant les badges figés, une incohérence pire que l'ancien comportement.
