@@ -1271,6 +1271,7 @@ function formaterDuree(s) {
 // Récupère, pour tous les projets, les débuts de traitement + timeouts des
 // issues ouvertes, puis rafraîchit immédiatement les badges.
 async function chargerTimingIssues() {
+  console.error('[DEBUG-269-TRACE]', new Error().stack);
   const noms = nomsProjetsDisponibles();
   // On repart de l'état COURANT, pas d'un map vide (issue #190). Avant, chaque
   // appel reconstruisait le map à partir de zéro : dès qu'un fetch
