@@ -685,6 +685,45 @@ let projetsFiltresActifs = new Set();
 // instantané depuis le cache, rafraîchi ensuite par un fetch d'arrière-plan.
 const CLE_CACHE_ISSUES = 'bridge_cache_issues';
 
+// ── Limite d'issues chargées PAR PROJET (issue #271) ──────────────────────
+// Transmise en paramètre de requête à /issues-liste/<projet> : c'est ce qui
+// est TÉLÉCHARGÉ depuis GitHub, pas ce qui est affiché — le quota adaptatif
+// d'appliquerFiltresListe() (issue #136) reste seul responsable de ce qui est
+// MONTRÉ une fois la liste en mémoire. Un total serait ambigu (il faudrait le
+// diviser par le nombre de projets actifs, qui change à chaque clic sur un
+// filtre) ; exprimer un nombre par projet garde le même sens en toute
+// circonstance. Défaut 5 (besoin courant réel dans 70% des cas d'après
+// l'issue) et non 30 : l'ancienne valeur reste atteignable en remontant le
+// champ. Changer la valeur ne déclenche PAS de rechargement automatique
+// (cohérent avec #270) : seul le bouton rafraîchir applique la nouvelle
+// limite. Le cache liste est néanmoins invalidé tout de suite (point 6),
+// sinon un cache constitué à une profondeur différente resterait affiché
+// avec une profondeur d'historique qui ne correspond plus au réglage visible.
+const CLE_LIMITE_ISSUES = 'bridge_limite_issues_projet';
+const LIMITE_ISSUES_DEFAUT = 5;
+const LIMITE_ISSUES_MIN = 1;
+const LIMITE_ISSUES_MAX = 50;
+
+function limiteIssuesProjet() {
+  let brut = null;
+  try { brut = localStorage.getItem(CLE_LIMITE_ISSUES); } catch(e) {}
+  const n = parseInt(brut, 10);
+  return Number.isFinite(n) && n >= LIMITE_ISSUES_MIN && n <= LIMITE_ISSUES_MAX
+    ? n : LIMITE_ISSUES_DEFAUT;
+}
+
+// Applique une nouvelle valeur saisie : bornée, persistée, cache liste
+// invalidé — mais AUCUN rechargement déclenché ici (voir commentaire ci-dessus).
+function changerLimiteIssuesProjet(valeur) {
+  const n = parseInt(valeur, 10);
+  const bornee = Number.isFinite(n)
+    ? Math.min(LIMITE_ISSUES_MAX, Math.max(LIMITE_ISSUES_MIN, n))
+    : LIMITE_ISSUES_DEFAUT;
+  try { localStorage.setItem(CLE_LIMITE_ISSUES, String(bornee)); } catch(e) {}
+  try { localStorage.removeItem(CLE_CACHE_ISSUES); } catch(e) {}
+  return bornee;
+}
+
 // Affiche/masque l'indicateur discret « Mise à jour… » sous la liste.
 function majIndicateurListe(actif) {
   const el = document.getElementById('maj-indicateur');
@@ -718,19 +757,23 @@ async function chargerListeIssues() {
     zone.innerHTML = '<div class="issue-vide">Chargement…</div>';
   }
 
-  // 2) Fetch d'arrière-plan des issues de chaque projet (jusqu'à 30 côté
-  //    backend). Le nombre réellement affiché par projet est ensuite plafonné
+  // 2) Fetch d'arrière-plan des issues de chaque projet (jusqu'à la limite
+  //    par projet réglée par l'utilisateur côté backend, issue #271 — 5 par
+  //    défaut). Le nombre réellement affiché par projet est ensuite plafonné
   //    par un quota adaptatif dans appliquerFiltresListe() (issue #136), selon
   //    le nombre de projets actifs dans le filtre — plus de troncature ici.
+  const limite = limiteIssuesProjet();
   majIndicateurListe(true);
   try {
     const listes = await Promise.all(noms.map(async nom => {
       try {
-        const rep = await fetch('/issues-liste/' + encodeURIComponent(nom));
+        const rep = await fetch('/issues-liste/' + encodeURIComponent(nom)
+          + '?limite=' + encodeURIComponent(limite));
         const liste = await rep.json();
         if (!Array.isArray(liste)) return [];
-        // Toute la liste reçue (déjà plafonnée à 30 côté backend), triée par
-        // date de création décroissante (plus récentes en premier).
+        // Toute la liste reçue (déjà plafonnée côté backend à la limite par
+        // projet), triée par date de création décroissante (plus récentes en
+        // premier).
         return liste
           .slice()
           .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
@@ -851,6 +894,32 @@ function construireBoutonsFiltre(noms) {
   // mise à jour de son état visuel (issue #262) n'aurait rien à trouver dans
   // le DOM, ce bouton étant créé après les boutons projet.
   majClassesBoutonsFiltre();
+  // Champ « limite par projet » (issue #271), juste avant le bouton
+  // rafraîchir. Recréé à chaque reconstruction de la ligne comme les autres
+  // contrôles ci-dessus ; sa valeur est restaurée depuis localStorage à
+  // chaque fois. Le libellé et le title précisent explicitement qu'il s'agit
+  // d'un nombre PAR PROJET (pas un total) et que la saisie seule ne recharge
+  // rien — cohérent avec la décision de #270 : seul le bouton ↻ recharge.
+  const limiteLabel = document.createElement('label');
+  limiteLabel.className = 'limite-issues-label';
+  limiteLabel.title = 'Nombre d\'issues chargées par projet (pas un total). '
+    + 'Ex. 5 → 5 issues par projet affiché. La saisie seule ne recharge '
+    + 'rien : cliquez sur ↻ pour appliquer.';
+  limiteLabel.textContent = 'par projet :';
+  const limiteInput = document.createElement('input');
+  limiteInput.type = 'number';
+  limiteInput.id = 'limite-issues-projet';
+  limiteInput.className = 'limite-issues-projet';
+  limiteInput.min = String(LIMITE_ISSUES_MIN);
+  limiteInput.max = String(LIMITE_ISSUES_MAX);
+  limiteInput.step = '1';
+  limiteInput.value = String(limiteIssuesProjet());
+  limiteInput.title = limiteLabel.title;
+  limiteInput.onchange = () => {
+    limiteInput.value = String(changerLimiteIssuesProjet(limiteInput.value));
+  };
+  limiteLabel.appendChild(limiteInput);
+  zone.appendChild(limiteLabel);
   // Bouton rafraîchir déplacé ici, juste après « Tous » (issue #57). Recréé à
   // chaque reconstruction de la ligne car zone.innerHTML est vidé au début.
   const rafr = document.createElement('button');
@@ -1212,7 +1281,12 @@ function finRedimTitre() {
 function appliquerFiltresListe() {
   // Quota adaptatif par projet (issue #136) : au lieu d'un plafond fixe, le
   // nombre d'issues affichées par projet dépend du nombre de projets actifs
-  // dans le filtre. 1 projet → 30 ; 2 → 15 ; 3 → 10 ; 4 → 7 ; etc.
+  // dans le filtre. 1 projet → 30 ; 2 → 15 ; 3 → 10 ; 4 → 7 ; etc. Ce calcul
+  // reste basé sur 30 (délibérément non touché par #271) : il plafonne ce qui
+  // est MONTRÉ, indépendamment de limiteIssuesProjet() qui plafonne ce qui est
+  // TÉLÉCHARGÉ. Si la limite de téléchargement est plus basse que ce quota
+  // d'affichage, ce dernier n'a simplement rien de plus à masquer — sans
+  // conséquence, les deux mécanismes ne se contredisent pas.
   const nActifs = projetsFiltresActifs.size;
   const quota   = nActifs > 0 ? Math.max(1, Math.floor(30 / nActifs)) : 0;
 

@@ -578,17 +578,41 @@ def _nettoyer_fichier(chemin: Path) -> None:
         pass
 
 
+LIMITE_ISSUES_DEFAUT = 30
+LIMITE_ISSUES_MIN = 1
+LIMITE_ISSUES_MAX = 50
+
+
+def _limite_issues_requete():
+    """Lit le paramètre de requête `limite` (issue #271) : entier borné entre
+    LIMITE_ISSUES_MIN et LIMITE_ISSUES_MAX. Toute valeur absente ou invalide
+    (non fournie, non entière, hors bornes) retombe sur LIMITE_ISSUES_DEFAUT —
+    comportement strictement inchangé pour tout appelant qui ne passe pas ce
+    paramètre."""
+    brut = request.args.get("limite")
+    if brut is None:
+        return LIMITE_ISSUES_DEFAUT
+    try:
+        valeur = int(brut)
+    except (TypeError, ValueError):
+        return LIMITE_ISSUES_DEFAUT
+    return max(LIMITE_ISSUES_MIN, min(LIMITE_ISSUES_MAX, valeur))
+
+
 def issues_liste(nom_projet):
-    """Retourne les 30 dernières issues (tous états) du projet via gh."""
+    """Retourne les dernières issues (tous états) du projet via gh, jusqu'à
+    LIMITE_ISSUES_DEFAUT (30) sauf si le paramètre `limite` en fournit une
+    autre (issue #271)."""
     cfg = projet_par_nom(nom_projet)
     if not cfg:
         return jsonify(erreur="Projet introuvable."), 404
+    limite = _limite_issues_requete()
     try:
         res = subprocess.run(
             ["gh", "issue", "list",
              "--repo",  cfg.depot,
              "--state", "all",
-             "--limit", "30",
+             "--limit", str(limite),
              "--json",  "number,title,state,labels,createdAt"],
             capture_output=True, text=True, timeout=30
         )
