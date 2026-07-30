@@ -4,6 +4,13 @@ Idées et pistes non prioritaires, à réaliser éventuellement plus tard.
 Alain peut modifier ce fichier directement, sans passer par une issue.
 
 ---
+##Bouton Interrompre dans l'onglet CCW
+
+Procédure : nssm restart CCW-Watcher, puis supprimer le(s) fichier(s)
+  dans C:\CCW\Bridge_Agent\logs\verrous\ :
+  Get-ChildItem C:\CCW\Bridge_Agent\logs\verrous\ -Filter "*.lock"
+  Remove-Item C:\CCW\Bridge_Agent\logs\verrous\<fichier>.lock
+
 ## Issues récurrentes — bibliothèque de templates par projet
 
 **Contexte** : certaines issues reviennent régulièrement à l'identique ou
