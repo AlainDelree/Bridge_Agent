@@ -108,6 +108,17 @@ inchangé.
 # Après un plantage : voir les dernières lignes de logs/new_issue.log
 ```
 
+**Bouton « Aperçu de la commande » (issue #285) :** avant d'envoyer, ce
+bouton appelle la route `/apercu` (fonction `apercu()` de `app/issues.py`),
+qui construit — à partir des champs actuellement remplis dans le
+formulaire — la commande `gh issue create` exacte qui serait exécutée
+(dépôt, titre, labels, `--body-file`), suivie en commentaire du corps
+complet qui serait envoyé. Cette commande est renvoyée en JSON et affichée
+telle quelle, en texte brut, dans la zone `zone-apercu` sous le formulaire
+(fonction `afficherApercu()` de `static/js/app.js`). C'est un aperçu pur :
+aucune issue n'est créée, aucune commande n'est réellement exécutée — rien
+n'est modifié tant que le bouton d'envoi n'est pas cliqué séparément.
+
 **Format du corps pour copier-coller depuis Claude Chat :**
 
 La première ligne du corps peut contenir `#Titre:` — new_issue.py détecte
@@ -1847,6 +1858,6 @@ issues de la même combinaison s'il le juge utile.
 
 ---
 
-*Dernière mise à jour : 30 juillet 2026 — Ajoute au §11 « Conventions de code » le paragraphe **« Niveau de détail des issues »** (issue #281) : Claude Chat décrit le problème, la cause et l'intention du fix, sans rédiger le code complet (blocs Avant/Après, implémentations entières) — CCL lit les fichiers source et fait l'implémentation lui-même ; exception tolérée pour un snippet de 1-2 lignes si la syntaxe est non-triviale ou l'intention ambiguë sans exemple. Mauvais exemple donné : les trois méthodes complètes Avant/Après d'un fix pywebview de navigation différée ; bon exemple : décrire l'intention (« différer l'appel dans un thread daemon avec `time.sleep(0.05)` avant de naviguer »). Aucun fichier `.py` modifié, aucune section renumérotée. Précédemment — Documente dans §13 le diagnostic du symptôme « Erreur inconnue » observé la nuit du 29/07/2026 (issue #279) : plusieurs issues échouaient en ~1,2 s, 3 tentatives et passe diagnostique comprises, un message générique masquant totalement la cause réelle. Nouveau bloc « Diagnostic — CCL ne démarre pas » en fin de §13 : symptôme (échec quasi immédiat sur toutes les issues → cause systémique, pas liée à une tâche précise) ; première vérification (`claude -p "test" 2>&1` — une réponse « Not logged in » signe un token de session CCL expiré) ; résolution (`claude` en interactif puis `/login`) ; autres causes possibles (réseau/DNS indisponible, installation `claude` corrompue) ; et le critère qui les distingue — un token expiré échoue en moins de 2 s, un problème réseau échoue proche du TIMEOUT configuré. Précédemment — Corrige la corruption du §10 provoquée par #263 (issue #268) : le remplacement automatique de la date du pied de page s'appliquait par erreur sur le modèle d'exemple du §10 (première occurrence du texte recherché dans le fichier) au lieu du vrai pied de page en fin de fichier. §10 restauré au mot près, pied de page reconstruit (#263, #257 puis #268), garde-fou ajouté au §10 pointant vers ce risque (toujours viser la fin du fichier, jamais la première occurrence).*
+*Dernière mise à jour : 30 juillet 2026 — Documente au §3 « Créer une issue — la méthode normale » le comportement exact du bouton **« Aperçu de la commande »** de l'onglet Nouvelle issue (issue #285) : il appelle la route `/apercu` (fonction `apercu()` de `app/issues.py`), qui construit à partir des champs actuellement remplis dans le formulaire la commande `gh issue create` exacte qui serait exécutée (dépôt, titre, labels, `--body-file`), suivie en commentaire du corps complet qui serait envoyé, renvoyée en JSON ; `afficherApercu()` (`static/js/app.js`) affiche ce texte tel quel dans la zone `zone-apercu` sous le formulaire. C'est un aperçu pur : aucune issue n'est créée, aucune commande n'est réellement exécutée. Précédemment — Ajoute au §11 « Conventions de code » le paragraphe « Niveau de détail des issues » (issue #281) : Claude Chat décrit le problème, la cause et l'intention du fix, sans rédiger le code complet (blocs Avant/Après, implémentations entières) — CCL lit les fichiers source et fait l'implémentation lui-même ; exception tolérée pour un snippet de 1-2 lignes si la syntaxe est non-triviale ou l'intention ambiguë sans exemple. Précédemment — Documente dans §13 le diagnostic du symptôme « Erreur inconnue » observé la nuit du 29/07/2026 (issue #279) : plusieurs issues échouaient en ~1,2 s, 3 tentatives et passe diagnostique comprises, un message générique masquant totalement la cause réelle. Nouveau bloc « Diagnostic — CCL ne démarre pas » en fin de §13 : symptôme (échec quasi immédiat sur toutes les issues → cause systémique, pas liée à une tâche précise) ; première vérification (`claude -p "test" 2>&1` — une réponse « Not logged in » signe un token de session CCL expiré) ; résolution (`claude` en interactif puis `/login`) ; autres causes possibles (réseau/DNS indisponible, installation `claude` corrompue) ; et le critère qui les distingue — un token expiré échoue en moins de 2 s, un problème réseau échoue proche du TIMEOUT configuré.*
 
 Historique complet : voir [`CHANGELOG.md`](CHANGELOG.md).
