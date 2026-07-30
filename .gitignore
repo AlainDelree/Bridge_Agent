@@ -12,3 +12,6 @@ provisioning/windows/autounattend.local.xml
 # Mot de passe ccw-admin lu par l'onglet CCW (issue #174) si CCW_ADMIN_PASSWORD
 # n'est pas dans l'environnement — ne doit JAMAIS être committé.
 configs/ccw_admin.secret
+# Bibliothèque de templates d'issues récurrentes par projet (issue #284) :
+# état de formulaire local, pas du code — jamais committé.
+configs/templates_*.json

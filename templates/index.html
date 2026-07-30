@@ -72,6 +72,23 @@
   <!-- ─── Onglet 1 : création d'issue ──────────────────────────────────── -->
   <div id="panneau-creation" class="panneau actif">
 
+    <!-- Bibliothèque de templates d'issues récurrentes (issue #284) : liste
+         filtrée dynamiquement selon le projet sélectionné dans le bandeau.
+         Charger un template pré-remplit tout le formulaire ci-dessous ; les
+         icônes crayon/poubelle modifient/suppriment le template sélectionné. -->
+    <div class="rangee" style="align-items:flex-end;gap:8px;margin-bottom:14px">
+      <div class="champ" style="flex:1">
+        <label>Charger un template</label>
+        <select id="template-select" onchange="onTemplateSelectChange()">
+          <option value="">-- Aucun --</option>
+        </select>
+      </div>
+      <button type="button" id="btn-template-modifier" onclick="modifierTemplateSelectionne()"
+              disabled title="Modifier le template sélectionné" style="padding:8px 12px">✏️</button>
+      <button type="button" id="btn-template-supprimer" onclick="supprimerTemplateSelectionne()"
+              disabled title="Supprimer le template sélectionné" style="padding:8px 12px">🗑️</button>
+    </div>
+
     <div class="rangee">
       <div class="champ" style="max-width:150px">
         <label>Priorité</label>
@@ -126,6 +143,7 @@
       <div style="flex:1"></div>
       <button class="danger" onclick="viderFormulaire()">Vider</button>
       <button onclick="afficherApercu()">Aperçu de la commande</button>
+      <button onclick="creerTemplate()" title="Enregistre l'état actuel du formulaire comme nouveau template">Créer le template</button>
       <button class="primaire" id="btn-envoyer" onclick="envoyerIssue()">Envoyer l'issue</button>
     </div>
 

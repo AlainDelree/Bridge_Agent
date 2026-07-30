@@ -66,6 +66,8 @@ def _enregistrer_routes(app: Flask) -> None:
     from app.issues import (apercu, envoyer, issues_liste, issue_detail,
                             diff_commit, issues_en_attente, annuler_issue,
                             fermer_issue, joindre_image)
+    from app.templates import (templates_liste, templates_sauvegarder,
+                               templates_supprimer)
     from app.journal import journal
     from app.ccw import (ccw_vm_statut, ccw_demarrer_vm, ccw_projets,
                          ccw_ajouter_projet, ccw_finaliser_projet,
@@ -82,6 +84,10 @@ def _enregistrer_routes(app: Flask) -> None:
     app.add_url_rule("/apercu", "apercu", login_requis(apercu), methods=["POST"])
     app.add_url_rule("/envoyer", "envoyer", login_requis(envoyer), methods=["POST"])
     app.add_url_rule("/joindre-image", "joindre_image", login_requis(joindre_image), methods=["POST"])
+    # ─── Bibliothèque de templates d'issues récurrentes (issue #284) ──────────
+    app.add_url_rule("/templates/<nom_projet>", "templates_liste", login_requis(templates_liste), methods=["GET"])
+    app.add_url_rule("/templates", "templates_sauvegarder", login_requis(templates_sauvegarder), methods=["POST"])
+    app.add_url_rule("/templates/<nom_projet>/<template_id>", "templates_supprimer", login_requis(templates_supprimer), methods=["DELETE"])
     app.add_url_rule("/journal/<nom_projet>", "journal", login_requis(journal))
     app.add_url_rule("/issues-liste/<nom_projet>", "issues_liste", login_requis(issues_liste))
     app.add_url_rule("/issue/<nom_projet>/<numero>", "issue_detail", login_requis(issue_detail))

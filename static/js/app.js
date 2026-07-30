@@ -86,6 +86,9 @@ function onProjetChange(reinitialiserTimeout = true) {
   appliquerAccentProjet(nom);
   verifierStatut();
   mettreAJourInfoProjet(reinitialiserTimeout);
+  // Bibliothèque de templates (issue #284) : filtrée par projet, rechargée à
+  // chaque changement de projet (manuel ou détection d'en-tête).
+  chargerTemplates();
   // L'onglet Résultats est indépendant du sélecteur global (il agrège tous
   // les projets) : on ne le recharge donc PAS ici.
   // Si l'onglet Configuration est actif, recharger sa config pour le
@@ -2484,6 +2487,145 @@ function collecterFormulaire() {
   };
 }
 
+// ─── Bibliothèque de templates d'issues récurrentes (issue #284) ──────────────
+// Un template capture l'état complet du formulaire (mêmes clés que
+// collecterFormulaire()) sous un nom choisi par l'utilisateur, pour recréer en
+// un clic une issue qui revient régulièrement à l'identique (ex. build
+// Scrabble). Liste rechargée à chaque changement de projet (onProjetChange).
+let templatesProjetActuel = [];
+
+async function chargerTemplates() {
+  const select = document.getElementById('template-select');
+  if (!select) return;
+  const nomProjet = document.getElementById('projet').value;
+  try {
+    const rep = await fetch('/templates/' + encodeURIComponent(nomProjet));
+    const json = await rep.json();
+    templatesProjetActuel = Array.isArray(json) ? json : [];
+  } catch(e) {
+    templatesProjetActuel = [];
+  }
+  select.innerHTML = '<option value="">-- Aucun --</option>' +
+    templatesProjetActuel.map(t =>
+      '<option value="' + escapeHtml(t.id) + '">' + escapeHtml(t.nom) + '</option>'
+    ).join('');
+  onTemplateSelectChange();
+}
+
+function templateSelectionne() {
+  const select = document.getElementById('template-select');
+  if (!select || !select.value) return null;
+  return templatesProjetActuel.find(t => t.id === select.value) || null;
+}
+
+// Sélectionner un template dans la liste déroulante pré-remplit tout le
+// formulaire ci-dessous (titre, corps, priorité, timeout, mode, notifications,
+// modèle) et active/désactive les icônes modifier/supprimer.
+function onTemplateSelectChange() {
+  const t = templateSelectionne();
+  const btnMod = document.getElementById('btn-template-modifier');
+  const btnSup = document.getElementById('btn-template-supprimer');
+  if (btnMod) btnMod.disabled = !t;
+  if (btnSup) btnSup.disabled = !t;
+  if (t) chargerTemplateDansFormulaire(t);
+}
+
+function chargerTemplateDansFormulaire(t) {
+  document.getElementById('titre').value = t.titre || '';
+  document.getElementById('priorite').value = t.priorite || 'normale';
+  document.getElementById('timeout').value = t.timeout || 300;
+  const radio = document.querySelector('input[name=mode][value="' + (t.mode || 'lecture') + '"]');
+  if (radio) radio.checked = true;
+  document.querySelectorAll('input[name=notifs]').forEach(c => {
+    c.checked = Array.isArray(t.notifs) && t.notifs.includes(c.value);
+  });
+  document.getElementById('corps').value = t.corps || '';
+  document.getElementById('modele-ponctuel').value = t.modele_ponctuel || '';
+  mettreAJourBoutonEnvoi();
+  mettreAJourResumeEntete();
+}
+
+// Enregistre l'état actuel du formulaire comme NOUVEAU template du projet en
+// cours (bouton « Créer le template »). Demande le nom via un prompt simple.
+async function creerTemplate() {
+  const nom = prompt('Nom du template :');
+  if (!nom || !nom.trim()) return;
+  const data = collecterFormulaire();
+  data.nom = nom.trim();
+  try {
+    const rep  = await fetch('/templates', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(data)
+    });
+    const json = await rep.json();
+    if (json.succes) {
+      await chargerTemplates();
+      document.getElementById('template-select').value = json.template.id;
+      onTemplateSelectChange();
+      afficherToast('Template « ' + nom.trim() + ' » créé.');
+    } else {
+      afficherMessage('Erreur : ' + (json.erreur || 'échec inconnu'), 'erreur');
+    }
+  } catch(e) {
+    afficherMessage('Erreur réseau : ' + e.message, 'erreur');
+  }
+}
+
+// Écrase le template actuellement sélectionné avec l'état courant du
+// formulaire (icône crayon) — le nom reste modifiable via le prompt.
+async function modifierTemplateSelectionne() {
+  const t = templateSelectionne();
+  if (!t) return;
+  const nom = prompt('Nom du template :', t.nom);
+  if (!nom || !nom.trim()) return;
+  const data = collecterFormulaire();
+  data.id  = t.id;
+  data.nom = nom.trim();
+  try {
+    const rep  = await fetch('/templates', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(data)
+    });
+    const json = await rep.json();
+    if (json.succes) {
+      await chargerTemplates();
+      document.getElementById('template-select').value = json.template.id;
+      onTemplateSelectChange();
+      afficherToast('Template « ' + nom.trim() + ' » mis à jour.');
+    } else {
+      afficherMessage('Erreur : ' + (json.erreur || 'échec inconnu'), 'erreur');
+    }
+  } catch(e) {
+    afficherMessage('Erreur réseau : ' + e.message, 'erreur');
+  }
+}
+
+// Supprime le template actuellement sélectionné (icône poubelle), après
+// confirmation.
+async function supprimerTemplateSelectionne() {
+  const t = templateSelectionne();
+  if (!t) return;
+  if (!confirm('Supprimer le template « ' + t.nom + ' » ?')) return;
+  const nomProjet = document.getElementById('projet').value;
+  try {
+    const rep  = await fetch(
+      '/templates/' + encodeURIComponent(nomProjet) + '/' + encodeURIComponent(t.id),
+      {method: 'DELETE'}
+    );
+    const json = await rep.json();
+    if (json.succes) {
+      await chargerTemplates();
+      afficherToast('Template supprimé.');
+    } else {
+      afficherMessage('Erreur : ' + (json.erreur || 'échec inconnu'), 'erreur');
+    }
+  } catch(e) {
+    afficherMessage('Erreur réseau : ' + e.message, 'erreur');
+  }
+}
+
 function afficherMessage(texte, type) {
   const el = document.getElementById('message');
   el.textContent = texte;
@@ -3615,6 +3757,11 @@ function viderFormulaire(cacherMsg=true) {
   // Le corps est vidé par programme (pas d'event « input ») : on masque
   // explicitement le résumé d'en-tête (issue #117).
   mettreAJourResumeEntete();
+  // Désélectionne le template chargé (issue #284) : un formulaire vidé ne
+  // reflète plus aucun template en particulier.
+  const selectTemplate = document.getElementById('template-select');
+  if (selectTemplate) selectTemplate.value = '';
+  onTemplateSelectChange();
 }
 
 // ─── Nouveau projet (issue #99) ───────────────────────────────────────────
