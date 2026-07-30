@@ -295,3 +295,39 @@ soin, pas seulement en confiance sur la consigne donnée à CCL.
 
 **Statut** : idée en attente, pas de développement lancé. Reçue via rapport
 d'audit Scrabble le 24/07/2026.
+
+---
+
+## Capture stderr CCL dans watcher.py
+
+**Contexte** : actuellement le stderr de CCL n'est pas capturé par
+`watcher.py`. Quand CCL échoue avant même de produire une réponse
+exploitable, le watcher journalise seulement "Erreur inconnue", ce qui
+masque la vraie cause (token expiré, coupure réseau, installation CCL
+cassée) et oblige à aller vérifier manuellement sur le terminal/la machine
+concernée.
+
+**Idée** : capturer (au moins) les premières lignes du stderr du process
+CCL et les afficher dans le log watcher (`logs/watcher-<nom>.log`) en cas
+d'échec, pour permettre un diagnostic immédiat sans accès terminal.
+
+**Statut** : idée en attente, pas de développement lancé. Identifiée lors
+de l'incident du 29/07/2026 (token CCL expiré → "Erreur inconnue" non
+diagnosticable, cf. issue #279).
+
+---
+
+## Vérification pre-flight de la validité du token CCL
+
+**Contexte** : lors du même incident du 29/07/2026, le watcher a enchaîné
+les 3 tentatives d'exécution (avec leurs timeouts respectifs) avant
+d'échouer, alors que le token CCL était expiré dès le départ — un
+diagnostic évitable en amont.
+
+**Idée** : avant de lancer une issue, vérifier que CCL est bien authentifié
+(ex. `claude -p "" 2>&1 | grep -i "not logged"`) et journaliser un
+avertissement explicite si le token est absent ou expiré, plutôt que
+d'attendre l'échec des 3 tentatives pour le découvrir.
+
+**Statut** : idée en attente, pas de développement lancé. Identifiée lors
+de l'incident du 29/07/2026 (cf. issue #279).
