@@ -4,6 +4,7 @@ Idées et pistes non prioritaires, à réaliser éventuellement plus tard.
 Alain peut modifier ce fichier directement, sans passer par une issue.
 
 ---
+
 ##Bouton Interrompre dans l'onglet CCW
 
 Procédure : nssm restart CCW-Watcher, puis supprimer le(s) fichier(s)
