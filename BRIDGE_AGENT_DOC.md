@@ -1398,17 +1398,9 @@ le propriétaire diffère de l'utilisateur courant. L'exception est à ajouter
 en étape 0 de chaque première issue sur un nouveau sous-dossier. Les issues
 suivantes la trouvent déjà en place.
 
-**Note staging local (issue #297) :** un build PyInstaller/Inno Setup lancé
-directement sur `\\VBOXSVR\CCW_Share` peut produire des fichiers
-tronqués/corrompus (diagnostiqué sur Scrabble, fix #338). Contournement
-standard : le script de build copie d'abord les sources vers un répertoire
-local à la VM (`C:\Temp\<Projet>Build` ou équivalent), construit
-entièrement là, puis ne recopie vers le partage que l'artefact final.
-Conséquence obligatoire : ajouter ce chemin local au `PERIMETRE` de
-`configs\ccw.conf` (liste séparée par virgules), sans quoi CCW refuse à
-juste titre d'en sortir et bloque le build. Avant de builder un nouveau
-projet, vérifier si son script suit déjà ce schéma de staging local et,
-si oui, étendre le `PERIMETRE` en conséquence.
+**Note staging local (issue #297) :** pattern général de contournement de
+la corruption de fichiers sur `\\VBOXSVR\CCW_Share`, et checklist par
+projet buildé (dont Scrabble) — voir `BUILD_WINDOWS_CCW.md`.
 
 ### 16.4 Interrompre une issue CCW coincée (issue #287)
 
@@ -1904,6 +1896,6 @@ issues de la même combinaison s'il le juge utile.
 
 ---
 
-*Dernière mise à jour : 31 juillet 2026 — Ajoute au §16.3 « Procédure — builder un projet Windows » une note « staging local » (issue #297) : un build PyInstaller/Inno Setup lancé directement sur `\\VBOXSVR\CCW_Share` peut produire des fichiers tronqués/corrompus (diagnostiqué sur Scrabble, fix #338) ; contournement standard — le script de build copie les sources vers un répertoire local à la VM (`C:\Temp\<Projet>Build`), construit entièrement là, puis ne recopie que l'artefact final vers le partage ; conséquence obligatoire — ajouter ce chemin local au `PERIMETRE` de `configs\ccw.conf`, sans quoi CCW bloque légitimement le build ; et rappel de vérifier ce schéma avant tout nouveau projet à builder. Précédemment — Ajoute au §16 « Agent Windows CCW » la sous-section 16.4 « Interrompre une issue CCW coincée » (issue #287) : symptôme (le watcher `CCW-Watcher` log en boucle « Issue différée : un autre traitement détient déjà le verrou sur \\VBOXSVR\CCW_Share\ » sans jamais progresser), cause (fichier verrou orphelin dans `C:\CCW\Bridge_Agent\logs\verrous\`, non nettoyé après un process tué brutalement ou un redémarrage NSSM sans libération propre), procédure manuelle (`nssm restart CCW-Watcher` puis lister/supprimer le(s) fichier(s) `.lock` restant(s) via `Get-ChildItem`/`Remove-Item`), et note sur le bouton **« Interrompre »** prévu dans l'onglet CCW de `new_issue.py` pour automatiser cette procédure (voir `TACHES.md`). Précédemment — Documente au §3 « Créer une issue — la méthode normale » le comportement exact du bouton « Aperçu de la commande » de l'onglet Nouvelle issue (issue #285) : il appelle la route `/apercu` (fonction `apercu()` de `app/issues.py`), qui construit à partir des champs actuellement remplis dans le formulaire la commande `gh issue create` exacte qui serait exécutée, suivie en commentaire du corps complet qui serait envoyé, renvoyée en JSON ; `afficherApercu()` (`static/js/app.js`) affiche ce texte tel quel dans la zone `zone-apercu` sous le formulaire — un aperçu pur, aucune issue n'est créée.*
+*Dernière mise à jour : 1er août 2026 — Crée `BUILD_WINDOWS_CCW.md` (issue #299) et allège d'autant le §16.3 « Procédure — builder un projet Windows » : la note « staging local » (issue #297) détaillée en toutes lettres — pattern de contournement de la corruption de fichiers sur `\\VBOXSVR\CCW_Share` et checklist par projet buildé — est remplacée par un renvoi de deux lignes vers ce nouveau fichier, qui porte désormais aussi la checklist Scrabble (clone, script de build, `.spec`, TIMEOUT, taille/hash de l'installeur de référence du 31/07/2026) ; objectif — éviter que chaque nouveau projet buildé sous Windows (Rummikub en préparation) n'ajoute encore du contenu spécifique-projet dans ce fichier central. Précédemment — Ajoute au §16 « Agent Windows CCW » la sous-section 16.4 « Interrompre une issue CCW coincée » (issue #287) : symptôme (le watcher `CCW-Watcher` log en boucle « Issue différée : un autre traitement détient déjà le verrou sur \\VBOXSVR\CCW_Share\ » sans jamais progresser), cause (fichier verrou orphelin dans `C:\CCW\Bridge_Agent\logs\verrous\`, non nettoyé après un process tué brutalement ou un redémarrage NSSM sans libération propre), procédure manuelle (`nssm restart CCW-Watcher` puis lister/supprimer le(s) fichier(s) `.lock` restant(s) via `Get-ChildItem`/`Remove-Item`), et note sur le bouton **« Interrompre »** prévu dans l'onglet CCW de `new_issue.py` pour automatiser cette procédure (voir `TACHES.md`). Précédemment — Documente au §16.3 « Procédure — builder un projet Windows » le pattern de staging local pour les builds Windows CCW (issue #297) : diagnostic du 31/07/2026 sur Scrabble — les builds PyInstaller + Inno Setup produisaient des fichiers tronqués/corrompus lorsqu'ils tournaient directement sur le partage VirtualBox `\\VBOXSVR\CCW_Share` (fix #338) ; contournement standard — le script de build copie les sources vers un répertoire local à la VM (`C:\Temp\<Projet>Build`), construit entièrement là, puis ne recopie que l'artefact final vers le partage ; conséquence obligatoire — ajouter ce chemin local au `PERIMETRE` de `configs\ccw.conf`, sans quoi CCW bloque légitimement le build (contenu depuis remplacé par un renvoi, voir ci-dessus).*
 
 Historique complet : voir [`CHANGELOG.md`](CHANGELOG.md).

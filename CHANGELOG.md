@@ -9,6 +9,30 @@ milliers de caractères sur une seule ligne logique, coûteux à relire et
 
 Convention d'ajout : voir §10 de `BRIDGE_AGENT_DOC.md`.
 
+## 1er août 2026 — issue #299
+
+Crée `BUILD_WINDOWS_CCW.md` à la racine du dépôt (issue #299), dédié au
+contenu spécifique-projet des builds Windows délégués à CCW — jusqu'ici en
+voie d'accumulation dans `BRIDGE_AGENT_DOC.md` (§16.3) à chaque nouveau
+projet buildé (Scrabble déjà, Rummikub en préparation). Le fichier reprend
+le pattern général de staging local documenté par l'issue #297 (corruption
+de fichiers sur `\\VBOXSVR\CCW_Share`, contournement via
+`C:\Temp\<Projet>Build`, extension obligatoire du `PERIMETRE` dans
+`configs\ccw.conf`), ajoute une checklist type à remplir par projet
+buildé (clone CCW, script de build, `.spec` — datas explicites ou
+`collect_tree` en bloc avec mise en garde suite à l'incident dump
+wiktionnaire 8,2 Go sur Scrabble du 31/07/2026 —, TIMEOUT de référence,
+taille/hash de l'artefact final), et une première entrée déjà remplie
+pour Scrabble (`Z:\CCW\scrabble`, `build\rebuild_scrabble.bat` en 7
+étapes fix #338, `scrabble.spec` corrigé en liste explicite, TIMEOUT
+1200s, installeur de référence 26 546 846 octets, SHA256
+`d52e101f8758a1b107011adf0bc1a04102bce48d3283248650019ba101ef3254`).
+En contrepartie, la note « staging local » ajoutée au §16.3 de
+`BRIDGE_AGENT_DOC.md` par l'issue #297 est remplacée par un renvoi de
+deux lignes vers ce nouveau fichier ; pied de page de `BRIDGE_AGENT_DOC.md`
+glissé (#299 en tête, #287 conservée, #297 conservée en dernière position
+avec note du remplacement, #285 sorti).
+
 ## 31 juillet 2026 — issue #297
 
 Documente au §16.3 « Procédure — builder un projet Windows » de `BRIDGE_AGENT_DOC.md` le pattern de staging local pour les builds Windows CCW (issue #297), jusqu'ici décrit uniquement dans le `CONTEXTE.md` propre au projet Scrabble et donc invisible pour toute autre instance CCL/CCW ayant le même besoin (ex. Rummikub, même stack PyInstaller + Inno Setup, prévoit ce pattern dès son premier script de build). Contexte : diagnostic du 31/07/2026 sur Scrabble — les builds PyInstaller + Inno Setup produisaient des fichiers tronqués/corrompus lorsqu'ils tournaient directement sur le partage VirtualBox `\\VBOXSVR\CCW_Share` (fix #338). Nouvelle note ajoutée juste après le paragraphe « Note safe.directory », avant la sous-section 16.4 : **contournement standard** — le script de build copie les sources vers un répertoire local à la VM (`C:\Temp\<Projet>Build` ou équivalent), construit entièrement là, puis ne recopie vers le partage que l'artefact final ; **conséquence obligatoire** — ajouter ce chemin local au `PERIMETRE` de `configs\ccw.conf` (liste séparée par virgules), sans quoi CCW refuse à juste titre d'en sortir et bloque légitimement le build ; **rappel** — avant d'ajouter un nouveau projet à builder sous Windows, vérifier si son script de build suit déjà ce schéma et, si oui, étendre le `PERIMETRE` en conséquence. Pied de page de `BRIDGE_AGENT_DOC.md` glissé (issue #297 en tête, #287 et #285 conservées comme les deux entrées les plus récentes parmi les issues modifiant cette doc, #281 sorti). Aucun fichier `.py`/`.js` modifié (documentation seule), aucune section renumérotée.
