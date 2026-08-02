@@ -1028,6 +1028,60 @@ a été remplacée par les deux seuls droits que documente Microsoft pour
   dans l'en-tête de l'issue (l'appel reste bloqué à attendre une réponse qui
   ne vient jamais, jusqu'à expiration).
 
+### Parallélisation mode_write via git worktrees (issue #337)
+
+Par défaut, plusieurs issues `mode_write` peuvent désormais tourner **en
+parallèle**, chacune dans son propre `git worktree` (répertoire frère isolé,
+sur sa propre branche) — au lieu du traitement strictement séquentiel
+historique (un seul `mode_write` à la fois, dans `REP_TRAVAIL`). Les issues
+`mode_lecture`/`mode_scratch` restent, elles, toujours traitées
+séquentiellement dans `REP_TRAVAIL` (hors périmètre de cette issue).
+
+- **`MAX_WRITE_PARALLELE`** (`.conf`, entier, défaut **2**) — nombre maximum
+  de tâches `mode_write` concurrentes. `1` = comportement séquentiel
+  historique intégral (aucun thread, aucun worktree créé, `traiter_issue`
+  reste synchrone). `0` = désactivé, identique à `1`.
+- **Décision de parallélisation** (`traiter_issue`, point d'entrée public
+  appelé pour chaque issue) : la **première** issue `mode_write` détectée
+  sans autre tâche `mode_write` déjà en cours est dispatchée dans un thread
+  Python ciblant `REP_TRAVAIL` directement — **sans worktree** — nécessaire
+  pour que la boucle principale (mono-thread) reste libre de détecter une
+  éventuelle deuxième issue `mode_write` pendant que la première tourne
+  encore ; sans cela, un `traiter_issue` bloquant sur la première tâche
+  empêcherait à jamais d'en atteindre une seconde. Les issues `mode_write`
+  **suivantes**, détectées pendant qu'au moins un thread est déjà actif et
+  sous `MAX_WRITE_PARALLELE`, obtiennent chacune un worktree dédié.
+- **Worktree** : chemin `<REP_TRAVAIL>/../<NOM_PROJET>-issue<N>` (répertoire
+  frère de `REP_TRAVAIL`), branche `worktree-issue-<N>`, créés par
+  `git -C <REP_TRAVAIL> worktree add <chemin> -b worktree-issue-<N>`. Si le
+  chemin ou la branche existe déjà, ou si `git worktree add` échoue pour
+  toute autre raison, repli propre sur le traitement séquentiel classique
+  (l'issue attend qu'un slot se libère au prochain cycle) — jamais
+  d'exception propagée.
+- **CHANGELOG** : dans un worktree, CCL reçoit une consigne de prompt dédiée
+  lui demandant d'écrire son entrée dans `CHANGELOG-<N>.md` à la racine du
+  worktree plutôt que dans `CHANGELOG.md` directement, pour éviter un
+  conflit systématique sur ce fichier unique entre worktrees actifs en
+  parallèle — voir `scripts/fusionner_changelog.py` (issue #336), qui
+  intègre ces fichiers dans `CHANGELOG.md` avant le push d'Alain (lancement
+  manuel, pas encore appelé automatiquement par `watcher.py`).
+- **Verrou anti-collision (issue #189/#322)** : posé par `chemin_travail`
+  (le `REP_TRAVAIL` ou le worktree effectif de CETTE tâche), et non plus
+  systématiquement par `REP_TRAVAIL` seul — deux worktrees du même projet
+  obtiennent donc deux verrous distincts et peuvent tourner sans s'attendre,
+  tandis qu'une issue `mode_lecture`/`mode_scratch` visant `REP_TRAVAIL`
+  pendant qu'un worktree y tourne encore (premier slot) reste bloquée par
+  le même verrou qu'avant, reprise au cycle suivant.
+- **Fin de tâche** : le worktree n'est **jamais** supprimé automatiquement
+  (ni `git worktree remove`, ni suppression de la branche) — Alain merge et
+  pousse manuellement une fois le travail relu. Le numéro d'issue, le
+  chemin du worktree et la branche sont journalisés clairement en fin de
+  traitement.
+- **Auto-extinction (§13 ci-dessus)** : le watcher ne s'éteint jamais tant
+  qu'un thread `mode_write` tourne encore, même si `DELAI_INACTIVITE_MIN`
+  est dépassé — réévalué à chaque cycle, dès qu'un thread se termine
+  l'extinction redevient possible.
+
 ---
 
 ## 14. Délégation Chef → Ouvrier (changement d'environnement)

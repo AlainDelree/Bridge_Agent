@@ -28,6 +28,7 @@ import tempfile
 import platform
 import signal
 import shutil
+import threading
 import ctypes
 import ctypes.wintypes
 from logging.handlers import RotatingFileHandler
@@ -238,6 +239,7 @@ class Config:
     notifier_local: bool   = True  # ce watcher émet-il lui-même bip/notify-send/ntfy à la fin d'une issue (issue #187) ? True = comportement historique. Mettre à False sur la VM CCW (et éventuellement CCL) pour laisser new_issue.py notifier de façon centralisée sur le ThinkPad, sans doublon.
     delai_inactivite_min: int = 20  # auto-extinction : minutes sans aucune issue traitable avant que le watcher ne s'arrête proprement (issue #200). 0 = désactivé (le watcher tourne indéfiniment, comportement historique).
     libelle_agent: str     = ""    # libellé de l'agent affiché dans l'ACK (ex. "agent Linux", "agent Windows") — vide = déduit automatiquement de la plateforme (issue #239)
+    max_write_parallele: int = 2   # parallélisation mode_write via git worktrees (issue #337) : nombre max de tâches mode_write concurrentes. 1 = comportement séquentiel historique (aucun worktree, aucun thread). 0 = désactivé (identique à 1).
 
     @property
     def url_ntfy(self) -> str:
@@ -330,6 +332,7 @@ def charger_config(chemin: Path) -> Config:
         notifier_local      = booleen("NOTIFIER_LOCAL", True),
         delai_inactivite_min = entier("DELAI_INACTIVITE_MIN", 20),
         libelle_agent       = brut.get("LIBELLE_AGENT", ""),
+        max_write_parallele = entier("MAX_WRITE_PARALLELE", 2),
     )
 
 
@@ -1899,7 +1902,8 @@ def lancer_claude(numero: int, titre: str, body: str, dry_run: bool,
                   perimetre: str = None,
                   cwd: Path = None,
                   verrou: Path = None,
-                  chemin_scratch: Path = None) -> tuple[bool, str]:
+                  chemin_scratch: Path = None,
+                  chemin_worktree: Path = None) -> tuple[bool, str]:
     """
     Lance Claude Code en mode non-interactif sur une issue.
 
@@ -1933,6 +1937,13 @@ def lancer_claude(numero: int, titre: str, body: str, dry_run: bool,
     watcher suivant de cibler et tuer cet éventuel orphelin si CE watcher meurt
     brutalement avant la fin du traitement. None = pas de verrou associé (ex.
     passe diagnostique) : aucun pgid n'est consigné, comportement inchangé.
+
+    chemin_worktree : chemin du worktree git isolé de cette tâche (issue #337),
+    si la parallélisation mode_write y a placé CCL. Sert uniquement à injecter
+    dans le prompt un bloc d'avertissement dédié (worktree/branche/consigne
+    CHANGELOG-<N>.md) — `cwd` porte déjà le répertoire RÉEL du subprocess
+    (worktree ou REP_TRAVAIL). None = traitement hors worktree (comportement
+    inchangé, aucun bloc injecté).
 
     Retourne (succès, sortie).
     """
@@ -2010,7 +2021,11 @@ fichier, n'exécute aucune commande modifiant l'état du système ou du dépôt.
     if CFG.fichier_contexte:
         chemin_ctx = Path(CFG.fichier_contexte).expanduser()
         if not chemin_ctx.is_absolute():
-            chemin_ctx = CFG.rep_travail / chemin_ctx
+            # cwd_effectif (pas CFG.rep_travail) : en worktree (issue #337), le
+            # fichier de contexte relatif doit être lu depuis le worktree — un
+            # `git worktree` contient une copie complète des fichiers suivis,
+            # CONTEXTE.md y est donc présent au même chemin relatif.
+            chemin_ctx = cwd_effectif / chemin_ctx
         if chemin_ctx.exists():
             try:
                 contenu = chemin_ctx.read_text(encoding="utf-8", errors="replace")
@@ -2051,6 +2066,23 @@ fichier, n'exécute aucune commande modifiant l'état du système ou du dépôt.
     else:
         clause_perimetre = ""
 
+    # Bloc d'avertissement worktree (issue #337) : injecté UNIQUEMENT quand
+    # cette tâche mode_write tourne dans un worktree git isolé (parallélisation
+    # active), pour que CCL sache où il se trouve réellement et respecte la
+    # convention CHANGELOG-<N>.md (fusionnée plus tard par
+    # scripts/fusionner_changelog.py, avant le push d'Alain — jamais dans
+    # CHANGELOG.md directement, qui provoquerait un conflit avec les autres
+    # worktrees actifs en parallèle).
+    bloc_worktree = ""
+    if chemin_worktree is not None:
+        bloc_worktree = (
+            f"\n⚠️ Tu travailles dans un worktree isolé : {chemin_worktree}\n"
+            f"Branche : worktree-issue-{numero}\n"
+            f"CHANGELOG : écris ton entrée dans CHANGELOG-{numero}.md à la racine de ce "
+            f"worktree, PAS dans CHANGELOG.md. Le script fusionner_changelog.py "
+            f"intégrera CHANGELOG-{numero}.md dans CHANGELOG.md avant le push.\n"
+        )
+
     if prompt_perso is not None:
         prompt = prompt_perso
     else:
@@ -2061,7 +2093,7 @@ TITRE : {titre}
 
 BODY :
 {body}
-{bloc_contexte}{bloc_consignes}{clause_perimetre}{garde_fou}
+{bloc_contexte}{bloc_consignes}{clause_perimetre}{bloc_worktree}{garde_fou}
 Instructions :
 1. Lis attentivement la tâche demandée
 2. Effectue le travail demandé (dans les limites du mode ci-dessus)
@@ -2247,6 +2279,101 @@ probables, sans préambule ni conclusion, et sans tenter de corriger quoi que ce
 
 # Mémoire des issues en cours de traitement (évite les doublons)
 issues_en_cours: set[int] = set()
+
+
+# ─── Parallélisation mode_write via git worktrees (issue #337) ─────────────────
+# But : permettre à plusieurs issues mode_write de tourner EN PARALLÈLE, chacune
+# dans son propre worktree git (répertoire frère isolé, sur sa propre branche),
+# sans conflit d'accès fichier — au lieu du traitement strictement séquentiel
+# historique (un seul mode_write à la fois, dans REP_TRAVAIL).
+#
+# `_threads_ecriture` : liste thread-safe (protégée par `_verrou_threads_ecriture`,
+# un `threading.Lock` — SANS RAPPORT avec les verrous FICHIER inter-process de
+# #189/#322, cf. `acquerir_verrou`) des tâches mode_write actuellement dispatchées
+# dans un thread Python. Chaque entrée : {"numero", "worktree" (None si la tâche
+# tourne dans REP_TRAVAIL, cf. décision ci-dessous), "thread"}.
+#
+# Décision de parallélisation (voir `traiter_issue`, point d'entrée public) :
+# la PREMIÈRE tâche mode_write d'un lot est dispatchée dans un thread ciblant
+# REP_TRAVAIL (worktree=None) — nécessaire pour que la boucle principale reste
+# libre de détecter une deuxième tâche mode_write pendant que la première
+# tourne encore (une boucle `while True` mono-thread ne peut sinon jamais
+# atteindre une deuxième issue tant que `traiter_issue` bloque sur la
+# première). Les tâches mode_write SUIVANTES, détectées pendant qu'au moins un
+# thread mode_write est déjà actif et que `MAX_WRITE_PARALLELE` n'est pas
+# atteint, obtiennent chacune un worktree dédié. `MAX_WRITE_PARALLELE <= 1`
+# désactive tout le mécanisme : traitement strictement séquentiel historique,
+# aucun thread, aucun worktree — comportement identique à avant #337.
+_verrou_threads_ecriture = threading.Lock()
+_threads_ecriture: list[dict] = []
+
+
+def _nettoyer_threads_ecriture_termines() -> None:
+    """Purge, sous verrou, les entrées dont le thread Python est terminé."""
+    with _verrou_threads_ecriture:
+        _threads_ecriture[:] = [t for t in _threads_ecriture if t["thread"].is_alive()]
+
+
+def _threads_ecriture_actifs() -> list[dict]:
+    """Instantané des tâches mode_write actuellement en thread, APRÈS purge
+    des threads terminés. Best-effort de lecture cohérente : le nettoyage et
+    la copie sont deux opérations séparées (léger risque qu'un thread se
+    termine entre les deux, sans conséquence — juste une entrée fantôme lue
+    une fois, purgée au prochain appel)."""
+    _nettoyer_threads_ecriture_termines()
+    with _verrou_threads_ecriture:
+        return list(_threads_ecriture)
+
+
+def _nb_threads_ecriture_actifs() -> int:
+    return len(_threads_ecriture_actifs())
+
+
+def _chemin_worktree(numero: int) -> Path:
+    """Chemin du worktree d'une issue mode_write (issue #337) : répertoire
+    FRÈRE de REP_TRAVAIL, nommé d'après le NOM du projet (CFG.nom, pas le nom
+    du dossier REP_TRAVAIL — ce sont deux choses potentiellement différentes)."""
+    return CFG.rep_travail.parent / f"{CFG.nom}-issue{numero}"
+
+
+def _branche_worktree(numero: int) -> str:
+    return f"worktree-issue-{numero}"
+
+
+def _creer_worktree(numero: int) -> Path | None:
+    """Crée le worktree git dédié à l'issue mode_write `numero` (issue #337) :
+    `git -C <REP_TRAVAIL> worktree add <chemin> -b worktree-issue-<numero>`.
+
+    Garde-fous (échec propre, jamais d'exception propagée) : chemin déjà
+    existant (vérifié AVANT l'appel git, évite une tentative vouée à
+    l'échec), ou `git worktree add` en échec pour toute autre raison (branche
+    déjà existante, etc.) — dans les deux cas, retourne None et journalise ;
+    l'appelant retombe alors sur le traitement séquentiel (l'issue attend
+    qu'un slot se libère)."""
+    chemin = _chemin_worktree(numero)
+    branche = _branche_worktree(numero)
+    if chemin.exists():
+        log.warning(
+            f"  Worktree #{numero} : {chemin} existe déjà — fallback séquentiel "
+            f"(l'issue attend qu'un slot se libère)."
+        )
+        return None
+    try:
+        res = subprocess.run(
+            ["git", "-C", str(CFG.rep_travail), "worktree", "add", str(chemin), "-b", branche],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60,
+        )
+    except (OSError, subprocess.SubprocessError) as e:
+        log.warning(f"  Worktree #{numero} : exception à la création ({e}) — fallback séquentiel.")
+        return None
+    if res.returncode != 0:
+        log.warning(
+            f"  Worktree #{numero} : échec de création (branche '{branche}' déjà "
+            f"existante ?) — {res.stderr.strip()} — fallback séquentiel."
+        )
+        return None
+    log.info(f"  Worktree #{numero} créé : {chemin} (branche {branche}).")
+    return chemin
 
 
 def _chemin_verrou(rep_travail: Path) -> Path:
@@ -2642,7 +2769,13 @@ def _restaurer_rep_travail_modifie(numero: int, cwd: Path,
     return list(nouveaux.keys())
 
 
-def traiter_issue(issue: dict, dry_run: bool):
+def _traiter_issue_synchrone(issue: dict, dry_run: bool, chemin_worktree: Path | None = None):
+    """Corps du traitement d'une issue — inchangé depuis avant #337, à
+    l'exception du paramètre `chemin_worktree` (issue #337) : chemin du
+    worktree git isolé où cette tâche mode_write doit tourner, ou None pour le
+    traitement classique dans REP_TRAVAIL. Appelée soit directement (issues
+    lecture/lecture active, ou mode_write hors parallélisation), soit depuis un
+    thread dédié via `traiter_issue` (point d'entrée public, voir plus bas)."""
     numero = issue["number"]
     titre  = issue["title"]
     body   = issue.get("body") or ""
@@ -2686,6 +2819,11 @@ def traiter_issue(issue: dict, dry_run: bool):
     log.info(f"→ Issue #{numero} détectée : '{titre}' [priorité: {priorite}] [mode: {mode_txt}]")
     if mode == MODE_ECRITURE:
         log.warning(f"  ⚠️  MODE ÉCRITURE ARMÉ pour #{numero} (label '{LABEL_ECRITURE}') — actions permises, push interdit.")
+        if chemin_worktree is not None:
+            log.info(
+                f"  Issue #{numero} : traitement en worktree isolé {chemin_worktree} "
+                f"(branche {_branche_worktree(numero)}) — parallélisation mode_write, issue #337."
+            )
     elif mode == MODE_LECTURE_ACTIVE:
         log.warning(
             f"  ⚠️  MODE LECTURE ACTIVE ARMÉ pour #{numero} (label '{LABEL_SCRATCH}') — "
@@ -2706,6 +2844,16 @@ def traiter_issue(issue: dict, dry_run: bool):
     perimetre_effectif = CFG.perimetre
     cwd_effectif       = CFG.rep_travail
     avertissement_conflit = ""
+
+    # Worktree isolé (issue #337) : chemin_travail effectif de CETTE tâche —
+    # remplace REP_TRAVAIL comme cwd du subprocess ET comme périmètre du
+    # prompt (Claude tourne physiquement dans ce dossier frère, un périmètre
+    # resté sur REP_TRAVAIL le bloquerait en pratique). Hors périmètre
+    # dynamique uniquement (#125) : les deux mécanismes ne se combinent pas,
+    # REPO_CIBLE reste seul décisif si les deux sont actifs par erreur.
+    if chemin_worktree is not None and not CFG.perimetre_dynamique:
+        cwd_effectif       = chemin_worktree
+        perimetre_effectif = str(chemin_worktree)
 
     if CFG.perimetre_dynamique:
         repo_cible = extraire_repo_cible(body)
@@ -2839,7 +2987,8 @@ def traiter_issue(issue: dict, dry_run: bool):
             succes, sortie = lancer_claude(numero, titre, body, dry_run, mode,
                                            timeout, modele,
                                            perimetre=perimetre_effectif, cwd=cwd_effectif,
-                                           verrou=verrou, chemin_scratch=chemin_scratch)
+                                           verrou=verrou, chemin_scratch=chemin_scratch,
+                                           chemin_worktree=chemin_worktree)
 
             if empreinte_configs_avant is not None:
                 _restaurer_configs_modifies(numero, empreinte_configs_avant)
@@ -3063,6 +3212,127 @@ def traiter_issue(issue: dict, dry_run: bool):
         # `try` ci-dessus.
         if chemin_scratch is not None:
             _nettoyer_scratch(numero, chemin_scratch)
+        # Fin de tâche en worktree (issue #337) : PAS de `git worktree remove`
+        # ni de suppression de branche automatique — Alain merge et pousse
+        # manuellement. On se contente de journaliser clairement l'état final
+        # (numéro, chemin, branche) pour qu'il sache quoi retrouver ; le
+        # statut succès/échec de CETTE tentative est visible sur la ligne de
+        # log immédiatement précédente (même numéro d'issue).
+        if chemin_worktree is not None:
+            log.info(
+                f"  Issue #{numero} : fin de traitement en worktree {chemin_worktree} "
+                f"(branche {_branche_worktree(numero)}) — worktree CONSERVÉ (aucune "
+                f"suppression automatique), fusion/push manuels par Alain."
+            )
+
+# ─── Point d'entrée public : dispatch séquentiel / parallèle (issue #337) ──────
+
+def _lancer_thread_ecriture(issue: dict, dry_run: bool, chemin_worktree: Path | None) -> None:
+    """Cible du thread Python dédié à une tâche mode_write parallélisée (issue
+    #337). Appelle simplement `_traiter_issue_synchrone` — toute la logique
+    (ACK, verrou par chemin_travail, retries, fermeture, notifications) reste
+    identique, seul le chemin de travail change. `_threads_ecriture` n'a PAS
+    besoin d'être purgé ici explicitement : `_nettoyer_threads_ecriture_termines`
+    (appelée à chaque décision de dispatch et en tête de boucle principale)
+    détecte `thread.is_alive() == False` dès que cette fonction retourne."""
+    _traiter_issue_synchrone(issue, dry_run, chemin_worktree=chemin_worktree)
+
+
+def traiter_issue(issue: dict, dry_run: bool) -> None:
+    """Point d'entrée public, appelé par la boucle principale pour CHAQUE
+    issue. Décide, pour une issue mode_write prête, entre traitement
+    séquentiel classique et parallélisation via git worktree (issue #337) ;
+    délègue tout le reste (lecture, lecture active, mode_write hors
+    parallélisation) tel quel à `_traiter_issue_synchrone`, comportement
+    inchangé depuis avant #337.
+
+    Décision de parallélisation (voir commentaire de section au-dessus de
+    `_threads_ecriture`) :
+      - `MAX_WRITE_PARALLELE <= 1`, dry-run, ou projet à périmètre dynamique
+        (#125, hors périmètre de #337) → jamais de thread/worktree, chemin
+        historique intégral.
+      - Aucun thread mode_write actif → PREMIER slot : thread dédié ciblant
+        REP_TRAVAIL (pas de worktree) — nécessaire pour que la boucle
+        principale reste libre de détecter une éventuelle deuxième tâche
+        mode_write pendant que celle-ci tourne encore.
+      - Au moins un thread actif et sous `MAX_WRITE_PARALLELE` → worktree dédié
+        + thread. Échec de création du worktree (déjà existant, erreur git) →
+        repli sur `_traiter_issue_synchrone` direct : le verrou par
+        chemin_travail (#189/#322, désormais posé sur REP_TRAVAIL ou le
+        worktree selon le cas, voir #337 point 7) fait alors office de garde-
+        fou — si REP_TRAVAIL est occupé par le premier slot, cette issue est
+        simplement différée au prochain cycle, sans double écriture possible.
+      - À `MAX_WRITE_PARALLELE` déjà atteint → même repli (différée par le
+        verrou si REP_TRAVAIL est occupé, traitée directement s'il est libre)."""
+    numero = issue["number"]
+    labels = [l.get("name", "") for l in issue.get("labels", [])]
+
+    if numero in issues_en_cours:
+        return
+
+    # Déjà en cours dans un thread depuis un cycle précédent (mode_write
+    # parallélisé) : ne pas re-dispatcher, laisser ce thread poursuivre.
+    if any(t["numero"] == numero for t in _threads_ecriture_actifs()):
+        return
+
+    # Issue déjà finalisée (échec définitif ou résultat déjà posté) : chemin
+    # rapide direct, pas de worktree à créer pour une issue qui ne va de toute
+    # façon rien exécuter (_traiter_issue_synchrone le détecte immédiatement).
+    if LABEL_ECHEC in labels or LABEL_FAIT in labels:
+        _traiter_issue_synchrone(issue, dry_run)
+        return
+
+    mode = _deduire_mode(labels)
+
+    if (mode == MODE_ECRITURE and not dry_run and not CFG.perimetre_dynamique
+            and CFG.max_write_parallele > 1):
+        actifs = _threads_ecriture_actifs()
+
+        if not actifs:
+            # Premier slot : thread sur REP_TRAVAIL (pas de worktree).
+            # PAS de issues_en_cours.add(numero) ICI : c'est
+            # _traiter_issue_synchrone, exécutée DANS le thread, qui s'en
+            # charge (comportement historique) — l'ajouter ici bloquerait le
+            # thread dès sa première ligne (garde d'idempotence en tête de
+            # _traiter_issue_synchrone). La déduplication inter-cycles est
+            # déjà assurée par `_threads_ecriture` (vérifié plus haut).
+            thread = threading.Thread(
+                target=_lancer_thread_ecriture, args=(issue, dry_run, None),
+                name=f"ecriture-issue-{numero}", daemon=True,
+            )
+            with _verrou_threads_ecriture:
+                _threads_ecriture.append({"numero": numero, "worktree": None, "thread": thread})
+            log.info(
+                f"  Issue #{numero} : lancement dans REP_TRAVAIL en tâche de fond "
+                f"(1/{CFG.max_write_parallele}) — parallélisation mode_write active (issue #337)."
+            )
+            thread.start()
+            return
+
+        if len(actifs) < CFG.max_write_parallele:
+            chemin_worktree = _creer_worktree(numero)
+            if chemin_worktree is not None:
+                # Même remarque que ci-dessus : pas de issues_en_cours.add ici.
+                thread = threading.Thread(
+                    target=_lancer_thread_ecriture, args=(issue, dry_run, chemin_worktree),
+                    name=f"ecriture-issue-{numero}", daemon=True,
+                )
+                with _verrou_threads_ecriture:
+                    _threads_ecriture.append({"numero": numero, "worktree": chemin_worktree, "thread": thread})
+                log.info(
+                    f"  Issue #{numero} : lancement dans le worktree {chemin_worktree} "
+                    f"({len(actifs) + 1}/{CFG.max_write_parallele}) — parallélisation mode_write (issue #337)."
+                )
+                thread.start()
+                return
+            # Échec de création du worktree : repli séquentiel ci-dessous.
+        else:
+            log.info(
+                f"  Issue #{numero} : MAX_WRITE_PARALLELE ({CFG.max_write_parallele}) déjà "
+                f"atteint — traitement séquentiel (différé si REP_TRAVAIL est occupé)."
+            )
+
+    _traiter_issue_synchrone(issue, dry_run)
 
 # ─── Boucle principale ─────────────────────────────────────────────────────────
 
@@ -3104,6 +3374,11 @@ def main():
     else:
         log.info("Auto-extinction désactivée (DELAI_INACTIVITE_MIN = 0) — watcher permanent.")
 
+    if CFG.max_write_parallele > 1:
+        log.info(f"Parallélisation mode_write via worktrees activée (issue #337) : MAX_WRITE_PARALLELE={CFG.max_write_parallele}.")
+    else:
+        log.info(f"Parallélisation mode_write désactivée (MAX_WRITE_PARALLELE={CFG.max_write_parallele}) — traitement séquentiel historique.")
+
     # Horloge monotone d'inactivité (issue #200). Initialisée AVANT la boucle
     # pour qu'un watcher fraîchement démarré ne s'éteigne pas au premier cycle,
     # puis réarmée à chaque cycle comportant au moins une issue traitable.
@@ -3116,16 +3391,31 @@ def main():
         # interrompu : on ne teste qu'entre deux cycles complets. delai 0 =
         # mécanisme désactivé.
         if CFG.delai_inactivite_min > 0:
-            inactif_s = time.monotonic() - derniere_activite
-            if inactif_s > CFG.delai_inactivite_min * 60:
-                log.info(f"⏻ Auto-extinction : aucune issue traitable depuis "
-                         f"{CFG.delai_inactivite_min} min — arrêt propre du watcher.")
-                # Nettoyage du fichier PID, par cohérence avec arreter_watcher()
-                # (app/watchers.py) : sans ça l'interface afficherait un PID
-                # orphelin au lieu de « inactif ».
-                pid_file = DOSSIER_LOGS / f"watcher-{CFG.nom}.pid"
-                pid_file.unlink(missing_ok=True)
-                sys.exit(0)
+            # Garde-fou parallélisation mode_write (issue #337, point 8) :
+            # jamais d'extinction tant qu'un thread mode_write tourne encore,
+            # même si le délai d'inactivité est dépassé — un worktree en
+            # thread n'est pas nécessairement reflété par `issue_traitable`
+            # au même instant (labels re-synchronisés au poll suivant).
+            # `_threads_ecriture_actifs()` purge les threads terminés à
+            # chaque appel : réévalué à CHAQUE cycle, donc dès qu'un thread se
+            # termine, l'extinction redevient possible au cycle suivant.
+            threads_ecriture_actifs = _threads_ecriture_actifs()
+            if threads_ecriture_actifs:
+                log.debug(
+                    f"Auto-extinction différée : {len(threads_ecriture_actifs)} "
+                    f"tâche(s) mode_write encore active(s) en thread (issue #337)."
+                )
+            else:
+                inactif_s = time.monotonic() - derniere_activite
+                if inactif_s > CFG.delai_inactivite_min * 60:
+                    log.info(f"⏻ Auto-extinction : aucune issue traitable depuis "
+                             f"{CFG.delai_inactivite_min} min — arrêt propre du watcher.")
+                    # Nettoyage du fichier PID, par cohérence avec arreter_watcher()
+                    # (app/watchers.py) : sans ça l'interface afficherait un PID
+                    # orphelin au lieu de « inactif ».
+                    pid_file = DOSSIER_LOGS / f"watcher-{CFG.nom}.pid"
+                    pid_file.unlink(missing_ok=True)
+                    sys.exit(0)
 
         try:
             # Rafraîchissement automatique du clone local en début de cycle
