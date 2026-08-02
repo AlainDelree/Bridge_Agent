@@ -9,6 +9,24 @@ milliers de caractères sur une seule ligne logique, coûteux à relire et
 
 Convention d'ajout : voir §10 de `BRIDGE_AGENT_DOC.md`.
 
+## 2 août 2026 — issue #340
+
+Suite #338 : le bouton ⛔ « Interrompre » (`app/interruption.py::interrompre_linux()`)
+nettoie désormais aussi les verrous des worktrees actifs, pas seulement
+celui de `REP_TRAVAIL`. Nouvelle fonction `_lister_worktrees_actifs()` :
+scanne le répertoire parent de `REP_TRAVAIL` à la recherche de
+répertoires frères `<NOM_PROJET>-issue<N>` (même convention que
+`_chemin_worktree` dans `watcher.py`) ; pour chacun, le chemin de verrou
+est recalculé via `_chemin_verrou()` (déjà importé de `watcher.py`) et le
+fichier `.lock` supprimé s'il existe — uniquement une fois l'arbre de
+process confirmé mort, même garde-fou que pour le verrou de
+`REP_TRAVAIL`. Ces suppressions apparaissent dans le rapport de statut
+renvoyé à l'interface (une étape `suppression_verrou_worktree_<nom>` par
+worktree détecté, ou `suppression_verrous_worktrees` en `rien_a_faire`
+si aucun). `WORKTREES.md` §4 mis à jour : la limite « verrou non libéré »
+documentée depuis #338 est corrigée, plus besoin d'intervention manuelle
+après un « Interrompre » pendant qu'un worktree tournait.
+
 ## 2 août 2026 — issue #339
 
 Nettoyage de `TACHES.md` : suppression de trois items devenus obsolètes.

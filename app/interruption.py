@@ -170,6 +170,26 @@ def _reaper_best_effort(pid: int) -> None:
         pass
 
 
+def _lister_worktrees_actifs(cfg) -> list:
+    """Répertoires frères de REP_TRAVAIL correspondant à des worktrees actifs
+    d'une tâche mode_write (issue #337) : même convention de nommage que
+    `_chemin_worktree` dans watcher.py — `<CFG.nom>-issue<N>`, où N est un
+    numéro d'issue (entier). Scanne le parent de REP_TRAVAIL, jamais
+    REP_TRAVAIL lui-même."""
+    parent = cfg.rep_travail.parent
+    if not parent.is_dir():
+        return []
+    prefixe = f"{cfg.nom}-issue"
+    resultat = []
+    for entree in parent.iterdir():
+        if not entree.is_dir():
+            continue
+        suffixe = entree.name[len(prefixe):]
+        if entree.name.startswith(prefixe) and suffixe.isdigit():
+            resultat.append(entree)
+    return resultat
+
+
 def interrompre_linux(cfg) -> list:
     etapes = []
 
@@ -252,6 +272,30 @@ def interrompre_linux(cfg) -> list:
     else:
         etapes.append({"etape": "reverification_verrou", "statut": "succes",
                         "message": "Absence du verrou confirmée."})
+
+    # Verrous des worktrees actifs (issue #337 / #340) : l'arbre de process
+    # est confirmé mort à ce stade (arbre_mort, garde-fou déjà appliqué plus
+    # haut) — il tuait déjà les threads worktree en cours, mais ne libérait
+    # jusqu'ici QUE le verrou de REP_TRAVAIL, laissant les worktrees bloqués
+    # jusqu'à péremption naturelle (limite documentée dans WORKTREES.md §4,
+    # désormais corrigée).
+    worktrees = _lister_worktrees_actifs(cfg)
+    if not worktrees:
+        etapes.append({"etape": "suppression_verrous_worktrees", "statut": "rien_a_faire",
+                        "message": "Aucun worktree actif détecté."})
+    else:
+        for chemin in worktrees:
+            verrou_wt = _chemin_verrou(chemin)
+            nom_etape = f"suppression_verrou_worktree_{chemin.name}"
+            try:
+                verrou_wt.unlink()
+                etapes.append({"etape": nom_etape, "statut": "succes",
+                                "message": f"Verrou supprimé : {verrou_wt.name}"})
+            except FileNotFoundError:
+                etapes.append({"etape": nom_etape, "statut": "rien_a_faire",
+                                "message": f"Aucun verrou présent ({verrou_wt.name}) — libéré normalement ou jamais posé."})
+            except OSError as e:
+                etapes.append({"etape": nom_etape, "statut": "echec", "message": str(e)})
 
     return etapes
 

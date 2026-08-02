@@ -121,19 +121,16 @@ au quotidien.
   ```
 - **Verrou non libéré.** Le verrou d'une tâche en worktree suit le même
   mécanisme fichier que celui de `REP_TRAVAIL` (`logs/verrous/*.lock`),
-  mais avec sa propre clé (basée sur le chemin résolu du worktree). Deux
-  cas :
-  - Le bouton ⛔ « Interrompre cette issue » de l'interface web (§13 du
-    DOC, « Interrompre une issue bloquée ») tue tout l'arbre de process
-    du watcher — donc aussi les tâches en worktree qui tournaient encore
-    en parallèle — mais ne supprime que le verrou de `REP_TRAVAIL`
-    (`interrompre_linux()` calcule `_chemin_verrou(cfg.rep_travail)`,
-    pas celui des worktrees actifs). **Après un « Interrompre » pendant
-    qu'un ou plusieurs worktrees tournaient, vérifier et nettoyer
-    manuellement leurs verrous** — sinon ces chemins restent bloqués
-    jusqu'à péremption naturelle (voir `acquerir_verrou`, plusieurs
-    dizaines de minutes).
-  - Procédure manuelle (identique au cas `REP_TRAVAIL`, §13 du DOC) :
+  mais avec sa propre clé (basée sur le chemin résolu du worktree). Le
+  bouton ⛔ « Interrompre cette issue » de l'interface web (§13 du DOC,
+  « Interrompre une issue bloquée ») tue tout l'arbre de process du
+  watcher — donc aussi les tâches en worktree qui tournaient encore en
+  parallèle — puis, une fois l'arbre confirmé mort, supprime
+  automatiquement le verrou de `REP_TRAVAIL` **et** ceux de tous les
+  worktrees actifs détectés à côté (`interrompre_linux()`, issue #340) :
+  plus besoin d'intervention manuelle dans ce cas.
+  - Procédure manuelle (résiduelle, pour un verrou orphelin en dehors du
+    circuit « Interrompre », ou si `interrompre_linux()` échoue) :
     identifier le PID du watcher (`ps aux | grep watcher`), le tuer
     (`kill -9 <pid>` + descendance), puis supprimer le fichier
     `logs/verrous/<...>.lock` correspondant **uniquement une fois l'arbre
