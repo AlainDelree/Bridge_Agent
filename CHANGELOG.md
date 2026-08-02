@@ -9,6 +9,51 @@ milliers de caractères sur une seule ligne logique, coûteux à relire et
 
 Convention d'ajout : voir §10 de `BRIDGE_AGENT_DOC.md`.
 
+## 2 août 2026 — issue #326
+
+Détection automatique du MODE dans l'en-tête + mode à valeurs extensibles,
+préparation lecture active/mode_scratch (issue #326). Deux problèmes réglés
+ensemble : (1) contrairement à TIMEOUT/PROJET/titre, le champ `| MODE | … |`
+était GÉNÉRÉ à l'envoi mais jamais LU depuis le corps collé — Alain cochait
+« écriture » à la main par habitude même pour des tâches en réalité en
+lecture seule, ce qui rangeait des lectures dans la population « write » et
+faussait la calibration TIMEOUT (§19, clé projet|TYPE|mode) ; (2) le mode
+était un booléen en dur (`autoriser_ecriture` déduit du seul label
+`mode_write`), incapable de porter un futur 3e mode.
+
+Frontend (`static/js/app.js`) : nouveau `detecterModeDansCorps`, calqué sur
+`detecterTimeoutDansCorps`, branché sur l'input du corps — lit `| MODE | … |`
+via `lireChampEntete` (aucune regex dupliquée), reconnaît la valeur de façon
+tolérante (casse/accents, plusieurs libellés par mode : « écriture »/
+« write »/`mode_write` ; « lecture active »/« scratch »/`mode_scratch` ;
+« lecture »/« lecture seule »/« read »/`mode_read`), coche le bon radio,
+retire la ligne MODE du corps (comme TIMEOUT/PROJET) et met à jour la
+couleur du bouton d'envoi. **MODE absent ou non reconnu → LECTURE forcée**
+(défaut sûr, cohérent avec le reset après envoi). Neutralisé en mode lot
+(le MODE reste commun à tout le lot, DOC §3, inchangé).
+
+`templates/index.html` : 3e radio `lecture_active` entre lecture et
+écriture (ordre du moins au plus permissif), badge « scratch (mode_scratch,
+réservé) » + tooltip précisant que ce mode n'est pas encore fonctionnel côté
+watcher. Bouton d'envoi à 3 couleurs (`COULEURS_MODE`) : lecture → noir,
+lecture active → bleu, écriture → rouge (inchangé, réservé à l'écriture
+pleine, la plus risquée).
+
+`app/issues.py` : nouvelle table `MODES` ({valeur radio → (libellé
+français, label GitHub)}) lue à la fois par `construire_body` (champ
+`| MODE | … |`) et `construire_labels` (pose du label technique) — remplace
+les deux tests booléens en dur (`"ÉCRITURE" if mode == "ecriture" …` /
+`if mode == "ecriture": labels.append("mode_write")`). Un futur 4e mode ne
+demande qu'une ligne dans cette table.
+
+**`mode_scratch` reste RÉSERVÉ, watcher.py non touché** : cette issue ne
+porte pas l'implémentation de la lecture active côté watcher (issue séparée
+à venir) — juste documenté (commentaire près de `LABEL_ECRITURE`) qu'une
+issue portant `mode_scratch` sans `mode_write` est traitée comme lecture
+seule par le watcher actuel (`autoriser_ecriture` ne teste que
+`LABEL_ECRITURE`), comportement sûr. Backlog `TACHES.md` renommé en
+cohérence (`mode_tmp_write` → `mode_scratch`, vocabulaire retenu par #326).
+
 ## 2 août 2026 — issue #325
 
 Retrait de `TACHES.md` de l'entrée backlog « Bouton Interrompre dans

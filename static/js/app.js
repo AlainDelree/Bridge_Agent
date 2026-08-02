@@ -3471,11 +3471,20 @@ async function actionWatchers(action) {
   await verifierStatut();
 }
 
+// Couleur du bouton d'envoi par mode — gradation cohérente avec l'ordre du
+// moins au plus permissif (issue #326) : lecture (noir) → lecture active
+// (bleu) → écriture (rouge, réservé à l'écriture pleine, la plus risquée).
+const COULEURS_MODE = {
+  lecture:        '#1a1a18',
+  lecture_active: '#1a4d8f',
+  ecriture:       '#a32d2d',
+};
 function mettreAJourBoutonEnvoi() {
-  const ecriture = document.querySelector('input[name=mode]:checked').value === 'ecriture';
+  const mode = document.querySelector('input[name=mode]:checked').value;
+  const couleur = COULEURS_MODE[mode] || COULEURS_MODE.lecture;
   const btn = document.getElementById('btn-envoyer');
-  btn.style.background    = ecriture ? '#a32d2d' : '#1a1a18';
-  btn.style.borderColor   = ecriture ? '#a32d2d' : '#1a1a18';
+  btn.style.background    = couleur;
+  btn.style.borderColor   = couleur;
 }
 
 // Détection de « #Titre: … » en première ligne du corps.
@@ -3617,6 +3626,70 @@ function detecterTimeoutDansCorps() {
   corpsEl.value = retirerLigneEntete(corpsEl.value, 'TIMEOUT');
 }
 document.getElementById('corps').addEventListener('input', detecterTimeoutDansCorps);
+
+// Détection de « | MODE | <valeur> | » dans le corps → pré-sélection du radio
+// mode (lecture / lecture active / écriture), calquée sur detecterTimeoutDansCorps
+// (issue #326). Contrairement à PROJET/TIMEOUT, qui ignorent silencieusement un
+// champ absent, MODE a un DÉFAUT explicite quand il est absent ou non reconnu :
+// LECTURE (défaut sûr — cohérent avec le reset après envoi, ligne ~4090, et le
+// principe qu'une issue déclare toujours explicitement son mode quand elle
+// écrit, sinon c'est lecture). Corrige la calibration TIMEOUT (§19, clé
+// projet|TYPE|mode) faussée par l'habitude de cocher « écriture » à la main
+// même pour des tâches en réalité en lecture seule.
+//
+// Reconnaissance TOLÉRANTE (insensible casse/accents, plusieurs libellés par
+// mode) — ordre du tableau significatif : « lecture active » doit être testé
+// avant « lecture » pour ne pas être absorbé par ce synonyme plus court.
+const MODE_SYNONYMES = [
+  { valeur: 'ecriture',       motifs: ['écriture', 'ecriture', 'write', 'mode_write'] },
+  { valeur: 'lecture_active', motifs: ['lecture active', 'scratch', 'mode_scratch'] },
+  { valeur: 'lecture',        motifs: ['lecture seule', 'lecture', 'read', 'mode_read'] },
+];
+
+function normaliserTexteMode(texte) {
+  return texte.trim().toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+}
+
+// Traduit le texte brut de la cellule « | MODE | … | » en valeur de radio.
+// Absent (chaîne vide/null) ou non reconnu → 'lecture' (défaut sûr).
+function reconnaitreModeTexte(brut) {
+  if (!brut) return 'lecture';
+  const normalise = normaliserTexteMode(brut);
+  const trouve = MODE_SYNONYMES.find(({ motifs }) =>
+    motifs.some(m => normalise.includes(normaliserTexteMode(m))));
+  return trouve ? trouve.valeur : 'lecture';
+}
+
+// Même garde-fou « valeur détectée changée » que detecterProjetDansCorps/
+// detecterTimeoutDansCorps : en régime stable (rien de neuf dans le corps), un
+// choix manuel du radio n'est jamais réécrasé — seul un changement effectif du
+// signal détecté (apparition/disparition/modification du champ MODE)
+// déclenche une resynchronisation.
+let dernierModeAutoDetecte = null;
+function detecterModeDansCorps() {
+  // Mode LOT : le MODE reste COMMUN à tout le lot, choisi via le radio du
+  // formulaire — pas détecté par bloc (DOC §3, hors périmètre de #326).
+  if (enModeLot()) { dernierModeAutoDetecte = null; return; }
+  const corpsEl = document.getElementById('corps');
+  const brut = lireChampEntete(corpsEl.value, 'MODE');
+  const valeurDetectee = reconnaitreModeTexte(brut);
+
+  // Rien de neuf depuis la dernière détection : ne pas réécraser un éventuel
+  // choix manuel d'Alain.
+  if (valeurDetectee === dernierModeAutoDetecte) return;
+  dernierModeAutoDetecte = valeurDetectee;
+
+  const radio = document.querySelector(`input[name=mode][value="${valeurDetectee}"]`);
+  if (radio && !radio.checked) radio.checked = true;
+
+  // Retire la ligne MODE du corps (comme TIMEOUT/PROJET), pour éviter que
+  // construire_body empile un second tableau d'en-tête — uniquement si le
+  // champ était effectivement présent (rien à retirer sinon).
+  if (brut) corpsEl.value = retirerLigneEntete(corpsEl.value, 'MODE');
+
+  mettreAJourBoutonEnvoi();
+}
+document.getElementById('corps').addEventListener('input', detecterModeDansCorps);
 
 // Résumé lecture seule des champs d'en-tête détectés dans le corps (issue #117).
 // Sous le champ Titre, on affiche une petite série de badges listant, dans

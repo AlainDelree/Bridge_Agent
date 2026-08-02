@@ -132,6 +132,14 @@ LABEL_ECRITURE  = "mode_write"    # ARME le mode écriture (--dangerously-skip-p
 LABEL_ECHEC     = "needs-human"   # posé après échec définitif : stoppe le retraitement auto
 LABEL_FAIT      = "done"          # posé au succès
 
+# "mode_scratch" (issue #326) : label RÉSERVÉ pour la future « lecture active »
+# (TACHES.md) — écriture scratch limitée pour les linters qui exigent un
+# fichier de config sur disque. #326 ne prépare que le formulaire/en-tête ;
+# cette constante n'existe PAS encore ici volontairement : autoriser_ecriture
+# ne teste que LABEL_ECRITURE, donc une issue portant mode_scratch (sans
+# mode_write) est traitée comme lecture seule par ce watcher — comportement
+# sûr, en attendant l'issue d'implémentation dédiée qui l'activera.
+
 # Labels de notification (opt-in, cumulatifs avec le bip). Depuis l'issue #187,
 # le dispatch concret selon ces labels vit dans notifications.py (module partagé
 # avec new_issue.py) ; ces constantes restent ici comme contrat documentaire du

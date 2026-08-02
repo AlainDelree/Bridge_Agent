@@ -142,6 +142,29 @@ def _parser_labels_entete(corps: str) -> list:
     return [lab.strip() for lab in m.group(1).split(",") if lab.strip()]
 
 
+# Table de correspondance MODE (issue #326) : {valeur du radio formulaire →
+# (libellé français écrit dans le champ d'en-tête | MODE | …, label GitHub
+# posé — None si aucun)}. Le mode n'est plus un booléen en dur (autrefois
+# `"ÉCRITURE" if mode == "ecriture" else "lecture seule"` + `if mode ==
+# "ecriture": labels.append("mode_write")`) : construire_body et
+# construire_labels lisent tous deux cette table, si bien qu'un futur 4e mode
+# ne demande qu'une ligne ici.
+#
+# lecture_active (label mode_scratch) est RÉSERVÉ : cette issue prépare le
+# terrain formulaire/en-tête pour la future « lecture active » du backlog
+# TACHES.md (écriture scratch limitée pour linters exigeant un fichier de
+# config sur disque), mais NE PORTE PAS l'implémentation côté watcher. Tant
+# que cette implémentation n'est pas faite, watcher.py ignore mode_scratch
+# (LABEL_ECRITURE == "mode_write" seul teste autoriser_ecriture) et traite
+# l'issue comme lecture seule — comportement sûr, mais pas encore la
+# « lecture active » annoncée par ce mode.
+MODES = {
+    "lecture":        ("lecture", None),
+    "lecture_active": ("lecture active", "mode_scratch"),
+    "ecriture":       ("écriture", "mode_write"),
+}
+
+
 def construire_body(data: dict) -> str:
     """Construit le body markdown depuis les champs du formulaire : tableau
     d'en-tête + corps rédigé par Claude Chat.
@@ -153,7 +176,7 @@ def construire_body(data: dict) -> str:
     universelle quel que soit le chemin de création de l'issue (formulaire web,
     `gh issue create` d'un chef, création manuelle GitHub). Source unique de
     vérité côté watcher, plus de double injection. Voir §12.1 du DOC."""
-    mode            = "ÉCRITURE" if data.get("mode") == "ecriture" else "lecture seule"
+    mode, _         = MODES.get(data.get("mode"), MODES["lecture"])
     priorite        = data.get("priorite", "normale")
     timeout         = data.get("timeout", "300")
     modele_ponctuel = data.get("modele_ponctuel", "").strip()
@@ -197,8 +220,9 @@ def construire_labels(data: dict) -> str:
     # autres labels standards (mode_write, notifs) restent posés normalement.
     if "for-windows" not in extras:
         labels.append("for-linux")
-    if data.get("mode") == "ecriture":
-        labels.append("mode_write")
+    _, label_mode = MODES.get(data.get("mode"), MODES["lecture"])
+    if label_mode:
+        labels.append(label_mode)
     notifs = data.get("notifs", [])
     if isinstance(notifs, str):
         notifs = [notifs]

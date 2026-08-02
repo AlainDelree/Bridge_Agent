@@ -114,9 +114,18 @@
     </div>
 
     <div class="titre-section">Mode</div>
+    <!-- Ordre du moins au plus permissif (issue #326) : lecture → lecture
+         active → écriture. Lecture active (label mode_scratch) est RÉSERVÉE :
+         préparée ici côté formulaire/en-tête, pas encore fonctionnelle côté
+         watcher (traitée comme lecture seule en attendant l'issue dédiée). -->
     <div class="radio-groupe">
       <label><input type="radio" name="mode" value="lecture" checked
                     onchange="mettreAJourBoutonEnvoi()"> Lecture seule</label>
+      <label><input type="radio" name="mode" value="lecture_active"
+                    onchange="mettreAJourBoutonEnvoi()"
+                    title="Réservé : préparé côté formulaire, pas encore fonctionnel côté watcher.">
+        Lecture active <span class="badge-alerte">scratch (mode_scratch, réservé)</span>
+      </label>
       <label><input type="radio" name="mode" value="ecriture"
                     onchange="mettreAJourBoutonEnvoi()">
         Écriture <span class="badge-alerte">⚠ mode_write</span>

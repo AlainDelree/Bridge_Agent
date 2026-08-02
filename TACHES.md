@@ -143,7 +143,7 @@ de code, pour valider le concept avant d'écrire le champ `WORKTREE` natif.
 
 ---
 
-## Mode mode_tmp_write — écriture scratch limitée pour outillage d'audit
+## Mode mode_scratch (lecture active) — écriture scratch limitée pour outillage d'audit
 
 **Contexte** : certains outils d'analyse (eslint flat config pour les
 versions ≥ 9, linters divers) exigent un vrai fichier de config sur disque,
@@ -154,8 +154,16 @@ réglé par une consigne d'abandon immédiat au refus de permission) — c'est
 un besoin distinct et réel, pour les cas où l'outil a effectivement besoin
 d'un fichier de config.
 
+**Préparation faite (issue #326)** : vocabulaire retenu « lecture active »
+(label `mode_scratch`, renommé depuis la proposition initiale
+`mode_tmp_write` ci-dessous) ; formulaire (3e radio) et champ d'en-tête
+`| MODE | … |` préparés côté `new_issue.py` pour porter cette valeur. Label
+encore RÉSERVÉ : le watcher actuel ne le connaît pas et traite une issue
+`mode_scratch` comme lecture seule. Reste à faire ci-dessous : toute la
+logique d'exécution côté `watcher.py`.
+
 **Proposition** (reçue via rapport d'audit Scrabble) : un troisième mode,
-`mode_tmp_write`, avec :
+`mode_scratch`, avec :
 - Écriture autorisée uniquement dans un chemin scratch bien défini et
   validé strictement côté watcher (ex. `/tmp/bridge_scratch_<projet>/`),
   jamais dans `REP_TRAVAIL` du projet. Validation stricte du chemin pour
