@@ -48,6 +48,20 @@ build suit déjà ce schéma de staging local et, si oui, étendre le
 
 ---
 
+## Rummikub
+
+- **Chemin du clone CCW** : `Z:\CCW\rummikub`
+- **Script de build** : `build\rebuild_rummikub.bat` (6 étapes)
+- **`.spec`** : `rummikub.spec` — liste explicite des `datas`
+  (`src/rummikub/ui/web/`), aucun `collect_tree` en bloc
+- **TIMEOUT de référence observé** : 1200s (build réel : ~333s)
+- **Deux garde-fous de taille distincts** (issue #57 — dist non compressé
+  et installeur compressé sont deux grandeurs différentes) :
+  - `dist\Rummikub\` non compressé : 28 712 051 octets (~28,7 Mo),
+    fourchette 20-45 Mo
+  - `Rummikub-Setup.exe` compressé : 12 778 092 octets (~12,18 Mo),
+    fourchette 5-25 Mo
+
 ## Scrabble
 
 - **Chemin du clone CCW** : `Z:\CCW\scrabble`

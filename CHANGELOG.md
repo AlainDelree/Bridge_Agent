@@ -9,6 +9,19 @@ milliers de caractères sur une seule ligne logique, coûteux à relire et
 
 Convention d'ajout : voir §10 de `BRIDGE_AGENT_DOC.md`.
 
+## 2 août 2026 — issue #315
+
+`BUILD_WINDOWS_CCW.md` : ajout de la checklist Rummikub (build validé),
+insérée avant l'entrée Scrabble (plus récente en premier) — clone
+`Z:\CCW\rummikub`, script `build\rebuild_rummikub.bat` (6 étapes),
+`rummikub.spec` en liste explicite des `datas` (`src/rummikub/ui/web/`,
+aucun `collect_tree` en bloc), TIMEOUT de référence 1200s (build réel
+~333s), et les deux garde-fous de taille distincts introduits par
+l'issue #57 (dist non compressé vs installeur compressé étant deux
+grandeurs différentes) : `dist\Rummikub\` non compressé 28 712 051
+octets (~28,7 Mo, fourchette 20-45 Mo) et `Rummikub-Setup.exe`
+compressé 12 778 092 octets (~12,18 Mo, fourchette 5-25 Mo).
+
 ## 2 août 2026 — issue #314
 
 `BRIDGE_AGENT_DOC.md` (§12.1, juste après le tableau des trois couches
