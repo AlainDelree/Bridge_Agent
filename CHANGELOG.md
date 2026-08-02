@@ -9,6 +9,16 @@ milliers de caractères sur une seule ligne logique, coûteux à relire et
 
 Convention d'ajout : voir §10 de `BRIDGE_AGENT_DOC.md`.
 
+## 2 août 2026 — issue #325
+
+Retrait de `TACHES.md` de l'entrée backlog « Bouton Interrompre dans
+l'onglet CCW » (procédure manuelle nssm restart + suppression des
+`.lock`), désormais implémentée — et dépassée — par #323 (suite #320) :
+le bouton « ⛔ Interrompre cette issue » a été ajouté dans l'onglet
+Résultats, pas l'onglet CCW, et couvre CCL comme CCW. Même convention de
+retrait que #317 (retiré par #321) et les entrées PERIMETRE (#319) :
+suppression pure de la section obsolète, rien d'autre touché.
+
 ## 2 août 2026 — issue #324
 
 Ajout au backlog `TACHES.md` d'une entrée (pas d'implémentation) :

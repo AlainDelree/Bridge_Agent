@@ -5,15 +5,6 @@ Alain peut modifier ce fichier directement, sans passer par une issue.
 
 ---
 
-##Bouton Interrompre dans l'onglet CCW
-
-Procédure : nssm restart CCW-Watcher, puis supprimer le(s) fichier(s)
-  dans C:\CCW\Bridge_Agent\logs\verrous\ :
-  Get-ChildItem C:\CCW\Bridge_Agent\logs\verrous\ -Filter "*.lock"
-  Remove-Item C:\CCW\Bridge_Agent\logs\verrous\<fichier>.lock
-
----
-
 ## Projet dédié à la communication CCL ↔ CCW
 
 **Contexte** : aujourd'hui les issues Windows passent par le projet
