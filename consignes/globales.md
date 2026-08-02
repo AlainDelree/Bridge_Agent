@@ -34,3 +34,19 @@
   programmé, et toute formulation du type « je répondrai/poursuivrai quand… »
   / « j'attends la fin de… » en guise de conclusion. Le watcher ferme
   l'issue dès ta réponse postée : il n'existe AUCUNE reprise possible.
+- **Garde-fou backup/reset :** le commit de sauvegarde (`git add -A`)
+  peut faire passer sous suivi git des dossiers auparavant non trackés
+  (ex. `.tools/`, `installeur/output/`). Si le script à exécuter ensuite
+  se termine par une opération git destructive (`reset --hard`, `clean
+  -fd`), ces dossiers fraîchement trackés seraient effacés du disque
+  puisqu'absents de `origin/master`. Avant de lancer un tel script,
+  vérifie si le commit de sauvegarde a capturé des fichiers/dossiers
+  auparavant non suivis (`git status` avant/après le commit, ou `git
+  show --stat` sur ce commit) ; si oui, détracke-les (`git rm --cached`,
+  sans supprimer du disque) avant de lancer le script.
+- **Build Windows :** si le projet courant a un script de build Windows
+  (PyInstaller/Inno Setup ou équivalent), consulte `BUILD_WINDOWS_CCW.md`
+  (dépôt bridge_agent, à la racine) avant de proposer une issue de build
+  ou de modification du pipeline — il documente le pattern de staging
+  local, l'extension du PÉRIMÈTRE associée, et une checklist par projet
+  déjà buildé.

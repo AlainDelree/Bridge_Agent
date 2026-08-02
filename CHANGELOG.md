@@ -9,6 +9,23 @@ milliers de caractères sur une seule ligne logique, coûteux à relire et
 
 Convention d'ajout : voir §10 de `BRIDGE_AGENT_DOC.md`.
 
+## 2 août 2026 — issue #313
+
+`consignes/globales.md` : ajout de deux garde-fous mutualisés à tous les
+projets (injection automatique, aucune modification de `CONTEXTE.md` par
+projet nécessaire). (1) Garde-fou backup/reset : le commit de sauvegarde
+(`git add -A`) peut faire passer sous suivi git des dossiers auparavant
+non trackés (ex. `.tools/`, `installeur/output/`) ; si le script exécuté
+ensuite se termine par une opération git destructive (`reset --hard`,
+`clean -fd`), ces dossiers seraient effacés du disque — vérifier via
+`git status`/`git show --stat` et détracker (`git rm --cached`) avant de
+lancer un tel script. Problème constaté et corrigé au cas par cas sur
+Scrabble et Rummikub (issues #306, #311). (2) Renvoi vers
+`BUILD_WINDOWS_CCW.md` (dépôt bridge_agent, racine) avant de proposer une
+issue de build ou de modification de pipeline sur un projet ayant un
+script de build Windows (PyInstaller/Inno Setup) — documente le pattern
+de staging local et l'extension du PÉRIMÈTRE associée (issue #297/#299).
+
 ## 2 août 2026 — issue #312
 
 `TACHES.md` : retrait des trois entrées de backlog désormais
