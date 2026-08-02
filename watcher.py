@@ -1854,7 +1854,8 @@ def lancer_claude(numero: int, titre: str, body: str, dry_run: bool,
                   modele: str = "",
                   prompt_perso: str = None,
                   perimetre: str = None,
-                  cwd: Path = None) -> tuple[bool, str]:
+                  cwd: Path = None,
+                  verrou: Path = None) -> tuple[bool, str]:
     """
     Lance Claude Code en mode non-interactif sur une issue.
 
@@ -1872,6 +1873,13 @@ def lancer_claude(numero: int, titre: str, body: str, dry_run: bool,
     CFG.rep_travail (répertoire réel du subprocess). None = valeur du .conf. Servent
     au périmètre dynamique (issue #125) : pour un projet à périmètre dynamique, ces
     deux valeurs viennent du champ REPO_CIBLE de l'issue, pas de la config.
+
+    verrou : chemin du fichier verrou posé par acquerir_verrou pour cette tâche
+    (issue #322), si fourni. Sert uniquement à y consigner le pgid du claude
+    tout juste lancé (_maj_verrou_pgid), une fois le Popen réussi — permet à un
+    watcher suivant de cibler et tuer cet éventuel orphelin si CE watcher meurt
+    brutalement avant la fin du traitement. None = pas de verrou associé (ex.
+    passe diagnostique) : aucun pgid n'est consigné, comportement inchangé.
 
     Retourne (succès, sortie).
     """
@@ -2038,6 +2046,12 @@ Si la tâche échoue, remplace ✅ par ❌ et explique la cause en une ligne.
             # #249) — un `taskkill` tenté plus tard, depuis le `finally`,
             # arrive systématiquement trop tard (PID déjà mort et réapé).
             job_windows = _preparer_job_windows(proc.pid)
+        elif verrou is not None:
+            # Issue #322 : pgid == pid de claude (start_new_session=True) —
+            # consigné dans le verrou dès que connu, pour qu'un watcher suivant
+            # puisse cibler cet orphelin précis si CE watcher meurt brutalement
+            # avant la fin du traitement (voir _nettoyer_orphelin_verrou_perime).
+            _maj_verrou_pgid(verrou, proc.pid)
         try:
             stdout, stderr = proc.communicate(timeout=timeout)
             if proc.returncode == 0:
@@ -2160,6 +2174,104 @@ def _chemin_verrou(rep_travail: Path) -> Path:
     return DOSSIER_VERROUS / f"{resolu.name or 'racine'}-{empreinte}.lock"
 
 
+def _lire_pgid_verrou(verrou: Path) -> int | None:
+    """Lit le champ `claude_pgid=<n>` du fichier verrou (issue #322), s'il est
+    présent. Retourne None si absent — ancien format, ou verrou posé mais
+    claude pas encore lancé au moment où le watcher précédent est mort — ou si
+    la lecture échoue. Dans tous ces cas, l'appelant doit se comporter comme
+    avant cette issue : reprendre le verrou sans tenter de tuer personne."""
+    try:
+        contenu = verrou.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    trouve = re.search(r"claude_pgid=(\d+)", contenu)
+    if not trouve:
+        return None
+    try:
+        return int(trouve.group(1))
+    except ValueError:
+        return None
+
+
+def _maj_verrou_pgid(verrou: Path, pgid: int) -> None:
+    """Complète le fichier verrou avec le PGID du claude tout juste lancé
+    (issue #322), appelée juste après un Popen réussi — POSIX, pgid == pid du
+    claude grâce à start_new_session, voir lancer_claude. Nécessaire car le
+    verrou est posé par acquerir_verrou AVANT le lancement de claude (voir
+    traiter_issue) : le pgid n'est donc pas encore connu à la pose. Préserve
+    les champs existants (pid=.../projet=.../rep=...) et ajoute
+    `claude_pgid=<n>` en conservant le format clé=valeur.
+
+    Best-effort pur : ne doit jamais faire échouer lancer_claude ni le
+    traitement de l'issue — une erreur ici laisse simplement le verrou sans
+    pgid, traité comme l'ancien format par _lire_pgid_verrou."""
+    try:
+        contenu = verrou.read_text(encoding="utf-8", errors="replace").rstrip("\n")
+        verrou.write_text(f"{contenu} claude_pgid={pgid}\n", encoding="utf-8")
+    except OSError as e:
+        log.warning(f"Mise à jour du verrou {verrou} avec le pgid claude ({pgid}) impossible : {e}")
+
+
+def _nettoyer_orphelin_verrou_perime(verrou: Path) -> None:
+    """Best-effort (issue #322) — au moment précis où acquerir_verrou reprend un
+    verrou PÉRIMÉ, tue l'éventuel claude orphelin encore attaché à ce verrou
+    AVANT de le libérer.
+
+    Contexte : un verrou périmé signale un watcher mort BRUTALEMENT (kill -9,
+    coupure de courant, plantage Python non capturé) pendant qu'un claude
+    tournait — aucun `finally` n'a pu s'exécuter, ni _nettoyer_arbre_claude ni
+    liberer_verrou. Sans ce nettoyage, reprendre le verrou lancerait un
+    nouveau claude dans le même rep_travail pendant que l'orphelin y écrit
+    encore : conflit de fichiers possible — le périmètre empêche de SORTIR du
+    dossier, pas deux process d'y entrer en collision.
+
+    Garde-fou anti-reboot (impératif) : après un redémarrage, les PID/pgid
+    sont réattribués — le pgid stocké pourrait désigner un process totalement
+    différent. On ne tue JAMAIS sur la seule foi du pgid stocké : il faut en
+    plus qu'un process de ce pgid existe ENCORE (_lister_processus_pgid) et
+    que sa ligne de commande contienne "claude" — identifier par ce que le
+    process EST, jamais tuer aveuglément, même esprit que _nettoyer_arbre_claude
+    (#247 point 4). Si l'une des conditions manque (pas de pgid stocké,
+    process disparu, ou pas un claude), rien n'est tué et le verrou est repris
+    normalement, comme avant cette issue.
+
+    POSIX uniquement : os.killpg n'existe pas sous Windows (objet Job, pas de
+    pgid — la question ne se pose pas dans les mêmes termes). L'appelant ne
+    doit invoquer cette fonction que sous POSIX (garde os.name).
+
+    Enveloppée dans un garde-fou total : _lister_processus_pgid peut lever une
+    OSError, os.killpg une PermissionError — aucune ne doit remonter et faire
+    échouer l'acquisition du verrou ni le traitement de l'issue."""
+    try:
+        pgid = _lire_pgid_verrou(verrou)
+        if pgid is None:
+            return
+        processus = _lister_processus_pgid(pgid)
+        processus_claude = [(pid, cmdline) for pid, cmdline in processus if "claude" in cmdline.lower()]
+        if not processus_claude:
+            return   # pgid mort ou recyclé (reboot), ou vivant mais pas un claude : on ne touche à rien
+        for pid_orphelin, cmdline in processus_claude:
+            log.warning(
+                f"Orphelin d'un watcher mort brutalement, nettoyé à la reprise "
+                f"du verrou périmé {verrou} : PID {pid_orphelin} (pgid {pgid}) — {cmdline}"
+            )
+        try:
+            os.killpg(pgid, signal.SIGKILL)
+        except ProcessLookupError:
+            return  # déjà mort entre l'énumération et le kill : rien à faire
+        except PermissionError as e:
+            log.warning(f"os.killpg refusé pour l'orphelin du verrou périmé {verrou} (pgid {pgid}) : {e}")
+            return
+        fin = time.monotonic() + 5
+        while time.monotonic() < fin and _lister_processus_pgid(pgid):
+            time.sleep(0.1)
+    except Exception as e:
+        log.warning(
+            f"Nettoyage de l'orphelin du verrou périmé {verrou} a levé une "
+            f"exception inattendue et a été abandonné : {e}"
+        )
+
+
 def acquerir_verrou(rep_travail: Path, timeout_projet: int) -> Path | None:
     """Tente de poser un verrou exclusif sur `rep_travail`. Retourne le chemin du
     verrou si acquis, ou None si un AUTRE traitement le détient déjà (verrou
@@ -2201,6 +2313,15 @@ def acquerir_verrou(rep_travail: Path, timeout_projet: int) -> Path | None:
             f"(âge {int(age) if age is not None else '?'}s ≥ {int(peremption)}s) — repris "
             f"(watcher précédent probablement tué avant libération)."
         )
+        # Issue #322 : avant de reprendre ce verrou périmé, nettoyer l'éventuel
+        # claude orphelin d'un watcher mort brutalement (kill -9, coupure,
+        # plantage non capturé) — sinon un nouveau claude serait lancé pendant
+        # que l'orphelin écrit encore dans le même rep_travail. POSIX
+        # uniquement (os.killpg absent sous Windows) ; best-effort strict, ne
+        # doit jamais empêcher la reprise du verrou (voir
+        # _nettoyer_orphelin_verrou_perime).
+        if os.name != "nt":
+            _nettoyer_orphelin_verrou_perime(verrou)
         try:
             verrou.unlink()
         except FileNotFoundError:
@@ -2479,7 +2600,8 @@ def traiter_issue(issue: dict, dry_run: bool):
 
             succes, sortie = lancer_claude(numero, titre, body, dry_run, autoriser_ecriture,
                                            timeout, modele,
-                                           perimetre=perimetre_effectif, cwd=cwd_effectif)
+                                           perimetre=perimetre_effectif, cwd=cwd_effectif,
+                                           verrou=verrou)
 
             if empreinte_configs_avant is not None:
                 _restaurer_configs_modifies(numero, empreinte_configs_avant)

@@ -9,6 +9,60 @@ milliers de caractères sur une seule ligne logique, coûteux à relire et
 
 Convention d'ajout : voir §10 de `BRIDGE_AGENT_DOC.md`.
 
+## 2 août 2026 — issue #322
+
+Dernier trou résiduel du cycle de vie verrou/claude comblé : si le watcher
+meurt BRUTALEMENT (kill -9, coupure de courant, plantage Python non
+capturé) pendant qu'un claude tourne, aucun `finally` ne s'exécute — le
+claude devient orphelin ET le verrou reste posé. Au démarrage suivant, le
+watcher voyait ce verrou, le déclarait périmé et le REPRENAIT sans
+vérifier qu'un claude orphelin de l'ancien contexte tournait encore,
+risquant de lancer un second claude dans le même `REP_TRAVAIL` pendant que
+l'orphelin y écrivait toujours (le périmètre empêche de sortir du dossier,
+pas deux process d'y entrer en collision). Fermé PAR CONSTRUCTION, au seul
+moment qui compte (la reprise d'un verrou périmé) — pas par une
+surveillance externe (cron), aveugle quand le watcher est éteint.
+
+- `watcher.py` :
+  - `lancer_claude` accepte un paramètre `verrou` optionnel ; une fois le
+    `Popen` du claude réussi, `_maj_verrou_pgid` consigne son pgid
+    (== pid, `start_new_session=True`) dans le fichier verrou via un
+    nouveau champ `claude_pgid=<n>`, en préservant les champs existants
+    (`pid=`/`projet=`/`rep=`). Le verrou est posé par `acquerir_verrou`
+    AVANT le lancement de claude : le pgid n'est donc connu qu'après le
+    `Popen`, d'où cette mise à jour a posteriori plutôt qu'à la pose.
+  - `_lire_pgid_verrou` : lit ce champ, `None` si absent (ancien format,
+    ou watcher mort avant même le lancement de claude) — traité sans
+    erreur, aucun kill tenté dans ce cas.
+  - `_nettoyer_orphelin_verrou_perime` (appelée depuis `acquerir_verrou`,
+    juste avant `verrou.unlink()`, uniquement sur la branche verrou
+    PÉRIMÉ) : garde-fou anti-reboot à trois conditions cumulées avant
+    tout kill — verrou périmé (déjà garanti par l'appelant), un process
+    de ce pgid existe encore (`_lister_processus_pgid`, réutilisée telle
+    quelle), et sa ligne de commande contient bien « claude » (identifier
+    par ce que le process EST, jamais tuer aveuglément, même esprit que
+    #247 point 4). Si les trois sont réunies : `os.killpg(pgid,
+    SIGKILL)` sur ce seul groupe, un `log.warning` par process tué
+    (PID + ligne de commande), attente bornée (5s) de la disparition
+    effective. Un pgid mort ou recyclé après un reboot (PID/pgid
+    réattribués) ne provoque aucun kill. POSIX uniquement, gardé par
+    `os.name != "nt"` côté appelant (sous Windows, objet Job — pas de
+    pgid, la question ne se pose pas dans les mêmes termes).
+    Best-effort strict, comme `_nettoyer_arbre_claude` (#249) : toute la
+    logique est enveloppée dans un garde-fou total (`_lister_processus_
+    pgid` peut lever `OSError`, `os.killpg` une `PermissionError`) — une
+    erreur du nettoyage journalise et laisse la reprise du verrou suivre
+    son cours normal, jamais de remontée qui ferait échouer l'acquisition
+    du verrou ni le traitement de l'issue.
+  - `traiter_issue` : passe désormais le verrou courant à `lancer_claude`.
+- `tests/test_orphelin_verrou_perime_322.py` (nouveau, sur le modèle de
+  `tests/test_nettoyage_arbre_247.py`) : orphelin réellement tué à la
+  reprise d'un verrou périmé (et journalisé) ; garde-fou anti-reboot sur
+  pgid vivant mais pas un claude, et sur pgid mort/recyclé — aucun kill
+  dans ces deux cas ; verrou d'ancien format (sans `claude_pgid`) repris
+  sans erreur ; `lancer_claude` consigne bien le pgid dans le verrou
+  fourni.
+
 ## 2 août 2026 — issue #321
 
 Champ de recherche par TITRE dans l'onglet Résultats de `new_issue.py`,
