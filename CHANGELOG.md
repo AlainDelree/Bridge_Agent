@@ -9,6 +9,40 @@ milliers de caractères sur une seule ligne logique, coûteux à relire et
 
 Convention d'ajout : voir §10 de `BRIDGE_AGENT_DOC.md`.
 
+## 2 août 2026 — issue #309
+
+Diagnostic CCL amélioré dans `watcher.py`, zone `lancer_claude()` (issue
+#309) — suite à l'incident #279 où plusieurs issues avaient échoué en
+~1,2s avec le message générique "Erreur inconnue" (cause réelle : token
+CCL expiré), sans aucune indication exploitable dans le log. Deux ajouts
+dans la même zone de code : **A)** capture stderr — au retour de
+`communicate()`, si le process claude échoue (code de retour non nul),
+les 2000 premiers caractères de son stderr sont journalisés en WARNING
+(`_extrait_stderr`, tronque avec mention du nombre total de caractères
+au-delà de cette limite, pour éviter un dump de plusieurs Mo tout en
+gardant de quoi diagnostiquer une panne d'auth/réseau) ; **B)**
+vérification pre-flight du token — nouvelle fonction
+`verifier_preflight_token()`, appelée une seule fois par issue dans
+`traiter_issue()` juste avant la boucle de tentatives (pas à chaque
+tentative), qui lance un `claude --print` court (stdin vide, timeout 5s)
+et recherche dans stdout+stderr des signatures d'authentification
+manquante/expirée (`SIGNATURES_TOKEN_EXPIRE` : "not logged in", "/login",
+"invalid api key", etc.) ; si détecté, WARNING explicite invitant à
+relancer `claude` interactivement et taper `/login`. Choix délibéré de
+passer une entrée vide via **stdin** plutôt que l'exemple littéral de
+l'issue (`claude -p ""`) : un argument positionnel vide est rejeté
+immédiatement par la validation d'arguments du CLI ("Input must be
+provided...") AVANT toute vérification d'authentification, quel que
+soit l'état du token — inutilisable comme sonde ; passé en stdin, l'appel
+atteint bien le contrôle d'authentification. Le pre-flight ne bloque
+jamais le traitement (toute exception — timeout, `claude` introuvable —
+est avalée silencieusement, aucune tentative n'est empêchée) et est
+sauté en dry-run. Comportement nominal (issues qui réussissent) inchangé
+: vérifié par exécution manuelle de `verifier_preflight_token()` sur
+l'environnement courant (aucune exception, aucun faux positif avec un
+token valide) et simulation d'un échec de process (stderr correctement
+tronqué et journalisé). Commit local, pas de push.
+
 ## 1er août 2026 — issue #299
 
 Crée `BUILD_WINDOWS_CCW.md` à la racine du dépôt (issue #299), dédié au

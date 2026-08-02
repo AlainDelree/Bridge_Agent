@@ -1774,6 +1774,80 @@ def _nettoyer_arbre_claude(proc: subprocess.Popen, job_windows=None) -> None:
         )
 
 
+# Diagnostic CCL amélioré (issue #309) — incident #279 : plusieurs issues
+# avaient échoué en ~1,2s avec "Erreur inconnue" (token CCL expiré), sans
+# aucune indication exploitable dans le log faute de capture du stderr et de
+# vérification préalable de l'authentification.
+
+# Limite de caractères de stderr journalisés en cas d'échec du process claude
+# (issue #309) — assez pour un diagnostic d'authentification/réseau, sans
+# risquer un dump de plusieurs Mo dans le log.
+LIMITE_STDERR_LOG = 2000
+
+# Signatures (recherche insensible à la casse dans stdout+stderr) évoquant un
+# token d'authentification CCL manquant ou expiré (issue #309). Liste
+# best-effort et non exhaustive : le message exact dépend de la version du
+# CLI claude, d'où plusieurs variantes plutôt qu'une correspondance unique.
+SIGNATURES_TOKEN_EXPIRE = (
+    "not logged in",
+    "please run",
+    "/login",
+    "invalid api key",
+    "authentication_error",
+    "unauthorized",
+    "please authenticate",
+    "oauth token",
+)
+
+
+def _extrait_stderr(stderr: str | None, limite: int = LIMITE_STDERR_LOG) -> str:
+    """Tronque le stderr capturé du process claude à `limite` caractères, pour
+    journalisation en cas d'échec (issue #309)."""
+    if not stderr:
+        return ""
+    stderr = stderr.strip()
+    if len(stderr) > limite:
+        return stderr[:limite] + f"... [tronqué, {len(stderr)} caractères au total]"
+    return stderr
+
+
+def verifier_preflight_token(cwd: Path = None) -> None:
+    """
+    Sonde rapide d'authentification CCL (issue #309), à lancer UNE FOIS avant
+    les tentatives sur une issue — pas à chaque tentative. But : éviter de
+    découvrir un token expiré seulement après plusieurs tentatives ratées avec
+    leur timeout complet (incident #279).
+
+    N'appelle PAS `claude --print ""` (argument positionnel vide) : ce dernier
+    est rejeté immédiatement par la validation d'arguments du CLI ("Input must
+    be provided...") AVANT toute vérification d'authentification, quel que
+    soit l'état du token — inutile comme sonde. Une entrée vide est passée via
+    stdin à la place, qui atteint bien le contrôle d'authentification.
+
+    Ne bloque JAMAIS le traitement de l'issue : toute exception (timeout,
+    claude introuvable, etc.) est avalée silencieusement — le pre-flight
+    n'enrichit le log que s'il détecte positivement un problème, il ne fait
+    jamais échouer ni retarder le traitement normal.
+    """
+    try:
+        cwd_effectif = CFG.rep_travail if cwd is None else cwd
+        resultat = subprocess.run(
+            ["claude", "--print"],
+            input="",
+            cwd=cwd_effectif,
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=5,
+        )
+        sortie = f"{resultat.stdout or ''}\n{resultat.stderr or ''}".lower()
+        if any(signature in sortie for signature in SIGNATURES_TOKEN_EXPIRE):
+            log.warning(
+                "  ⚠️  Pre-flight : token CCL expiré ou absent — relancer `claude` "
+                "interactivement et taper `/login`."
+            )
+    except Exception:
+        pass
+
+
 def lancer_claude(numero: int, titre: str, body: str, dry_run: bool,
                   autoriser_ecriture: bool = False,
                   timeout: int = None,
@@ -1969,7 +2043,19 @@ Si la tâche échoue, remplace ✅ par ❌ et explique la cause en une ligne.
             if proc.returncode == 0:
                 return True, stdout.strip()
             else:
-                return False, stderr.strip() or "Erreur inconnue"
+                stderr_propre = stderr.strip()
+                extrait = _extrait_stderr(stderr_propre)
+                if extrait:
+                    log.warning(
+                        f"  claude a échoué (code {proc.returncode}) pour issue "
+                        f"#{numero} — stderr : {extrait}"
+                    )
+                else:
+                    log.warning(
+                        f"  claude a échoué (code {proc.returncode}) pour issue "
+                        f"#{numero} — stderr vide."
+                    )
+                return False, stderr_propre or "Erreur inconnue"
         except subprocess.TimeoutExpired:
             return False, f"Timeout après {timeout}s"
     except FileNotFoundError:
@@ -2277,6 +2363,12 @@ def traiter_issue(issue: dict, dry_run: bool):
         # nb_projets_actifs_au_lancement) — figé une fois pour toute la durée du
         # traitement (succès ou timeouts successifs), pas recalculé à chaque tentative.
         nb_projets_actifs_debut = _compter_watchers_actifs()
+
+        # Pre-flight token (issue #309) : une seule sonde avant la première
+        # tentative, pas à chaque tentative — voir verifier_preflight_token.
+        # Sautée en dry-run (aucun appel claude réel dans ce mode).
+        if not dry_run:
+            verifier_preflight_token(cwd=cwd_effectif)
 
         tentative = 0
         while True:
