@@ -216,3 +216,27 @@ silencieusement son propre périmètre d'exécution.
 
 **Statut** : idée en attente, pas de développement lancé. Diagnostic
 établi le 31/07/2026 (issue #298).
+
+---
+
+## Champ de recherche texte dans l'onglet Résultats de new_issue.py
+
+**Contexte** : le 02/08/2026, une issue a été envoyée deux fois par
+inadvertance (#315 et #316, doublon), faute de moyen rapide de
+vérifier si une issue similaire avait déjà été traitée. Une alerte
+automatique basée sur la similarité de titre a été envisagée mais
+écartée : les templates d'issues récurrentes (ex. « Rebuild
+exécutable/installeur Scrabble », revenu une dizaine de fois pour des
+raisons différentes) produiraient trop de faux positifs, menant à
+ignorer l'alerte.
+
+**Idée** : ajouter un champ de recherche texte dans l'onglet Résultats
+de `new_issue.py`, filtrant sur titre ET corps des issues déjà
+envoyées (pas seulement le titre, pour retrouver une issue même si son
+libellé a légèrement varié d'une version à l'autre). Objectif :
+vérifier rapidement, en cas de doute, si un sujet a déjà été traité
+avant d'envoyer une nouvelle issue — sans alerte intrusive ni faux
+positif automatique.
+
+**Statut** : idée en attente, pas de développement lancé. Reçue le
+02/08/2026 (issue #317), suite au doublon #315/#316.
