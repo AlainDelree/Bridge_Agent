@@ -9,6 +9,19 @@ milliers de caractères sur une seule ligne logique, coûteux à relire et
 
 Convention d'ajout : voir §10 de `BRIDGE_AGENT_DOC.md`.
 
+## 2 août 2026 — issue #339
+
+Nettoyage de `TACHES.md` : suppression de trois items devenus obsolètes.
+« Parallélisation en mode_write via git worktrees » est implémenté depuis
+l'issue #337. « Rafraîchir une seule fois la ligne d'une issue quand son
+décompte atteint zéro » est implémenté depuis l'issue #334. « Concurrence
+limitée aux issues mode_lecture » est abandonné : le cas d'usage est trop
+rare pour justifier une implémentation séparée, et le sujet sera
+naturellement couvert par le système de worktrees si le besoin se
+confirme. Restent inchangés : « Projet dédié à la communication CCL ↔
+CCW » et « Calibration automatique du TIMEOUT — trois défauts à
+corriger ».
+
 ## 2 août 2026 — issue #338
 
 Documentation dédiée à la parallélisation mode_write via git worktrees
