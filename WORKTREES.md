@@ -94,12 +94,32 @@ au quotidien.
    `REP_TRAVAIL` pour voir quels worktrees sont prêts à être relus et
    mergés (chemin + branche de chaque tâche encore en attente de
    traitement manuel).
-3. **Avant de merger ou de pousser quoi que ce soit**, lancer
-   `python3 scripts/fusionner_changelog.py` depuis la racine du dépôt
-   (ou `--repo <chemin>` si besoin) — il intègre tous les
-   `CHANGELOG-<N>.md` trouvés dans `CHANGELOG.md` et les supprime. Sans
-   cette étape, les entrées changelog des tâches en worktree restent
-   invisibles dans l'historique fusionné.
+3. **Avant de merger — impérativement avant, pas après —**, fusionner
+   les `CHANGELOG-<N>.md` des worktrees prêts à être traités. Le script
+   scanne la racine du dépôt indiqué par `--repo` (`.` par défaut) : un
+   `CHANGELOG-<N>.md` n'existe qu'à la racine de son **worktree**, pas à
+   celle de `master`, tant que le merge de l'étape 4 n'a pas eu lieu.
+   Deux méthodes, la première étant la plus simple et recommandée :
+   - **Lancer le script depuis le worktree**, avant de merger :
+     ```bash
+     cd <chemin_worktree>
+     python3 <chemin_vers_bridge_agent>/scripts/fusionner_changelog.py --repo .
+     cd <rep_master>
+     ```
+     Le `CHANGELOG.md` du worktree, désormais fusionné, arrive dans
+     `master` via le merge normal de l'étape 4.
+   - **Alternative : copier `CHANGELOG-<N>.md` dans master puis fusionner
+     depuis master**, toujours avant le merge :
+     ```bash
+     cp <chemin_worktree>/CHANGELOG-<N>.md .
+     python3 scripts/fusionner_changelog.py
+     ```
+     (depuis `REP_TRAVAIL`).
+
+   ⚠️ **Si le merge de l'étape 4 est fait avant cette étape**,
+   `CHANGELOG-<N>.md` arrive tel quel dans `master`, non intégré à
+   `CHANGELOG.md` — voir la procédure de rattrapage au §4
+   (« `CHANGELOG-N.md` oublié avant merge/push »).
 4. **Merger chaque branche worktree dans `master` manuellement**, une
    par une, en relisant le diff avant. Rien de spécifique aux worktrees
    ici — un `git merge worktree-issue-<N>` classique depuis `REP_TRAVAIL`
@@ -135,11 +155,16 @@ au quotidien.
     (`kill -9 <pid>` + descendance), puis supprimer le fichier
     `logs/verrous/<...>.lock` correspondant **uniquement une fois l'arbre
     de process confirmé mort**.
-- **`CHANGELOG-N.md` oublié avant push.** Si un push a déjà eu lieu sans
-  passer par `fusionner_changelog.py` et qu'un `CHANGELOG-<N>.md` traîne
-  encore à la racine : relancer `python3 scripts/fusionner_changelog.py`,
-  vérifier le résultat (`git diff CHANGELOG.md`), committer, puis
-  pousser.
+- **`CHANGELOG-N.md` oublié avant merge/push.** Si le merge (voire le
+  push) a déjà eu lieu sans passer par `fusionner_changelog.py`, et
+  qu'un `CHANGELOG-<N>.md` traîne désormais à la racine de `master` (cas
+  vécu lors des issues #340/#341, session du 02/08/2026 — le script
+  scanne la racine du dépôt qu'on lui indique, pas celle de `master` par
+  défaut si on l'a lancé ailleurs) : relancer
+  `python3 scripts/fusionner_changelog.py` **depuis `REP_TRAVAIL`** (le
+  fichier y est maintenant présent, donc le scan par défaut le trouve),
+  vérifier le résultat (`git diff CHANGELOG.md`), committer, puis pousser
+  si un push avait déjà eu lieu.
 - **Conflit de merge** entre une branche worktree et `master` (deux
   tâches ayant touché la même zone d'un même fichier, ou `master` ayant
   avancé entre-temps) : résolution via l'outil de merge intégré de
