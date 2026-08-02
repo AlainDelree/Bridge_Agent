@@ -5,6 +5,15 @@ Alain peut modifier ce fichier directement, sans passer par une issue.
 
 ---
 
+## Worktrees en production — points de surveillance
+
+**Contexte** : après correction de #340, deux limites connues restent
+sur le mécanisme de parallélisation des issues mode_write via git
+worktrees (cf. `WORKTREES.md`) :
+
+- Pas d'alerte sur l'accumulation de worktrees (nettoyage manuel requis).
+- `issues_en_cours` sans verrou explicite inter-process.
+
 ## Projet dédié à la communication CCL ↔ CCW
 
 **Contexte** : aujourd'hui les issues Windows passent par le projet
