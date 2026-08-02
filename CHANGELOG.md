@@ -9,6 +9,18 @@ milliers de caractères sur une seule ligne logique, coûteux à relire et
 
 Convention d'ajout : voir §10 de `BRIDGE_AGENT_DOC.md`.
 
+## 2 août 2026 — issue #312
+
+`TACHES.md` : retrait des trois entrées de backlog désormais
+implémentées — « Capture stderr CCL dans watcher.py » et « Vérification
+pre-flight de la validité du token CCL » (issue #309, commit bcd3a11)
+et « Archivage de logs/historique_durees.json » (issue #310, commit
+6df2f44). Suppression simple, sans section « Terminé » : c'est déjà la
+convention établie pour ce fichier (cf. commit dcecb85). Reste du
+fichier inchangé, notamment « Garde-fou technique sur la modification
+de PERIMETRE » (#298) et « Concurrence limitée aux issues mode_lecture »,
+toujours en attente sans implémentation.
+
 ## 2 août 2026 — issue #310
 
 Nouveau script `scripts/archiver_historique.py`, lancement manuel

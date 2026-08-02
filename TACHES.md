@@ -80,32 +80,6 @@ modélisation qu'on prendrait mal à la légère.
 
 ---
 
-## Archivage de logs/historique_durees.json
-
-**Contexte** : le fichier accumule depuis mai sans jamais être purgé —
-682 entrées, 112 Ko au 29/07/2026 — et il est relu puis réécrit à chaque
-clôture d'issue. Répartition : scrabble 284, bridge_agent 237, alchess 58,
-rummikub 24, actualise 22, bloc_score 21, ecole 18, ff_galerie 13,
-diagnostique_programme 5. Les entrées `ff_galerie` datent de mai et ne
-correspondent pas à un usage réel du bridge (projet piloté par EmailJS) ;
-elles ne polluent aucun calcul — la calibration filtre par combinaison —
-mais brouillent la lecture manuelle.
-
-**Idée** : archiver les vieilles entrées pour contenir la taille du
-fichier et rendre son contenu lisible.
-
-**Point à concevoir avant implémentation, impératif** : ne PAS archiver
-naïvement par mois. L'EWMA de la calibration a une demi-vie de 15 issues ;
-une bascule mensuelle ferait repartir le calcul de zéro à chaque nouveau
-mois, précisément pour les projets les plus actifs. Il faut soit archiver
-sans rendre les entrées invisibles au calcul, soit assumer explicitement
-la remise à zéro.
-
-**Statut** : aucune urgence à 112 Ko. À traiter avant que le fichier
-n'atteigne plusieurs Mo. Lié à l'entrée sur la calibration ci-dessus.
-
----
-
 ## Concurrence limitée aux issues mode_lecture
 
 **Contexte** : `watcher.py` est aujourd'hui strictement séquentiel (une issue à
@@ -210,42 +184,6 @@ soin, pas seulement en confiance sur la consigne donnée à CCL.
 
 **Statut** : idée en attente, pas de développement lancé. Reçue via rapport
 d'audit Scrabble le 24/07/2026.
-
----
-
-## Capture stderr CCL dans watcher.py
-
-**Contexte** : actuellement le stderr de CCL n'est pas capturé par
-`watcher.py`. Quand CCL échoue avant même de produire une réponse
-exploitable, le watcher journalise seulement "Erreur inconnue", ce qui
-masque la vraie cause (token expiré, coupure réseau, installation CCL
-cassée) et oblige à aller vérifier manuellement sur le terminal/la machine
-concernée.
-
-**Idée** : capturer (au moins) les premières lignes du stderr du process
-CCL et les afficher dans le log watcher (`logs/watcher-<nom>.log`) en cas
-d'échec, pour permettre un diagnostic immédiat sans accès terminal.
-
-**Statut** : idée en attente, pas de développement lancé. Identifiée lors
-de l'incident du 29/07/2026 (token CCL expiré → "Erreur inconnue" non
-diagnosticable, cf. issue #279).
-
----
-
-## Vérification pre-flight de la validité du token CCL
-
-**Contexte** : lors du même incident du 29/07/2026, le watcher a enchaîné
-les 3 tentatives d'exécution (avec leurs timeouts respectifs) avant
-d'échouer, alors que le token CCL était expiré dès le départ — un
-diagnostic évitable en amont.
-
-**Idée** : avant de lancer une issue, vérifier que CCL est bien authentifié
-(ex. `claude -p "" 2>&1 | grep -i "not logged"`) et journaliser un
-avertissement explicite si le token est absent ou expiré, plutôt que
-d'attendre l'échec des 3 tentatives pour le découvrir.
-
-**Statut** : idée en attente, pas de développement lancé. Identifiée lors
-de l'incident du 29/07/2026 (cf. issue #279).
 
 ---
 
