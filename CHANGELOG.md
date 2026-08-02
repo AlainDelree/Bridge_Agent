@@ -9,6 +9,33 @@ milliers de caractères sur une seule ligne logique, coûteux à relire et
 
 Convention d'ajout : voir §10 de `BRIDGE_AGENT_DOC.md`.
 
+## 2 août 2026 — issue #336
+
+Création de `scripts/fusionner_changelog.py`, en préparation du futur
+système de worktrees : quand CCL travaillera dans un répertoire isolé, il
+écrira son entrée CHANGELOG dans `CHANGELOG-<N>.md` (N = numéro de l'issue)
+plutôt que dans `CHANGELOG.md` directement, pour éviter les conflits
+systématiques sur ce fichier unique quand plusieurs issues mode_write
+tournent en parallèle. Ce script fusionne ces fichiers dans `CHANGELOG.md`
+avant le push d'Alain.
+
+- Scanne la racine du dépôt (`--repo`, défaut `.`) à la recherche de
+  fichiers `CHANGELOG-<N>.md`, les trie par N décroissant (plus récent en
+  tête, cohérent avec la convention de `CHANGELOG.md`, issue #252), et
+  insère leur contenu tel quel en tête de `CHANGELOG.md`, juste après
+  l'en-tête fixe (jusqu'à la ligne vide qui suit « Convention d'ajout :
+  ... »). Les fichiers traités sont ensuite supprimés.
+- Aucun `CHANGELOG-<N>.md` trouvé : message et sortie propre (code 0),
+  `CHANGELOG.md` laissé inchangé — propriété qui rend une seconde exécution
+  sans nouveaux fichiers idempotente de fait, puisque les sources du
+  premier passage ont déjà été supprimées. Vérifié par test manuel (fichiers
+  factices `CHANGELOG-338.md`/`CHANGELOG-340.md` dans un dépôt temporaire,
+  hors du dépôt réel) : fusion correcte dans l'ordre #340 puis #338,
+  suppression des fichiers sources, relance sans effet.
+- Pas encore appelé automatiquement par `watcher.py` — le système de
+  worktrees qui produira des `CHANGELOG-<N>.md` n'existe pas encore ;
+  lancement manuel uniquement pour l'instant.
+
 ## 2 août 2026 — issue #335
 
 Correction du radio Mode qui restait parfois figé sur « Lecture seule » après
