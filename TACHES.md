@@ -143,49 +143,6 @@ de code, pour valider le concept avant d'écrire le champ `WORKTREE` natif.
 
 ---
 
-## Mode mode_scratch (lecture active) — écriture scratch limitée pour outillage d'audit
-
-**Contexte** : certains outils d'analyse (eslint flat config pour les
-versions ≥ 9, linters divers) exigent un vrai fichier de config sur disque,
-pas seulement une commande inline. Le mode_lecture actuel interdit toute
-écriture, y compris hors dépôt — ce qui bloque ces outils. Note : ce n'est
-PAS ce qui causait les timeouts observés sur Scrabble (#235 vs #238,
-réglé par une consigne d'abandon immédiat au refus de permission) — c'est
-un besoin distinct et réel, pour les cas où l'outil a effectivement besoin
-d'un fichier de config.
-
-**Préparation faite (issue #326)** : vocabulaire retenu « lecture active »
-(label `mode_scratch`, renommé depuis la proposition initiale
-`mode_tmp_write` ci-dessous) ; formulaire (3e radio) et champ d'en-tête
-`| MODE | … |` préparés côté `new_issue.py` pour porter cette valeur. Label
-encore RÉSERVÉ : le watcher actuel ne le connaît pas et traite une issue
-`mode_scratch` comme lecture seule. Reste à faire ci-dessous : toute la
-logique d'exécution côté `watcher.py`.
-
-**Proposition** (reçue via rapport d'audit Scrabble) : un troisième mode,
-`mode_scratch`, avec :
-- Écriture autorisée uniquement dans un chemin scratch bien défini et
-  validé strictement côté watcher (ex. `/tmp/bridge_scratch_<projet>/`),
-  jamais dans `REP_TRAVAIL` du projet. Validation stricte du chemin pour
-  empêcher tout `../` ou équivalent remontant vers le dépôt.
-- Toujours interdit, comme en lecture seule : `git commit`, `git push`,
-  toute commande destructrice, toute écriture hors du chemin scratch.
-- Nettoyage attendu en fin de tâche par CCL, idéalement complété par un
-  nettoyage automatique du dossier scratch par le watcher en fin de
-  traitement — pour ne pas reposer uniquement sur la consigne donnée à CCL.
-- Conceptuellement plus proche du mode lecture seule que du mode écriture :
-  pas de garde-fou "backup avant modification" nécessaire (aucun fichier du
-  projet n'est jamais en jeu).
-
-**Point de vigilance** : la garantie ne tient que si la validation du
-chemin scratch est réellement stricte côté `watcher.py` — à concevoir avec
-soin, pas seulement en confiance sur la consigne donnée à CCL.
-
-**Statut** : idée en attente, pas de développement lancé. Reçue via rapport
-d'audit Scrabble le 24/07/2026.
-
----
-
 ## Rafraîchir une seule fois la ligne d'une issue quand son décompte atteint zéro
 
 **Contexte** : le décompte de temps restant affiché pour une issue tourne

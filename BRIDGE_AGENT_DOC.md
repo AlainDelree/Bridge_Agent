@@ -211,6 +211,7 @@ directement dans le champ Corps.
 | `for-linux` | **Requis** — le watcher ne voit que ces issues |
 | `bridge` | Marque l'issue comme tâche bridge (traçabilité) |
 | `mode_write` | **ARME le mode écriture** — CCL peut modifier des fichiers |
+| `mode_scratch` | **ARME la lecture active** — écriture confinée à un dossier scratch, jamais dans le projet (voir §5) |
 | `needs-human` | Posé automatiquement après 3 échecs — stoppe le retraitement |
 | `done` | Posé automatiquement au succès |
 | `notif_pc` | Ajoute une notification bureau (notify-send) |
@@ -222,11 +223,45 @@ directement dans le champ Corps.
 
 ---
 
-## 5. Modes lecture seule vs écriture
+## 5. Modes lecture seule / lecture active / écriture
+
+Le watcher pilote un MODE à trois valeurs (issue #327 — remplace un ancien
+booléen qui ne pouvait distinguer que deux états), déduit des labels de
+l'issue par ordre de priorité : `mode_write` (écriture) > `mode_scratch`
+(lecture active) > aucun des deux (lecture seule, défaut).
 
 **Lecture seule (défaut)** — CCL peut lire, analyser, grep, rapporter.
 Ne peut PAS écrire de fichier ni exécuter de commande modifiant le système.
 Idéal pour : diagnostics, audits, lectures de fichiers, comptages.
+
+**Lecture active (`mode_scratch`, issue #327)** — CCL peut écrire, mais
+**UNIQUEMENT** dans un dossier scratch dédié, jamais dans le projet. Utile
+aux outils d'analyse qui exigent un vrai fichier de config sur disque (ex.
+eslint flat config ≥ 9, autres linters) — impossible à satisfaire en lecture
+seule. Le livrable attendu reste un **rapport** de lecture, comme en lecture
+seule : la lecture active n'autorise pas de modifier le projet, seulement
+d'y faire tourner des outils qui ont besoin d'écrire un fichier temporaire.
+- Chemin scratch : `/tmp/bridge_scratch_<projet>/` (`<projet>` = `NOM` du
+  `.conf`), créé par le watcher juste avant le lancement de CCL, supprimé
+  juste après (succès, échec ou timeout confondus) — rien n'y survit d'une
+  tâche à l'autre.
+- Défense en profondeur à deux niveaux (même schéma que le garde-fou
+  `configs/*.conf`, §11/#318) :
+  - **Niveau 1 (prompt)** : un bloc de garde-fou dédié indique explicitement
+    à CCL le chemin scratch exact et lui interdit toute écriture ailleurs
+    (notamment le répertoire de travail du projet), tout `git commit`/`git
+    push`, et toute commande destructrice.
+  - **Niveau 2 (détection technique a posteriori)** : le watcher prend une
+    empreinte de l'état git du répertoire de travail juste avant le
+    lancement de CCL, et la compare juste après. Toute écriture détectée
+    dans le projet (malgré la consigne de niveau 1) est **restaurée**
+    automatiquement et l'issue est marquée en échec (`needs-human`) — le
+    prompt seul ne suffit pas à garantir le confinement, cf. non-déterminisme
+    du modèle (issues #290/#291).
+- Comme la lecture seule, aucun backup du projet n'est nécessaire (le projet
+  n'est jamais modifié par construction) ; `--dangerously-skip-permissions`
+  est ajouté (nécessaire pour écrire dans le scratch), d'où l'importance du
+  niveau 2 puisque ce flag désarme aussi les protections de Claude Code.
 
 **Mode écriture (`mode_write`)** — CCL peut modifier des fichiers, exécuter
 des commandes, faire des commits git.
@@ -235,6 +270,9 @@ Garde-fous automatiques :
 - **JAMAIS `git push`** — Alain pousse lui-même après vérification
 - Aucune commande destructrice sans demande explicite
 - Périmètre strict : CCL ne travaille que dans le dossier configuré
+
+> `configs/*.conf` reste interdit à l'écriture **quel que soit le mode**
+> (lecture active comme écriture) — garde-fou technique #318, voir §11.
 
 ---
 
@@ -490,16 +528,18 @@ les petits changements (une ligne CSS, un label, une couleur).
 l'onglet Configuration de new_issue.py, ou à la main par Alain — elles
 ne touchent pas au code et sont gitignorées. **Cette exception vaut
 uniquement pour Alain** : CCL/CCW ne modifie **jamais** `configs/*.conf`
-via une issue, même en mode_write et même si l'issue le demande
-explicitement en toutes lettres (issue #318, suite au diagnostic #298 —
-ce champ texte simple n'avait aucun garde-fou contre un élargissement ou
-un rétrécissement silencieux du PÉRIMÈTRE). La règle est injectée à
-CCL/CCW via `consignes/globales.md`, et doublée d'un garde-fou technique
-dans `watcher.py` (`_empreinte_configs` / `_restaurer_configs_modifies`) :
+via une issue, même en mode_write (ou en lecture active, mode_scratch,
+depuis #327) et même si l'issue le demande explicitement en toutes
+lettres (issue #318, suite au diagnostic #298 — ce champ texte simple
+n'avait aucun garde-fou contre un élargissement ou un rétrécissement
+silencieux du PÉRIMÈTRE). La règle est injectée à CCL/CCW via
+`consignes/globales.md`, et doublée d'un garde-fou technique dans
+`watcher.py` (`_empreinte_configs` / `_restaurer_configs_modifies`) :
 toute modification de `configs/*.conf` survenue malgré tout au cours
-d'un traitement mode_write est détectée (comparaison du contenu avant/
-après chaque tentative) et annulée automatiquement, avec un WARNING
-journalisé, sans faire échouer le reste du traitement de l'issue.
+d'un traitement en écriture ou en lecture active est détectée
+(comparaison du contenu avant/après chaque tentative) et annulée
+automatiquement, avec un WARNING journalisé, sans faire échouer le reste
+du traitement de l'issue.
 
 ### 12.1 Consignes injectées — architecture à trois couches (issues #209, #211)
 
@@ -1915,6 +1955,6 @@ issues de la même combinaison s'il le juge utile.
 
 ---
 
-*Dernière mise à jour : 2 août 2026 — §12 « Règles d'usage » : le paragraphe « Exception » sur `configs/*.conf` précise désormais que cette exception (modification directe, hors passage par CC) vaut uniquement pour Alain (à la main ou via l'onglet Configuration de `new_issue.py`), jamais pour CCL/CCW — même en mode_write, même si l'issue le demande explicitement en toutes lettres (issue #318, suite au diagnostic #298 : PERIMETRE est un champ texte simple sans garde-fou contre un élargissement/rétrécissement silencieux). Renvoie vers le garde-fou technique ajouté à `watcher.py` (`_empreinte_configs`/`_restaurer_configs_modifies`) qui détecte et annule automatiquement toute modification de `configs/*.conf` survenue malgré tout en cours de traitement, sans faire échouer le reste de l'issue. Précédemment — Crée `BUILD_WINDOWS_CCW.md` (issue #299) et allège d'autant le §16.3 « Procédure — builder un projet Windows » : la note « staging local » (issue #297) détaillée en toutes lettres — pattern de contournement de la corruption de fichiers sur `\\VBOXSVR\CCW_Share` et checklist par projet buildé — est remplacée par un renvoi de deux lignes vers ce nouveau fichier, qui porte désormais aussi la checklist Scrabble (clone, script de build, `.spec`, TIMEOUT, taille/hash de l'installeur de référence du 31/07/2026) ; objectif — éviter que chaque nouveau projet buildé sous Windows (Rummikub en préparation) n'ajoute encore du contenu spécifique-projet dans ce fichier central. Précédemment — Ajoute au §16 « Agent Windows CCW » la sous-section 16.4 « Interrompre une issue CCW coincée » (issue #287) : symptôme (le watcher `CCW-Watcher` log en boucle « Issue différée : un autre traitement détient déjà le verrou sur \\VBOXSVR\CCW_Share\ » sans jamais progresser), cause (fichier verrou orphelin dans `C:\CCW\Bridge_Agent\logs\verrous\`, non nettoyé après un process tué brutalement ou un redémarrage NSSM sans libération propre), procédure manuelle (`nssm restart CCW-Watcher` puis lister/supprimer le(s) fichier(s) `.lock` restant(s) via `Get-ChildItem`/`Remove-Item`), et note sur le bouton **« Interrompre »** prévu dans l'onglet CCW de `new_issue.py` pour automatiser cette procédure (voir `TACHES.md`).*
+*Dernière mise à jour : 2 août 2026 — §4 « Labels disponibles » et §5, renommé « Modes lecture seule / lecture active / écriture » : implémente la « lecture active » (label `mode_scratch`) préparée côté formulaire/en-tête par #326 mais jusqu'ici ignorée par le watcher (issue #327). Le booléen `autoriser_ecriture` est remplacé par un MODE à trois valeurs (`lecture`/`lecture_active`/`ecriture`), déduit des labels par `watcher.py::_deduire_mode` et lu par les cinq points de décision (flag `--dangerously-skip-permissions`, bloc de garde-fou du prompt, backup, garde-fou `configs/*.conf`, étiquette de calibration TIMEOUT). La lecture active écrit UNIQUEMENT dans `/tmp/bridge_scratch_<projet>/` (créé avant CCL, nettoyé après, quel que soit le résultat) — défense en profondeur niveau 1 (bloc de prompt dédié) + niveau 2 (empreinte de l'état git du répertoire de travail avant/après, restauration + échec `needs-human` si une écriture est détectée hors scratch, même schéma que le garde-fou `configs/*.conf` #318). Le livrable reste un rapport, comme en lecture seule. §12 « Règles d'usage » précise que l'interdiction d'écriture sur `configs/*.conf` (#318) vaut aussi en lecture active. Précédemment — §12 « Règles d'usage » : le paragraphe « Exception » sur `configs/*.conf` précise désormais que cette exception (modification directe, hors passage par CC) vaut uniquement pour Alain (à la main ou via l'onglet Configuration de `new_issue.py`), jamais pour CCL/CCW — même en mode_write, même si l'issue le demande explicitement en toutes lettres (issue #318, suite au diagnostic #298 : PERIMETRE est un champ texte simple sans garde-fou contre un élargissement/rétrécissement silencieux). Renvoie vers le garde-fou technique ajouté à `watcher.py` (`_empreinte_configs`/`_restaurer_configs_modifies`) qui détecte et annule automatiquement toute modification de `configs/*.conf` survenue malgré tout en cours de traitement, sans faire échouer le reste de l'issue. Précédemment — Crée `BUILD_WINDOWS_CCW.md` (issue #299) et allège d'autant le §16.3 « Procédure — builder un projet Windows » : la note « staging local » (issue #297) détaillée en toutes lettres — pattern de contournement de la corruption de fichiers sur `\\VBOXSVR\CCW_Share` et checklist par projet buildé — est remplacée par un renvoi de deux lignes vers ce nouveau fichier, qui porte désormais aussi la checklist Scrabble (clone, script de build, `.spec`, TIMEOUT, taille/hash de l'installeur de référence du 31/07/2026) ; objectif — éviter que chaque nouveau projet buildé sous Windows (Rummikub en préparation) n'ajoute encore du contenu spécifique-projet dans ce fichier central.*
 
 Historique complet : voir [`CHANGELOG.md`](CHANGELOG.md).

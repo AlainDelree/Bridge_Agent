@@ -298,7 +298,7 @@ def scenario_lancer_claude_ecrit_pgid_dans_verrou():
 
             succes, sortie = watcher.lancer_claude(
                 numero=9999, titre="Test #322", body="Corps de test",
-                dry_run=False, autoriser_ecriture=False,
+                dry_run=False, mode=watcher.MODE_LECTURE,
                 timeout=15, cwd=tmp_path, verrou=verrou,
             )
             assert succes, f"lancer_claude aurait dû réussir : {sortie}"

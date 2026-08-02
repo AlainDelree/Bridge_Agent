@@ -24,7 +24,7 @@ from app.auth import login_requis  # noqa: F401 (exporté pour l'enregistrement 
 # du watcher fonctionne. On réutilise ses primitives pour éviter toute dérive
 # entre le calcul du watcher et celui du badge (issues #91 et #106).
 from watcher import (est_titre_chef, deduire_type_issue, PAUSE_ENTRE_TENTATIVES,
-                     _est_depot_git)
+                     _est_depot_git, LABEL_ECRITURE, LABEL_SCRATCH)
 
 # Racine du projet (dossier parent du package app/).
 DOSSIER_SCRIPT = Path(__file__).resolve().parent.parent
@@ -150,14 +150,11 @@ def _parser_labels_entete(corps: str) -> list:
 # construire_labels lisent tous deux cette table, si bien qu'un futur 4e mode
 # ne demande qu'une ligne ici.
 #
-# lecture_active (label mode_scratch) est RÉSERVÉ : cette issue prépare le
-# terrain formulaire/en-tête pour la future « lecture active » du backlog
-# TACHES.md (écriture scratch limitée pour linters exigeant un fichier de
-# config sur disque), mais NE PORTE PAS l'implémentation côté watcher. Tant
-# que cette implémentation n'est pas faite, watcher.py ignore mode_scratch
-# (LABEL_ECRITURE == "mode_write" seul teste autoriser_ecriture) et traite
-# l'issue comme lecture seule — comportement sûr, mais pas encore la
-# « lecture active » annoncée par ce mode.
+# lecture_active (label mode_scratch, issue #327) : écriture confinée à
+# /tmp/bridge_scratch_<projet>/ côté watcher (jamais dans le projet), utile
+# aux linters/outils exigeant un vrai fichier de config sur disque. Voir
+# watcher.py::_deduire_mode / MODE_LECTURE_ACTIVE pour l'implémentation
+# complète (garde-fous niveau 1 prompt + niveau 2 empreinte REP_TRAVAIL).
 MODES = {
     "lecture":        ("lecture", None),
     "lecture_active": ("lecture active", "mode_scratch"),
@@ -986,7 +983,16 @@ def issues_en_attente(nom_projet):
         priorite = _parser_priorite(body)
         labels = [(l.get("name") or "").lower() for l in it.get("labels", [])]
         type_issue = deduire_type_issue(titre, body)
-        mode = "write" if "mode_write" in labels else "read"
+        # "scratch" (issue #327) : population de durées distincte de "read", au
+        # même titre que "write" — sinon l'estimation d'une issue en lecture
+        # active emprunterait à tort la population "read" (mélange de profils
+        # de durée hétérogènes, même défaut que celui corrigé côté UI par #326).
+        if LABEL_ECRITURE in labels:
+            mode = "write"
+        elif LABEL_SCRATCH in labels:
+            mode = "scratch"
+        else:
+            mode = "read"
         it["timeout"]     = _parser_timeout(body, titre, cfg)
         it["max_essais"]  = cfg.max_essais
         it["backoff"]     = PAUSE_ENTRE_TENTATIVES

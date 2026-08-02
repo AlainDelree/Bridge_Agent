@@ -103,7 +103,7 @@ def scenario_enfant_bloque_tue_apres_retour():
         try:
             succes, sortie = watcher.lancer_claude(
                 numero=9999, titre="Test #247", body="Corps de test",
-                dry_run=False, autoriser_ecriture=False,
+                dry_run=False, mode=watcher.MODE_LECTURE,
                 timeout=15, cwd=tmp_path,
             )
         finally:

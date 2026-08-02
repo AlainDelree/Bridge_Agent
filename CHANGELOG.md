@@ -9,6 +9,88 @@ milliers de caractères sur une seule ligne logique, coûteux à relire et
 
 Convention d'ajout : voir §10 de `BRIDGE_AGENT_DOC.md`.
 
+## 2 août 2026 — issue #327
+
+Implémentation du mode « lecture active » (`mode_scratch`) côté
+`watcher.py` — préparé formulaire/en-tête par #326, resté volontairement
+inactif (une issue `mode_scratch` sans `mode_write` était traitée comme
+lecture seule). Écriture confinée pour les outils d'analyse qui exigent un
+vrai fichier de config sur disque (linters, eslint flat config ≥ 9, ...),
+impossible à satisfaire en lecture seule.
+
+**Mode à trois valeurs, plus un booléen empilé.** `autoriser_ecriture: bool`
+pilotait CINQ points de décision (flag `--dangerously-skip-permissions`,
+bloc de garde-fou du prompt, backup, garde-fou `configs/*.conf` #318,
+étiquette de calibration TIMEOUT) — insuffisant pour un 3e mode. Remplacé
+par `MODE_LECTURE`/`MODE_LECTURE_ACTIVE`/`MODE_ECRITURE` (nouvelle constante
+`LABEL_SCRATCH = "mode_scratch"`), déduits des labels par la nouvelle
+`_deduire_mode` (priorité `mode_write` > `mode_scratch` > lecture seule par
+défaut) et lus par les cinq points ci-dessus — un futur 4e mode n'ajoutera
+qu'une valeur, pas cinq retouches éparses. `lancer_claude` prend désormais
+`mode` (plus `autoriser_ecriture`) et `chemin_scratch` ; les deux tests
+existants qui l'appelaient directement (`test_nettoyage_arbre_247.py`,
+`test_orphelin_verrou_perime_322.py`) sont mis à jour en conséquence.
+
+**Chemin scratch** : `/tmp/bridge_scratch_<projet>/` (`<projet>` = `CFG.nom`,
+validé strictement — aucun `../`, aucun séparateur de chemin — jamais dérivé
+d'une valeur fournie par l'issue). Créé par le watcher juste avant le
+premier lancement de claude en lecture active, supprimé dans un `finally`
+(succès/échec/timeout confondus, même esprit que `_nettoyer_arbre_claude`).
+
+**Défense en profondeur, niveau 1 + niveau 2** (même schéma que le
+garde-fou `configs/*.conf`, #318) :
+- **Niveau 1 (prompt)** : nouveau bloc de garde-fou dédié dans
+  `lancer_claude`, distinct des deux blocs existants — chemin scratch exact,
+  interdiction d'écrire ailleurs (notamment REP_TRAVAIL), interdiction de
+  `git commit`/`git push`/commande destructrice, rappel que le scratch est
+  éphémère et que le livrable reste un rapport de lecture.
+  `--dangerously-skip-permissions` est ajouté (la lecture active doit
+  pouvoir écrire dans le scratch), désarmant les mêmes protections claude
+  que l'écriture libre — d'où le niveau 2.
+- **Niveau 2 (détection technique a posteriori)** : nouvelles
+  `_statut_git_rep_travail`/`_restaurer_rep_travail_modifie`, sur le modèle
+  de `_empreinte_configs`/`_restaurer_configs_modifies` (#318) — empreinte de
+  `git status --porcelain -uall` sur REP_TRAVAIL avant la première tentative,
+  comparée après chaque tentative. Toute écriture détectée (fichier modifié,
+  neuf ou supprimé) est restaurée (`git checkout`/`git clean` ciblés) et
+  l'issue est marquée en échec définitif (`needs-human`, pas de nouvelle
+  tentative) avec un message explicite. Le scratch (`/tmp`, hors REP_TRAVAIL)
+  n'apparaît jamais dans cette empreinte par construction, donc n'est jamais
+  emporté par la restauration.
+
+**Backup et garde-fou configs** : aucun backup projet en lecture active
+(comme la lecture seule — le filet est le niveau 2, pas un commit de
+sauvegarde). Le garde-fou technique `configs/*.conf` (#318) est étendu : il
+s'armait uniquement en mode écriture, il couvre désormais aussi la lecture
+active (`mode != MODE_LECTURE`), cohérent avec le fait que ce mode arme
+aussi `--dangerously-skip-permissions`.
+
+**Calibration (§19)** : nouvelle étiquette `"scratch"` (fonction
+`_etiquette_calibration`), distincte de `"read"`/`"write"`, appliquée aux
+trois points de calibration (succès, timeout, échec définitif) —
+`etat_timeout.json` et `historique_durees.json` gagnent une population
+`projet|TYPE|scratch` propre, pour ne pas refaire le mélange de populations
+que #326 avait corrigé côté UI. `app/issues.py` (estimation de durée d'une
+issue ouverte, badge de progression) mis à jour en cohérence : `mode_scratch`
+y était jusqu'ici classé à tort dans la population `"read"`.
+
+`templates/index.html` : le radio « Lecture active » n'est plus marqué
+« réservé » (le mode est désormais fonctionnel) ; `app/issues.py` (table
+`MODES`) et le commentaire près de `LABEL_ECRITURE`/`LABEL_SCRATCH` dans
+`watcher.py` mis à jour en conséquence.
+
+Tests (`tests/test_lecture_active_327.py`, faux `claude` **et** faux `gh`,
+aucun appel réseau) : déduction du mode depuis les labels (les quatre cas,
+priorité `mode_write` > `mode_scratch`) ; validation stricte de
+`_chemin_scratch` ; traitement complet (`traiter_issue`) d'une lecture
+active qui n'écrit que dans le scratch → succès, REP_TRAVAIL inchangé,
+scratch nettoyé ; traitement complet d'une lecture active qui écrit dans le
+projet hors scratch → détecté, restauré (fichier modifié restauré à son
+contenu d'origine, fichier neuf supprimé), `needs-human` posé, jamais
+`done`.
+
+`TACHES.md` : entrée « mode_scratch » retirée (implémentée).
+
 ## 2 août 2026 — issue #326
 
 Détection automatique du MODE dans l'en-tête + mode à valeurs extensibles,

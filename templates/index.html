@@ -115,16 +115,18 @@
 
     <div class="titre-section">Mode</div>
     <!-- Ordre du moins au plus permissif (issue #326) : lecture → lecture
-         active → écriture. Lecture active (label mode_scratch) est RÉSERVÉE :
-         préparée ici côté formulaire/en-tête, pas encore fonctionnelle côté
-         watcher (traitée comme lecture seule en attendant l'issue dédiée). -->
+         active → écriture. Lecture active (label mode_scratch, issue #327) :
+         écriture confinée à /tmp/bridge_scratch_<projet>/, jamais dans le
+         projet — utile aux linters/outils exigeant un vrai fichier de config
+         sur disque (eslint flat config ≥ 9, etc.). Livrable = rapport, comme
+         la lecture seule. -->
     <div class="radio-groupe">
       <label><input type="radio" name="mode" value="lecture" checked
                     onchange="mettreAJourBoutonEnvoi()"> Lecture seule</label>
       <label><input type="radio" name="mode" value="lecture_active"
                     onchange="mettreAJourBoutonEnvoi()"
-                    title="Réservé : préparé côté formulaire, pas encore fonctionnel côté watcher.">
-        Lecture active <span class="badge-alerte">scratch (mode_scratch, réservé)</span>
+                    title="Écriture confinée au dossier scratch (/tmp/bridge_scratch_<projet>/), jamais dans le projet.">
+        Lecture active <span class="badge-alerte">scratch (mode_scratch)</span>
       </label>
       <label><input type="radio" name="mode" value="ecriture"
                     onchange="mettreAJourBoutonEnvoi()">
