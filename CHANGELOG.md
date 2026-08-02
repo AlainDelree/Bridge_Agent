@@ -9,6 +9,36 @@ milliers de caractères sur une seule ligne logique, coûteux à relire et
 
 Convention d'ajout : voir §10 de `BRIDGE_AGENT_DOC.md`.
 
+## 2 août 2026 — issue #334
+
+Onglet Résultats : fetch unique de vérification 15s après le dépassement du
+décompte TIMEOUT d'une issue — le watcher a besoin de quelques secondes après
+son TIMEOUT pour poster le diagnostic et fermer l'issue ; jusqu'ici, la ligne
+restait figée sur « ⌛ 0s — budget épuisé » même une fois l'issue close côté
+serveur, jusqu'au prochain ↻ manuel. L'idée du `TACHES.md` (fetch au décompte
+UI/médiane) est abandonnée au profit du décompte TIMEOUT réel, déjà présent
+côté client, comme déclencheur — plus simple et plus fiable. Zéro polling
+ajouté : un seul appel réseau par issue, une seule fois.
+
+- `static/js/app.js` : dès que `formaterBadgeTempsRestant()` atteint la
+  branche « budget épuisé », `programmerFetchDepassement()` pose un unique
+  `setTimeout` de 15s (`DELAI_FETCH_DEPASSEMENT_MS`) qui appelle
+  `verifierIssueApresDepassement()` — fetch de `/issue/<projet>/<numero>`
+  (route existante). Un `Set` (`issuesFetchDepassementProgrammees`) garde-fou
+  garantit une seule programmation par issue, même si le composant est
+  rendu plusieurs fois (rendu de liste, tick/s de `majBadgesTempsRestant`).
+- Issue fermée (`done`/`needs-human`) au moment du fetch : la ligne est mise
+  à jour normalement (badge terminal, retrait du décompte), comme un ↻
+  manuel restreint à cette seule ligne — nouvelle fonction
+  `remplacerLigneIssue()`, qui reconstruit la ligne DOM via
+  `construireLigneIssueDOM()` et rebranche ses gestes (clic/ctrl+clic/
+  double-clic) via `brancherEvenementsLigneIssue()`, extraite de
+  `rendreListeIssues()` pour être partagée sans dupliquer le câblage.
+- Issue encore ouverte au moment du fetch (cas marginal de timing) : le
+  badge devient « ⌛ dépassement — rafraîchir ↻ » (mémorisé dans le Set
+  `issuesDepassementVerifie`, relu par `formaterBadgeTempsRestant`) et
+  aucun autre fetch automatique n'est reprogrammé pour cette issue.
+
 ## 2 août 2026 — issue #333
 
 Documentation : les deux boutons ⛔ « Interrompre » (CCL et CCW, issue

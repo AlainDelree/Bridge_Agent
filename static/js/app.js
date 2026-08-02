@@ -1163,6 +1163,32 @@ function construireLigneIssueDOM(it) {
 // couleur de son projet ; le clic simple sélectionne (selectionnerLigne), le
 // double-clic charge et affiche le détail (afficherIssue, issue #261). Si
 // reset=true, on sélectionne (sans charger) la première issue visible.
+// Câble le clic simple (sélection seule, issue #261), le ctrl+clic (détail +
+// défilement jusqu'au résultat CCL) et le double-clic (détail) d'une ligne.
+// Extrait de rendreListeIssues pour être réutilisé par remplacerLigneIssue
+// (issue #334), qui reconstruit une ligne isolée après vérification du
+// dépassement TIMEOUT — même rendu, mêmes gestes qu'un rendu de liste complet.
+function brancherEvenementsLigneIssue(ligne, it) {
+  const numero = String(it.number);
+  ligne.onclick = async (event) => {
+    event.preventDefault();
+    if (event.ctrlKey) {
+      await afficherIssue(it.projet, numero);
+      setTimeout(() => {
+        const cible = document.querySelector('#zone-issue .commentaire.resultat')
+                   || document.querySelector('#zone-issue .commentaire:last-child');
+        if (cible) cible.scrollIntoView({behavior: 'smooth', block: 'start'});
+      }, 100);
+    } else {
+      selectionnerLigne(it.projet, numero);
+    }
+  };
+  ligne.ondblclick = async (event) => {
+    event.preventDefault();
+    await afficherIssue(it.projet, numero);
+  };
+}
+
 function rendreListeIssues(reset) {
   const zone = document.getElementById('liste-issues');
   zone.innerHTML = '';
@@ -1173,33 +1199,8 @@ function rendreListeIssues(reset) {
     return;
   }
   for (const it of listeIssuesResultats) {
-    const numero = String(it.number);
     const ligne = construireLigneIssueDOM(it);
-    // Clic simple : sélectionne SEULEMENT la ligne, sans charger son détail —
-    // geste réflexe qui ne doit pas coûter un aller-retour réseau (issue #261).
-    // Ctrl+clic : demande explicite de détail (comme le double-clic), puis
-    // défile automatiquement jusqu'au bloc résultat CCL (dans cette UI, le
-    // résultat est rendu EN PREMIER via .commentaire.resultat ; on le vise
-    // donc explicitement, avec repli sur .commentaire:last-child). Double-clic :
-    // charge et affiche le détail (voir ondblclick ci-dessous).
-    ligne.onclick = async (event) => {
-      event.preventDefault();
-      if (event.ctrlKey) {
-        await afficherIssue(it.projet, numero);
-        setTimeout(() => {
-          const cible = document.querySelector('#zone-issue .commentaire.resultat')
-                     || document.querySelector('#zone-issue .commentaire:last-child');
-          if (cible) cible.scrollIntoView({behavior: 'smooth', block: 'start'});
-        }, 100);
-      } else {
-        selectionnerLigne(it.projet, numero);
-      }
-    };
-    // Double-clic : seul geste qui charge explicitement le détail (issue #261).
-    ligne.ondblclick = async (event) => {
-      event.preventDefault();
-      await afficherIssue(it.projet, numero);
-    };
+    brancherEvenementsLigneIssue(ligne, it);
     zone.appendChild(ligne);
   }
   appliquerFiltresListe();
@@ -1358,6 +1359,18 @@ function appliquerFiltresListe() {
 let timingIssues = {};              // clé "projet#numero" → {timeout, max_essais, backoff, debut, sans_limite}
 let intervalTempsRestant = null;    // recalcul 1 s du compte à rebours (client seul, aucun appel réseau)
 
+// ─── Fetch unique au dépassement du TIMEOUT (issue #334) ──────────────────
+// Clés (cleTiming) des issues pour lesquelles le fetch unique de vérification
+// a déjà été programmé — évite qu'un re-rendu (rendreListeIssues) ou le tick
+// de majBadgesTempsRestant (chaque seconde) ne reprogramme un second setTimeout
+// pour la même issue tant que la page reste ouverte.
+let issuesFetchDepassementProgrammees = new Set();
+// Clés des issues dont le fetch unique a confirmé qu'elles sont toujours
+// ouvertes (cas marginal de timing) : affiche « rafraîchir ↻ » à la place du
+// message générique « budget épuisé » et empêche formaterBadgeTempsRestant de
+// reprogrammer un nouveau fetch automatique (un seul essai, jamais de polling).
+let issuesDepassementVerifie = new Set();
+
 function cleTiming(projet, numero) { return projet + '#' + numero; }
 
 // Formate une durée en secondes → "45s" / "3min 20s" (compact, lisible).
@@ -1490,7 +1503,9 @@ function formaterBadgeEstimation(badge, t) {
 }
 
 // Applique l'état de temps restant à un badge, selon les données de timing.
-function formaterBadgeTempsRestant(badge, t) {
+// projet/numero (issue #334) : nécessaires pour programmer, au moment où le
+// budget tombe à zéro, le fetch unique de vérification 15s plus tard.
+function formaterBadgeTempsRestant(badge, t, projet, numero) {
   badge.className = 'ligne-tempsrestant';
   if (!t) { badge.style.display = 'none'; badge.textContent = ''; return; }
   badge.style.display = '';
@@ -1531,22 +1546,34 @@ function formaterBadgeTempsRestant(badge, t) {
     badge.title = 'Le 1er cycle TIMEOUT (' + t.timeout + 's) a été dépassé, mais '
                 + 'le watcher dispose de ' + essais + ' tentatives. Reste ~'
                 + formaterDuree(restant) + ' sur le budget total ; pas encore un échec.';
+  } else if (issuesDepassementVerifie.has(cleTiming(projet, numero))) {
+    // Fetch unique déjà effectué (issue #334) et l'issue était encore ouverte
+    // à ce moment (cas marginal de timing) : on le dit clairement plutôt que
+    // de réafficher indéfiniment le message générique « budget épuisé », et on
+    // NE reprogramme AUCUN autre fetch automatique — seul un ↻ (ligne ou
+    // global) ira revérifier.
+    badge.textContent = '⌛ dépassement — rafraîchir ↻';
+    badge.classList.add('tr-depasse');
+    badge.title = 'Budget total épuisé (' + essais + ' tentatives × ' + t.timeout
+                + 's' + (backoff ? ' + backoffs' : '') + ') ; la vérification '
+                + 'automatique 15s après le dépassement montre l\'issue toujours '
+                + 'ouverte. Cliquez sur ↻ pour revérifier — aucune autre '
+                + 'vérification automatique ne sera programmée.';
   } else {
     // Budget total (toutes tentatives) épuisé : décompte figé à zéro (issue
     // #270), jamais de valeur négative ni de compteur de dépassement qui
-    // grossirait indéfiniment. Sans re-fetch périodique, on ne sait pas si
-    // l'issue est toujours bloquée, retentée ou déjà fermée — un « dépassement
-    // +Xs » qui continue à monter suggérerait un suivi en temps réel qu'on
-    // n'a plus, et un message du type « terminé ? » serait une pure
-    // spéculation. Le badge reste donc affiché, figé, jusqu'au prochain
-    // rafraîchissement manuel (rafraichirResultats).
+    // grossirait indéfiniment. Le watcher a encore besoin de quelques
+    // secondes pour poster son diagnostic et fermer l'issue une fois son
+    // TIMEOUT écoulé : un unique fetch de vérification est donc programmé
+    // 15s après ce dépassement (issue #334, voir programmerFetchDepassement),
+    // sans aucun polling — un seul appel réseau, une seule fois par issue.
     badge.textContent = '⌛ 0s — budget épuisé';
     badge.classList.add('tr-depasse');
     badge.title = 'Budget total épuisé (' + essais + ' tentatives × ' + t.timeout
                 + 's' + (backoff ? ' + backoffs' : '') + ') ; intervention '
-                + 'humaine probable (label needs-human). Décompte figé à zéro : '
-                + "l'état réel (toujours bloquée, retentée, ou déjà fermée) "
-                + "n'est connu qu'au prochain rafraîchissement manuel.";
+                + 'humaine probable (label needs-human). Vérification automatique '
+                + 'programmée dans 15s ; en cas de doute, ↻ revérifie immédiatement.';
+    programmerFetchDepassement(projet, numero);
   }
 }
 
@@ -1560,8 +1587,76 @@ function majBadgesTempsRestant() {
     if (badgeEst) formaterBadgeEstimation(badgeEst, t);
     const badge = ligne.querySelector('.ligne-tempsrestant');
     if (!badge) return;
-    formaterBadgeTempsRestant(badge, t);
+    formaterBadgeTempsRestant(badge, t, ligne.dataset.projet, ligne.dataset.numero);
   });
+}
+
+const DELAI_FETCH_DEPASSEMENT_MS = 15000;   // marge laissée au watcher (issue #334)
+
+// Programme le fetch unique de vérification (issue #334), 15s après que le
+// décompte TIMEOUT d'une issue soit tombé à zéro — le Set garde-fou garantit
+// qu'un seul setTimeout est posé par issue, même si formaterBadgeTempsRestant
+// repasse par cette branche à chaque tick (1/s) tant que la page reste ouverte.
+function programmerFetchDepassement(projet, numero) {
+  const cle = cleTiming(projet, numero);
+  if (issuesFetchDepassementProgrammees.has(cle)) return;
+  issuesFetchDepassementProgrammees.add(cle);
+  setTimeout(() => verifierIssueApresDepassement(projet, numero), DELAI_FETCH_DEPASSEMENT_MS);
+}
+
+// Retrouve la ligne DOM d'une issue par projet+numéro (pas de sélecteur CSS
+// construit à partir de valeurs externes, pour rester robuste à un nom de
+// projet contenant des caractères spéciaux).
+function trouverLigneIssue(projet, numero) {
+  numero = String(numero);
+  return [...document.querySelectorAll('#liste-issues .ligne-issue')]
+    .find(l => l.dataset.projet === projet && l.dataset.numero === numero);
+}
+
+// Remplace intégralement la ligne DOM d'une issue par une version reconstruite
+// à partir des données fraîches `it` — même rendu et mêmes gestes (clic/double-
+// clic) qu'un ↻ manuel global, mais restreint à cette seule ligne (issue #334).
+function remplacerLigneIssue(ligneAncienne, it) {
+  const nouvelle = construireLigneIssueDOM(it);
+  brancherEvenementsLigneIssue(nouvelle, it);
+  if (ligneAncienne.classList.contains('selectionnee')) nouvelle.classList.add('selectionnee');
+  ligneAncienne.replaceWith(nouvelle);
+  appliquerFiltresListe();
+  majBadgesTempsRestant();
+}
+
+// Exécute le fetch unique programmé par programmerFetchDepassement, 15s après
+// le dépassement du TIMEOUT. Issue fermée (done/needs-human) → met à jour la
+// ligne normalement (badge terminal, retrait du décompte), comme un ↻ manuel
+// restreint à cette seule issue. Issue encore ouverte (cas marginal de
+// timing) → le badge devient « rafraîchir ↻ » (géré par formaterBadgeTempsRestant
+// via issuesDepassementVerifie) et AUCUN autre fetch automatique n'est
+// programmé — zéro polling, un seul appel réseau par issue.
+async function verifierIssueApresDepassement(projet, numero) {
+  const cle = cleTiming(projet, numero);
+  let it;
+  try {
+    const rep = await fetch('/issue/' + encodeURIComponent(projet) + '/' + encodeURIComponent(numero));
+    it = await rep.json();
+  } catch(e) {
+    return;   // échec réseau : pas de nouvelle tentative auto (cohérent avec #270)
+  }
+  if (!it || it.erreur) return;
+  if ((it.state || '').toUpperCase() === 'CLOSED') {
+    const itListe = {
+      number: it.number, title: it.title, state: it.state,
+      labels: it.labels, createdAt: it.createdAt, projet: projet,
+    };
+    const idx = listeIssuesResultats.findIndex(
+      x => x.projet === projet && String(x.number) === String(numero));
+    if (idx !== -1) listeIssuesResultats[idx] = Object.assign({}, listeIssuesResultats[idx], itListe);
+    delete timingIssues[cle];
+    const ligne = trouverLigneIssue(projet, numero);
+    if (ligne) remplacerLigneIssue(ligne, itListe);
+  } else {
+    issuesDepassementVerifie.add(cle);
+    majBadgesTempsRestant();
+  }
 }
 
 // Démarre le suivi du temps restant (à l'ouverture de l'onglet Résultats) :
