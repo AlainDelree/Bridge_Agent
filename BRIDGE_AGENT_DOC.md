@@ -1082,6 +1082,9 @@ séquentiellement dans `REP_TRAVAIL` (hors périmètre de cette issue).
   est dépassé — réévalué à chaque cycle, dès qu'un thread se termine
   l'extinction redevient possible.
 
+> Pour le détail du workflow et les procédures de récupération, voir
+> [`WORKTREES.md`](WORKTREES.md).
+
 ---
 
 ## 14. Délégation Chef → Ouvrier (changement d'environnement)

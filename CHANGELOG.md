@@ -9,6 +9,25 @@ milliers de caractères sur une seule ligne logique, coûteux à relire et
 
 Convention d'ajout : voir §10 de `BRIDGE_AGENT_DOC.md`.
 
+## 2 août 2026 — issue #338
+
+Documentation dédiée à la parallélisation mode_write via git worktrees
+(#337) : nouveau fichier `WORKTREES.md` à la racine du dépôt, distinct de
+`BRIDGE_AGENT_DOC.md` (manuel commun à tous les projets) pour ne pas
+l'alourdir d'internals d'infrastructure. Couvre le pourquoi du mécanisme,
+son design (`MAX_WRITE_PARALLELE`, premier slot sans worktree, verrou par
+chemin de travail effectif, auto-extinction différée), le workflow normal
+d'Alain (création d'issues, `git worktree list`, `fusionner_changelog.py`
+avant merge, merge manuel branche par branche, nettoyage
+`git worktree remove` + `git branch -d`), les procédures de récupération
+(worktree orphelin, verrou non libéré — y compris la limite du bouton
+« Interrompre », qui ne nettoie que le verrou de `REP_TRAVAIL` et pas ceux
+des worktrees actifs —, `CHANGELOG-N.md` oublié, conflit de merge) et les
+limites connues (`issues_en_cours` sans verrou explicite, pas d'alerte sur
+l'accumulation de worktrees, `mode_lecture`/`mode_scratch` non
+parallélisés). `BRIDGE_AGENT_DOC.md` §13 pointe désormais vers ce nouveau
+fichier juste sous sa sous-section worktrees existante.
+
 ## 2 août 2026 — issue #337
 
 Parallélisation des issues `mode_write` via `git worktree` : `watcher.py`
