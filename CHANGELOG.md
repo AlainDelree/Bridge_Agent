@@ -9,6 +9,19 @@ milliers de caractères sur une seule ligne logique, coûteux à relire et
 
 Convention d'ajout : voir §10 de `BRIDGE_AGENT_DOC.md`.
 
+## 2 août 2026 — issue #314
+
+`BRIDGE_AGENT_DOC.md` (§12.1, juste après le tableau des trois couches
+de consignes) : ajout d'un renvoi explicite pour un Claude en
+conversation (celui qui rédige une issue avant envoi, ex.
+ClaudeRummikub) vers `consignes/globales.md` via `curl`, sur le même
+modèle que le renvoi déjà existant vers `BRIDGE_AGENT_DOC.md` lui-même
+(§9). Jusqu'ici le tableau décrivait l'injection automatique par
+`watcher.py` à l'exécution (CCL/CCW) sans jamais pointer un Claude en
+conversation vers le contenu réel de `globales.md` — notamment le
+garde-fou backup/reset ajouté par l'issue #313, invisible avant que
+l'issue parte à l'exécution.
+
 ## 2 août 2026 — issue #313
 
 `consignes/globales.md` : ajout de deux garde-fous mutualisés à tous les

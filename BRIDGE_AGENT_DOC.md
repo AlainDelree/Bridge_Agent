@@ -507,6 +507,14 @@ les projets) :
 | **Type** | `consignes/type_<type>.md` | Issues d'un TYPE donné (ex. `type_chef.md`) | **Oui** — créé à la demande |
 | **Projet** | `consignes/projet_<projet>.md` | Issues ciblant un projet donné | **Oui** — créé à la demande |
 
+⚠️ **Pour un Claude en conversation** (celui qui rédige une issue avant de
+l'envoyer) : ce tableau décrit une injection qui n'a lieu qu'à l'exécution
+(CCL/CCW) — tu ne vois donc pas ce contenu ici. Avant de proposer une issue,
+consulte `consignes/globales.md` (rappels de sécurité, garde-fous) via :
+```bash
+curl -sL "https://raw.githubusercontent.com/AlainDelree/Bridge_Agent/master/consignes/globales.md"
+```
+
 **Couverture universelle (issue #211).** Une issue peut naître de trois chemins :
 (1) le formulaire web (`new_issue.py`), (2) un CCL « chef » via `gh issue create`
 en ligne de commande (§14, pattern Chef → Ouvrier), (3) une création manuelle
