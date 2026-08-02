@@ -201,3 +201,12 @@ while ($true) {
     $tailleAvant = $tailleActuelle
     Start-Sleep -Seconds $IntervalleSecondes
 }
+## ChangeLog Scrabble
+Le CHANGELOG.md du projet Scrabble (~\Scrabble/CHANGELOG.md) ne contient
+pas la ligne « Convention d'ajout : ... » attendue par
+scripts/fusionner_changelog.py (issue #336). Lors de la fusion de
+CHANGELOG-345.md, le script a supprimé le fichier sans fusionner son
+contenu (erreur : "en-tête fixe introuvable"). Tant que ce n'est pas
+corrigé, toutes les futures entrées de worktree Scrabble seront perdues
+à la fusion.
+
