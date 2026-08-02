@@ -48,6 +48,26 @@ build suit déjà ce schéma de staging local et, si oui, étendre le
 
 ---
 
+## Actualise
+
+- **Chemin du clone CCW** : `Z:\CCW\actualise` (dépôt AlainDelree/Actualise,
+  public)
+- **Script de build** : `build\rebuild_actualise.bat` (staging local
+  `C:\Temp\ActualiseBuild`, PAS d'étape Inno Setup — Actualise se
+  distribue en `dist\Actualise\` nu via Release GitHub, pas d'installeur)
+- **`.spec`** : `actualise.spec` — `--onedir --noconsole` (invisible
+  pendant que l'application cible tourne, logging fichier compense, voir
+  `CONCEPTION.md` du projet Actualise) ; `datas=[]` explicite
+  (`config.json` est externe, jamais embarqué) ; `hiddenimports=[]`
+  (`requests` détecté seul par PyInstaller)
+- **TIMEOUT de référence observé** : build réel 90,47 s (marge très
+  confortable avec le TIMEOUT de 1800s utilisé)
+- **Taille de référence de l'artefact final** : `dist\Actualise\` non
+  compressé, 20 970 000 octets environ (20,97 Mo, 29 fichiers) —
+  `Actualise.exe` seul : 4 388 786 octets, SHA-256
+  `61A3373D6EE2D48A357E34BA9E967236B101F3F580BD98BC20DD667C86772F47`
+  (référence du 3 août 2026)
+
 ## Rummikub
 
 - **Chemin du clone CCW** : `Z:\CCW\rummikub`
