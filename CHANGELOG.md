@@ -9,6 +9,53 @@ milliers de caractères sur une seule ligne logique, coûteux à relire et
 
 Convention d'ajout : voir §10 de `BRIDGE_AGENT_DOC.md`.
 
+## 2 août 2026 — issue #321
+
+Champ de recherche par TITRE dans l'onglet Résultats de `new_issue.py`,
+répondant au backlog ouvert par #317 suite au doublon #315/#316 — sous
+une forme différente de l'idée initiale (titre ET corps) : décision de
+#321 de rester sur le titre seul, plus rapide et suffisant pour
+retrouver un sujet déjà traité. Entrée backlog correspondante retirée
+de `TACHES.md`.
+
+- `app/issues.py` : nouvelle route `recherche_issues` (une par projet,
+  comme `issues_liste`) — `gh issue list --state all --limit <portée>`
+  (state `all` : on cherche justement une issue déjà fermée/done),
+  `--limit` réutilisant `_limite_issues_requete`/`LIMITE_ISSUES_MIN`/
+  `LIMITE_ISSUES_MAX` sans dupliquer de borne. Filtrage sur le titre
+  uniquement, insensible casse+accents via `_normaliser_recherche`
+  (NFKD + suppression des diacritiques + casefold). Même gestion
+  d'erreur (timeout/gh introuvable/returncode) qu'`issues_liste`.
+- `app/__init__.py` : route `/recherche-issues/<nom_projet>`.
+- `static/js/app.js` : champ texte + champ « portée » (défaut 15/projet,
+  borné à `LIMITE_ISSUES_MAX`, réglage DISTINCT de la limite d'affichage
+  de l'onglet) dans la barre de contrôles, déclenchement au clic (ou
+  Entrée) uniquement — jamais à la frappe, cohérent avec #270. La
+  recherche porte sur les projets actuellement sélectionnés dans les
+  filtres (un appel `gh` par projet, portée non cumulative), ratisse
+  toute la portée sans s'arrêter au premier match, respecte le filtre
+  « 👷 Ouvriers », et agrège les échecs par projet sans annuler les
+  autres. `construireLigneIssueDOM` extrait de `rendreListeIssues` pour
+  être partagée avec la nouvelle fenêtre de résultats, qui réutilise
+  telles quelles `copierReponseDepuisBadge`/`copierDiffDepuisBadge`/
+  `copierToutEtDiffDepuisBadge` (badges ✅/Diff/All) et une nouvelle
+  `afficherIssueRecherche` (double-clic) chargeant dans sa PROPRE zone
+  de détail (`#zone-issue-recherche`), autonome de celle de l'onglet —
+  plusieurs corps peuvent s'enchaîner sans se fermer mutuellement.
+  `demarrerRedimTitre`/`finRedimTitre` adaptés pour redimensionner la
+  colonne titre de la fenêtre indépendamment de celle de l'onglet, sans
+  persister ce redimensionnement en localStorage.
+- `templates/index.html` : barre de recherche statique dans l'onglet
+  Résultats + modal `#modal-recherche-titre` (liste + zone de détail
+  propres, bouton Fermer).
+- `static/css/style.css` : styles de la barre et du modal.
+- `TACHES.md` : retrait de l'entrée de backlog « Champ de recherche
+  texte dans l'onglet Résultats » (#317), désormais implémentée.
+
+La limite d'affichage par défaut de l'onglet (`LIMITE_ISSUES_DEFAUT`,
+30) reste inchangée — le 15 par défaut ne concerne que la portée de
+recherche, un réglage distinct.
+
 ## 2 août 2026 — issue #319
 
 `TACHES.md` : retrait de l'entrée de backlog « Garde-fou technique sur

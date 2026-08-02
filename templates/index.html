@@ -184,6 +184,29 @@
     <!-- Boutons toggle : un par projet + « Tous ». Générés dynamiquement. -->
     <div id="filtres-projets" class="filtres-projets"></div>
 
+    <!-- Recherche par titre (issue #321) : bloc STATIQUE (pas régénéré à
+         chaque bascule de filtre, contrairement à #filtres-projets), pour ne
+         jamais perdre la saisie en cours. La PORTÉE (nombre d'issues ratissées
+         PAR PROJET sélectionné ci-dessus) est un réglage DISTINCT de la limite
+         d'affichage de l'onglet (« par projet : ») — la recherche re-interroge
+         toujours GitHub, elle ne filtre jamais ce qui est déjà en mémoire.
+         Déclenchée uniquement au clic sur « Rechercher » (ou Entrée dans le
+         champ texte), jamais à la frappe (cohérent avec #270). -->
+    <div class="barre-recherche-titre">
+      <input type="text" id="recherche-titre-texte"
+             placeholder="Rechercher un titre déjà traité…" autocomplete="off"
+             onkeydown="if(event.key==='Enter'){event.preventDefault();lancerRechercheTitre();}">
+      <label class="limite-issues-label"
+             title="Nombre d'issues ratissées PAR PROJET sélectionné ci-dessus (pas un total). Réglage distinct de la limite d'affichage de l'onglet.">
+        portée :
+        <input type="number" id="recherche-titre-portee" class="limite-issues-projet"
+               min="1" max="50" step="1" value="15">
+      </label>
+      <button id="btn-recherche-titre" onclick="lancerRechercheTitre()">🔍 Rechercher</button>
+      <span id="recherche-titre-indicateur" class="maj-indicateur" style="display:none">Recherche…</span>
+    </div>
+    <div id="recherche-titre-erreurs" class="message" style="display:none"></div>
+
     <!-- Liste HTML cliquable des issues récentes (tous projets). Remplace la
          combobox : chaque ligne est coloriée à la couleur de son projet, ce que
          Firefox refuse de faire sur les <option>. Navigation par clic direct. -->
@@ -515,6 +538,24 @@
     <div class="modal-boutons">
       <button id="np-fermer" onclick="fermerNouveauProjet()">Fermer</button>
       <button class="primaire" id="np-creer" onclick="soumettreNouveauProjet()">Créer le projet</button>
+    </div>
+  </div>
+</div>
+
+<!-- ─── Modal « Résultats de recherche par titre » (issue #321) ──────────────
+     Fenêtre séparée et AUTONOME : sa propre liste (réplique exacte des lignes
+     de l'onglet Résultats, mêmes badges ✅/Diff/All) et sa PROPRE zone de
+     détail (#zone-issue-recherche) — un double-clic ici n'affecte jamais la
+     zone de détail de l'onglet Résultats. -->
+<div id="modal-recherche-titre" class="modal-overlay">
+  <div class="modal-carte modal-recherche-titre">
+    <div class="modal-titre">🔍 Résultats de recherche</div>
+    <div id="liste-resultats-recherche" class="liste-issues"></div>
+    <div id="zone-issue-recherche" class="zone-issue">
+      <div class="issue-vide">Double-cliquez un résultat pour afficher son détail.</div>
+    </div>
+    <div class="modal-boutons">
+      <button id="btn-fermer-recherche-titre" onclick="fermerModalRechercheTitre()">Fermer</button>
     </div>
   </div>
 </div>

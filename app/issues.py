@@ -11,6 +11,7 @@ import re
 import subprocess
 import sys  # noqa: F401 (conservé pour parité avec les autres modules extraits)
 import tempfile
+import unicodedata
 from datetime import datetime
 from pathlib import Path
 
@@ -625,6 +626,55 @@ def issues_liste(nom_projet):
         return jsonify(erreur="gh introuvable dans le PATH."), 500
     except Exception as e:
         return jsonify(erreur=str(e)), 500
+
+
+def _normaliser_recherche(texte: str) -> str:
+    """Normalise un texte pour une comparaison de titre insensible à la casse
+    ET aux accents (issue #321, ex. « ecran » doit trouver « Écran ») :
+    décomposition Unicode (NFKD) qui sépare les diacritiques des lettres de
+    base, suppression de ces diacritiques, puis casefold (plus robuste que
+    .lower() pour une comparaison insensible à la casse)."""
+    decompose = unicodedata.normalize('NFKD', texte or '')
+    sans_accents = ''.join(c for c in decompose if not unicodedata.combining(c))
+    return sans_accents.casefold()
+
+
+def recherche_issues(nom_projet):
+    """Recherche par TITRE (jamais le corps) dans les issues d'un projet,
+    insensible à la casse et aux accents (issue #321). Réutilise la même
+    logique gh que issues_liste : --state all (une issue déjà fermée/done est
+    justement ce qu'on cherche à retrouver, cf. doublon #315/#316), --limit
+    borné par _limite_issues_requete (portée de recherche PAR PROJET,
+    INDÉPENDANTE de la limite d'affichage de l'onglet). Le filtrage se fait
+    ici côté serveur, sur le titre uniquement."""
+    cfg = projet_par_nom(nom_projet)
+    if not cfg:
+        return jsonify(erreur="Projet introuvable."), 404
+    limite = _limite_issues_requete()
+    titre_cherche = _normaliser_recherche(request.args.get("titre", ""))
+    try:
+        res = subprocess.run(
+            ["gh", "issue", "list",
+             "--repo",  cfg.depot,
+             "--state", "all",
+             "--limit", str(limite),
+             "--json",  "number,title,state,labels,createdAt"],
+            capture_output=True, text=True, timeout=30
+        )
+        if res.returncode != 0:
+            return jsonify(erreur=res.stderr.strip() or "Erreur de gh."), 502
+        toutes = json.loads(res.stdout or "[]")
+    except subprocess.TimeoutExpired:
+        return jsonify(erreur="Timeout (gh n'a pas répondu en 30s)."), 504
+    except FileNotFoundError:
+        return jsonify(erreur="gh introuvable dans le PATH."), 500
+    except Exception as e:
+        return jsonify(erreur=str(e)), 500
+    if not titre_cherche:
+        return jsonify(toutes)
+    filtrees = [it for it in toutes
+                if titre_cherche in _normaliser_recherche(it.get("title", ""))]
+    return jsonify(filtrees)
 
 
 def issue_detail(nom_projet, numero):

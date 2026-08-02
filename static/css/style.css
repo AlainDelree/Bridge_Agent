@@ -354,3 +354,12 @@ button.danger-plein:hover{background:#8f2626}
 .overlay-arret .msg{color:#fff;font-size:18px;font-weight:600;line-height:1.5;
   max-width:520px}
 .overlay-arret button{font-size:15px;padding:11px 24px}
+/* Recherche par titre (issue #321) : barre statique + modal de résultats. */
+.barre-recherche-titre{display:flex;align-items:center;gap:8px;flex-wrap:wrap;
+  margin:8px 0}
+.barre-recherche-titre input[type="text"]{flex:1;min-width:180px;
+  padding:5px 9px;font-size:13px;border:1px solid #ccc;border-radius:4px}
+.modal-recherche-titre{max-width:900px;max-height:85vh;overflow-y:auto;
+  text-align:left}
+.modal-recherche-titre .liste-issues{max-height:280px;margin-bottom:14px}
+.modal-recherche-titre .zone-issue{max-height:360px;overflow-y:auto}

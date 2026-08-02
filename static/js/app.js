@@ -1035,6 +1035,128 @@ function basculerCocheResultat(event, projet, numero) {
   if (ligne) ligne.classList.toggle('resultat-traite', coche);
 }
 
+// Construit l'élément DOM d'UNE ligne d'issue (case à cocher, pastille,
+// badges ✅/Diff/All, titre) — markup PARTAGÉ entre la liste principale de
+// l'onglet Résultats (rendreListeIssues) et la fenêtre de recherche par titre
+// (issue #321), pour que chaque résultat de recherche soit une réplique EXACTE
+// d'une ligne de l'onglet. Les badges ✅/Diff/All sont câblés ICI (leur action
+// copierReponseDepuisBadge & consorts ne dépend d'aucun contexte, juste de
+// projet+numéro) ; en revanche onclick/ondblclick de la ligne elle-même ne
+// sont PAS posés ici — chaque appelant les branche selon son propre contexte
+// (sélection + zone de détail cible).
+function construireLigneIssueDOM(it) {
+  const etat = (it.state || '').toUpperCase() === 'CLOSED' ? 'fermé' : 'ouvert';
+  const couleur = couleurProjetResultats(it.projet);
+  const numero = String(it.number);
+  // Horodatage en heure locale du navigateur (issue #58). Depuis l'issue #95,
+  // la ligne n'affiche QUE l'heure "HH:MM:SS" (colonne plus étroite) ; la date
+  // complète "DD/MM/YYYY HH:MM:SS" reste disponible au survol (attribut title).
+  const dObj = it.createdAt ? new Date(it.createdAt) : null;
+  const heureCreation = dObj
+    ? dObj.toLocaleTimeString('fr-FR', {
+        hour: '2-digit', minute: '2-digit', second: '2-digit'
+      })
+    : '';
+  const dateCreation = dObj
+    ? dObj.toLocaleString('fr-FR', {
+        day: '2-digit', month: '2-digit', year: 'numeric',
+        hour: '2-digit', minute: '2-digit', second: '2-digit'
+      })
+    : '';
+  const ligne = document.createElement('div');
+  ligne.className = 'ligne-issue';
+  ligne.dataset.projet = it.projet;
+  ligne.dataset.numero = numero;
+  // Case à cocher libre (issue #154) : repère visuel personnel d'Alain, SANS
+  // aucune signification métier. État persisté côté navigateur uniquement
+  // (localStorage), jamais envoyé au serveur. On lit l'état mémorisé pour
+  // pré-cocher la case et marquer la ligne « traitée » dès le rendu (texte
+  // grisé + fond pâle, badges colorés préservés — voir .resultat-traite, #155).
+  const dejaCoche = estResultatCoche(it.projet, numero);
+  if (dejaCoche) ligne.classList.add('resultat-traite');
+  // TYPE de l'issue (pattern chef/ouvriers, issue #86) porté en dataset :
+  // exploité par appliquerFiltresListe() pour masquer les ouvriers au besoin.
+  ligne.dataset.type = typeIssue(it);
+  // Couleur du texte = couleur du projet ; fonds translucides propres au projet
+  // portés par des variables CSS, exploitées par .ligne-issue:hover/.selectionnee.
+  ligne.style.color = couleur;
+  ligne.style.setProperty('--bg-hover', avecOpacite(couleur, 0.10));
+  ligne.style.setProperty('--bg-sel',   avecOpacite(couleur, 0.20));
+  ligne.title = 'Double-cliquez pour afficher le détail de cette issue';
+  // Gauche : badges emoji (✅ ✏️ ⚠️ ○) + pastille ● colorée du projet.
+  // Centre : #N — titre [état].
+  // Le badge ✅ des issues FERMÉES portant le label « done » (les seules qui
+  // ont une réponse CCL) devient cliquable : un clic copie directement la
+  // réponse CCL sans ouvrir le détail (issue #62).
+  // Préfixe visuel du TYPE (🎯 chef / 👷 ouvrier / rien) et de l'OS CIBLE
+  // (🪟 for-windows / rien) devant les badges. Deux dimensions distinctes et
+  // cumulables : un ouvrier for-windows affiche « 👷🪟 » (issue #165).
+  const prefType = prefixeTypeIssue(it) + prefixeOSCible(it);
+  let badgesHtml = (prefType ? prefType + ' ' : '') + prefixeIssue(it.labels);
+  const nomsLabelsLigne = (it.labels || [])
+    .map(l => ((l && l.name) || l || '').toLowerCase());
+  if (etat === 'fermé' && nomsLabelsLigne.includes('done')
+      && badgesHtml.includes('✅')) {
+    // Trois badges aux rôles distincts et non redondants (issue #116) :
+    //   ✅ (vert) → réponse CCL COMPLÈTE seule (plus jamais le résumé),
+    //   « Diff »  → diff seul du/des commit(s) associé(s),
+    //   « All »   → réponse complète + diff ensemble.
+    // Le badge ✅ (vert) copie la réponse CCL COMPLÈTE (résumé + détails), sans
+    // le diff. Le résumé seul n'est plus copié par aucun badge (issue #116).
+    badgesHtml = badgesHtml.replace('✅',
+      '<span class="badge-copie-ccl" title="Copier la réponse CCL complète"'
+      + ' onclick="copierReponseDepuisBadge(event, \''
+      + escapeHtml(it.projet) + '\', ' + Number(numero) + ')">✅</span>');
+    // Badge « Diff » (issue #116) : copie UNIQUEMENT le diff du/des commit(s)
+    // associé(s) (résultat de git show), sans la réponse. Sans commit (issue en
+    // lecture seule), comportement neutre — rien n'est copié, pas d'erreur.
+    badgesHtml +=
+      '<span class="badge-copie-diff" title="Copier le diff seul du/des commit(s)"'
+      + ' onclick="copierDiffDepuisBadge(event, \''
+      + escapeHtml(it.projet) + '\', ' + Number(numero) + ')">Diff</span>';
+    // Badge « All » (issue #116) : copie, en un seul geste, la réponse CCL
+    // COMPLÈTE suivie du diff du/des commit(s) associé(s). Sans commit (lecture
+    // seule), copie la réponse seule — sans section diff vide ni erreur.
+    badgesHtml +=
+      '<span class="badge-copie-all" title="Copier la réponse complète + le diff"'
+      + ' onclick="copierToutEtDiffDepuisBadge(event, \''
+      + escapeHtml(it.projet) + '\', ' + Number(numero) + ')">All</span>';
+  }
+  ligne.innerHTML =
+    // Case à cocher libre (issue #154), tout à gauche de la ligne. Le clic ne
+    // doit PAS sélectionner/ouvrir l'issue (stopPropagation) ; onchange délègue
+    // à basculerCocheResultat() qui persiste l'état dans localStorage.
+    '<input type="checkbox" class="coche-resultat"'
+    + (dejaCoche ? ' checked' : '')
+    + ' title="Repère personnel : marquer ce résultat comme traité/lu"'
+    + ' onclick="event.stopPropagation()"'
+    + ' onchange="basculerCocheResultat(event, \''
+    + escapeHtml(it.projet) + '\', ' + Number(numero) + ')">'
+    + '<span class="ligne-date" title="' + escapeHtml(dateCreation) + '"'
+    + ' style="font-size:11px;color:#999;'
+    + 'min-width:66px;font-family:monospace">' + escapeHtml(heureCreation) + '</span>'
+    + '<span class="ligne-gauche">'
+    + '<span class="ligne-badges">' + badgesHtml + '</span>'
+    + '<span class="pastille-ligne" style="background:' + couleur + '"></span>'
+    + '</span>'
+    // Poignée de redimensionnement de la SEULE colonne titre (issue #95) :
+    // sur la bordure gauche de .ligne-texte. onclick stoppe la propagation
+    // pour qu'un clic de fin de glisser ne sélectionne pas l'issue.
+    + '<span class="poignee-titre" title="Glisser pour redimensionner la colonne titre"'
+    + ' onmousedown="demarrerRedimTitre(event)" onclick="event.stopPropagation()"></span>'
+    + '<span class="ligne-texte">#' + escapeHtml(numero) + ' — '
+    + escapeHtml(it.title) + ' [' + etat + ']</span>'
+    // Badge d'estimation prédictive (issue #108) PUIS badge de temps restant
+    // (issues #91/#106) : l'estimation (durée médiane historique du même
+    // projet+type+mode) s'affiche JUSTE AVANT le décompte, qui reste inchangé.
+    // Les deux sont remplis/actualisés par majBadgesTempsRestant().
+    + (etat === 'ouvert'
+        ? '<span class="ligne-estimation" style="display:none"></span>'
+          + '<span class="ligne-tempsrestant" style="display:none"></span>'
+        : '');
+  return ligne;
+}
+
 // (Re)construit la liste HTML cliquable à partir de listeIssuesResultats. TOUTES
 // les issues sont rendues comme lignes ; le filtre projet ne fait que masquer
 // (display:none) les lignes des projets inactifs. Chaque ligne est coloriée à la
@@ -1051,43 +1173,8 @@ function rendreListeIssues(reset) {
     return;
   }
   for (const it of listeIssuesResultats) {
-    const etat = (it.state || '').toUpperCase() === 'CLOSED' ? 'fermé' : 'ouvert';
-    const couleur = couleurProjetResultats(it.projet);
     const numero = String(it.number);
-    // Horodatage en heure locale du navigateur (issue #58). Depuis l'issue #95,
-    // la ligne n'affiche QUE l'heure "HH:MM:SS" (colonne plus étroite) ; la date
-    // complète "DD/MM/YYYY HH:MM:SS" reste disponible au survol (attribut title).
-    const dObj = it.createdAt ? new Date(it.createdAt) : null;
-    const heureCreation = dObj
-      ? dObj.toLocaleTimeString('fr-FR', {
-          hour: '2-digit', minute: '2-digit', second: '2-digit'
-        })
-      : '';
-    const dateCreation = dObj
-      ? dObj.toLocaleString('fr-FR', {
-          day: '2-digit', month: '2-digit', year: 'numeric',
-          hour: '2-digit', minute: '2-digit', second: '2-digit'
-        })
-      : '';
-    const ligne = document.createElement('div');
-    ligne.className = 'ligne-issue';
-    ligne.dataset.projet = it.projet;
-    ligne.dataset.numero = numero;
-    // Case à cocher libre (issue #154) : repère visuel personnel d'Alain, SANS
-    // aucune signification métier. État persisté côté navigateur uniquement
-    // (localStorage), jamais envoyé au serveur. On lit l'état mémorisé pour
-    // pré-cocher la case et marquer la ligne « traitée » dès le rendu (texte
-    // grisé + fond pâle, badges colorés préservés — voir .resultat-traite, #155).
-    const dejaCoche = estResultatCoche(it.projet, numero);
-    if (dejaCoche) ligne.classList.add('resultat-traite');
-    // TYPE de l'issue (pattern chef/ouvriers, issue #86) porté en dataset :
-    // exploité par appliquerFiltresListe() pour masquer les ouvriers au besoin.
-    ligne.dataset.type = typeIssue(it);
-    // Couleur du texte = couleur du projet ; fonds translucides propres au projet
-    // portés par des variables CSS, exploitées par .ligne-issue:hover/.selectionnee.
-    ligne.style.color = couleur;
-    ligne.style.setProperty('--bg-hover', avecOpacite(couleur, 0.10));
-    ligne.style.setProperty('--bg-sel',   avecOpacite(couleur, 0.20));
+    const ligne = construireLigneIssueDOM(it);
     // Clic simple : sélectionne SEULEMENT la ligne, sans charger son détail —
     // geste réflexe qui ne doit pas coûter un aller-retour réseau (issue #261).
     // Ctrl+clic : demande explicite de détail (comme le double-clic), puis
@@ -1113,78 +1200,6 @@ function rendreListeIssues(reset) {
       event.preventDefault();
       await afficherIssue(it.projet, numero);
     };
-    ligne.title = 'Double-cliquez pour afficher le détail de cette issue';
-    // Gauche : badges emoji (✅ ✏️ ⚠️ ○) + pastille ● colorée du projet.
-    // Centre : #N — titre [état].
-    // Le badge ✅ des issues FERMÉES portant le label « done » (les seules qui
-    // ont une réponse CCL) devient cliquable : un clic copie directement la
-    // réponse CCL sans ouvrir le détail (issue #62).
-    // Préfixe visuel du TYPE (🎯 chef / 👷 ouvrier / rien) et de l'OS CIBLE
-    // (🪟 for-windows / rien) devant les badges. Deux dimensions distinctes et
-    // cumulables : un ouvrier for-windows affiche « 👷🪟 » (issue #165).
-    const prefType = prefixeTypeIssue(it) + prefixeOSCible(it);
-    let badgesHtml = (prefType ? prefType + ' ' : '') + prefixeIssue(it.labels);
-    const nomsLabelsLigne = (it.labels || [])
-      .map(l => ((l && l.name) || l || '').toLowerCase());
-    if (etat === 'fermé' && nomsLabelsLigne.includes('done')
-        && badgesHtml.includes('✅')) {
-      // Trois badges aux rôles distincts et non redondants (issue #116) :
-      //   ✅ (vert) → réponse CCL COMPLÈTE seule (plus jamais le résumé),
-      //   « Diff »  → diff seul du/des commit(s) associé(s),
-      //   « All »   → réponse complète + diff ensemble.
-      // Le badge ✅ (vert) copie la réponse CCL COMPLÈTE (résumé + détails), sans
-      // le diff. Le résumé seul n'est plus copié par aucun badge (issue #116).
-      badgesHtml = badgesHtml.replace('✅',
-        '<span class="badge-copie-ccl" title="Copier la réponse CCL complète"'
-        + ' onclick="copierReponseDepuisBadge(event, \''
-        + escapeHtml(it.projet) + '\', ' + Number(numero) + ')">✅</span>');
-      // Badge « Diff » (issue #116) : copie UNIQUEMENT le diff du/des commit(s)
-      // associé(s) (résultat de git show), sans la réponse. Sans commit (issue en
-      // lecture seule), comportement neutre — rien n'est copié, pas d'erreur.
-      badgesHtml +=
-        '<span class="badge-copie-diff" title="Copier le diff seul du/des commit(s)"'
-        + ' onclick="copierDiffDepuisBadge(event, \''
-        + escapeHtml(it.projet) + '\', ' + Number(numero) + ')">Diff</span>';
-      // Badge « All » (issue #116) : copie, en un seul geste, la réponse CCL
-      // COMPLÈTE suivie du diff du/des commit(s) associé(s). Sans commit (lecture
-      // seule), copie la réponse seule — sans section diff vide ni erreur.
-      badgesHtml +=
-        '<span class="badge-copie-all" title="Copier la réponse complète + le diff"'
-        + ' onclick="copierToutEtDiffDepuisBadge(event, \''
-        + escapeHtml(it.projet) + '\', ' + Number(numero) + ')">All</span>';
-    }
-    ligne.innerHTML =
-      // Case à cocher libre (issue #154), tout à gauche de la ligne. Le clic ne
-      // doit PAS sélectionner/ouvrir l'issue (stopPropagation) ; onchange délègue
-      // à basculerCocheResultat() qui persiste l'état dans localStorage.
-      '<input type="checkbox" class="coche-resultat"'
-      + (dejaCoche ? ' checked' : '')
-      + ' title="Repère personnel : marquer ce résultat comme traité/lu"'
-      + ' onclick="event.stopPropagation()"'
-      + ' onchange="basculerCocheResultat(event, \''
-      + escapeHtml(it.projet) + '\', ' + Number(numero) + ')">'
-      + '<span class="ligne-date" title="' + escapeHtml(dateCreation) + '"'
-      + ' style="font-size:11px;color:#999;'
-      + 'min-width:66px;font-family:monospace">' + escapeHtml(heureCreation) + '</span>'
-      + '<span class="ligne-gauche">'
-      + '<span class="ligne-badges">' + badgesHtml + '</span>'
-      + '<span class="pastille-ligne" style="background:' + couleur + '"></span>'
-      + '</span>'
-      // Poignée de redimensionnement de la SEULE colonne titre (issue #95) :
-      // sur la bordure gauche de .ligne-texte. onclick stoppe la propagation
-      // pour qu'un clic de fin de glisser ne sélectionne pas l'issue.
-      + '<span class="poignee-titre" title="Glisser pour redimensionner la colonne titre"'
-      + ' onmousedown="demarrerRedimTitre(event)" onclick="event.stopPropagation()"></span>'
-      + '<span class="ligne-texte">#' + escapeHtml(numero) + ' — '
-      + escapeHtml(it.title) + ' [' + etat + ']</span>'
-      // Badge d'estimation prédictive (issue #108) PUIS badge de temps restant
-      // (issues #91/#106) : l'estimation (durée médiane historique du même
-      // projet+type+mode) s'affiche JUSTE AVANT le décompte, qui reste inchangé.
-      // Les deux sont remplis/actualisés par majBadgesTempsRestant().
-      + (etat === 'ouvert'
-          ? '<span class="ligne-estimation" style="display:none"></span>'
-            + '<span class="ligne-tempsrestant" style="display:none"></span>'
-          : '');
     zone.appendChild(ligne);
   }
   appliquerFiltresListe();
@@ -1230,17 +1245,23 @@ function appliquerLargeurTitre() {
 let redimTitreEtat = null;
 
 // Début du glisser sur la poignée gauche de la colonne titre. On mémorise la
-// largeur de départ de CETTE ligne comme référence ; le mouvement met à jour la
-// var CSS partagée par toutes les lignes (colonne cohérente).
+// largeur de départ de CETTE ligne comme référence, ainsi que la liste (.liste-
+// issues) qui la contient : depuis l'issue #321, ce n'est plus forcément
+// #liste-issues (l'onglet Résultats) — la fenêtre de recherche par titre
+// affiche ses propres lignes dans #liste-resultats-recherche, qui porte aussi
+// la classe .liste-issues et doit se redimensionner indépendamment, sans
+// affecter la colonne de l'onglet.
 function demarrerRedimTitre(event) {
   event.preventDefault();
   event.stopPropagation();
   const ligne = event.currentTarget.closest('.ligne-issue');
   const texte = ligne ? ligne.querySelector('.ligne-texte') : null;
-  if (!texte) return;
+  const liste = ligne ? ligne.closest('.liste-issues') : null;
+  if (!texte || !liste) return;
   redimTitreEtat = {
     xDepart: event.clientX,
     largeurDepart: texte.getBoundingClientRect().width,
+    liste: liste,
   };
   document.body.style.cursor = 'col-resize';
   document.body.style.userSelect = 'none';
@@ -1256,22 +1277,23 @@ function surRedimTitre(event) {
   const delta = redimTitreEtat.xDepart - event.clientX;
   let w = Math.round(redimTitreEtat.largeurDepart + delta);
   w = Math.max(80, Math.min(w, 1200));
-  const liste = document.getElementById('liste-issues');
-  if (!liste) return;
-  liste.style.setProperty('--largeur-titre', w + 'px');
-  liste.classList.add('titre-redimensionne');
+  redimTitreEtat.liste.style.setProperty('--largeur-titre', w + 'px');
+  redimTitreEtat.liste.classList.add('titre-redimensionne');
 }
 
-// Fin du glisser : on persiste la largeur courante dans localStorage.
+// Fin du glisser : on persiste la largeur courante dans localStorage — mais
+// UNIQUEMENT pour la liste de l'onglet Résultats (#liste-issues) ; un
+// redimensionnement dans la fenêtre de recherche reste local à cette session,
+// la fenêtre étant reconstruite à chaque nouvelle recherche.
 function finRedimTitre() {
   document.removeEventListener('mousemove', surRedimTitre);
   document.removeEventListener('mouseup', finRedimTitre);
   document.body.style.cursor = '';
   document.body.style.userSelect = '';
   if (!redimTitreEtat) return;
+  const liste = redimTitreEtat.liste;
   redimTitreEtat = null;
-  const liste = document.getElementById('liste-issues');
-  if (!liste) return;
+  if (liste.id !== 'liste-issues') return;
   const w = parseInt(liste.style.getPropertyValue('--largeur-titre'), 10);
   if (Number.isFinite(w) && w > 0) {
     try { localStorage.setItem(CLE_LARGEUR_TITRE, String(w)); } catch(e) {}
@@ -1857,6 +1879,201 @@ async function afficherIssue(nom, numero) {
       zone.innerHTML = '<div class="issue-vide">Erreur réseau : ' + escapeHtml(e.message) + '</div>';
     }
   }
+}
+
+// ─── Fenêtre de recherche par titre (issue #321) ──────────────────────────
+// Contexte : le 02/08/2026 une issue a été envoyée en double (#315/#316)
+// faute de moyen rapide de vérifier si un sujet avait déjà été traité. La
+// PORTÉE de recherche (nombre d'issues ratissées PAR PROJET sélectionné dans
+// les filtres) est INDÉPENDANTE de la limite d'affichage de l'onglet
+// (limiteIssuesProjet) : la recherche re-interroge toujours GitHub avec sa
+// propre portée — elle ne filtre jamais listeIssuesResultats déjà en mémoire,
+// sans quoi une issue au-delà de la limite d'affichage resterait introuvable.
+
+// Jeton anti-course dédié à la zone de détail de la fenêtre de recherche —
+// INDÉPENDANT de afficherIssueSeq (zone-issue de l'onglet Résultats) : les
+// deux zones chargent des détails en parallèle sans interférer, et un
+// double-clic dans la fenêtre n'affecte jamais projetCourant/numeroCourant ni
+// la sélection de l'onglet (contrairement à afficherIssue, qui reste dédiée à
+// #zone-issue et inchangée).
+let seqDetailRecherche = 0;
+
+// Charge et affiche le détail d'un résultat de recherche dans la zone de
+// détail PROPRE à la fenêtre (#zone-issue-recherche, autonome — jamais
+// #zone-issue de l'onglet). Reprend la même mécanique cache TTL + fetch +
+// rendu que afficherIssue, en réutilisant construireHtmlIssue (même badges,
+// mêmes onglets Réponse/Diff) sans la dupliquer.
+async function afficherIssueRecherche(nom, numero) {
+  numero = numero == null ? '' : String(numero);
+  const zone = document.getElementById('zone-issue-recherche');
+  if (!zone || !nom || !numero) return;
+  const seq = ++seqDetailRecherche;
+
+  const cleCache = CLE_CACHE_DETAIL + nom + '_' + numero;
+  let htmlAffiche = null;
+  try {
+    const obj = JSON.parse(localStorage.getItem(cleCache) || 'null');
+    if (obj && obj.it && (Date.now() - obj.ts) < TTL_DETAIL_MS) {
+      htmlAffiche = construireHtmlIssue(obj.it, nom);
+      zone.innerHTML = htmlAffiche;
+    }
+  } catch(e) {}
+  if (htmlAffiche === null) {
+    zone.innerHTML = '<div class="issue-vide">Chargement de l\'issue #' + escapeHtml(numero) + '…</div>';
+  }
+
+  try {
+    const rep = await fetch('/issue/' + encodeURIComponent(nom) + '/' + encodeURIComponent(numero));
+    const it = await rep.json();
+    if (seq !== seqDetailRecherche) return;
+    if (it.erreur) {
+      if (htmlAffiche === null) {
+        zone.innerHTML = '<div class="issue-vide">Erreur : ' + escapeHtml(it.erreur) + '</div>';
+      }
+      return;
+    }
+    try { localStorage.setItem(cleCache, JSON.stringify({ts: Date.now(), it: it})); } catch(e) {}
+    const htmlFrais = construireHtmlIssue(it, nom);
+    if (htmlFrais !== htmlAffiche) {
+      zone.innerHTML = htmlFrais;
+    }
+  } catch(e) {
+    if (seq === seqDetailRecherche && htmlAffiche === null) {
+      zone.innerHTML = '<div class="issue-vide">Erreur réseau : ' + escapeHtml(e.message) + '</div>';
+    }
+  }
+}
+
+// Lit le champ « portée » de la recherche, bornée par les mêmes constantes
+// que la limite d'affichage (LIMITE_ISSUES_MIN..MAX) — deux réglages distincts
+// partageant les mêmes bornes serveur (_limite_issues_requete).
+function porteeRechercheTitre() {
+  const input = document.getElementById('recherche-titre-portee');
+  const n = parseInt(input ? input.value : '', 10);
+  const bornee = Number.isFinite(n)
+    ? Math.min(LIMITE_ISSUES_MAX, Math.max(LIMITE_ISSUES_MIN, n))
+    : 15;
+  if (input) input.value = String(bornee);
+  return bornee;
+}
+
+// (Re)construit la liste des résultats de recherche : réplique EXACTE d'une
+// ligne de l'onglet Résultats (construireLigneIssueDOM, mêmes badges), dont le
+// double-clic cible la zone de détail PROPRE à la fenêtre (afficherIssueRecherche),
+// jamais celle de l'onglet.
+function rendreResultatsRecherche(resultats) {
+  const zone = document.getElementById('liste-resultats-recherche');
+  zone.innerHTML = '';
+  if (!resultats.length) {
+    zone.innerHTML = '<div class="issue-vide">Aucun résultat</div>';
+    return;
+  }
+  for (const it of resultats) {
+    const numero = String(it.number);
+    const ligne = construireLigneIssueDOM(it);
+    ligne.ondblclick = async (event) => {
+      event.preventDefault();
+      await afficherIssueRecherche(it.projet, numero);
+    };
+    zone.appendChild(ligne);
+  }
+}
+
+function ouvrirModalRechercheTitre() {
+  const modal = document.getElementById('modal-recherche-titre');
+  if (modal) modal.classList.add('actif');
+}
+
+function fermerModalRechercheTitre() {
+  const modal = document.getElementById('modal-recherche-titre');
+  if (modal) modal.classList.remove('actif');
+}
+
+// Lance la recherche par titre : un appel gh --state all --limit <portée> PAR
+// PROJET sélectionné dans les filtres (issue #321), state=all car on cherche
+// justement à retrouver un sujet DÉJÀ traité (doublon #315/#316). Déclenchée
+// UNIQUEMENT au clic sur le bouton (ou Entrée dans le champ texte) — jamais à
+// la frappe, cohérent avec la décision de #270 pour le bouton ↻. L'échec d'un
+// projet n'annule pas la recherche sur les autres : ce qui a réussi est
+// agrégé, les projets en échec sont listés dans un message discret.
+async function lancerRechercheTitre() {
+  const champTexte = document.getElementById('recherche-titre-texte');
+  const titre = (champTexte ? champTexte.value : '').trim();
+  const zoneErreurs = document.getElementById('recherche-titre-erreurs');
+  if (zoneErreurs) { zoneErreurs.style.display = 'none'; zoneErreurs.innerHTML = ''; }
+
+  if (!titre) {
+    if (zoneErreurs) {
+      zoneErreurs.textContent = 'Saisissez un titre à rechercher.';
+      zoneErreurs.style.display = '';
+    }
+    return;
+  }
+  // Portée = projets ACTUELLEMENT sélectionnés dans les filtres de l'onglet
+  // (projetsFiltresActifs) — pas tous les projets configurés.
+  const projets = nomsProjetsDisponibles().filter(nom => projetsFiltresActifs.has(nom));
+  if (!projets.length) {
+    if (zoneErreurs) {
+      zoneErreurs.textContent = 'Aucun projet sélectionné — activez au moins un filtre projet ci-dessus.';
+      zoneErreurs.style.display = '';
+    }
+    return;
+  }
+
+  const portee = porteeRechercheTitre();
+  const btn = document.getElementById('btn-recherche-titre');
+  const indicateur = document.getElementById('recherche-titre-indicateur');
+  if (btn) btn.disabled = true;
+  if (indicateur) indicateur.style.display = '';
+
+  const echecs = [];
+  let resultats = [];
+  try {
+    // Un appel gh PAR PROJET sélectionné, chacun avec sa propre portée — la
+    // recherche ne s'arrête pas au premier match, elle ratisse toute la
+    // portée de tous les projets sélectionnés (issue #321).
+    const listes = await Promise.all(projets.map(async nom => {
+      try {
+        const rep = await fetch('/recherche-issues/' + encodeURIComponent(nom)
+          + '?titre=' + encodeURIComponent(titre)
+          + '&limite=' + encodeURIComponent(portee));
+        const json = await rep.json();
+        if (!Array.isArray(json)) {
+          echecs.push(nom + ' : ' + (json && json.erreur ? json.erreur : 'erreur inconnue'));
+          return [];
+        }
+        return json.map(it => Object.assign({}, it, {projet: nom}));
+      } catch(e) {
+        echecs.push(nom + ' : erreur réseau (' + e.message + ')');
+        return [];
+      }
+    }));
+    resultats = listes.flat();
+  } finally {
+    if (btn) btn.disabled = false;
+    if (indicateur) indicateur.style.display = 'none';
+  }
+
+  // Filtre « 👷 Ouvriers » (issue #86), même détection que l'onglet — appliqué
+  // uniquement sur les projets ratissés (les autres n'ont de toute façon pas
+  // été interrogés).
+  if (!filtreOuvriersActif) {
+    resultats = resultats.filter(it => typeIssue(it) !== 'ouvrier');
+  }
+  resultats.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+
+  if (zoneErreurs && echecs.length) {
+    zoneErreurs.innerHTML = '⚠️ Échec sur ' + echecs.length + ' projet(s) : '
+      + echecs.map(escapeHtml).join(' — ');
+    zoneErreurs.style.display = '';
+  }
+
+  rendreResultatsRecherche(resultats);
+  const zoneDetail = document.getElementById('zone-issue-recherche');
+  if (zoneDetail) {
+    zoneDetail.innerHTML = '<div class="issue-vide">Double-cliquez un résultat pour afficher son détail.</div>';
+  }
+  ouvrirModalRechercheTitre();
 }
 
 // Bouton rafraîchir (issue #56) : vide le cache localStorage (liste + tous les
