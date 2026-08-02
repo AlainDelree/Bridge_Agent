@@ -9,6 +9,35 @@ milliers de caractères sur une seule ligne logique, coûteux à relire et
 
 Convention d'ajout : voir §10 de `BRIDGE_AGENT_DOC.md`.
 
+## 2 août 2026 — issue #330
+
+Documentation du champ d'en-tête `MODE`, jusqu'ici absent de
+`BRIDGE_AGENT_DOC.md` alors qu'il est auto-détecté depuis #326.
+
+- **§3** — ajout de `MODE` à la liste des champs d'en-tête optionnels
+  reconnus, avec un paragraphe dédié : `| MODE | … |` est détecté par
+  `new_issue.py` (`detecterModeDansCorps`) exactement comme
+  `TIMEOUT`/`PROJET`/`MODELE` — pré-sélectionne le radio Mode du
+  formulaire puis la ligne est retirée du corps collé. Reconnaissance
+  tolérante (insensible casse/accents, plusieurs libellés par valeur) et
+  défaut LECTURE si le champ est absent ou non reconnu.
+- **§6** — ajout d'une ligne `MODE` au tableau des champs spéciaux :
+  valeurs `lecture`/`écriture`, effet (arme ou non le label `mode_write`
+  via le radio du formulaire), renvoi au §5 pour le comportement des
+  modes.
+- **Ligne ~172 (§3, envoi en lot)** — précision : en mono-issue `MODE`
+  est auto-détecté depuis l'en-tête du bloc, alors qu'en mode lot il
+  reste commun à tout le lot (choisi une fois au radio du formulaire,
+  jamais lu bloc par bloc).
+- Volontairement **hors périmètre** : la troisième valeur (« lecture
+  active » / `mode_scratch`) n'est PAS ajoutée à ces deux endroits — elle
+  reste documentée uniquement au §5 (issue #327), car cette issue ne
+  documente que les deux valeurs fonctionnelles au sens de la détection
+  `new_issue.py`/formulaire.
+- Pied de page de `BRIDGE_AGENT_DOC.md` mis à jour selon la convention
+  §10 (nouvelle entrée en tête, glissement des deux précédentes ; l'entrée
+  #299 sort du pied de page — déjà disponible dans `CHANGELOG.md`).
+
 ## 2 août 2026 — issue #327
 
 Implémentation du mode « lecture active » (`mode_scratch`) côté
