@@ -4294,6 +4294,14 @@ function viderFormulaire(cacherMsg=true) {
   // Réinitialise le timeout sur la valeur TIMEOUT_CLAUDE du projet courant.
   mettreAJourInfoProjet();
   document.querySelector('input[name=mode][value=lecture]').checked = true;
+  // Réinitialise le garde-fou de detecterModeDansCorps (#335) : sans ça, coller
+  // ensuite un corps portant le MÊME MODE que la détection précédente est vu
+  // comme « rien de neuf » (ligne ~3812) et le radio — pourtant remis de force à
+  // lecture juste au-dessus, pas par un choix manuel d'Alain — ne rebasculait
+  // pas sur la valeur collée. D'où le symptôme intermittent (dépend de si le
+  // MODE collé diffère du précédent) qu'un F5 « corrigeait » en réinitialisant
+  // cette variable JS à null.
+  dernierModeAutoDetecte = null;
   mettreAJourBoutonEnvoi();
   document.querySelectorAll('input[name=notifs]').forEach(c => c.checked = false);
   // notif_pc revient à l'état mémorisé (coché par défaut), pas à décoché.

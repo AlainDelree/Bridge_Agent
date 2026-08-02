@@ -9,6 +9,34 @@ milliers de caractères sur une seule ligne logique, coûteux à relire et
 
 Convention d'ajout : voir §10 de `BRIDGE_AGENT_DOC.md`.
 
+## 2 août 2026 — issue #335
+
+Correction du radio Mode qui restait parfois figé sur « Lecture seule » après
+un collage, alors que le corps collé portait bien `| MODE | écriture |` —
+symptôme intermittent, corrigé par un simple F5 puis re-collage (observé à la
+suite des issues #157 et suivantes).
+
+- Cause racine : `viderFormulaire()` (appelée après chaque envoi réussi) remet
+  le radio Mode sur *lecture* mais ne réinitialisait pas `dernierModeAutoDetecte`,
+  la variable de garde de `detecterModeDansCorps()` (#326) qui évite de réécraser
+  un choix manuel quand « rien de neuf » n'est détecté dans le corps. Si le
+  corps collé ensuite portait le MÊME MODE que la détection précédente,
+  `detecterModeDansCorps` voyait `valeurDetectee === dernierModeAutoDetecte` et
+  ne touchait plus au radio — qui restait donc sur *lecture*, alors que ce
+  n'était pas un choix manuel d'Alain mais le défaut posé de force par
+  `viderFormulaire()` (qui vide aussi le corps par affectation directe de
+  `.value`, sans déclencher d'événement `input`, donc sans repasser par la
+  détection). Un rafraîchissement de page réinitialise cette variable JS à
+  `null`, ce qui « corrigeait » silencieusement le symptôme au collage suivant.
+- `static/js/app.js` (`viderFormulaire`) : ajout de `dernierModeAutoDetecte =
+  null;` juste après la remise à *lecture* du radio, pour que le prochain
+  collage soit toujours traité comme une détection neuve, quelle que soit la
+  valeur MODE précédemment vue dans la session.
+- Non modifié : `detecterProjetDansCorps`/`detecterTimeoutDansCorps`
+  partagent le même schéma de garde-fou (`dernierProjetAutoDetecte`,
+  `dernierTimeoutAutoDetecte`) et pourraient présenter la même faille — hors
+  périmètre de cette issue, à traiter séparément si observé en pratique.
+
 ## 2 août 2026 — issue #334
 
 Onglet Résultats : fetch unique de vérification 15s après le dépassement du
