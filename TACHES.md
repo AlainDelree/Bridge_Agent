@@ -78,7 +78,7 @@ première et sous-estimerait gravement la seconde.
 lancée. À reprendre à froid — le sujet touche des EWMA et des choix de
 modélisation qu'on prendrait mal à la légère.
 
-##Rapport : nouvel outil surveiller_builds.ps1 — surveillance des builds CCW en temps réel
+## Rapport : nouvel outil surveiller_builds.ps1 — surveillance des builds CCW en temps réel
 
 Contexte : besoin exprimé de suivre visuellement l'avancement d'un build Windows en cours (PyInstaller via Claude Code, ou compilation Inno Setup via ISCC.exe) sans devoir ouvrir le Gestionnaire des tâches ni re-scanner le dossier de sortie à la main.
 
