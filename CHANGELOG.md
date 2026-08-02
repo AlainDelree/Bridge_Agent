@@ -9,6 +9,50 @@ milliers de caractères sur une seule ligne logique, coûteux à relire et
 
 Convention d'ajout : voir §10 de `BRIDGE_AGENT_DOC.md`.
 
+## 2 août 2026 — issue #310
+
+Nouveau script `scripts/archiver_historique.py`, lancement manuel
+uniquement — jamais appelé par `watcher.py` (issue #310) — pour purger
+`logs/historique_durees.json`, qui accumule toutes les entrées depuis
+mai 2026 sans purge et grossit à chaque clôture d'issue. Diagnostic
+préalable (lecture du code, pas de conséquence sur ce script) :
+`maj_calibration_timeout` (EWMA, calibration TIMEOUT réelle, issue
+#221, `watcher.py`) est purement incrémentale et ne lit/écrit jamais
+`historique_durees.json` (seulement `etat_timeout.json` et
+`etat_ambiance.json`) — l'archivage n'a donc aucun impact sur elle ;
+`estimer_duree` (badge de fiabilité à la création d'une issue, issue
+#108, `app/issues.py`) recalcule en revanche une médiane à partir de
+tout l'historique transmis, filtré par projet/type/mode, donc un
+archivage réduit potentiellement le nombre d'échantillons par
+catégorie.
+
+Fonctionnement : pour chaque combinaison (projet, type, mode), les
+`--n-min` entrées les plus récentes (défaut 20) sont TOUJOURS
+conservées quelle que soit leur ancienneté ; au-delà de ce plancher,
+les entrées antérieures à `--seuil-mois` (défaut 6) sont déplacées
+vers `logs/historique_durees_archive_<année>.json` (une entrée va
+dans le fichier de SON année ; fusion avec l'archive existante si déjà
+présente). Les entrées à date illisible/absente sont conservées par
+prudence, jamais archivées. N_MIN_DEFAUT = 20 choisi en cohérence avec
+`SEUIL_ESTIM_SUR = 15` (`app/issues.py`) : une catégorie déjà au badge
+"sûr" (vert, n > 15) avant archivage y reste après, avec une marge de
+confort de 5. Le rapport console liste, par catégorie, le nombre total
+avant, archivé et conservé, avec une alerte si une catégorie repasse
+sous le seuil "sûr". `--dry-run` simule sans rien écrire. Écriture
+atomique (`tempfile` + `os.replace`, même motif que `watcher.py`) ;
+`etat_timeout.json` et `etat_ambiance.json` ne sont ni lus ni écrits
+par ce script.
+
+Testé sur une copie temporaire (`/tmp`, hors dépôt) avec des seuils
+réduits pour valider le mécanisme (archivage, fusion sur double
+exécution, conservation du total d'entrées) avant exécution réelle sur
+`logs/historique_durees.json` : avec les valeurs par défaut (6 mois),
+aucune entrée n'est encore assez ancienne (données depuis le
+24/05/2026 seulement) — 774 entrées conservées, 0 archivée, fichier
+inchangé après exécution. `etat_timeout.json` vérifié inchangé (même
+empreinte MD5) ; `etat_ambiance.json` n'existe pas encore sur cette
+machine et n'a pas été créé par ce script.
+
 ## 2 août 2026 — issue #309
 
 Diagnostic CCL amélioré dans `watcher.py`, zone `lancer_claude()` (issue
