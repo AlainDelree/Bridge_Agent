@@ -9,6 +9,18 @@ milliers de caractères sur une seule ligne logique, coûteux à relire et
 
 Convention d'ajout : voir §10 de `BRIDGE_AGENT_DOC.md`.
 
+## 2 août 2026 — issue #319
+
+`TACHES.md` : retrait de l'entrée de backlog « Garde-fou technique sur
+la modification de PERIMETRE » (diagnostic du 31/07/2026, issue #298),
+désormais implémentée — sous une forme différente de l'idée initiale
+(détection/confirmation) : décision finale du 02/08/2026 d'interdire
+purement et simplement toute modification de `configs/*.conf` par
+CCL/CCW (issue #318, commit 65e81c5). Suppression simple, même
+convention que les issues #310/#312. Reste du fichier inchangé,
+notamment « Champ de recherche texte dans l'onglet Résultats de
+new_issue.py » (#317), toujours en attente sans implémentation.
+
 ## 2 août 2026 — issue #318
 
 Interdiction totale de modification de `configs/*.conf` par CCL/CCW, y
