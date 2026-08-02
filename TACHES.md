@@ -184,3 +184,61 @@ soin, pas seulement en confiance sur la consigne donnée à CCL.
 
 **Statut** : idée en attente, pas de développement lancé. Reçue via rapport
 d'audit Scrabble le 24/07/2026.
+
+---
+
+## Rafraîchir une seule fois la ligne d'une issue quand son décompte atteint zéro
+
+**Contexte** : le décompte de temps restant affiché pour une issue tourne
+uniquement côté navigateur (timer local à 1 s, `majBadgesTempsRestant`) et
+ne re-interroge jamais GitHub. Quand le budget est épuisé,
+`formaterBadgeTempsRestant` affiche « ⌛ 0 s — budget épuisé » qui reste figé
+indéfiniment, même si l'issue est en réalité déjà terminée côté serveur.
+Ça donne l'illusion qu'une issue tourne encore et pousse à aller vérifier
+au log « pour être sûr » à chaque fois — repéré à plusieurs reprises le
+02/08/2026 (#320/#322/#323), où le décompte figé a fait douter à répétition
+de l'état réel d'issues déjà closes.
+
+Ce n'est pas un bug : c'est le comportement assumé depuis #270, qui a
+retiré le re-fetch périodique de toutes les issues (~3840 pts/h de quota
+GraphQL, premier poste de consommation, cf. #263) au profit d'un
+rafraîchissement uniquement manuel (bouton ↻). Le bip et le ↻ restent
+fiables — seul le décompte non rafraîchi ment.
+
+**Idée** : quand le décompte d'une issue atteint zéro, déclencher UN SEUL
+fetch ciblé de CETTE issue pour connaître son état réel, au lieu de laisser
+le badge figé jusqu'au ↻ manuel. La route existe déjà :
+`/issue/<projet>/<numero>` (`issue_detail`) renvoie state/labels/closedAt —
+pas de nouvelle route serveur nécessaire. Selon le résultat :
+- issue réellement fermée (done/needs-human) → mettre à jour la ligne
+  (badge terminal, retrait du décompte) ;
+- issue encore ouverte (dépassement légitime : l'estimation est une
+  médiane, pas une limite) → ne pas re-décompter indéfiniment.
+
+**Pourquoi ce n'est pas un retour à #270** : #270 a supprimé le re-fetch
+PÉRIODIQUE de TOUTES les issues, en continu (~240 cycles/h × N projets).
+Ici c'est UN fetch, d'UNE issue, UNE fois, au moment précis où son décompte
+expire — quelques appels par heure au maximum, négligeable devant ce que
+#270 a supprimé. Une future implémentation ne doit pas réintroduire, même
+partiellement, le polling banni par #270.
+
+**Point de conception à trancher (le seul vrai) — comportement au
+dépassement légitime** : si le fetch dit « toujours ouverte », que faire ?
+Deux options à documenter comme alternatives, sans trancher ici :
+- (a) re-tenter le fetch à intervalle LONG (ex. toutes les quelques
+  minutes) tant que l'issue traîne — un décompte honnête, au prix de
+  quelques appels espacés ;
+- (b) basculer le badge en « ⌛ dépassement — rafraîchir » (invite
+  explicite au ↻, zéro appel supplémentaire).
+
+Compromis à peser : (a) est plus confortable mais rouvre un mini-polling
+borné ; (b) est strictement fidèle à l'esprit #270 mais laisse une action
+manuelle à Alain.
+
+**Anti-abus à prévoir** (si l'option a est retenue un jour) : borner le
+nombre de re-fetch par issue, pour qu'une issue qui expire et traîne en
+boucle ne génère pas d'appels sans fin.
+
+**Statut** : idée en attente, pas de développement lancé. Née le
+02/08/2026 d'une session où le décompte figé a fait douter à répétition de
+l'état réel d'issues déjà terminées (#320/#322/#323).

@@ -9,6 +9,22 @@ milliers de caractères sur une seule ligne logique, coûteux à relire et
 
 Convention d'ajout : voir §10 de `BRIDGE_AGENT_DOC.md`.
 
+## 2 août 2026 — issue #324
+
+Ajout au backlog `TACHES.md` d'une entrée (pas d'implémentation) :
+« Rafraîchir une seule fois la ligne d'une issue quand son décompte atteint
+zéro ». Née d'une session où le décompte figé côté navigateur
+(`majBadgesTempsRestant`, jamais re-fetché depuis #270) a fait douter à
+répétition de l'état réel d'issues déjà closes (#320/#322/#323). Idée :
+au passage à « ⌛ 0s — budget épuisé », déclencher UN SEUL fetch ciblé de
+l'issue via la route existante `/issue/<projet>/<numero>` (`issue_detail`)
+plutôt qu'un re-fetch périodique de toutes les issues comme avant #270 —
+distinction explicitée dans l'entrée pour qu'une future implémentation ne
+réintroduise pas le polling banni par #270 (~3840 pts/h de quota GraphQL,
+cf. #263). Point de conception laissé ouvert : comportement au dépassement
+légitime (re-fetch à intervalle long vs. badge « rafraîchir » manuel), avec
+anti-abus à prévoir si l'option de re-fetch est retenue.
+
 ## 2 août 2026 — issue #323 (suite #320)
 
 Bouton **« ⛔ Interrompre cette issue »** dans l'onglet Résultats, sur toute
