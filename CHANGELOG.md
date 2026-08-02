@@ -9,6 +9,31 @@ milliers de caractères sur une seule ligne logique, coûteux à relire et
 
 Convention d'ajout : voir §10 de `BRIDGE_AGENT_DOC.md`.
 
+## 2 août 2026 — issue #332
+
+Le bouton « ⛔ Interrompre cette issue » (#323) tue par SIGKILL sans
+prévenir que, si l'issue écrivait, le working tree du projet peut rester
+PARTIEL (fichier à moitié écrit, backup présent sans le fix) — rien n'est
+perdu ni poussé, mais l'état n'est pas nettoyé automatiquement et il faut
+l'inspecter avant de relancer quoi que ce soit dessus.
+
+- `static/js/app.js` — `interrompreIssue` : nouvelle `modeEcritureDepuisLabels`
+  (mêmes labels que le pastillage `prefixeIssue`, ligne ~606, étendue à
+  `mode_scratch`) détecte si l'issue écrivait (`mode_write` → 'ecriture',
+  `mode_scratch` → 'lecture_active', aucun des deux → lecture seule, pas
+  d'avertissement). Nouvelle `avertissementWorkingTree` formule le message
+  (texte différent pour écriture pleine et pour lecture active — nuance :
+  le garde-fou de restauration #327 tourne APRÈS claude, donc peut ne pas
+  s'être exécuté avant un kill en pleine lecture active).
+- Confirmation AVANT le kill (`confirm()`) : enrichie avec l'avertissement
+  quand l'issue écrit — dernier moment pour renoncer. Comportement
+  inchangé pour une issue en lecture seule.
+- Modal de résultat APRÈS (`ouvrirModalInterrompre`, `modal-interrompre-rappel`) :
+  reçoit désormais l'avertissement en paramètre et l'ajoute au rappel
+  existant (relance manuelle du watcher) — `git status` dans le projet,
+  annuler/repartir du commit `avant-XXX`, ne pas relancer d'issue sur ce
+  projet avant working tree propre.
+
 ## 2 août 2026 — issue #330
 
 Documentation du champ d'en-tête `MODE`, jusqu'ici absent de

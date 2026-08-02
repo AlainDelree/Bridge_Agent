@@ -2732,6 +2732,36 @@ function labelsIssueDepuisCache(nom, numero) {
   return [];
 }
 
+// Détecte si l'issue interrompue ÉCRIVAIT dans le working tree du projet, à
+// partir des mêmes labels que prefixeIssue() (mode_write, ligne ~606) —
+// étendu à mode_scratch (lecture active, #327). Renvoie 'ecriture',
+// 'lecture_active' ou null (lecture seule : pas de working tree modifié,
+// donc aucun avertissement à afficher — issue #332).
+function modeEcritureDepuisLabels(labels) {
+  const noms = (labels || []).map(l => (l || '').toLowerCase());
+  if (noms.includes('mode_write'))   return 'ecriture';
+  if (noms.includes('mode_scratch')) return 'lecture_active';
+  return null;
+}
+
+// Message d'avertissement working tree, ajouté à la confirmation AVANT le
+// kill et/ou au rappel de la modal de résultat APRÈS (issue #332) — mêmes
+// faits, formulé une seule fois pour ne pas diverger entre les deux emplois.
+function avertissementWorkingTree(modeEcr, nom) {
+  if (modeEcr === 'ecriture') {
+    return "le kill peut tomber en pleine écriture : le working tree de « " + nom + " » "
+         + 'peut rester PARTIEL (fichier à moitié écrit, backup sans le fix). '
+         + 'Vérifiez `git status` dans ~/' + nom + ' avant de relancer une issue sur ce projet '
+         + '(annulez si besoin, ou repartez du commit avant-XXX).';
+  }
+  if (modeEcr === 'lecture_active') {
+    return 'le garde-fou de restauration (#327) tourne APRÈS claude — un kill peut tomber avant, '
+         + 'donc le working tree de « ' + nom + ' » a pu ne PAS être restauré. '
+         + 'Un `git status` de vérification dans ~/' + nom + ' est recommandé avant de relancer.';
+  }
+  return '';
+}
+
 async function interrompreIssue(nom, numero) {
   const depot = depotDuProjet(nom);
   if (!depot) {
@@ -2740,12 +2770,16 @@ async function interrompreIssue(nom, numero) {
   }
   const labels  = labelsIssueDepuisCache(nom, numero);
   const windows = labels.map(l => l.toLowerCase()).includes('for-windows');
+  const modeEcr = modeEcritureDepuisLabels(labels);
+  const avertTree = avertissementWorkingTree(modeEcr, nom);
   if (!confirm("Interrompre le traitement de l'issue #" + numero
              + (windows ? ' (CCW / Windows)' : ' (CCL / Linux)') + " ?\n\n"
              + 'Le watcher ' + (windows ? 'CCW-Watcher' : 'du projet')
              + ' sera ARRÊTÉ (les autres issues en file restent ouvertes sur GitHub, '
              + 'mais en attente tant que le watcher n\'est pas relancé MANUELLEMENT). '
-             + "L'issue sera marquée needs-human — elle ne sera PAS fermée. Continuer ?")) return;
+             + "L'issue sera marquée needs-human — elle ne sera PAS fermée."
+             + (avertTree ? '\n\n⚠️ Cette issue écrit dans le projet : ' + avertTree : '')
+             + ' Continuer ?')) return;
 
   let resultat;
   try {
@@ -2763,7 +2797,7 @@ async function interrompreIssue(nom, numero) {
     alert('Erreur : ' + (resultat.erreur || "échec de l'interruption."));
     return;
   }
-  ouvrirModalInterrompre(resultat);
+  ouvrirModalInterrompre(resultat, avertTree);
 
   // Recharge la liste (l'issue porte désormais needs-human) puis réaffiche.
   const numStr = String(numero);
@@ -2786,7 +2820,7 @@ const LIBELLES_STATUT_INTERROMPRE = {
 };
 const BADGES_ETAPE_INTERROMPRE = {succes: '✅', rien_a_faire: '➖', echec: '❌'};
 
-function ouvrirModalInterrompre(resultat) {
+function ouvrirModalInterrompre(resultat, avertTree) {
   const overlay = document.getElementById('modal-interrompre');
   const titre   = document.getElementById('modal-interrompre-titre');
   const liste   = document.getElementById('modal-interrompre-liste');
@@ -2815,6 +2849,10 @@ function ouvrirModalInterrompre(resultat) {
                  + 'volontairement laissé en place pour éviter un double traitement).';
   } else if (resultat.statut_global === 'succes_partiel') {
     rappelTexte += ' ⚠ Certaines étapes ont échoué (détail ci-dessus) — vérifiez avant de relancer.';
+  }
+  if (avertTree) {
+    rappelTexte += ' ⚠️ Cette issue écrivait dans le projet : ' + avertTree
+                 + ' Ne relancez aucune issue sur ce projet avant working tree propre.';
   }
   rappel.textContent = rappelTexte;
 
