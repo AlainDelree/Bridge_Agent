@@ -2235,6 +2235,93 @@ def liberer_verrou(verrou: Path | None):
         log.warning(f"Libération du verrou {verrou} impossible ({e}).")
 
 
+def _empreinte_configs() -> dict[str, bytes]:
+    """Instantané intégral de configs/*.conf (issue #318), pris juste avant un
+    traitement en mode_write. Sert de base à `_restaurer_configs_modifies` pour
+    détecter ET annuler toute modification de ce dossier par CCL/CCW — ces
+    fichiers (PERIMETRE, TOPIC_NTFY, FICHIER_CONTEXTE, ...) ne sont modifiables
+    qu'à la main par Alain (ou via l'onglet Configuration de new_issue.py),
+    jamais par une issue, cf. consignes/globales.md. `configs/` est commun à
+    TOUS les projets (partagé par ce watcher.py, cf. DOSSIER_SCRIPT) : cette
+    empreinte protège donc l'ensemble du dossier, pas seulement le `.conf` du
+    projet courant."""
+    dossier = DOSSIER_SCRIPT / "configs"
+    empreinte = {}
+    if dossier.is_dir():
+        for chemin in dossier.glob("*.conf"):
+            try:
+                empreinte[chemin.name] = chemin.read_bytes()
+            except OSError:
+                pass
+    return empreinte
+
+
+def _detecter_demande_modif_configs(body: str) -> bool:
+    """Détection best-effort (issue #318), purement informative : le corps de
+    l'issue mentionne-t-il un chemin `configs/*.conf` ? Ne bloque rien —
+    l'interdiction réelle vient de la consigne `globales.md` (CCL doit refuser
+    lui-même) et de `_restaurer_configs_modifies` (garde-fou technique après
+    coup) ; ce simple repérage sert seulement à journaliser un avertissement
+    précoce, avant même le lancement de claude."""
+    return bool(re.search(r"configs[/\\][\w.-]*\.conf", body or "", re.IGNORECASE))
+
+
+def _restaurer_configs_modifies(numero: int, empreinte_avant: dict[str, bytes]) -> None:
+    """Garde-fou technique (issue #318) : après une exécution mode_write,
+    compare configs/*.conf à l'instantané pris juste avant (`_empreinte_configs`)
+    et annule toute modification, création ou suppression détectée — fichier
+    par fichier, en journalisant un WARNING explicite — sans jamais faire
+    échouer le reste du traitement de l'issue (best-effort, aucune exception
+    propagée). Seul Alain modifie ces fichiers, à la main."""
+    dossier = DOSSIER_SCRIPT / "configs"
+    if not dossier.is_dir():
+        return
+    noms_apres = set()
+    try:
+        fichiers_apres = list(dossier.glob("*.conf"))
+    except OSError:
+        fichiers_apres = []
+    for chemin in fichiers_apres:
+        noms_apres.add(chemin.name)
+        contenu_avant = empreinte_avant.get(chemin.name)
+        try:
+            contenu_apres = chemin.read_bytes()
+        except OSError:
+            continue
+        if contenu_avant is None:
+            log.warning(
+                f"  ⚠️  Issue #{numero} : nouveau fichier 'configs/{chemin.name}' détecté "
+                f"après un traitement mode_write — modification de configs/*.conf interdite "
+                f"(consignes/globales.md, issue #318), suppression automatique."
+            )
+            try:
+                chemin.unlink()
+            except OSError as e:
+                log.error(f"  Suppression de configs/{chemin.name} impossible : {e}")
+        elif contenu_apres != contenu_avant:
+            log.warning(
+                f"  ⚠️  Issue #{numero} : modification de 'configs/{chemin.name}' détectée "
+                f"après un traitement mode_write — interdite (consignes/globales.md, issue "
+                f"#318), restauration automatique de la version d'avant exécution."
+            )
+            try:
+                chemin.write_bytes(contenu_avant)
+            except OSError as e:
+                log.error(f"  Restauration de configs/{chemin.name} impossible : {e}")
+    for nom, contenu_avant in empreinte_avant.items():
+        if nom in noms_apres:
+            continue
+        log.warning(
+            f"  ⚠️  Issue #{numero} : suppression de 'configs/{nom}' détectée après un "
+            f"traitement mode_write — interdite (consignes/globales.md, issue #318), "
+            f"restauration automatique."
+        )
+        try:
+            (dossier / nom).write_bytes(contenu_avant)
+        except OSError as e:
+            log.error(f"  Restauration de configs/{nom} impossible : {e}")
+
+
 def traiter_issue(issue: dict, dry_run: bool):
     numero = issue["number"]
     titre  = issue["title"]
@@ -2275,6 +2362,12 @@ def traiter_issue(issue: dict, dry_run: bool):
     log.info(f"→ Issue #{numero} détectée : '{titre}' [priorité: {priorite}] [mode: {mode_txt}]")
     if autoriser_ecriture:
         log.warning(f"  ⚠️  MODE ÉCRITURE ARMÉ pour #{numero} (label '{LABEL_ECRITURE}') — actions permises, push interdit.")
+        if _detecter_demande_modif_configs(body):
+            log.warning(
+                f"  ⚠️  Issue #{numero} : le corps mentionne un chemin configs/*.conf — "
+                f"rappel : CCL/CCW ne doit JAMAIS modifier ces fichiers (consignes/globales.md, "
+                f"issue #318), même si l'issue le demande explicitement. Garde-fou technique actif."
+            )
 
     # Périmètre effectif de cette exécution (issue #125). Par défaut : celui du
     # .conf. Pour un projet à périmètre dynamique, il vient du champ REPO_CIBLE de
@@ -2370,6 +2463,15 @@ def traiter_issue(issue: dict, dry_run: bool):
         if not dry_run:
             verifier_preflight_token(cwd=cwd_effectif)
 
+        # Garde-fou technique configs/*.conf (issue #318) : instantané pris une
+        # seule fois avant la première tentative — chaque tentative est comparée
+        # à CE MÊME instantané (l'état légitime d'origine), pas à celui de la
+        # tentative précédente, pour rester la référence même après une éventuelle
+        # restauration intermédiaire.
+        empreinte_configs_avant = (
+            _empreinte_configs() if (autoriser_ecriture and not dry_run) else None
+        )
+
         tentative = 0
         while True:
             tentative += 1
@@ -2378,6 +2480,9 @@ def traiter_issue(issue: dict, dry_run: bool):
             succes, sortie = lancer_claude(numero, titre, body, dry_run, autoriser_ecriture,
                                            timeout, modele,
                                            perimetre=perimetre_effectif, cwd=cwd_effectif)
+
+            if empreinte_configs_avant is not None:
+                _restaurer_configs_modifies(numero, empreinte_configs_avant)
 
             if succes:
                 log.info(f"  ✓ Issue #{numero} traitée avec succès.")

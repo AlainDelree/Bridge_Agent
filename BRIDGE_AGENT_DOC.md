@@ -485,10 +485,21 @@ les petits changements (une ligne CSS, un label, une couleur).
 4. CCL exécute, committe, ne pousse pas
 5. Alain vérifie (`git show`) et pousse
 
-**Exception :** les modifications de `configs/*.conf` (`TOPIC_NTFY`,
-`FICHIER_CONTEXTE`, etc.) peuvent se faire directement via
-l'onglet Configuration de new_issue.py — elles ne touchent
-pas au code et sont gitignorées.
+**Exception :** les modifications de `configs/*.conf` (`PERIMETRE`,
+`TOPIC_NTFY`, `FICHIER_CONTEXTE`, etc.) peuvent se faire directement via
+l'onglet Configuration de new_issue.py, ou à la main par Alain — elles
+ne touchent pas au code et sont gitignorées. **Cette exception vaut
+uniquement pour Alain** : CCL/CCW ne modifie **jamais** `configs/*.conf`
+via une issue, même en mode_write et même si l'issue le demande
+explicitement en toutes lettres (issue #318, suite au diagnostic #298 —
+ce champ texte simple n'avait aucun garde-fou contre un élargissement ou
+un rétrécissement silencieux du PÉRIMÈTRE). La règle est injectée à
+CCL/CCW via `consignes/globales.md`, et doublée d'un garde-fou technique
+dans `watcher.py` (`_empreinte_configs` / `_restaurer_configs_modifies`) :
+toute modification de `configs/*.conf` survenue malgré tout au cours
+d'un traitement mode_write est détectée (comparaison du contenu avant/
+après chaque tentative) et annulée automatiquement, avec un WARNING
+journalisé, sans faire échouer le reste du traitement de l'issue.
 
 ### 12.1 Consignes injectées — architecture à trois couches (issues #209, #211)
 
@@ -1904,6 +1915,6 @@ issues de la même combinaison s'il le juge utile.
 
 ---
 
-*Dernière mise à jour : 1er août 2026 — Crée `BUILD_WINDOWS_CCW.md` (issue #299) et allège d'autant le §16.3 « Procédure — builder un projet Windows » : la note « staging local » (issue #297) détaillée en toutes lettres — pattern de contournement de la corruption de fichiers sur `\\VBOXSVR\CCW_Share` et checklist par projet buildé — est remplacée par un renvoi de deux lignes vers ce nouveau fichier, qui porte désormais aussi la checklist Scrabble (clone, script de build, `.spec`, TIMEOUT, taille/hash de l'installeur de référence du 31/07/2026) ; objectif — éviter que chaque nouveau projet buildé sous Windows (Rummikub en préparation) n'ajoute encore du contenu spécifique-projet dans ce fichier central. Précédemment — Ajoute au §16 « Agent Windows CCW » la sous-section 16.4 « Interrompre une issue CCW coincée » (issue #287) : symptôme (le watcher `CCW-Watcher` log en boucle « Issue différée : un autre traitement détient déjà le verrou sur \\VBOXSVR\CCW_Share\ » sans jamais progresser), cause (fichier verrou orphelin dans `C:\CCW\Bridge_Agent\logs\verrous\`, non nettoyé après un process tué brutalement ou un redémarrage NSSM sans libération propre), procédure manuelle (`nssm restart CCW-Watcher` puis lister/supprimer le(s) fichier(s) `.lock` restant(s) via `Get-ChildItem`/`Remove-Item`), et note sur le bouton **« Interrompre »** prévu dans l'onglet CCW de `new_issue.py` pour automatiser cette procédure (voir `TACHES.md`). Précédemment — Documente au §16.3 « Procédure — builder un projet Windows » le pattern de staging local pour les builds Windows CCW (issue #297) : diagnostic du 31/07/2026 sur Scrabble — les builds PyInstaller + Inno Setup produisaient des fichiers tronqués/corrompus lorsqu'ils tournaient directement sur le partage VirtualBox `\\VBOXSVR\CCW_Share` (fix #338) ; contournement standard — le script de build copie les sources vers un répertoire local à la VM (`C:\Temp\<Projet>Build`), construit entièrement là, puis ne recopie que l'artefact final vers le partage ; conséquence obligatoire — ajouter ce chemin local au `PERIMETRE` de `configs\ccw.conf`, sans quoi CCW bloque légitimement le build (contenu depuis remplacé par un renvoi, voir ci-dessus).*
+*Dernière mise à jour : 2 août 2026 — §12 « Règles d'usage » : le paragraphe « Exception » sur `configs/*.conf` précise désormais que cette exception (modification directe, hors passage par CC) vaut uniquement pour Alain (à la main ou via l'onglet Configuration de `new_issue.py`), jamais pour CCL/CCW — même en mode_write, même si l'issue le demande explicitement en toutes lettres (issue #318, suite au diagnostic #298 : PERIMETRE est un champ texte simple sans garde-fou contre un élargissement/rétrécissement silencieux). Renvoie vers le garde-fou technique ajouté à `watcher.py` (`_empreinte_configs`/`_restaurer_configs_modifies`) qui détecte et annule automatiquement toute modification de `configs/*.conf` survenue malgré tout en cours de traitement, sans faire échouer le reste de l'issue. Précédemment — Crée `BUILD_WINDOWS_CCW.md` (issue #299) et allège d'autant le §16.3 « Procédure — builder un projet Windows » : la note « staging local » (issue #297) détaillée en toutes lettres — pattern de contournement de la corruption de fichiers sur `\\VBOXSVR\CCW_Share` et checklist par projet buildé — est remplacée par un renvoi de deux lignes vers ce nouveau fichier, qui porte désormais aussi la checklist Scrabble (clone, script de build, `.spec`, TIMEOUT, taille/hash de l'installeur de référence du 31/07/2026) ; objectif — éviter que chaque nouveau projet buildé sous Windows (Rummikub en préparation) n'ajoute encore du contenu spécifique-projet dans ce fichier central. Précédemment — Ajoute au §16 « Agent Windows CCW » la sous-section 16.4 « Interrompre une issue CCW coincée » (issue #287) : symptôme (le watcher `CCW-Watcher` log en boucle « Issue différée : un autre traitement détient déjà le verrou sur \\VBOXSVR\CCW_Share\ » sans jamais progresser), cause (fichier verrou orphelin dans `C:\CCW\Bridge_Agent\logs\verrous\`, non nettoyé après un process tué brutalement ou un redémarrage NSSM sans libération propre), procédure manuelle (`nssm restart CCW-Watcher` puis lister/supprimer le(s) fichier(s) `.lock` restant(s) via `Get-ChildItem`/`Remove-Item`), et note sur le bouton **« Interrompre »** prévu dans l'onglet CCW de `new_issue.py` pour automatiser cette procédure (voir `TACHES.md`).*
 
 Historique complet : voir [`CHANGELOG.md`](CHANGELOG.md).

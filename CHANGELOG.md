@@ -9,6 +9,41 @@ milliers de caractères sur une seule ligne logique, coûteux à relire et
 
 Convention d'ajout : voir §10 de `BRIDGE_AGENT_DOC.md`.
 
+## 2 août 2026 — issue #318
+
+Interdiction totale de modification de `configs/*.conf` par CCL/CCW, y
+compris en mode_write (diagnostic #298, décision du 02/08/2026 : pas de
+mécanisme de détection/confirmation, interdiction pure et simple —
+seul Alain modifie ces fichiers à la main ou via l'onglet Configuration
+de `new_issue.py`).
+
+- `consignes/globales.md` : nouvelle règle explicite — CCL/CCW ne
+  modifie JAMAIS `configs/*.conf`, même si une issue le demande en
+  toutes lettres ; en cas de demande de ce type, refuser cette partie
+  de la tâche, l'expliquer dans le rapport de clôture, ne rien
+  committer sur ce point.
+- `watcher.py` : garde-fou technique en deux temps.
+  - `_detecter_demande_modif_configs` : repérage best-effort (regex sur
+    un chemin `configs/*.conf` dans le corps) juste avant le lancement
+    de claude en mode_write — purement informatif (WARNING journalisé),
+    ne bloque rien.
+  - `_empreinte_configs` / `_restaurer_configs_modifies` : instantané
+    intégral (contenu brut) de `configs/*.conf` pris une seule fois
+    avant la première tentative de `traiter_issue`, comparé après
+    CHAQUE tentative (succès ou échec). Toute modification, création ou
+    suppression détectée est annulée automatiquement (restauration du
+    contenu d'origine, ou suppression d'un fichier apparu), avec un
+    WARNING explicite par fichier concerné — sans jamais faire échouer
+    le reste du traitement de l'issue (best-effort, aucune exception
+    propagée). `configs/` est commun à tous les projets (partagé par ce
+    `watcher.py`), donc l'ensemble du dossier est protégé, pas
+    seulement le `.conf` du projet en cours de traitement.
+- `BRIDGE_AGENT_DOC.md` (§12) : le paragraphe « Exception » sur
+  `configs/*.conf` précise désormais que cette exception vaut
+  uniquement pour Alain (à la main ou via l'onglet Configuration),
+  jamais pour CCL/CCW, même en mode_write, et renvoie vers le
+  garde-fou technique de `watcher.py`.
+
 ## 2 août 2026 — issue #315
 
 `BUILD_WINDOWS_CCW.md` : ajout de la checklist Rummikub (build validé),

@@ -50,3 +50,14 @@
   ou de modification du pipeline — il documente le pattern de staging
   local, l'extension du PÉRIMÈTRE associée, et une checklist par projet
   déjà buildé.
+- **Interdiction absolue de modifier `configs/*.conf` :** CCL/CCW ne
+  modifie JAMAIS un fichier `configs/*.conf` (PERIMETRE, TOPIC_NTFY,
+  FICHIER_CONTEXTE, etc.), même si une issue le demande explicitement en
+  toutes lettres. Seul Alain modifie ces fichiers, à la main ou via
+  l'onglet Configuration de `new_issue.py`. Si une issue demande une
+  telle modification, refuse cette partie de la tâche, explique-le dans
+  le rapport de clôture, et ne committe rien sur ce point (le reste de
+  la tâche, s'il est indépendant, peut être traité normalement). Un
+  garde-fou technique dans `watcher.py` détecte et annule automatiquement
+  toute modification de `configs/*.conf` survenue malgré tout au cours du
+  traitement.
