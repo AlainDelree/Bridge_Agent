@@ -9,6 +9,27 @@ milliers de caractères sur une seule ligne logique, coûteux à relire et
 
 Convention d'ajout : voir §10 de `BRIDGE_AGENT_DOC.md`.
 
+## 2 août 2026 — issue #342
+
+§11 « Conventions de code » de `BRIDGE_AGENT_DOC.md` : deux notes ajoutées
+pour informer les projets utilisant Bridge_Agent des conséquences
+pratiques de la parallélisation `mode_write` par worktrees (issue #337),
+jusqu'ici documentée uniquement pour l'infrastructure elle-même (§13 du
+DOC, `WORKTREES.md`). Première note : deux issues `mode_write` touchant
+les mêmes fichiers ou zones de code peuvent désormais générer un conflit
+de merge à résoudre manuellement — recommandation de scoper chaque issue
+sur un périmètre de fichiers aussi distinct que possible. Deuxième note :
+le workflow de vérification/push d'Alain inclut désormais deux étapes
+supplémentaires après une ou plusieurs issues `mode_write` en parallèle —
+`git worktree list` pour repérer les worktrees à traiter,
+`python3 scripts/fusionner_changelog.py` avant tout merge ou push (intègre
+les `CHANGELOG-N.md` des worktrees dans `CHANGELOG.md`), puis merge manuel
+de chaque branche `worktree-issue-<N>` et nettoyage
+(`git worktree remove` + `git branch -d`) ; renvoi vers `WORKTREES.md` pour
+le détail complet plutôt qu'une duplication intégrale. Pied de page du DOC
+mis à jour en conséquence (glissement des trois entrées, #327 sort du pied
+de page).
+
 ## 2 août 2026 — issue #340
 
 Suite #338 : le bouton ⛔ « Interrompre » (`app/interruption.py::interrompre_linux()`)

@@ -518,6 +518,27 @@ la même opération, en plus du point ci-dessus :
   - *Bon exemple* : « Dans `api.py`, pour les trois méthodes de navigation,
     différer l'appel dans un thread daemon avec `time.sleep(0.05)` avant
     de naviguer. »
+- **Parallélisation `mode_write` (issue #337, information pour les projets
+  utilisant Bridge_Agent)** : depuis #337, plusieurs issues `mode_write` d'un
+  même projet peuvent tourner **en parallèle**, chacune dans son propre
+  `git worktree`. Deux issues touchant les mêmes fichiers ou les mêmes zones
+  de code peuvent donc générer un conflit de merge à résoudre manuellement.
+  **Recommandation** : scoper chaque issue sur un périmètre de fichiers aussi
+  distinct que possible des autres issues `mode_write` en cours.
+- **Workflow de vérification/push après des issues `mode_write` parallèles**
+  (issue #342) : en plus de la relecture habituelle des commits avant push,
+  Alain doit désormais :
+  1. Vérifier `git worktree list` pour repérer les worktrees prêts à être
+     mergés.
+  2. Lancer `python3 scripts/fusionner_changelog.py` **avant tout merge ou
+     push** — intègre les `CHANGELOG-N.md` de chaque worktree dans
+     `CHANGELOG.md` (lancement manuel uniquement, jamais automatique).
+  3. Merger chaque branche `worktree-issue-<N>` dans `master` manuellement,
+     une par une.
+  4. Nettoyer : `git worktree remove <chemin>` puis
+     `git branch -d worktree-issue-<N>`.
+  Détail complet (procédures de récupération incluses) : voir
+  [`WORKTREES.md`](WORKTREES.md).
 
 ---
 
@@ -2094,47 +2115,41 @@ issues de la même combinaison s'il le juge utile.
 
 ---
 
-*Dernière mise à jour : 2 août 2026 — §13 « Commandes utiles » (nouvelle
-sous-section « Interrompre une issue bloquée ») et §16.4 « Interrompre une
-issue CCW coincée » : les deux boutons ⛔ « Interrompre » (CCL et CCW, issue
-#323) sont désormais documentés comme implémentés et fonctionnels — le
-renvoi mort vers `TACHES.md` du §16.4 est supprimé (issue #333). §16.4
-décrit maintenant au présent ce que fait `interrompre_windows()`
-(`app/interruption.py`) via `provisioning/windows/interrompre_projet_ccw.ps1` :
-arrêt du service NSSM, vérification bornée de l'arbre de process,
-suppression conditionnelle des `.lock`. La nouvelle sous-section de §13
-documente le pendant côté CCL (`interrompre_linux()`) : arbre de process
-retrouvé par remontée `/proc/<pid>/status` (PPID, jamais par nom
-d'exécutable), `SIGKILL`, attente confirmée de la mort de l'arbre avant
-suppression du verrou — ainsi que l'équivalent manuel (`kill -9` + suppression
-du `.lock`). Précédemment — §3 « Créer une issue — la méthode normale » et §6
-« Champs spéciaux dans le corps de l'issue » : documente le champ d'en-tête
-`MODE` (issue #330), auto-détecté par `new_issue.py` (`detecterModeDansCorps`)
-au même titre que `TIMEOUT`/`PROJET`/`MODELE` (issue #326) — pré-sélectionne
-le radio Mode du formulaire puis la ligne est retirée du corps, reconnaissance
-tolérante (casse/accents, plusieurs libellés par valeur), défaut LECTURE si
-le champ est absent ou non reconnu. Seules les deux valeurs fonctionnelles
+*Dernière mise à jour : 2 août 2026 — §11 « Conventions de code » : deux
+notes informant les projets utilisant Bridge_Agent des conséquences de la
+parallélisation `mode_write` par worktrees (issue #337) — risque de conflit
+de merge entre deux issues touchant les mêmes fichiers (recommandation :
+scoper les issues sur des périmètres de fichiers aussi distincts que
+possible) et workflow de vérification/push désormais attendu d'Alain
+(`git worktree list`, `python3 scripts/fusionner_changelog.py` avant tout
+merge ou push, merge manuel de chaque branche `worktree-issue-<N>`,
+nettoyage `git worktree remove`/`git branch -d`) — renvoi vers
+`WORKTREES.md` pour le détail complet (issue #342). Précédemment — §13
+« Commandes utiles » (nouvelle sous-section « Interrompre une issue
+bloquée ») et §16.4 « Interrompre une issue CCW coincée » : les deux
+boutons ⛔ « Interrompre » (CCL et CCW, issue #323) sont désormais
+documentés comme implémentés et fonctionnels — le renvoi mort vers
+`TACHES.md` du §16.4 est supprimé (issue #333). §16.4 décrit maintenant au
+présent ce que fait `interrompre_windows()` (`app/interruption.py`) via
+`provisioning/windows/interrompre_projet_ccw.ps1` : arrêt du service NSSM,
+vérification bornée de l'arbre de process, suppression conditionnelle des
+`.lock`. La nouvelle sous-section de §13 documente le pendant côté CCL
+(`interrompre_linux()`) : arbre de process retrouvé par remontée
+`/proc/<pid>/status` (PPID, jamais par nom d'exécutable), `SIGKILL`,
+attente confirmée de la mort de l'arbre avant suppression du verrou — ainsi
+que l'équivalent manuel (`kill -9` + suppression du `.lock`). Précédemment
+— §3 « Créer une issue — la méthode normale » et §6 « Champs spéciaux dans
+le corps de l'issue » : documente le champ d'en-tête `MODE` (issue #330),
+auto-détecté par `new_issue.py` (`detecterModeDansCorps`) au même titre que
+`TIMEOUT`/`PROJET`/`MODELE` (issue #326) — pré-sélectionne le radio Mode du
+formulaire puis la ligne est retirée du corps, reconnaissance tolérante
+(casse/accents, plusieurs libellés par valeur), défaut LECTURE si le champ
+est absent ou non reconnu. Seules les deux valeurs fonctionnelles
 `lecture`/`écriture` sont documentées à ces deux endroits ; la troisième
-valeur (lecture active/`mode_scratch`) reste décrite uniquement au §5 (issue
-#327), hors périmètre de #330. Précise aussi qu'en mono-issue `MODE` est
-auto-détecté depuis l'en-tête du bloc, alors qu'en mode lot il reste commun
-à tout le lot — choisi une fois au radio du formulaire, jamais lu bloc par
-bloc. Précédemment — §4 « Labels disponibles » et §5, renommé « Modes
-lecture seule / lecture active / écriture » : implémente la « lecture
-active » (label `mode_scratch`) préparée côté formulaire/en-tête par #326
-mais jusqu'ici ignorée par le watcher (issue #327). Le booléen
-`autoriser_ecriture` est remplacé par un MODE à trois valeurs
-(`lecture`/`lecture_active`/`ecriture`), déduit des labels par
-`watcher.py::_deduire_mode` et lu par les cinq points de décision (flag
-`--dangerously-skip-permissions`, bloc de garde-fou du prompt, backup,
-garde-fou `configs/*.conf`, étiquette de calibration TIMEOUT). La lecture
-active écrit UNIQUEMENT dans `/tmp/bridge_scratch_<projet>/` (créé avant
-CCL, nettoyé après, quel que soit le résultat) — défense en profondeur
-niveau 1 (bloc de prompt dédié) + niveau 2 (empreinte de l'état git du
-répertoire de travail avant/après, restauration + échec `needs-human` si
-une écriture est détectée hors scratch, même schéma que le garde-fou
-`configs/*.conf` #318). Le livrable reste un rapport, comme en lecture
-seule. §12 « Règles d'usage » précise que l'interdiction d'écriture sur
-`configs/*.conf` (#318) vaut aussi en lecture active.*
+valeur (lecture active/`mode_scratch`) reste décrite uniquement au §5
+(issue #327), hors périmètre de #330. Précise aussi qu'en mono-issue `MODE`
+est auto-détecté depuis l'en-tête du bloc, alors qu'en mode lot il reste
+commun à tout le lot — choisi une fois au radio du formulaire, jamais lu
+bloc par bloc.*
 
 Historique complet : voir [`CHANGELOG.md`](CHANGELOG.md).
