@@ -73,6 +73,7 @@ def _enregistrer_routes(app: Flask) -> None:
                          ccw_ajouter_projet, ccw_finaliser_projet,
                          ccw_redemarrer_projet, ccw_demarrer_projet,
                          ccw_arreter_projet)
+    from app.interruption import route_interrompre
     from app.cycle_vie import heartbeat, events, quitter
     from app.diag_heartbeat import visibilite as diag_visibilite   # DIAGNOSTIC TEMPORAIRE — issue #157, à retirer
     from app.vues import index
@@ -113,6 +114,8 @@ def _enregistrer_routes(app: Flask) -> None:
     app.add_url_rule("/ccw/redemarrer-projet", "ccw_redemarrer_projet", login_requis(ccw_redemarrer_projet), methods=["POST"])
     app.add_url_rule("/ccw/demarrer-projet", "ccw_demarrer_projet", login_requis(ccw_demarrer_projet), methods=["POST"])
     app.add_url_rule("/ccw/arreter-projet", "ccw_arreter_projet", login_requis(ccw_arreter_projet), methods=["POST"])
+    # ─── Interruption ciblée d'une issue en cours (issue #323, suite #320) ────
+    app.add_url_rule("/interrompre", "route_interrompre", login_requis(route_interrompre), methods=["POST"])
     app.add_url_rule("/heartbeat", "heartbeat", heartbeat, methods=["POST"])
     app.add_url_rule("/events", "events", login_requis(events))
     app.add_url_rule("/quitter", "quitter", login_requis(quitter), methods=["POST"])

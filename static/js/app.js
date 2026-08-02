@@ -1718,6 +1718,19 @@ function construireHtmlIssue(it, nom) {
           + 'Fermer définitivement</button></div>';
   }
 
+  // Bouton « Interrompre » (issue #323, suite #320) : sur TOUTE issue ouverte
+  // ni done ni needs-human — remplace au niveau de l'issue elle-même l'action
+  // corrective qui se faisait jusqu'ici hors interface (kill manuel, verrou à
+  // la main). Contrairement à « Interrompre et fermer » (#144, ci-dessus) :
+  // ne FERME PAS l'issue (needs-human seulement, trace via commentaire), et
+  // fonctionne aussi côté for-windows (CCW), pas seulement for-linux.
+  if (!ferme && !nomsLabels.includes('done') && !nomsLabels.includes('needs-human')) {
+    html += '<div class="bloc-annuler">'
+          + '<button class="danger" onclick="interrompreIssue(\'' + nom + '\', '
+          + Number(it.number) + ')">'
+          + '⛔ Interrompre cette issue</button></div>';
+  }
+
   html += '<div class="issue-body">' + escapeHtml(it.body || '(pas de description)') + '</div>';
 
   const comms = it.comments || [];
@@ -2688,6 +2701,128 @@ async function fermerEtInterrompre(nom, numero) {
   if (panneauWatchers && panneauWatchers.classList.contains('actif')) {
     await chargerWatchers();
   }
+}
+
+// ─── Interruption ciblée d'une issue en cours (issue #323, suite #320) ──────
+// Contrairement à fermerEtInterrompre() (#144, ci-dessus) : ne ferme PAS
+// l'issue (needs-human + commentaire seulement, trace conservée), et gère
+// aussi bien for-linux (CCL) que for-windows (CCW via guestcontrol/nssm).
+// Le dépôt GitHub est lu depuis le <select id="projet"> peuplé côté serveur
+// (« nom — depot », cf. templates/index.html et ajouterProjetAuSelecteur) —
+// JAMAIS déduit du nom du projet (les deux peuvent diverger, voir la route
+// Flask /interrompre, app/interruption.py). Les labels viennent du cache
+// localStorage du détail déjà affiché (CLE_CACHE_DETAIL), forcément à jour
+// puisque c'est ce détail qui vient de faire apparaître le bouton.
+function depotDuProjet(nom) {
+  const select = document.getElementById('projet');
+  if (!select) return null;
+  const opt = [...select.options].find(o => o.value === nom);
+  if (!opt) return null;
+  const idx = (opt.textContent || '').indexOf(' — ');
+  return idx >= 0 ? opt.textContent.slice(idx + 3).trim() : null;
+}
+
+function labelsIssueDepuisCache(nom, numero) {
+  try {
+    const obj = JSON.parse(localStorage.getItem(CLE_CACHE_DETAIL + nom + '_' + numero) || 'null');
+    if (obj && obj.it && Array.isArray(obj.it.labels)) {
+      return obj.it.labels.map(l => (l && l.name) || l || '').filter(Boolean);
+    }
+  } catch(e) {}
+  return [];
+}
+
+async function interrompreIssue(nom, numero) {
+  const depot = depotDuProjet(nom);
+  if (!depot) {
+    alert('Dépôt GitHub introuvable pour le projet « ' + nom + ' » — impossible d\'interrompre.');
+    return;
+  }
+  const labels  = labelsIssueDepuisCache(nom, numero);
+  const windows = labels.map(l => l.toLowerCase()).includes('for-windows');
+  if (!confirm("Interrompre le traitement de l'issue #" + numero
+             + (windows ? ' (CCW / Windows)' : ' (CCL / Linux)') + " ?\n\n"
+             + 'Le watcher ' + (windows ? 'CCW-Watcher' : 'du projet')
+             + ' sera ARRÊTÉ (les autres issues en file restent ouvertes sur GitHub, '
+             + 'mais en attente tant que le watcher n\'est pas relancé MANUELLEMENT). '
+             + "L'issue sera marquée needs-human — elle ne sera PAS fermée. Continuer ?")) return;
+
+  let resultat;
+  try {
+    const rep = await fetch('/interrompre', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({depot: depot, numero: Number(numero), labels: labels})
+    });
+    resultat = await rep.json();
+  } catch(e) {
+    alert('Erreur réseau : ' + e.message);
+    return;
+  }
+  if (!resultat.succes) {
+    alert('Erreur : ' + (resultat.erreur || "échec de l'interruption."));
+    return;
+  }
+  ouvrirModalInterrompre(resultat);
+
+  // Recharge la liste (l'issue porte désormais needs-human) puis réaffiche.
+  const numStr = String(numero);
+  await chargerListeIssues();
+  const ligne = [...document.querySelectorAll('#liste-issues .ligne-issue')]
+    .find(l => l.dataset.projet === nom && l.dataset.numero === numStr);
+  if (ligne && ligne.style.display !== 'none') {
+    await afficherIssue(nom, numStr);
+  }
+  const panneauWatchers = document.getElementById('panneau-watchers');
+  if (panneauWatchers && panneauWatchers.classList.contains('actif')) {
+    await chargerWatchers();
+  }
+}
+
+const LIBELLES_STATUT_INTERROMPRE = {
+  ok:              {icone: '✅', texte: 'Interruption effectuée'},
+  succes_partiel:  {icone: '⚠️', texte: 'Interruption partielle — certaines étapes ont échoué'},
+  echec_critique:  {icone: '⛔', texte: "Interruption incomplète — action manuelle requise"},
+};
+const BADGES_ETAPE_INTERROMPRE = {succes: '✅', rien_a_faire: '➖', echec: '❌'};
+
+function ouvrirModalInterrompre(resultat) {
+  const overlay = document.getElementById('modal-interrompre');
+  const titre   = document.getElementById('modal-interrompre-titre');
+  const liste   = document.getElementById('modal-interrompre-liste');
+  const rappel  = document.getElementById('modal-interrompre-rappel');
+
+  const lib = LIBELLES_STATUT_INTERROMPRE[resultat.statut_global]
+           || {icone: '', texte: resultat.statut_global || '?'};
+  titre.textContent = lib.icone + ' ' + lib.texte;
+
+  liste.innerHTML = (resultat.etapes || []).map(e =>
+    '<div class="etape-interrompre etape-' + escapeHtml(e.statut) + '">'
+    + '<span class="etape-badge">' + (BADGES_ETAPE_INTERROMPRE[e.statut] || '?') + '</span> '
+    + '<b>' + escapeHtml(e.etape) + '</b> — ' + escapeHtml(e.message || '')
+    + '</div>'
+  ).join('') || '<div class="issue-vide">Aucune étape.</div>';
+
+  let rappelTexte = resultat.agent === 'windows'
+    ? 'Service CCW-Watcher arrêté — relance via l\'onglet CCW (pas de rallumage automatique).'
+    : 'Relance manuelle du watcher obligatoire (onglet Watchers) — pas de rallumage automatique.';
+  if (resultat.agent === 'windows' && resultat.vm_running === false) {
+    rappelTexte += ' ⚠ La VM CCW-Build ne semble pas démarrée actuellement.';
+  }
+  if (resultat.statut_global === 'echec_critique') {
+    rappelTexte += " ⛔ Un process n'a pas pu être confirmé mort — vérifiez avec ps / le "
+                 + 'Gestionnaire des tâches AVANT de relancer le watcher (le verrou a été '
+                 + 'volontairement laissé en place pour éviter un double traitement).';
+  } else if (resultat.statut_global === 'succes_partiel') {
+    rappelTexte += ' ⚠ Certaines étapes ont échoué (détail ci-dessus) — vérifiez avant de relancer.';
+  }
+  rappel.textContent = rappelTexte;
+
+  overlay.classList.add('actif');
+}
+
+function fermerModalInterrompre() {
+  document.getElementById('modal-interrompre').classList.remove('actif');
 }
 
 function collecterFormulaire() {

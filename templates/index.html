@@ -560,6 +560,22 @@
   </div>
 </div>
 
+<!-- ─── Modal « Résultat de l'interruption » (issue #323, suite #320) ────────
+     Affichée après l'appel à POST /interrompre : statut global + détail de
+     CHAQUE étape (pas seulement le résultat global), puis rappel de la
+     relance manuelle obligatoire du watcher (les deux côtés : CCL comme
+     CCW-Watcher ne sont JAMAIS relancés automatiquement par cette action). -->
+<div id="modal-interrompre" class="modal-overlay">
+  <div class="modal-carte" style="max-width:560px">
+    <div class="modal-titre" id="modal-interrompre-titre"></div>
+    <div id="modal-interrompre-liste" class="modal-liste" style="font-family:inherit"></div>
+    <div id="modal-interrompre-rappel" class="message avertissement" style="margin-bottom:14px"></div>
+    <div class="modal-boutons">
+      <button id="btn-fermer-interrompre" onclick="fermerModalInterrompre()">OK</button>
+    </div>
+  </div>
+</div>
+
 <!-- ─── Overlay « serveur arrêté » ────────────────────────────────────────── -->
 <div id="overlay-arret" class="overlay-arret">
   <div class="msg">🔴 Serveur arrêté — relancez new_issue.py puis rechargez</div>

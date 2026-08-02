@@ -9,6 +9,72 @@ milliers de caractères sur une seule ligne logique, coûteux à relire et
 
 Convention d'ajout : voir §10 de `BRIDGE_AGENT_DOC.md`.
 
+## 2 août 2026 — issue #323 (suite #320)
+
+Bouton **« ⛔ Interrompre cette issue »** dans l'onglet Résultats, sur toute
+issue ouverte ni `done` ni `needs-human` — remplace l'intervention manuelle
+hors interface (kill + nettoyage de verrou à la main) qu'exigeait jusqu'ici
+un watcher bloqué (verrou orphelin, process pendu). Reprise de #320,
+abandonnée 3 fois faute de `TIMEOUT` suffisant (600s ne couvrait pas
+`watcher.py` + route Flask + logique CCW + modal front) ; `TIMEOUT` porté à
+1800s pour cette reprise. **Contrainte centrale** : interrompre UNE issue ne
+sacrifie jamais les autres issues en file pour le même watcher — elles
+restent ouvertes sur GitHub, simplement en attente d'une relance MANUELLE
+(bouton « Lancer watcher » côté CCL, onglet CCW côté CCW-Watcher ; aucun
+rallumage automatique ici, à la différence de #202).
+
+- Nouvelle route **`POST /interrompre`** (`app/interruption.py`) : reçoit
+  `{depot, numero, labels}`, résout le projet via `projet_par_depot` (nouveau
+  dans `app/projets.py`) — **toujours par le champ DEPOT du `.conf`**, jamais
+  déduit du nom projet ni du basename de `REP_TRAVAIL` (trois clés distinctes
+  qui peuvent diverger, ex. projet « echecs » / dépôt `AlChess` / répertoire
+  `~/NicLink`). Chaque étape renvoie un statut à **trois valeurs**
+  (`succes`/`rien_a_faire`/`echec`) + message ; une étape en échec n'arrête
+  pas les suivantes, sauf la suppression du verrou, volontairement **sautée**
+  si l'arbre de process n'est pas confirmé mort. Statut global dérivé : `ok`
+  / `succes_partiel` / `echec_critique` (arbre non tué → lock **non**
+  nettoyé, pour ne jamais risquer un double traitement). Label `needs-human`
+  + commentaire `⛔ Interrompu via new_issue.py` posés dans TOUS les cas
+  (sortie du circuit + trace), avant même le résultat des étapes techniques.
+  - **for-linux** : arbre de process du watcher (`logs/watcher-<nom>.pid` +
+    toute sa descendance, dont l'éventuel claude en session séparée,
+    §13/#247) énuméré par **remontée `/proc` via PPID** — jamais par nom
+    d'exécutable — puis `SIGKILL`, attente bornée (~5s) de disparition
+    effective avant de supprimer le verrou par **nom exact**
+    (`watcher._chemin_verrou` réutilisée telle quelle, jamais redupliquée),
+    puis re-vérification (verrou frais réapparu → signalé comme course #202
+    probable, jamais resupprimé en boucle). Piège découvert en testant :
+    le process watcher est un enfant DIRECT du process Flask
+    (`app/watchers.py:demarrer_watcher`) jamais attendu (`wait()`) — après
+    `SIGKILL` il reste **zombie** et `os.kill(pid, 0)` le signale encore
+    vivant indéfiniment ; `_reaper_best_effort` (`os.waitpid(..., WNOHANG)`)
+    corrige ce faux positif. `FileNotFoundError` sur le verrou = `rien_a_faire`
+    (libéré normalement), pas un échec.
+  - **for-windows** : nouveau script `provisioning/windows/
+    interrompre_projet_ccw.ps1` (poussé + exécuté via guestcontrol, pattern
+    `app/ccw.py` — service et répertoire du projet résolus dynamiquement via
+    `_lister_projets_vm`, jamais codés en dur malgré l'exemple `CCW-Watcher`
+    / `C:\CCW\Bridge_Agent` de l'issue) : arrêt du service NSSM, vérification
+    + kill ciblé de l'arbre resté vivant (remontée par `ParentProcessId`,
+    même logique PPID que côté Linux), suppression des `.lock` du dossier
+    `logs\verrous` du projet **seulement** si l'arbre est confirmé mort.
+    Non exécuté contre une VM réelle (pas d'environnement CCW disponible ici
+    — comme `finaliser_projet_ccw.ps1` en son temps).
+- `templates/index.html` / `static/js/app.js` : bouton `interrompreIssue()`
+  dans `construireHtmlIssue` (dépôt lu depuis le `<select id="projet">`
+  peuplé côté serveur « nom — depot », jamais déduit du nom ; labels lus
+  depuis le cache localStorage du détail déjà affiché). Modal dédiée
+  (`#modal-interrompre`) détaillant **chaque étape** (statut + message), pas
+  seulement le résultat global, avec rappel de la relance manuelle adapté à
+  l'agent (CCL vs CCW) et alerte explicite en cas de `succes_partiel` /
+  `echec_critique` (« vérifier avec ps/Gestionnaire des tâches avant de
+  relancer »). Avertissement discret si la VM CCW n'est pas démarrée
+  (`vm_running` dans la réponse).
+- Testé (hors modal/CCW, sans VM disponible) : arbre de process réel
+  (`sh` + enfant `sleep`) tué + confirmé mort + verrou nommé supprimé +
+  re-vérifié ; cas `rien_a_faire` (aucun watcher, aucun verrou) ;
+  `projet_par_depot` contre les `.conf` réels du dépôt.
+
 ## 2 août 2026 — issue #322
 
 Dernier trou résiduel du cycle de vie verrou/claude comblé : si le watcher
