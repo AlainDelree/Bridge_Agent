@@ -9,6 +9,32 @@ milliers de caractères sur une seule ligne logique, coûteux à relire et
 
 Convention d'ajout : voir §10 de `BRIDGE_AGENT_DOC.md`.
 
+## 2 août 2026 — issue #333
+
+Documentation : les deux boutons ⛔ « Interrompre » (CCL et CCW, issue
+#323) sont désormais implémentés et fonctionnels — mise à jour de
+`BRIDGE_AGENT_DOC.md` en conséquence, plus de renvoi mort vers
+`TACHES.md`.
+
+- `BRIDGE_AGENT_DOC.md`, §16.4 « Interrompre une issue CCW coincée » : la
+  Note « un bouton [...] est prévu [...] (voir `TACHES.md`) » est
+  remplacée par une description au présent de `interrompre_windows()`
+  (`app/interruption.py`) : copie et exécution à distance (`VBoxManage
+  guestcontrol`) de `provisioning/windows/interrompre_projet_ccw.ps1` —
+  arrêt du service NSSM, vérification bornée (~5 s) que l'arbre de
+  process est mort, suppression conditionnelle des `.lock` de
+  `<RepDepot>\logs\verrous\`, label `needs-human` + commentaire de
+  traçabilité systématiques, watcher jamais relancé automatiquement.
+- `BRIDGE_AGENT_DOC.md`, §13 « Commandes utiles » : nouvelle sous-section
+  « Interrompre une issue bloquée (issue #323, suite #320) », même niveau
+  de détail que §16.4, pour le pendant côté CCL (`interrompre_linux()`) :
+  arbre de process retrouvé par remontée `/proc/<pid>/status` (PPID),
+  `SIGKILL`, attente de confirmation avant suppression du verrou —
+  équivalent manuel (`kill -9` + suppression du `.lock`) inclus.
+- `BRIDGE_AGENT_DOC.md`, pied de page : ligne « Dernière mise à jour »
+  mise à jour (nouvelle entrée en tête, l'entrée #318 sort).
+- Aucun changement de code — documentation uniquement.
+
 ## 2 août 2026 — issue #332
 
 Le bouton « ⛔ Interrompre cette issue » (#323) tue par SIGKILL sans

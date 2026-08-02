@@ -806,6 +806,54 @@ dans le `.conf` du projet.
 (#200). Aucun process ne tourne inutilement, et aucune étape manuelle n'est
 requise pour le flux normal.
 
+### Interrompre une issue bloquée (issue #323, suite #320)
+
+**Symptôme visé.** Une issue en cours de traitement reste bloquée — CCL
+plante, boucle, ou dépasse largement le TIMEOUT attendu sans jamais poser
+`done` ni `needs-human` — et Alain veut la sortir du circuit sans attendre
+indéfiniment ni sacrifier les autres issues en file pour le même watcher
+(elles restent ouvertes sur GitHub, simplement en attente tant que le
+watcher n'est pas relancé manuellement).
+
+**Ce que fait le bouton.** Sur toute issue ouverte ni `done` ni
+`needs-human`, le détail de l'issue affiche un bouton ⛔ « Interrompre cette
+issue » (contrairement à « Interrompre et fermer », #144, qui ferme
+l'issue, celui-ci ne fait que la sortir du circuit). Il appelle `POST
+/interrompre` (`app/interruption.py::route_interrompre`), qui pose
+**toujours** le label `needs-human` et poste un commentaire `⛔ Interrompu
+via new_issue.py` (trace GitHub, quel que soit le résultat des étapes
+techniques qui suivent), puis exécute selon le label de l'issue
+`interrompre_windows()` (issue `for-windows`, voir §16.4) ou
+`interrompre_linux()` (issue `for-linux`, ci-dessous) :
+
+- lit le PID du watcher dans `logs/watcher-<projet>.pid` ;
+- remonte tout son arbre de process par lecture directe de `/proc/<pid>
+  /status` (`PPid`, jamais par nom d'exécutable) ;
+- l'achève par `SIGKILL`, attend jusqu'à 5 s sa disparition confirmée
+  (avec `waitpid` non bloquant sur le PID du watcher, pour éviter qu'un
+  zombie non réapé ne soit à tort signalé comme encore vivant) ;
+- supprime le verrou du projet (`_chemin_verrou`) **uniquement** si l'arbre
+  est confirmé mort — sinon la suppression est sautée, pour ne jamais
+  risquer un double traitement.
+
+Le watcher n'est **jamais** relancé automatiquement (contrairement à
+#202) : relance manuelle requise (bouton « Lancer watcher » de l'onglet
+Watchers côté CCL, onglet CCW côté CCW-Watcher).
+
+**Équivalent manuel (CCL) :**
+
+```bash
+ps aux | grep watcher            # trouver le PID du watcher bloqué
+kill -9 <pid>                    # puis ceux de sa descendance si besoin
+rm logs/verrous/<fichier>.lock   # UNIQUEMENT si l'arbre est bien mort
+```
+
+**Résultat affiché.** Une modale récapitule chaque étape (badges succès /
+rien à faire / échec) et le statut global : `ok`, `succes_partiel` (au
+moins une étape non critique en échec) ou `echec_critique` (l'arbre de
+process n'a pas pu être confirmé mort — le verrou est alors volontairement
+laissé en place, intervention manuelle requise).
+
 ### Nettoyage de l'arbre de process après une tâche (issue #247)
 
 **Problème constaté.** Après un build Scrabble réussi côté CCW, un `cmd.exe`
@@ -1512,9 +1560,22 @@ fichier existe, même après redémarrage.
    Remove-Item C:\CCW\Bridge_Agent\logs\verrous\<fichier>.lock
    ```
 
-**Note :** un bouton **« Interrompre »** dans l'onglet CCW de `new_issue.py`
-est prévu pour automatiser cette procédure à distance depuis Linux (voir
-`TACHES.md`).
+**Bouton « Interrompre » (issue #323, implémenté).** Le bouton ⛔ « Interrompre
+cette issue », affiché sur toute issue ouverte ni `done` ni `needs-human` dans
+l'interface, automatise cette procédure à distance depuis Linux pour les
+issues `for-windows` : `POST /interrompre` (`app/interruption.py::
+interrompre_windows`) copie et exécute `provisioning/windows/
+interrompre_projet_ccw.ps1` dans la VM via `VBoxManage guestcontrol` — arrêt
+du service NSSM (`nssm stop <Service>`), vérification bornée (~5 s, kill
+ciblé si besoin) que l'arbre de process du service (watcher + éventuel
+`claude` orphelin) est bien mort, puis suppression des `.lock` de
+`<RepDepot>\logs\verrous\` **uniquement** si cet arbre est confirmé mort —
+sinon le verrou est volontairement laissé en place, pour ne jamais risquer un
+double traitement. Le label `needs-human` et un commentaire de traçabilité
+sont toujours postés sur GitHub ; l'issue n'est **pas** fermée et le watcher
+CCW n'est **jamais** relancé automatiquement (relance manuelle via l'onglet
+CCW). Voir § « Interrompre une issue bloquée » (§13) pour le pendant côté CCL
+et le détail commun de l'interface (bouton, route Flask, statuts).
 
 ---
 
@@ -1976,6 +2037,47 @@ issues de la même combinaison s'il le juge utile.
 
 ---
 
-*Dernière mise à jour : 2 août 2026 — §3 « Créer une issue — la méthode normale » et §6 « Champs spéciaux dans le corps de l'issue » : documente le champ d'en-tête `MODE` (issue #330), auto-détecté par `new_issue.py` (`detecterModeDansCorps`) au même titre que `TIMEOUT`/`PROJET`/`MODELE` (issue #326) — pré-sélectionne le radio Mode du formulaire puis la ligne est retirée du corps, reconnaissance tolérante (casse/accents, plusieurs libellés par valeur), défaut LECTURE si le champ est absent ou non reconnu. Seules les deux valeurs fonctionnelles `lecture`/`écriture` sont documentées à ces deux endroits ; la troisième valeur (lecture active/`mode_scratch`) reste décrite uniquement au §5 (issue #327), hors périmètre de #330. Précise aussi qu'en mono-issue `MODE` est auto-détecté depuis l'en-tête du bloc, alors qu'en mode lot il reste commun à tout le lot — choisi une fois au radio du formulaire, jamais lu bloc par bloc. Précédemment — §4 « Labels disponibles » et §5, renommé « Modes lecture seule / lecture active / écriture » : implémente la « lecture active » (label `mode_scratch`) préparée côté formulaire/en-tête par #326 mais jusqu'ici ignorée par le watcher (issue #327). Le booléen `autoriser_ecriture` est remplacé par un MODE à trois valeurs (`lecture`/`lecture_active`/`ecriture`), déduit des labels par `watcher.py::_deduire_mode` et lu par les cinq points de décision (flag `--dangerously-skip-permissions`, bloc de garde-fou du prompt, backup, garde-fou `configs/*.conf`, étiquette de calibration TIMEOUT). La lecture active écrit UNIQUEMENT dans `/tmp/bridge_scratch_<projet>/` (créé avant CCL, nettoyé après, quel que soit le résultat) — défense en profondeur niveau 1 (bloc de prompt dédié) + niveau 2 (empreinte de l'état git du répertoire de travail avant/après, restauration + échec `needs-human` si une écriture est détectée hors scratch, même schéma que le garde-fou `configs/*.conf` #318). Le livrable reste un rapport, comme en lecture seule. §12 « Règles d'usage » précise que l'interdiction d'écriture sur `configs/*.conf` (#318) vaut aussi en lecture active. Précédemment — §12 « Règles d'usage » : le paragraphe « Exception » sur `configs/*.conf` précise désormais que cette exception (modification directe, hors passage par CC) vaut uniquement pour Alain (à la main ou via l'onglet Configuration de `new_issue.py`), jamais pour CCL/CCW — même en mode_write, même si l'issue le demande explicitement en toutes lettres (issue #318, suite au diagnostic #298 : PERIMETRE est un champ texte simple sans garde-fou contre un élargissement/rétrécissement silencieux). Renvoie vers le garde-fou technique ajouté à `watcher.py` (`_empreinte_configs`/`_restaurer_configs_modifies`) qui détecte et annule automatiquement toute modification de `configs/*.conf` survenue malgré tout en cours de traitement, sans faire échouer le reste de l'issue.*
+*Dernière mise à jour : 2 août 2026 — §13 « Commandes utiles » (nouvelle
+sous-section « Interrompre une issue bloquée ») et §16.4 « Interrompre une
+issue CCW coincée » : les deux boutons ⛔ « Interrompre » (CCL et CCW, issue
+#323) sont désormais documentés comme implémentés et fonctionnels — le
+renvoi mort vers `TACHES.md` du §16.4 est supprimé (issue #333). §16.4
+décrit maintenant au présent ce que fait `interrompre_windows()`
+(`app/interruption.py`) via `provisioning/windows/interrompre_projet_ccw.ps1` :
+arrêt du service NSSM, vérification bornée de l'arbre de process,
+suppression conditionnelle des `.lock`. La nouvelle sous-section de §13
+documente le pendant côté CCL (`interrompre_linux()`) : arbre de process
+retrouvé par remontée `/proc/<pid>/status` (PPID, jamais par nom
+d'exécutable), `SIGKILL`, attente confirmée de la mort de l'arbre avant
+suppression du verrou — ainsi que l'équivalent manuel (`kill -9` + suppression
+du `.lock`). Précédemment — §3 « Créer une issue — la méthode normale » et §6
+« Champs spéciaux dans le corps de l'issue » : documente le champ d'en-tête
+`MODE` (issue #330), auto-détecté par `new_issue.py` (`detecterModeDansCorps`)
+au même titre que `TIMEOUT`/`PROJET`/`MODELE` (issue #326) — pré-sélectionne
+le radio Mode du formulaire puis la ligne est retirée du corps, reconnaissance
+tolérante (casse/accents, plusieurs libellés par valeur), défaut LECTURE si
+le champ est absent ou non reconnu. Seules les deux valeurs fonctionnelles
+`lecture`/`écriture` sont documentées à ces deux endroits ; la troisième
+valeur (lecture active/`mode_scratch`) reste décrite uniquement au §5 (issue
+#327), hors périmètre de #330. Précise aussi qu'en mono-issue `MODE` est
+auto-détecté depuis l'en-tête du bloc, alors qu'en mode lot il reste commun
+à tout le lot — choisi une fois au radio du formulaire, jamais lu bloc par
+bloc. Précédemment — §4 « Labels disponibles » et §5, renommé « Modes
+lecture seule / lecture active / écriture » : implémente la « lecture
+active » (label `mode_scratch`) préparée côté formulaire/en-tête par #326
+mais jusqu'ici ignorée par le watcher (issue #327). Le booléen
+`autoriser_ecriture` est remplacé par un MODE à trois valeurs
+(`lecture`/`lecture_active`/`ecriture`), déduit des labels par
+`watcher.py::_deduire_mode` et lu par les cinq points de décision (flag
+`--dangerously-skip-permissions`, bloc de garde-fou du prompt, backup,
+garde-fou `configs/*.conf`, étiquette de calibration TIMEOUT). La lecture
+active écrit UNIQUEMENT dans `/tmp/bridge_scratch_<projet>/` (créé avant
+CCL, nettoyé après, quel que soit le résultat) — défense en profondeur
+niveau 1 (bloc de prompt dédié) + niveau 2 (empreinte de l'état git du
+répertoire de travail avant/après, restauration + échec `needs-human` si
+une écriture est détectée hors scratch, même schéma que le garde-fou
+`configs/*.conf` #318). Le livrable reste un rapport, comme en lecture
+seule. §12 « Règles d'usage » précise que l'interdiction d'écriture sur
+`configs/*.conf` (#318) vaut aussi en lecture active.*
 
 Historique complet : voir [`CHANGELOG.md`](CHANGELOG.md).
