@@ -9,6 +9,23 @@ milliers de caractères sur une seule ligne logique, coûteux à relire et
 
 Convention d'ajout : voir §10 de `BRIDGE_AGENT_DOC.md`.
 
+## 2 août 2026 — issue #343
+
+`WORKTREES.md` §3 « Workflow normal d'Alain » (étape 3) et §4
+« Procédures de récupération » : précisions suite à un cas vécu lors du
+premier workflow complet avec worktrees (issues #340/#341, session du
+02/08/2026) — `fusionner_changelog.py` lancé depuis `master` avant le
+merge n'a rien trouvé, car le script scanne la racine du dépôt qu'on lui
+indique et `CHANGELOG-341.md` n'existait alors qu'à la racine du
+worktree ; le fichier s'est donc retrouvé dans `master` via le merge
+sans être intégré, nécessitant un commit de rattrapage. L'étape 3
+documente désormais l'ordre impératif (script avant merge) et deux
+méthodes : lancer `--repo .` depuis le worktree lui-même (recommandé),
+ou copier `CHANGELOG-<N>.md` dans master avant de fusionner depuis
+`REP_TRAVAIL`. Le §4 précise la procédure de rattrapage si le merge a
+eu lieu avant le script (relancer le script depuis `REP_TRAVAIL`,
+vérifier `git diff CHANGELOG.md`, committer).
+
 ## 2 août 2026 — issue #341
 
 Ajout dans `TACHES.md`, juste après le bloc d'en-tête, d'une section
