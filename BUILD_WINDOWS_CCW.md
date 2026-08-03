@@ -67,6 +67,15 @@ build suit déjà ce schéma de staging local et, si oui, étendre le
   `Actualise.exe` seul : 4 388 786 octets, SHA-256
   `61A3373D6EE2D48A357E34BA9E967236B101F3F580BD98BC20DD667C86772F47`
   (référence du 3 août 2026)
+- **Mode `--publier`** (suite #328/#329, demandé par #364, implémenté côté
+  CCW via l'issue for-windows #365 — `rebuild_actualise.bat` vit dans le
+  dépôt Actualise, hors périmètre CCL) : après un build réussi, construit
+  `actualise.zip` (manifeste `{"build": N, "supprimer": []}`), détermine le
+  numéro de build (auto = `version.json` existant + 1, ou forcé via
+  `--publier --build N`), calcule le SHA-256 du zip, écrit `version.json`
+  (`{"build": N, "sha256": "..."}`) et fait un commit local sur le dépôt
+  Actualise — jamais de `git push` ni de Release GitHub (restent manuels,
+  à la charge d'Alain). Comportement par défaut (sans paramètre) inchangé.
 
 ## Rummikub
 
