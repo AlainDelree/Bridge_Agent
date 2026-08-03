@@ -9,6 +9,28 @@ milliers de caractères sur une seule ligne logique, coûteux à relire et
 
 Convention d'ajout : voir §10 de `BRIDGE_AGENT_DOC.md`.
 
+## 3 août 2026 — issue #352
+
+Le POST `/notifier-fin-issue` (#350) était déclenché via `notifications.bip()`,
+donc uniquement pour les issues portant un label `notif_pc`/`notif_gsm`/
+`notif_tous` — le rafraîchissement SSE de l'onglet Résultats restait soumis
+au ↻ manuel pour toutes les autres. Il doit être universel, indépendamment
+des labels notif.
+
+- `watcher.py` : import direct de `scripts/traitement_fin.py` (ajout de
+  `scripts/` au `sys.path`, ce dossier n'étant pas un package) et nouvelle
+  enveloppe `notifier_fin_sse(numero)` qui appelle
+  `traitement_fin.notifier_fin_issue(CFG.nom, numero)` sans passer par
+  `notifier()`/`bip()` — donc sans dépendre des labels `notif_*`. Appelée
+  dans `_traiter_issue_synchrone` aux trois points de fin définitive d'une
+  issue : succès, échec définitif (garde-fou lecture active niveau 2, issue
+  #327), échec définitif après épuisement des tentatives (`max_essais`, non
+  critique). Non appelée sur les fins non définitives (retry différé d'une
+  issue critique, commentaire de résultat non posté) — l'issue reste ouverte
+  et sera retraitée.
+- Le bip et les labels `notif_*` restent inchangés — seul le POST est
+  découplé, comme demandé par l'issue.
+
 ## 3 août 2026 — issue #350
 
 Renommage de `scripts/bip.py` en `scripts/traitement_fin.py` et ajout d'un

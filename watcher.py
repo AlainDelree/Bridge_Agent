@@ -49,6 +49,13 @@ import notifications
 DOSSIER_SCRIPT = Path(__file__).resolve().parent
 DOSSIER_LOGS   = DOSSIER_SCRIPT / "logs"
 
+# scripts/traitement_fin.py (issue #352) : notifier_fin_issue() y est importée
+# directement (pas via subprocess comme le bip) pour pouvoir la déclencher à
+# chaque fin d'issue indépendamment des labels notif_* — voir notifier_fin_sse
+# ci-dessous. scripts/ n'est pas un package : on l'ajoute au sys.path.
+sys.path.insert(0, str(DOSSIER_SCRIPT / "scripts"))
+import traitement_fin
+
 # Consignes injectées dans le PROMPT donné à CCL (architecture à trois couches,
 # issues #209 puis #211). Vivent à côté du watcher (racine du dépôt), PAS dans le
 # rep_travail du projet piloté : elles sont communes à tous les projets. Trois
@@ -439,6 +446,15 @@ def bip(fois=1, numero=None):
     """Bip sonore via le script partagé (Bridge_Agent/scripts/traitement_fin.py,
     anciennement bip.py)."""
     notifications.bip(CFG.script_bip, fois, projet=CFG.nom, numero=numero)
+
+def notifier_fin_sse(numero):
+    """POST direct vers /notifier-fin-issue (issue #352), appelé à CHAQUE fin
+    d'issue (succès ou échec définitif), DÉCOUPLÉ des labels notif_* : à la
+    différence de notifier() ci-dessous (bip/notify-send/ntfy, opt-in par
+    label), le rafraîchissement SSE de l'onglet Résultats doit être universel.
+    Best-effort, timeout court, échec silencieux — voir
+    traitement_fin.notifier_fin_issue."""
+    traitement_fin.notifier_fin_issue(CFG.nom, numero)
 
 def notifier_bureau(titre: str, message: str, urgence: str = "normal"):
     """Bulle de notification bureau via notify-send (voir notifications.py)."""
@@ -3031,6 +3047,7 @@ def _traiter_issue_synchrone(issue: dict, dry_run: bool, chemin_worktree: Path |
                         priorite_ntfy="high",
                         numero=numero,
                     )
+                    notifier_fin_sse(numero)
                     issues_en_cours.discard(numero)
                     return
 
@@ -3111,6 +3128,7 @@ def _traiter_issue_synchrone(issue: dict, dry_run: bool, chemin_worktree: Path |
                     priorite_ntfy="default",
                     numero=numero,
                 )
+                notifier_fin_sse(numero)
                 return
 
             # Échec
@@ -3205,6 +3223,7 @@ def _traiter_issue_synchrone(issue: dict, dry_run: bool, chemin_worktree: Path |
                         priorite_ntfy="high",
                         numero=numero,
                     )
+                    notifier_fin_sse(numero)
                     issues_en_cours.discard(numero)
                     return
 
