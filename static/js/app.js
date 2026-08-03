@@ -2,6 +2,10 @@ let sourceSSE = null;
 
 let intervalWatchers = null;
 
+// Connexion SSE dédiée au rafraîchissement instantané des résultats (issue
+// #350) — ouverte à l'entrée dans l'onglet Résultats, fermée en le quittant.
+let sourceFinIssue = null;
+
 // SOURCE UNIQUE DE VÉRITÉ pour la couleur de chaque projet (issue #120).
 // Utilisée à la fois pour l'accent du formulaire (couleurProjet) et pour les
 // pastilles/badges/boutons de l'onglet Résultats (couleurProjetResultats).
@@ -59,8 +63,8 @@ function basculerOnglet(nom) {
   noms.forEach(n =>
     document.getElementById('panneau-' + n).classList.toggle('actif', n === nom));
   if (nom === 'journal')  demarrerJournal();
-  if (nom === 'resultats') { chargerListeIssues(); demarrerTempsRestant(); }
-  else arreterTempsRestant();
+  if (nom === 'resultats') { chargerListeIssues(); demarrerTempsRestant(); demarrerStreamFinIssue(); }
+  else { arreterTempsRestant(); arreterStreamFinIssue(); }
   if (nom === 'watchers') {
     chargerWatchers();
     intervalWatchers = setInterval(chargerWatchers, 5000);
@@ -1672,6 +1676,32 @@ function demarrerTempsRestant() {
 // Stoppe l'intervalle de temps restant (en quittant l'onglet Résultats).
 function arreterTempsRestant() {
   if (intervalTempsRestant) { clearInterval(intervalTempsRestant); intervalTempsRestant = null; }
+}
+
+// Ouvre le canal SSE de fin d'issue (issue #350), à l'ouverture de l'onglet
+// Résultats. Sur réception d'un événement fin_issue pour une issue affichée
+// dans listeIssuesResultats, réutilise EXACTEMENT le traitement du fetch de
+// vérification de #334 (verifierIssueApresDepassement) — même fetch, même
+// remplacement de ligne — plutôt que de dupliquer cette logique. La
+// reconnexion en cas de coupure est gérée nativement par EventSource, aucun
+// code supplémentaire n'est nécessaire ici.
+function demarrerStreamFinIssue() {
+  if (sourceFinIssue) return;   // déjà ouverte
+  sourceFinIssue = new EventSource('/stream');
+  sourceFinIssue.addEventListener('fin_issue', function(e) {
+    let donnees;
+    try { donnees = JSON.parse(e.data); } catch (err) { return; }
+    const { projet, numero } = donnees;
+    const dansLaListe = listeIssuesResultats.some(
+      it => it.projet === projet && String(it.number) === String(numero));
+    if (dansLaListe) verifierIssueApresDepassement(projet, numero);
+  });
+}
+
+// Ferme le canal SSE de fin d'issue (en quittant l'onglet Résultats) : pas de
+// connexion inutile maintenue quand l'onglet n'est pas affiché.
+function arreterStreamFinIssue() {
+  if (sourceFinIssue) { sourceFinIssue.close(); sourceFinIssue = null; }
 }
 
 // Sélectionne la première ligne encore visible SANS charger son détail (voir

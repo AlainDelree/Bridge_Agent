@@ -9,6 +9,51 @@ milliers de caractères sur une seule ligne logique, coûteux à relire et
 
 Convention d'ajout : voir §10 de `BRIDGE_AGENT_DOC.md`.
 
+## 3 août 2026 — issue #350
+
+Renommage de `scripts/bip.py` en `scripts/traitement_fin.py` et ajout d'un
+canal SSE de rafraîchissement instantané (< 1 s) de l'onglet Résultats, sans
+polling supplémentaire.
+
+- `scripts/traitement_fin.py` : après le bip habituel, POST **best-effort**
+  (timeout 1 s, échec silencieux si `new_issue.py` n'est pas lancé) vers
+  `http://localhost:5100/notifier-fin-issue` avec `{"projet": ..., "numero": ...}`,
+  lus depuis deux nouveaux arguments CLI `--projet`/`--numero`. La clé de
+  config reste `SCRIPT_BIP` (renommer la clé impliquerait de modifier les
+  `configs/*.conf` gitignorés, hors périmètre agent) — **Alain doit mettre à
+  jour manuellement le chemin dans ses `configs/*.conf` existants**
+  (`.../scripts/bip.py` → `.../scripts/traitement_fin.py`).
+- `notifications.py` (`bip()`/`notifier()`) et les enveloppes correspondantes
+  de `watcher.py` et `app/notifications_poller.py` : ajout d'un paramètre
+  `numero` transmis en CLI au script, pour que le POST identifie précisément
+  l'issue concernée. Comme le bip lui-même, ce déclenchement reste opt-in via
+  les labels `notif_*` — sans label, la ligne reste soumise au ↻ manuel ou au
+  fetch post-TIMEOUT de #334.
+- `app/fin_issue.py` (nouveau module) : route `POST /notifier-fin-issue`
+  (sans authentification, appelée par le script local) qui pousse un
+  événement SSE `event: fin_issue\ndata: {"projet": ..., "numero": ...}` à
+  tous les onglets Résultats ouverts, et route `GET /stream` (protégée par
+  `login_requis`) qui les diffuse — une `queue.Queue` par connexion active
+  (ajoutée/retirée de `app.config["FIN_ISSUE_ABONNES"]`), pas de broadcast
+  global, car plusieurs onglets peuvent être ouverts simultanément. Ping
+  `: ping\n\n` toutes les 30 s pour maintenir la connexion ; nettoyage propre
+  de l'abonné à la déconnexion (`GeneratorExit`).
+- `static/js/app.js` : `demarrerStreamFinIssue()`/`arreterStreamFinIssue()`
+  ouvrent/ferment un `EventSource('/stream')` à l'entrée/sortie de l'onglet
+  Résultats (`basculerOnglet`). Sur réception d'un événement `fin_issue` dont
+  le numéro figure dans `listeIssuesResultats`, réutilise directement
+  `verifierIssueApresDepassement()` (issue #334) — même fetch de vérification,
+  même `remplacerLigneIssue()`, sans dupliquer la logique. Reconnexion
+  automatique gérée nativement par `EventSource`.
+- `BRIDGE_AGENT_DOC.md` : §17 mis à jour (mentions de `bip.py` →
+  `traitement_fin.py`), nouvelle sous-section 17.3 documentant le mécanisme
+  SSE complet.
+- Testé sans `new_issue.py` lancé (bip normal, POST en échec silencieux,
+  aucune exception) et avec un client de test Flask (`app.test_client()`) :
+  `POST /notifier-fin-issue` livre bien l'événement à une connexion
+  `GET /stream` active, et la liste des abonnés est correctement nettoyée à
+  la déconnexion.
+
 ## 2 août 2026 — issue #343
 
 `WORKTREES.md` §3 « Workflow normal d'Alain » (étape 3) et §4

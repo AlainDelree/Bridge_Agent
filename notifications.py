@@ -45,15 +45,23 @@ def a_un_label_notif(labels: list[str]) -> bool:
             or LABEL_NOTIF_TOUS in labels)
 
 
-def bip(script_bip: Path, fois: int = 1):
-    """Bip sonore via le script bip.py. `script_bip` : chemin du script (le
-    partagé Bridge_Agent/scripts/bip.py par défaut). Silencieux si absent."""
+def bip(script_bip: Path, fois: int = 1, projet: str | None = None, numero=None):
+    """Bip sonore via le script partagé (Bridge_Agent/scripts/traitement_fin.py,
+    anciennement bip.py). `script_bip` : chemin du script. Silencieux si absent.
+    `projet`/`numero`, si tous deux fournis, sont transmis en CLI au script pour
+    qu'il notifie new_issue.py en plus du bip (SSE de rafraîchissement de
+    l'onglet Résultats, issue #350) — best-effort côté script, sans incidence
+    ici en cas d'échec."""
     script_bip = Path(script_bip)
     if not script_bip.exists():
         return
+    argv_supplementaires = []
+    if projet and numero is not None:
+        argv_supplementaires = ["--projet", str(projet), "--numero", str(numero)]
     for _ in range(fois):
         try:
-            subprocess.run(["python3", str(script_bip)], capture_output=True, timeout=10)
+            subprocess.run(["python3", str(script_bip), *argv_supplementaires],
+                           capture_output=True, timeout=10)
         except Exception:
             pass
         time.sleep(0.3)
@@ -98,14 +106,15 @@ def notifier_ntfy(url_ntfy: str, titre: str, message: str,
 def notifier(labels: list[str], nom_projet: str, url_ntfy: str, script_bip: Path,
              titre: str, message: str,
              urgence_bureau: str = "normal", priorite_ntfy: str = "default",
-             fois_bip: int = 1, log: logging.Logger = _log_defaut):
+             fois_bip: int = 1, numero=None, log: logging.Logger = _log_defaut):
     """Dispatch de notification selon les labels de l'issue.
     Le bip et les canaux additionnels (notify-send, ntfy) sont opt-in via les
     labels notif_pc / notif_gsm / notif_tous : sans aucun de ces labels, aucun
     signal n'est émis. fois_bip renforce le signal (ex. 3 pour une alerte
-    critique)."""
+    critique). `numero`, si fourni, permet au bip de notifier new_issue.py de
+    la fin de CETTE issue précise (SSE, issue #350)."""
     if a_un_label_notif(labels):
-        bip(script_bip, fois_bip)
+        bip(script_bip, fois_bip, projet=nom_projet, numero=numero)
     if LABEL_NOTIF_PC in labels or LABEL_NOTIF_TOUS in labels:
         notifier_bureau(nom_projet, titre, message, urgence_bureau, log=log)
     if LABEL_NOTIF_GSM in labels or LABEL_NOTIF_TOUS in labels:

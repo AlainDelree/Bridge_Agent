@@ -46,6 +46,7 @@ def create_app() -> Flask:
     app.config["LAST_SSE_ACTIVITE"]      = 0.0   # horodatage de la dernière activité SSE (issue #157)
     app.config["SSE_DEJA_VU"]            = False # au moins une connexion SSE a-t-elle eu lieu (issue #157)
     app.config["PROC_TUNNEL"]    = None    # processus cloudflared (mode --externe)
+    app.config["FIN_ISSUE_ABONNES"] = []   # files SSE actives /stream, une par onglet Résultats (issue #350)
 
     _enregistrer_routes(app)
     return app
@@ -75,6 +76,7 @@ def _enregistrer_routes(app: Flask) -> None:
                          ccw_arreter_projet)
     from app.interruption import route_interrompre
     from app.cycle_vie import heartbeat, events, quitter
+    from app.fin_issue import notifier_fin_issue, stream_fin_issue
     from app.diag_heartbeat import visibilite as diag_visibilite   # DIAGNOSTIC TEMPORAIRE — issue #157, à retirer
     from app.vues import index
 
@@ -119,4 +121,10 @@ def _enregistrer_routes(app: Flask) -> None:
     app.add_url_rule("/heartbeat", "heartbeat", heartbeat, methods=["POST"])
     app.add_url_rule("/events", "events", login_requis(events))
     app.add_url_rule("/quitter", "quitter", login_requis(quitter), methods=["POST"])
+    # ─── SSE de fin d'issue (issue #350) : rafraîchissement instantané de l'onglet
+    # Résultats, déclenché par scripts/traitement_fin.py. /notifier-fin-issue est
+    # appelé par ce script local (pas par un navigateur) : pas de login_requis,
+    # comme /heartbeat.
+    app.add_url_rule("/notifier-fin-issue", "notifier_fin_issue", notifier_fin_issue, methods=["POST"])
+    app.add_url_rule("/stream", "stream_fin_issue", login_requis(stream_fin_issue))
     app.add_url_rule("/diag-visibilite", "diag_visibilite", diag_visibilite, methods=["POST"])   # DIAGNOSTIC TEMPORAIRE — issue #157, à retirer

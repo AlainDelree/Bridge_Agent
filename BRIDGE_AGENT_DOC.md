@@ -1699,11 +1699,15 @@ new_issue.py (ThinkPad) → polling gh → détecte la transition → bip/bulle/
   - **succès** : issue **fermée** portant le label `done` (`closedAt` récent) ;
   - **échec définitif** : label `needs-human` posé, issue restée **ouverte**
     (`updatedAt` récent).
-- **Script bip partagé `scripts/bip.py`** : le bip vivait dans `~/NicLink/bip.py`
+- **Script bip partagé `scripts/traitement_fin.py`** (anciennement
+  `scripts/bip.py`, renommé issue #350) : le bip vivait dans `~/NicLink/bip.py`
   (dépôt AlChess) alors que c'est de l'infrastructure commune à tous les projets.
-  Il a été déplacé/recréé dans `scripts/bip.py` ; le **défaut** de `SCRIPT_BIP`
-  pointe désormais vers lui, et les `configs/*.conf` qui référençaient l'ancien
-  chemin ont été mis à jour.
+  Il a été déplacé/recréé dans `scripts/`, renommé une première fois `bip.py`
+  puis `traitement_fin.py` (#350, une fois devenu aussi le déclencheur du SSE
+  de fin d'issue — voir §17.3) ; le **défaut** de `SCRIPT_BIP` pointe désormais
+  vers lui. **La clé de config reste `SCRIPT_BIP`** (renommer impliquerait de
+  modifier les `configs/*.conf` gitignorés, hors périmètre agent — voir §17.3
+  pour la marche à suivre manuelle).
 
 **Éviter le spam de vieilles issues au démarrage.** Deux garde-fous combinés :
 - **filtre de récence** : seules les transitions horodatées dans les
@@ -1787,6 +1791,53 @@ NOTIFIER_LOCAL = false
 | `BRIDGE_NOTIF_INTERVALLE` | `60` | Période de polling (secondes) — 20→60 s en #188 pour alléger la charge gh cumulée. |
 | `BRIDGE_NOTIF_RECENCE_MIN` | `30` | Fenêtre de récence des transitions (minutes). |
 | `BRIDGE_NOTIF_ESPACEMENT` | `2` | Délai (secondes) entre le traitement de deux projets (issue #190) : étale les appels gh du poller au lieu d'une rafale groupée qui rendait le bouton Rafraîchir lent et faisait « sursauter » les badges. `0` = rafale immédiate (ancien comportement). |
+
+### 17.3 SSE de fin d'issue — rafraîchissement instantané de l'onglet Résultats (issue #350)
+
+Avant #350, la ligne d'une issue dans l'onglet Résultats restait figée après sa
+clôture jusqu'au ↻ manuel ou jusqu'au fetch unique post-TIMEOUT de #334 (15 s
+après dépassement du décompte). #350 ajoute un canal de rafraîchissement quasi
+instantané (< 1 s), **sans polling supplémentaire**, en réutilisant
+`scripts/traitement_fin.py` (le script bip partagé, voir plus haut) comme
+déclencheur et un canal SSE dédié comme transport :
+
+- **`scripts/traitement_fin.py --projet <nom> --numero <n>`** : après le bip
+  habituel, POST **best-effort** (timeout 1 s, échec silencieux — new_issue.py
+  peut ne pas être lancé, notamment sur la VM CCW) vers
+  `http://localhost:5100/notifier-fin-issue` avec le corps
+  `{"projet": ..., "numero": ...}`. `notifications.bip()` transmet ces deux
+  arguments dès que `notifications.notifier()` les reçoit — ce qui remonte
+  jusqu'aux enveloppes `bip()`/`notifier()` de `watcher.py` (paramètre
+  `numero` ajouté) et jusqu'à `app/notifications_poller.py` (transitions
+  détectées côté CCW). Comme le bip lui-même, ce POST reste **opt-in via les
+  labels `notif_*`** (§4) : `notifications.notifier()` n'appelle `bip()` que si
+  l'issue en porte un — sans label, la ligne reste soumise au ↻ manuel / au
+  fetch post-TIMEOUT de #334, exactement comme avant #350.
+- **`POST /notifier-fin-issue`** (`app/fin_issue.py`, sans `login_requis` —
+  appelé par un script local, pas par un navigateur, comme `/heartbeat`) :
+  pousse un événement SSE `event: fin_issue\ndata: {"projet": ..., "numero": ...}`
+  à tous les onglets Résultats actuellement ouverts.
+- **`GET /stream`** (`app/fin_issue.py`, protégé par `login_requis` comme
+  `/events`) : générateur Flask SSE dédié, séparé de `/events` (cycle de vie)
+  et de `/journal/<projet>` (log watcher). Mécanisme de diffusion : une
+  **`queue.Queue` par connexion active**, ajoutée à la liste partagée
+  `app.config["FIN_ISSUE_ABONNES"]` à la connexion et retirée (`finally`,
+  couvre le `GeneratorExit` d'une déconnexion navigateur) à la fermeture — pas
+  de broadcast global, car new_issue.py est mono-utilisateur mais plusieurs
+  onglets peuvent être ouverts en même temps. Ping `: ping\n\n` toutes les 30 s
+  pour maintenir la connexion (proxys, navigateur).
+- **Côté navigateur** (`static/js/app.js`) : `demarrerStreamFinIssue()` ouvre
+  l'`EventSource('/stream')` à l'entrée dans l'onglet Résultats
+  (`basculerOnglet`), `arreterStreamFinIssue()` la ferme en le quittant. Sur
+  réception d'un événement `fin_issue` dont le numéro figure dans
+  `listeIssuesResultats`, appelle directement `verifierIssueApresDepassement()`
+  (§ issue #334 dans `app.js`) — même fetch de vérification, même
+  `remplacerLigneIssue()`, aucune logique dupliquée. La reconnexion après
+  coupure est native à `EventSource`, sans code supplémentaire.
+
+**Configuration héritée** : la clé `.conf` reste `SCRIPT_BIP` (voir §17.1
+ci-dessus et §10) — Alain doit mettre à jour manuellement le chemin dans ses
+`configs/*.conf` existants (`.../scripts/bip.py` → `.../scripts/traitement_fin.py`).
 
 ---
 
@@ -2115,7 +2166,18 @@ issues de la même combinaison s'il le juge utile.
 
 ---
 
-*Dernière mise à jour : 2 août 2026 — §11 « Conventions de code » : deux
+*Dernière mise à jour : 3 août 2026 — §17 « Notifications centralisées » :
+nouvelle sous-section 17.3 documentant le SSE de fin d'issue (issue #350) —
+`scripts/bip.py` renommé `scripts/traitement_fin.py` (clé de config
+`SCRIPT_BIP` inchangée, chemin à mettre à jour manuellement dans les
+`configs/*.conf` existants) et devenu, en plus du bip, le déclencheur
+best-effort d'un POST `/notifier-fin-issue` → SSE `GET /stream`
+(`app/fin_issue.py`, une `queue.Queue` par onglet Résultats ouvert) consommé
+côté navigateur par `demarrerStreamFinIssue()`, qui réutilise le fetch de
+vérification de #334 (`verifierIssueApresDepassement`) sans dupliquer sa
+logique. Rafraîchissement toujours opt-in via les labels `notif_*` (comme le
+bip lui-même) ; sans label, la ligne reste soumise au ↻ manuel ou au fetch
+post-TIMEOUT de #334. Précédemment — §11 « Conventions de code » : deux
 notes informant les projets utilisant Bridge_Agent des conséquences de la
 parallélisation `mode_write` par worktrees (issue #337) — risque de conflit
 de merge entre deux issues touchant les mêmes fichiers (recommandation :
@@ -2137,19 +2199,6 @@ vérification bornée de l'arbre de process, suppression conditionnelle des
 (`interrompre_linux()`) : arbre de process retrouvé par remontée
 `/proc/<pid>/status` (PPID, jamais par nom d'exécutable), `SIGKILL`,
 attente confirmée de la mort de l'arbre avant suppression du verrou — ainsi
-que l'équivalent manuel (`kill -9` + suppression du `.lock`). Précédemment
-— §3 « Créer une issue — la méthode normale » et §6 « Champs spéciaux dans
-le corps de l'issue » : documente le champ d'en-tête `MODE` (issue #330),
-auto-détecté par `new_issue.py` (`detecterModeDansCorps`) au même titre que
-`TIMEOUT`/`PROJET`/`MODELE` (issue #326) — pré-sélectionne le radio Mode du
-formulaire puis la ligne est retirée du corps, reconnaissance tolérante
-(casse/accents, plusieurs libellés par valeur), défaut LECTURE si le champ
-est absent ou non reconnu. Seules les deux valeurs fonctionnelles
-`lecture`/`écriture` sont documentées à ces deux endroits ; la troisième
-valeur (lecture active/`mode_scratch`) reste décrite uniquement au §5
-(issue #327), hors périmètre de #330. Précise aussi qu'en mono-issue `MODE`
-est auto-détecté depuis l'en-tête du bloc, alors qu'en mode lot il reste
-commun à tout le lot — choisi une fois au radio du formulaire, jamais lu
-bloc par bloc.*
+que l'équivalent manuel (`kill -9` + suppression du `.lock`).*
 
 Historique complet : voir [`CHANGELOG.md`](CHANGELOG.md).

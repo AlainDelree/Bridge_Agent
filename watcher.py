@@ -226,7 +226,7 @@ class Config:
     timeout_claude: int   = 300
     timeout_chef: int     = 1200   # défaut plus généreux pour les issues « Chef : » sans TIMEOUT explicite (issue #106)
     timeout_diagnostic: int = 90   # timeout court et fixe de la passe diagnostique avant abandon non-critique (issue #124)
-    script_bip: Path      = field(default_factory=lambda: DOSSIER_SCRIPT / "scripts" / "bip.py")
+    script_bip: Path      = field(default_factory=lambda: DOSSIER_SCRIPT / "scripts" / "traitement_fin.py")
     log_taille_max_mo: int = 1     # rotation quand le journal dépasse cette taille (Mo)
     log_archives: int      = 5     # nombre d'archives datées conservées
     cmd_backup: str        = ""    # commande de sauvegarde avant modif (mode écriture)
@@ -319,7 +319,7 @@ def charger_config(chemin: Path) -> Config:
         timeout_chef   = entier("TIMEOUT_CHEF", 1200),
         timeout_diagnostic = entier("TIMEOUT_DIAGNOSTIC", 90),
         script_bip  = Path(brut["SCRIPT_BIP"]).expanduser() if brut.get("SCRIPT_BIP")
-                      else DOSSIER_SCRIPT / "scripts" / "bip.py",
+                      else DOSSIER_SCRIPT / "scripts" / "traitement_fin.py",
         log_taille_max_mo = entier("LOG_TAILLE_MAX_MO", 1),
         log_archives      = entier("LOG_ARCHIVES", 5),
         cmd_backup        = brut.get("CMD_BACKUP", ""),
@@ -435,9 +435,10 @@ def configurer_logs(cfg: Config):
 # du CFG courant (nom, url_ntfy, script_bip) et le logger du watcher. Les sites
 # d'appel existants (succès/échec/alerte critique) restent inchangés.
 
-def bip(fois=1):
-    """Bip sonore via le script bip partagé (Bridge_Agent/scripts/bip.py)."""
-    notifications.bip(CFG.script_bip, fois)
+def bip(fois=1, numero=None):
+    """Bip sonore via le script partagé (Bridge_Agent/scripts/traitement_fin.py,
+    anciennement bip.py)."""
+    notifications.bip(CFG.script_bip, fois, projet=CFG.nom, numero=numero)
 
 def notifier_bureau(titre: str, message: str, urgence: str = "normal"):
     """Bulle de notification bureau via notify-send (voir notifications.py)."""
@@ -449,7 +450,7 @@ def notifier_ntfy(titre: str, message: str, priorite: str = "default"):
 
 def notifier(labels: list[str], titre: str, message: str,
              urgence_bureau: str = "normal", priorite_ntfy: str = "default",
-             fois_bip: int = 1):
+             fois_bip: int = 1, numero=None):
     """Dispatch de notification selon les labels de l'issue.
 
     Garde issue #187 : si `NOTIFIER_LOCAL = false` dans le .conf, ce watcher
@@ -457,14 +458,17 @@ def notifier(labels: list[str], titre: str, message: str,
     qui détecte la transition par polling GitHub et notifie de façon centralisée
     sur le ThinkPad d'Alain (évite les doublons, et fait remonter les transitions
     CCW dont le bip/notify-send tomberaient sinon dans la VM). Par défaut True :
-    comportement historique préservé (notamment CCL, déjà fonctionnel)."""
+    comportement historique préservé (notamment CCL, déjà fonctionnel).
+
+    `numero`, si fourni, permet au bip de notifier new_issue.py de la fin de
+    CETTE issue précise pour un rafraîchissement SSE instantané (issue #350)."""
     if not CFG.notifier_local:
         return
     notifications.notifier(
         labels, CFG.nom, CFG.url_ntfy, CFG.script_bip,
         titre, message,
         urgence_bureau=urgence_bureau, priorite_ntfy=priorite_ntfy,
-        fois_bip=fois_bip, log=log,
+        fois_bip=fois_bip, numero=numero, log=log,
     )
 
 def alerte_critique(numero, titre, tentative, labels: list[str]):
@@ -478,6 +482,7 @@ def alerte_critique(numero, titre, tentative, labels: list[str]):
         urgence_bureau="critical",
         priorite_ntfy="high",
         fois_bip=3,  # 3 bips pour l'alerte critique (au lieu du bip simple par défaut)
+        numero=numero,
     )
 
 def gh(*args) -> dict | list | None:
@@ -3024,6 +3029,7 @@ def _traiter_issue_synchrone(issue: dict, dry_run: bool, chemin_worktree: Path |
                         message=f"'{titre}' : écriture détectée hors scratch en lecture active, projet restauré.",
                         urgence_bureau="critical",
                         priorite_ntfy="high",
+                        numero=numero,
                     )
                     issues_en_cours.discard(numero)
                     return
@@ -3051,6 +3057,7 @@ def _traiter_issue_synchrone(issue: dict, dry_run: bool, chemin_worktree: Path |
                                  f"(réseau). Issue laissée ouverte pour reprise au prochain cycle."),
                         urgence_bureau="critical",
                         priorite_ntfy="high",
+                        numero=numero,
                     )
                     issues_en_cours.discard(numero)
                     return
@@ -3102,6 +3109,7 @@ def _traiter_issue_synchrone(issue: dict, dry_run: bool, chemin_worktree: Path |
                     message=f"'{titre}' traitée avec succès.",
                     urgence_bureau="normal",
                     priorite_ntfy="default",
+                    numero=numero,
                 )
                 return
 
@@ -3195,6 +3203,7 @@ def _traiter_issue_synchrone(issue: dict, dry_run: bool, chemin_worktree: Path |
                         message=f"'{titre}' abandonnée après {CFG.max_essais} tentatives.\nDernière erreur : {sortie[:200]}",
                         urgence_bureau="critical",
                         priorite_ntfy="high",
+                        numero=numero,
                     )
                     issues_en_cours.discard(numero)
                     return
