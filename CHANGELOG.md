@@ -9,6 +9,18 @@ milliers de caractères sur une seule ligne logique, coûteux à relire et
 
 Convention d'ajout : voir §10 de `BRIDGE_AGENT_DOC.md`.
 
+## 3 août 2026 — issue #370
+
+Script PowerShell `surveiller_builds.ps1` (issu d'une session Claude Chat
+précédente) committé dans `provisioning/windows/` : surveille en temps réel,
+pendant un build CCW (PyInstaller/ISCC), les processus de build et la
+croissance du dossier de sortie (taille + delta par passage et depuis le
+début). Paramètre `-Dossier` obligatoire, `-Processus` et
+`-IntervalleSecondes` optionnels. Documenté au §16 de `BRIDGE_AGENT_DOC.md`
+(tableau de provisioning), avec la note que le nom de process Claude Code
+(`claude` par défaut) reste à confirmer via `Get-Process` pendant un build
+réel.
+
 ## 3 août 2026 — issue #352
 
 Le POST `/notifier-fin-issue` (#350) était déclenché via `notifications.bip()`,
