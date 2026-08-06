@@ -299,7 +299,7 @@ button.danger:hover{background:#f8d7da}
   box-shadow:0 2px 8px rgba(0,0,0,.12)}
 .pl-toggle.actif{border-color:#185FA5;color:#185FA5}
 .panneau-lateral{position:fixed;top:64px;right:18px;z-index:1000;
-  width:360px;max-height:80vh;overflow-y:auto;
+  width:360px;max-height:calc(100vh - 80px);overflow-y:auto;
   border:1px solid #e0dfda;border-radius:10px;background:#fff;padding:16px;
   box-shadow:0 6px 24px rgba(0,0,0,.18)}
 .panneau-lateral.ferme{display:none}
