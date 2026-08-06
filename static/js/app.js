@@ -1781,22 +1781,57 @@ async function sidebarChargerCcw() {
   await ccwChargerProjets();
 }
 
-// Monitoring passif (issue #375, état par défaut) : watcher CCL (actif/pid,
-// fetch /watchers — local, pas d'appel GitHub) + watcher CCW si un service est
-// déjà connu pour ce projet (ccwProjetsConnus), pour tous les projets actifs
+// Fabrique une liste inline de pastilles « nom » (une par projet), sans retour
+// à la ligne par projet — utilisée par les blocs de résumé synthétiques pour
+// montrer d'un coup d'œil qui est actif (vert) / éteint (rouge).
+function pastillesInline(noms, couleurFn) {
+  if (!noms.length) return '<span style="color:#999">aucun</span>';
+  return noms.map(function(nom) {
+    return '<span class="pl-chip"><span class="pl-dot" style="background:'
+      + couleurFn(nom) + '"></span>' + escapeHtml(nom) + '</span>';
+  }).join(' ');
+}
+
+// Démarre la VM CCW depuis le panneau latéral (même endpoint que l'onglet CCW,
+// ccwDemarrerVm) sans dépendre des éléments DOM propres à cet onglet : le
+// bouton vit ici, dans le panneau de monitoring. Re-rend le panneau ensuite
+// pour refléter le nouvel état de la VM.
+async function sidebarDemarrerVm(btn) {
+  if (btn) { btn.disabled = true; btn.textContent = 'Démarrage…'; }
+  try {
+    await fetch('/ccw/demarrer-vm', {method: 'POST'});
+  } catch(e) {
+    alert('Erreur réseau : ' + e.message);
+  }
+  await rafraichirPanneauLateralResultats();
+}
+
+// Monitoring passif (issue #375/#376, état par défaut). En tête, une vue
+// SYNTHÉTIQUE de l'infrastructure (issue #376) : état de la VM CCW + bouton de
+// démarrage si éteinte, résumé « N/M watchers CCL actifs », résumé « N/M
+// services CCW running ». En dessous, le détail par projet inchangé : watcher
+// CCL (actif/pid, fetch /watchers — local, pas d'appel GitHub) + watcher CCW si
+// un service est déjà connu (ccwProjetsConnus), pour tous les projets actifs
 // (nomsProjetsDisponibles, même source que le reste de l'onglet Résultats).
 async function rendrePanneauLateralMonitoring() {
   const zone = document.getElementById('panneau-lateral-resultats');
   if (!zone) return;
   const noms = nomsProjetsDisponibles();
-  let watchersMap = null;
+  // Deux fetchs locaux en parallèle : /watchers (état CCL) et /ccw/vm-statut
+  // (état de la VM, VBoxManage local — pas de guestcontrol, rapide). Aucun
+  // appel GitHub, aucun polling des services CCW (guestcontrol) ici.
+  let watchersMap = null, vmStatut = null;
   try {
-    const rep = await fetch('/watchers');
-    const liste = await rep.json();
+    const [repW, repVm] = await Promise.all([
+      fetch('/watchers'),
+      fetch('/ccw/vm-statut').catch(() => null),
+    ]);
+    const liste = await repW.json();
     watchersMap = {};
     liste.forEach(w => { watchersMap[w.nom] = w; });
+    if (repVm) { try { vmStatut = await repVm.json(); } catch(e) { vmStatut = null; } }
   } catch(e) { watchersMap = null; }
-  // Une issue a pu être sélectionnée pendant ce fetch : ne pas écraser le
+  // Une issue a pu être sélectionnée pendant ces fetchs : ne pas écraser le
   // panneau d'actions qui a entre-temps pris sa place.
   if (projetCourant && numeroCourant) return;
 
@@ -1804,26 +1839,81 @@ async function rendrePanneauLateralMonitoring() {
            + '<div class="pl-sous">Tous projets actifs — actualisé toutes les 30 s</div>';
   if (!watchersMap) {
     html += '<div class="issue-vide" style="padding:10px 0">Erreur de chargement</div>';
-  } else {
-    for (const nom of noms) {
-      const w = watchersMap[nom];
-      const cclActif = !!(w && w.actif);
-      const service = serviceCcwProjet(nom);
-      html += '<div class="pl-projet" style="border-left-color:' + couleurProjetResultats(nom) + '">'
-            + '<div class="pl-projet-nom">' + escapeHtml(nom) + '</div>'
-            + '<div class="pl-etat"><span class="pl-dot" style="background:'
-            + (cclActif ? '#2e8b57' : '#c0392b') + '"></span>CCL '
-            + (cclActif ? ('actif (pid ' + escapeHtml(w.pid) + ')') : 'arrêté') + '</div>';
-      if (service) {
-        html += '<div class="pl-etat"><span class="pl-dot" style="background:'
-              + couleurEtatCcw(service.etat) + '"></span>CCW '
-              + escapeHtml(service.etat || '?') + '</div>';
-      }
-      html += '</div>';
+    zone.innerHTML = html;
+    return;
+  }
+
+  // ── Bloc synthétique infrastructure (issue #376) ──────────────────────────
+  html += '<div class="pl-synthese">';
+
+  // 1. VM CCW : allumée (vert) / éteinte (rouge) / inconnu (gris).
+  let vmCouleur = '#888', vmTexte = 'VM : état inconnu', vmEteinte = false;
+  if (vmStatut && vmStatut.succes) {
+    if (!vmStatut.existe) {
+      vmCouleur = '#c0392b'; vmTexte = 'VM introuvable (non créée)';
+    } else if (vmStatut.etat === 'running') {
+      vmCouleur = '#2e8b57'; vmTexte = 'VM allumée';
+    } else {
+      vmCouleur = '#c0392b'; vmTexte = 'VM éteinte (' + escapeHtml(vmStatut.etat || '?') + ')';
+      vmEteinte = true;
     }
-    html += '<div class="pl-lien" onclick="sidebarChargerCcw()">🔄 '
-          + (ccwProjetsConnus.length ? 'Actualiser les services CCW' : 'Vérifier les services CCW')
+  } else if (vmStatut && vmStatut.erreur) {
+    vmTexte = 'VM : ' + escapeHtml(vmStatut.erreur);
+  }
+  html += '<div class="pl-etat"><span class="pl-dot" style="background:'
+        + vmCouleur + '"></span>' + vmTexte + '</div>';
+  if (vmEteinte) {
+    html += '<button class="pl-btn-vm" onclick="sidebarDemarrerVm(this)">▶ Démarrer la VM</button>';
+  }
+
+  // 2. Résumé watchers CCL : N/M actifs + liste inline actifs/éteints.
+  const cclActifs  = noms.filter(n => !!(watchersMap[n] && watchersMap[n].actif));
+  const cclEteints = noms.filter(n => !(watchersMap[n] && watchersMap[n].actif));
+  html += '<div class="pl-resume-titre">' + cclActifs.length + '/' + noms.length
+        + ' watchers CCL actifs</div>'
+        + '<div class="pl-chips">'
+        + pastillesInline(cclActifs, () => '#2e8b57')
+        + (cclEteints.length ? ' ' + pastillesInline(cclEteints, () => '#c0392b') : '')
+        + '</div>';
+
+  // 3. Résumé watchers CCW : seulement si des services sont déjà connus.
+  if (ccwProjetsConnus.length) {
+    const ccwRunning = ccwProjetsConnus.filter(p => p.etat === 'running');
+    const ccwAutres  = ccwProjetsConnus.filter(p => p.etat !== 'running');
+    html += '<div class="pl-resume-titre">' + ccwRunning.length + '/' + ccwProjetsConnus.length
+          + ' services CCW running</div>'
+          + '<div class="pl-chips">'
+          + pastillesInline(ccwRunning.map(p => p.projet), () => '#2e8b57')
+          + (ccwAutres.length ? ' ' + pastillesInline(ccwAutres.map(p => p.projet),
+              nom => couleurEtatCcw((ccwAutres.find(p => p.projet === nom) || {}).etat)) : '')
           + '</div>';
+  } else {
+    html += '<div class="pl-lien" onclick="sidebarChargerCcw()">🔄 Vérifier les services CCW</div>';
+  }
+  html += '</div>';  // .pl-synthese
+
+  // ── Séparateur + détail par projet (inchangé, issue #375) ─────────────────
+  html += '<hr class="pl-sep"><div class="titre-section">Détail par projet</div>';
+  for (const nom of noms) {
+    const w = watchersMap[nom];
+    const cclActif = !!(w && w.actif);
+    const service = serviceCcwProjet(nom);
+    html += '<div class="pl-projet" style="border-left-color:' + couleurProjetResultats(nom) + '">'
+          + '<div class="pl-projet-nom">' + escapeHtml(nom) + '</div>'
+          + '<div class="pl-etat"><span class="pl-dot" style="background:'
+          + (cclActif ? '#2e8b57' : '#c0392b') + '"></span>CCL '
+          + (cclActif ? ('actif (pid ' + escapeHtml(w.pid) + ')') : 'arrêté') + '</div>';
+    if (service) {
+      html += '<div class="pl-etat"><span class="pl-dot" style="background:'
+            + couleurEtatCcw(service.etat) + '"></span>CCW '
+            + escapeHtml(service.etat || '?') + '</div>';
+    }
+    html += '</div>';
+  }
+  // Actualisation des services CCW une fois connus (le cas « inconnu » est déjà
+  // couvert par le lien « Vérifier » du bloc de résumé ci-dessus).
+  if (ccwProjetsConnus.length) {
+    html += '<div class="pl-lien" onclick="sidebarChargerCcw()">🔄 Actualiser les services CCW</div>';
   }
   zone.innerHTML = html;
 }

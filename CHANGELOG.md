@@ -9,6 +9,32 @@ milliers de caractères sur une seule ligne logique, coûteux à relire et
 
 Convention d'ajout : voir §10 de `BRIDGE_AGENT_DOC.md`.
 
+## 6 août 2026 — issue #376
+
+Panneau monitoring de l'onglet Résultats (`rendrePanneauLateralMonitoring`,
+`static/js/app.js`) : ajout d'une **vue synthétique de l'infrastructure** en
+tête du panneau, avant le détail par projet (inchangé, désormais sous un
+séparateur `<hr class="pl-sep">` titré « Détail par projet »). Trois blocs de
+résumé, dans un encadré `.pl-synthese` :
+- **VM CCW** — état allumée (pastille verte) / éteinte (rouge) / inconnu
+  (gris), lu via l'endpoint existant `/ccw/vm-statut` (VBoxManage local, pas de
+  guestcontrol) fetché en parallèle de `/watchers` (`Promise.all`). Si la VM est
+  éteinte, un bouton « ▶ Démarrer la VM » appelle `/ccw/demarrer-vm`
+  (`sidebarDemarrerVm`, même endpoint que le bouton de l'onglet CCW) puis
+  re-rend le panneau.
+- **Watchers CCL** — une ligne « N/M watchers CCL actifs » + liste inline des
+  projets actifs (pastille verte) et éteints (rouge), sans répéter le détail du
+  dessous (`pastillesInline`, `.pl-chips`).
+- **Services CCW** — affiché seulement si `ccwProjetsConnus` est non vide :
+  « N/M services CCW running » + liste inline ; sinon le lien « Vérifier les
+  services CCW » existant. Le lien « Actualiser les services CCW » (cas connu)
+  reste sous le détail.
+
+Nouvelles classes CSS `.pl-synthese`, `.pl-resume-titre`, `.pl-chips`,
+`.pl-chip`, `.pl-btn-vm`, `.pl-sep` (`static/css/style.css`). Aucun nouveau
+polling réseau : la synthèse réutilise les fetchs locaux déjà en place et
+`ccwProjetsConnus` (alimenté uniquement à la demande par `ccwChargerProjets`).
+
 ## 6 août 2026 — issue #375
 
 Onglet Résultats : panneau latéral droit (~280px, scrollable, repasse sous la
