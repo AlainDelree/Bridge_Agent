@@ -1,6 +1,11 @@
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:system-ui,sans-serif;font-size:14px;background:#f0efe9;color:#1a1a18;min-height:100vh;padding:28px 16px;position:relative}
-.fenetre{max-width:860px;margin:0 auto;background:#fff;border:1px solid #ddd;border-radius:12px;overflow:hidden}
+/* 860px→1160px (issue #375) : l'ancienne largeur laissait l'onglet Résultats
+   sans place pour le panneau latéral droit (~280px + espacement) sans écraser
+   la liste des issues. Élargie globalement plutôt que pour ce seul onglet —
+   les autres onglets (formulaires flex, tableaux width:100%) s'en accommodent
+   sans régression, juste un peu plus de confort de lecture. */
+.fenetre{max-width:1160px;margin:0 auto;background:#fff;border:1px solid #ddd;border-radius:12px;overflow:hidden}
 .entete{padding:14px 20px;border-bottom:1px solid #dad9d2;display:flex;align-items:center;gap:9px;background:#e7e6e0}
 .entete h1{font-size:15px;font-weight:500}
 .entete .statut{margin-left:auto;font-size:12px;color:#888}
@@ -267,6 +272,30 @@ button.danger:hover{background:#f8d7da}
 .legende-resultats{font-size:12px;color:#888;background:#f8f8f5;
   border:1px solid #e0dfda;border-radius:6px;padding:8px 12px;
   margin-bottom:16px;display:flex;flex-direction:column;gap:2px;line-height:1.55}
+/* Panneau latéral droit de l'onglet Résultats (issue #375) : liste des issues
+   à gauche (flex:1, largeur inchangée), panneau ~280px fixe à droite —
+   monitoring passif des watchers sans issue sélectionnée, actions
+   contextuelles une fois une ligne sélectionnée (voir rafraichirPanneauLateral-
+   Resultats dans app.js). Écran étroit : le panneau repasse sous la liste. */
+.resultats-layout{display:flex;gap:20px;align-items:flex-start}
+.resultats-liste-col{flex:1;min-width:0}
+.panneau-lateral{width:280px;flex-shrink:0;align-self:flex-start;
+  max-height:calc(100vh - 160px);overflow-y:auto;
+  border:1px solid #e0dfda;border-radius:8px;background:#f8f8f5;padding:14px}
+@media (max-width:900px){
+  .resultats-layout{flex-direction:column}
+  .panneau-lateral{width:100%;max-height:none}
+}
+.pl-sous{font-size:11px;color:#999;margin:-4px 0 12px}
+.pl-projet{border-left:3px solid #ccc;padding:6px 0 6px 10px;margin-bottom:10px}
+.pl-projet-nom{font-size:13px;font-weight:600;color:#1a1a18;margin-bottom:3px}
+.pl-etat{display:flex;align-items:center;gap:6px;font-size:12px;color:#555;margin-bottom:2px}
+.pl-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+.pl-lien{font-size:12px;color:#185FA5;cursor:pointer;user-select:none;margin-top:8px;display:inline-block}
+.pl-lien:hover{text-decoration:underline}
+.pl-issue-ref{font-size:12px;color:#999;margin-bottom:12px}
+.pl-actions{display:flex;flex-direction:column;gap:8px}
+.pl-actions button{width:100%}
 .issue-body{background:#f8f8f5;border:1px solid #e0dfda;border-radius:6px;padding:12px;
   font-family:monospace;font-size:12px;white-space:pre-wrap;word-break:break-word;
   max-height:200px;overflow-y:auto;line-height:1.6;margin-bottom:16px}

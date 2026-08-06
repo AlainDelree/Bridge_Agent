@@ -9,6 +9,35 @@ milliers de caractères sur une seule ligne logique, coûteux à relire et
 
 Convention d'ajout : voir §10 de `BRIDGE_AGENT_DOC.md`.
 
+## 6 août 2026 — issue #375
+
+Onglet Résultats : panneau latéral droit (~280px, scrollable, repasse sous la
+liste en écran étroit) ajouté à droite de la liste des issues
+(`.resultats-layout` / `.resultats-liste-col` / `.panneau-lateral`), qui
+utilisait mal l'espace disponible dans la fenêtre (`.fenetre` élargie
+860→1160px pour l'accueillir sans écraser la liste). Deux états, pilotés par
+la sélection de ligne existante (`selectionnerLigne`) :
+- **Aucune issue sélectionnée** : monitoring passif, tous les projets actifs —
+  watcher CCL (actif/pid via `/watchers`, appel Flask local) et watcher CCW
+  (état NSSM) pour les projets ayant un service CCW connu. Rafraîchi toutes
+  les 30s et à chaque événement SSE `fin_issue` (#350), sans appel GitHub
+  supplémentaire.
+- **Issue sélectionnée** : actions contextuelles — relancer le watcher CCL
+  (`/lancer-watcher`, comme l'onglet Watchers), interrompre l'issue (bouton
+  identique à celui du détail, `/interrompre`, affiché seulement si l'issue
+  est ouverte et ni `done` ni `needs-human`), relancer le watcher CCW
+  (`ccwRedemarrerProjet`, réutilisée telle quelle depuis l'onglet CCW) et un
+  emplacement pour « Nettoyer verrous CCW + redémarrer », désactivé en
+  attendant l'issue #378 — ces deux derniers boutons seulement si le projet a
+  un service CCW connu.
+- L'état des services CCW (`ccwProjetsConnus`) n'est JAMAIS interrogé
+  directement par ce panneau (guestcontrol coûteux) : il ne fait que lire le
+  résultat du dernier appel à `ccwChargerProjets()` (onglet CCW ou lien
+  manuel « Vérifier les services CCW » du panneau) — aucun nouveau polling.
+- Aucune route Flask ajoutée : tout reprend les endpoints existants
+  (`/watchers`, `/lancer-watcher`, `/interrompre`, `/ccw/projets`,
+  `/ccw/redemarrer-projet`).
+
 ## 3 août 2026 — issue #370
 
 Script PowerShell `surveiller_builds.ps1` (issu d'une session Claude Chat

@@ -2,6 +2,18 @@ let sourceSSE = null;
 
 let intervalWatchers = null;
 
+// ─── Panneau latéral droit de l'onglet Résultats (issue #375) ─────────────
+// Rafraîchi toutes les 30s (intervalPanneauLateral) + sur chaque événement SSE
+// fin_issue (#350) + sur chaque changement de sélection de ligne. Dernière
+// liste connue des services CCW (projet/service/etat), alimentée par
+// ccwChargerProjets() — jamais interrogée directement depuis ce panneau, pour
+// ne pas ajouter un second polling des appels guestcontrol coûteux de l'onglet
+// CCW (voir ccwOuvrirOnglet) : seul un clic sur le lien « Vérifier les
+// services CCW » du panneau (sidebarChargerCcw) ou une action déjà existante
+// de l'onglet CCW la met à jour.
+let ccwProjetsConnus = [];
+let intervalPanneauLateral = null;
+
 // Connexion SSE dédiée au rafraîchissement instantané des résultats (issue
 // #350) — ouverte à l'entrée dans l'onglet Résultats, fermée en le quittant.
 let sourceFinIssue = null;
@@ -63,8 +75,12 @@ function basculerOnglet(nom) {
   noms.forEach(n =>
     document.getElementById('panneau-' + n).classList.toggle('actif', n === nom));
   if (nom === 'journal')  demarrerJournal();
-  if (nom === 'resultats') { chargerListeIssues(); demarrerTempsRestant(); demarrerStreamFinIssue(); }
-  else { arreterTempsRestant(); arreterStreamFinIssue(); }
+  if (nom === 'resultats') {
+    chargerListeIssues(); demarrerTempsRestant(); demarrerStreamFinIssue();
+    demarrerPanneauLateral();
+  } else {
+    arreterTempsRestant(); arreterStreamFinIssue(); arreterPanneauLateral();
+  }
   if (nom === 'watchers') {
     chargerWatchers();
     intervalWatchers = setInterval(chargerWatchers, 5000);
@@ -312,6 +328,11 @@ async function ccwChargerProjets() {
       return;
     }
     const projets = j.projets || [];
+    // Seul point d'écriture de ccwProjetsConnus (issue #375) : le panneau
+    // latéral de l'onglet Résultats lit cette variable sans jamais fetcher
+    // /ccw/projets lui-même (pas de second polling des appels guestcontrol).
+    ccwProjetsConnus = projets;
+    rafraichirPanneauLateralResultats();
     // Mémorise la sélection courante pour la restaurer si le projet existe encore.
     const selectionCourante = selectFin ? selectFin.value : '';
     if (projets.length === 0) {
@@ -1695,6 +1716,12 @@ function demarrerStreamFinIssue() {
     const dansLaListe = listeIssuesResultats.some(
       it => it.projet === projet && String(it.number) === String(numero));
     if (dansLaListe) verifierIssueApresDepassement(projet, numero);
+    // Panneau latéral (issue #375) : une fin d'issue change potentiellement
+    // l'état « ouvert/fermé » de l'issue sélectionnée (bouton Interrompre) et
+    // peut coïncider avec un arrêt de watcher — rafraîchi à chaque événement,
+    // sans coût supplémentaire (le fetch /watchers est local, pas d'appel
+    // GitHub, cf. issue #375).
+    rafraichirPanneauLateralResultats();
   });
 }
 
@@ -1702,6 +1729,163 @@ function demarrerStreamFinIssue() {
 // connexion inutile maintenue quand l'onglet n'est pas affiché.
 function arreterStreamFinIssue() {
   if (sourceFinIssue) { sourceFinIssue.close(); sourceFinIssue = null; }
+}
+
+// ─── Panneau latéral droit de l'onglet Résultats (issue #375) ─────────────
+// Deux états mutuellement exclusifs, pilotés par projetCourant/numeroCourant
+// (mêmes variables que la sélection de ligne, voir selectionnerLigne) :
+//  - aucune sélection → monitoring passif des watchers CCL+CCW de tous les
+//    projets actifs (rendrePanneauLateralMonitoring) ;
+//  - une ligne sélectionnée → actions contextuelles pour SON projet
+//    (rendrePanneauLateralActions), sans fetch réseau (données déjà en
+//    mémoire : listeIssuesResultats + ccwProjetsConnus).
+
+function demarrerPanneauLateral() {
+  rafraichirPanneauLateralResultats();
+  arreterPanneauLateral();
+  intervalPanneauLateral = setInterval(rafraichirPanneauLateralResultats, 30000);
+}
+
+function arreterPanneauLateral() {
+  if (intervalPanneauLateral) { clearInterval(intervalPanneauLateral); intervalPanneauLateral = null; }
+}
+
+async function rafraichirPanneauLateralResultats() {
+  const panneau = document.getElementById('panneau-resultats');
+  if (!panneau || !panneau.classList.contains('actif')) return;
+  if (projetCourant && numeroCourant) {
+    rendrePanneauLateralActions();
+  } else {
+    await rendrePanneauLateralMonitoring();
+  }
+}
+
+// Couleur de la pastille CCW, même code que ccwChargerProjets (onglet CCW) —
+// répété volontairement ici plutôt que factorisé : deux appelants seulement,
+// une factorisation forcerait à exposer un utilitaire pour si peu.
+function couleurEtatCcw(etat) {
+  return etat === 'running' ? '#2e8b57' : (etat === 'stopped' ? '#c0392b' : '#888');
+}
+
+// Service CCW connu pour ce projet (ou null), depuis la dernière liste chargée
+// (ccwProjetsConnus) — jamais un fetch direct, voir le commentaire sur cette
+// variable en tête de fichier.
+function serviceCcwProjet(nom) {
+  return ccwProjetsConnus.find(p => (p.projet || '').toLowerCase() === nom.toLowerCase()) || null;
+}
+
+// Déclenche (à la demande, sur clic) le seul fetch de l'état des services CCW
+// utilisé par ce panneau : ccwChargerProjets(), qui alimente ccwProjetsConnus
+// et re-rend elle-même ce panneau une fois la réponse reçue.
+async function sidebarChargerCcw() {
+  await ccwChargerProjets();
+}
+
+// Monitoring passif (issue #375, état par défaut) : watcher CCL (actif/pid,
+// fetch /watchers — local, pas d'appel GitHub) + watcher CCW si un service est
+// déjà connu pour ce projet (ccwProjetsConnus), pour tous les projets actifs
+// (nomsProjetsDisponibles, même source que le reste de l'onglet Résultats).
+async function rendrePanneauLateralMonitoring() {
+  const zone = document.getElementById('panneau-lateral-resultats');
+  if (!zone) return;
+  const noms = nomsProjetsDisponibles();
+  let watchersMap = null;
+  try {
+    const rep = await fetch('/watchers');
+    const liste = await rep.json();
+    watchersMap = {};
+    liste.forEach(w => { watchersMap[w.nom] = w; });
+  } catch(e) { watchersMap = null; }
+  // Une issue a pu être sélectionnée pendant ce fetch : ne pas écraser le
+  // panneau d'actions qui a entre-temps pris sa place.
+  if (projetCourant && numeroCourant) return;
+
+  let html = '<div class="titre-section" style="margin-top:0">Monitoring watchers</div>'
+           + '<div class="pl-sous">Tous projets actifs — actualisé toutes les 30 s</div>';
+  if (!watchersMap) {
+    html += '<div class="issue-vide" style="padding:10px 0">Erreur de chargement</div>';
+  } else {
+    for (const nom of noms) {
+      const w = watchersMap[nom];
+      const cclActif = !!(w && w.actif);
+      const service = serviceCcwProjet(nom);
+      html += '<div class="pl-projet" style="border-left-color:' + couleurProjetResultats(nom) + '">'
+            + '<div class="pl-projet-nom">' + escapeHtml(nom) + '</div>'
+            + '<div class="pl-etat"><span class="pl-dot" style="background:'
+            + (cclActif ? '#2e8b57' : '#c0392b') + '"></span>CCL '
+            + (cclActif ? ('actif (pid ' + escapeHtml(w.pid) + ')') : 'arrêté') + '</div>';
+      if (service) {
+        html += '<div class="pl-etat"><span class="pl-dot" style="background:'
+              + couleurEtatCcw(service.etat) + '"></span>CCW '
+              + escapeHtml(service.etat || '?') + '</div>';
+      }
+      html += '</div>';
+    }
+    html += '<div class="pl-lien" onclick="sidebarChargerCcw()">🔄 '
+          + (ccwProjetsConnus.length ? 'Actualiser les services CCW' : 'Vérifier les services CCW')
+          + '</div>';
+  }
+  zone.innerHTML = html;
+}
+
+// Actions contextuelles (issue #375) : projet/issue actuellement sélectionnés
+// (projetCourant/numeroCourant). Aucun fetch réseau — les données viennent de
+// listeIssuesResultats (déjà en mémoire) et ccwProjetsConnus.
+function rendrePanneauLateralActions() {
+  const zone = document.getElementById('panneau-lateral-resultats');
+  if (!zone) return;
+  const nom = projetCourant, numero = numeroCourant;
+  const it = listeIssuesResultats.find(
+    x => x.projet === nom && String(x.number) === String(numero));
+  const nomsLabels = it ? (it.labels || []).map(l => ((l && l.name) || l || '').toLowerCase()) : [];
+  const ferme = !!(it && (it.state || '').toUpperCase() === 'CLOSED');
+  // Même condition que le bouton « Interrompre » du détail d'issue
+  // (construireHtmlIssue, issue #323) : issue ouverte, ni done ni needs-human.
+  const interromptible = !!it && !ferme
+    && !nomsLabels.includes('done') && !nomsLabels.includes('needs-human');
+  const service = serviceCcwProjet(nom);
+
+  let html = '<div class="titre-section" style="margin-top:0">Actions</div>'
+           + '<div class="pl-issue-ref">' + escapeHtml(nom) + ' #' + escapeHtml(numero) + '</div>'
+           + '<div class="pl-actions">'
+           + '<button onclick="sidebarRelancerWatcherCCL(\'' + escapeHtml(nom) + '\', this)">'
+           + '🔁 Relancer watcher CCL</button>';
+  if (interromptible) {
+    html += '<button class="danger" onclick="interrompreIssue(\'' + escapeHtml(nom) + '\', '
+          + Number(numero) + ')">⛔ Interrompre l\'issue</button>';
+  }
+  if (service) {
+    html += '<button onclick="ccwRedemarrerProjet(\'' + escapeHtml(nom) + '\', this)">'
+          + '🔁 Relancer watcher CCW</button>'
+          + '<button disabled title="Prévu par l\'issue #378 (à venir) — pas encore implémenté">'
+          + '🔒 Nettoyer verrous CCW + redémarrer</button>';
+  }
+  html += '</div>';
+  if (!ccwProjetsConnus.length) {
+    html += '<div class="pl-lien" onclick="sidebarChargerCcw()">🔄 Vérifier le service CCW de ce projet</div>';
+  }
+  zone.innerHTML = html;
+}
+
+// Relance (ou lance) le watcher CCL du projet donné — même endpoint que
+// l'onglet Watchers (actionWatchers → /lancer-watcher), appelé ici pour un
+// seul projet directement depuis le panneau latéral.
+async function sidebarRelancerWatcherCCL(nom, btn) {
+  const label = btn ? btn.textContent : null;
+  if (btn) { btn.disabled = true; btn.textContent = 'Relance…'; }
+  try {
+    await fetch('/lancer-watcher', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({projet: nom, relancer: true})
+    });
+  } catch(e) {
+    alert('Erreur réseau : ' + e.message);
+  }
+  const panneauWatchers = document.getElementById('panneau-watchers');
+  if (panneauWatchers && panneauWatchers.classList.contains('actif')) await chargerWatchers();
+  if (btn) { btn.disabled = false; if (label !== null) btn.textContent = label; }
+  await rafraichirPanneauLateralResultats();
 }
 
 // Sélectionne la première ligne encore visible SANS charger son détail (voir
@@ -1965,11 +2149,13 @@ function selectionnerLigne(nom, numero) {
     projetCourant = null;
     numeroCourant = null;
     zone.innerHTML = '<div class="issue-vide">Aucune issue à afficher</div>';
+    rafraichirPanneauLateralResultats();
     return;
   }
   projetCourant = nom;
   numeroCourant = numero;
   zone.innerHTML = '<div class="issue-vide">Double-cliquez une issue pour afficher son détail.</div>';
+  rafraichirPanneauLateralResultats();
 }
 
 async function afficherIssue(nom, numero) {

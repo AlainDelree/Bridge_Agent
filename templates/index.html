@@ -191,6 +191,9 @@
 
   <!-- ─── Onglet Résultats : visualisation des issues ──────────────────── -->
   <div id="panneau-resultats" class="panneau">
+   <div class="resultats-layout">
+    <!-- Colonne gauche : liste + détail (contenu inchangé, issue #375). -->
+    <div class="resultats-liste-col">
 
     <!-- Boutons toggle : un par projet + « Tous ». Générés dynamiquement. -->
     <div id="filtres-projets" class="filtres-projets"></div>
@@ -241,6 +244,16 @@
     <div id="zone-issue" class="zone-issue">
       <div class="issue-vide">Aucune issue à afficher</div>
     </div>
+
+    </div><!-- /resultats-liste-col -->
+
+    <!-- Panneau latéral droit (issue #375) : monitoring passif des watchers
+         (aucune issue sélectionnée) ou actions contextuelles (issue
+         sélectionnée). Peuplé par rafraichirPanneauLateralResultats()
+         (static/js/app.js) — jamais rempli côté serveur. -->
+    <div id="panneau-lateral-resultats" class="panneau-lateral"></div>
+
+   </div><!-- /resultats-layout -->
   </div>
 
   <!-- ─── Onglet 2 : gestion des watchers ──────────────────────────────── -->
