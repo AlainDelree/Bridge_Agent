@@ -191,9 +191,17 @@
 
   <!-- ─── Onglet Résultats : visualisation des issues ──────────────────── -->
   <div id="panneau-resultats" class="panneau">
-   <div class="resultats-layout">
-    <!-- Colonne gauche : liste + détail (contenu inchangé, issue #375). -->
-    <div class="resultats-liste-col">
+
+    <!-- Bouton toggle du panneau flottant de monitoring (issue #380) : fixe,
+         toujours visible dans l'onglet Résultats (scope via .panneau.actif
+         sur l'ancêtre, pas besoin de le masquer explicitement) — ouvre/ferme
+         #panneau-lateral-resultats (basculerPanneauLateral, static/js/app.js). -->
+    <button id="pl-toggle" class="pl-toggle" onclick="basculerPanneauLateral()">📊 Infrastructure</button>
+
+    <!-- Liste + détail, pleine largeur depuis #380 (l'ancien layout flex
+         .resultats-layout / .resultats-liste-col à 280px est retiré : le
+         panneau de monitoring est maintenant un overlay flottant, voir plus
+         bas). -->
 
     <!-- Boutons toggle : un par projet + « Tous ». Générés dynamiquement. -->
     <div id="filtres-projets" class="filtres-projets"></div>
@@ -245,21 +253,27 @@
       <div class="issue-vide">Aucune issue à afficher</div>
     </div>
 
-    </div><!-- /resultats-liste-col -->
-
-    <!-- Panneau latéral droit (issue #375, restructuré #377) : deux zones
-         empilées, peuplées par rafraichirPanneauLateralResultats()
-         (static/js/app.js) — jamais rempli côté serveur.
+    <!-- Panneau flottant de monitoring (issue #375, #376, #377, refonte
+         overlay lisible #380) : position:fixed (voir .panneau-lateral,
+         style.css), basculé par #pl-toggle, ouvert par défaut à l'entrée dans
+         l'onglet (ouvrirPanneauLateralParDefaut). Trois zones empilées,
+         peuplées par rafraichirPanneauLateralResultats() (static/js/app.js)
+         — jamais rempli côté serveur.
          - #pl-zone-monitoring : monitoring de l'infrastructure, TOUJOURS
-           visible (VM CCW, watchers CCL, services CCW).
+           visible, une ligne par watcher CCL/service CCW (VM CCW, watchers
+           CCL, services CCW).
+         - #pl-zone-extras : zone réservée aux futurs boutons (issue #380) —
+           volontairement vide, prête à accueillir de nouveaux boutons sans
+           restructurer le panneau. NE PAS remplir dans cette issue.
          - #pl-zone-actions : actions contextuelles sur l'issue sélectionnée,
            vide (donc invisible) tant qu'aucune ligne n'est sélectionnée. -->
     <div id="panneau-lateral-resultats" class="panneau-lateral">
       <div id="pl-zone-monitoring"></div>
+      <!-- Zone réservée aux futurs boutons (issue #380) : vide intentionnellement. -->
+      <div id="pl-zone-extras" class="pl-zone-extras"></div>
       <div id="pl-zone-actions"></div>
     </div>
 
-   </div><!-- /resultats-layout -->
   </div>
 
   <!-- ─── Onglet 2 : gestion des watchers ──────────────────────────────── -->

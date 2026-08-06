@@ -9,6 +9,37 @@ milliers de caractères sur une seule ligne logique, coûteux à relire et
 
 Convention d'ajout : voir §10 de `BRIDGE_AGENT_DOC.md`.
 
+## 6 août 2026 — issue #380
+
+Refonte du panneau latéral de l'onglet Résultats (#375/#376/#377) en
+**panneau flottant** (`position:fixed`, `.panneau-lateral`,
+`static/css/style.css`), lisible et extensible :
+- **Layout** : l'ancien layout flex `.resultats-layout` / `.resultats-liste-col`
+  (colonne fixe 280px) est retiré — la liste des issues reprend toute la
+  largeur. Le panneau devient un overlay ~360px, max-height 80vh scrollable,
+  ombre portée, coin haut-droit. Nouveau bouton toggle fixe `#pl-toggle`
+  (« 📊 Infrastructure », `basculerPanneauLateral`) toujours visible dans
+  l'onglet, qui ouvre/ferme le panneau. Ouvert par défaut à chaque entrée
+  dans l'onglet (`ouvrirPanneauLateralParDefaut`), sauf écran étroit
+  (< 900px) où il reste fermé par défaut.
+- **Monitoring lisible** (`rendrePanneauLateralMonitoring`, `static/js/app.js`) :
+  fini les pastilles colorées par projet, illisibles en 280px — chaque
+  watcher CCL a désormais sa propre ligne (`🟢`/`⚫` + nom + bouton individuel
+  « ▶ Lancer » ou « ↺ Relancer », noir et blanc, sans couleur projet), même
+  format pour les services CCW connus. VM CCW en ligne unique
+  (« 🟢 VM allumée » / « 🔴 VM éteinte » + bouton Démarrer si éteinte). Bouton
+  « ↺ Relancer tous les éteints » conservé si au moins un watcher CCL est
+  éteint. Fonctions `pastillesInline`/`couleurEtatCcw` (obsolètes) retirées.
+- **Zone réservée** `#pl-zone-extras` (`.pl-zone-extras`, vide, s'efface via
+  `:empty` tant qu'inutilisée) ajoutée entre le monitoring et les actions
+  contextuelles, prête à accueillir de futurs boutons sans restructurer le
+  panneau — non remplie par cette issue.
+- Zone actions contextuelles (`rendrePanneauLateralActions`) inchangée sur le
+  fond, seule sa position dans le panneau flottant change.
+- CSS : classes `.pl-chip`/`.pl-chips`/`.pl-dot`/`.pl-etat`/`.pl-synthese`
+  devenues inutiles retirées, remplacées par `.pl-ligne`/`.pl-ligne-libelle`/
+  `.pl-btn-mini`.
+
 ## 6 août 2026 — issue #377
 
 Panneau latéral de l'onglet Résultats (#375/#376) : les deux états

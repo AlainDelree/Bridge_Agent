@@ -272,30 +272,44 @@ button.danger:hover{background:#f8d7da}
 .legende-resultats{font-size:12px;color:#888;background:#f8f8f5;
   border:1px solid #e0dfda;border-radius:6px;padding:8px 12px;
   margin-bottom:16px;display:flex;flex-direction:column;gap:2px;line-height:1.55}
-/* Panneau latéral droit de l'onglet Résultats (issue #375) : liste des issues
-   à gauche (flex:1, largeur inchangée), panneau ~280px fixe à droite —
-   monitoring passif des watchers sans issue sélectionnée, actions
-   contextuelles une fois une ligne sélectionnée (voir rafraichirPanneauLateral-
-   Resultats dans app.js). Écran étroit : le panneau repasse sous la liste. */
-.resultats-layout{display:flex;gap:20px;align-items:flex-start}
-.resultats-liste-col{flex:1;min-width:0}
-.panneau-lateral{width:280px;flex-shrink:0;align-self:flex-start;
-  max-height:calc(100vh - 160px);overflow-y:auto;
-  border:1px solid #e0dfda;border-radius:8px;background:#f8f8f5;padding:14px}
+/* Panneau flottant de monitoring de l'onglet Résultats (issue #375→#377,
+   refonte overlay lisible #380) : liste des issues pleine largeur (l'ancien
+   layout flex .resultats-layout / .resultats-liste-col à 280px est retiré),
+   panneau en position:fixed haut-droite basculé par #pl-toggle — monitoring
+   passif des watchers (une ligne par watcher) sans issue sélectionnée,
+   actions contextuelles une fois une ligne sélectionnée (voir
+   rafraichirPanneauLateralResultats dans app.js). Ouvert par défaut à
+   l'entrée dans l'onglet (ouvrirPanneauLateralParDefaut), sauf écran étroit
+   où il reste fermé par défaut (même seuil 900px que le media query CSS). */
+.pl-toggle{position:fixed;top:18px;right:18px;z-index:1001;
+  padding:9px 14px;border:1px solid #ccc;border-radius:8px;background:#fff;
+  font-size:13px;font-weight:600;color:#1a1a18;cursor:pointer;
+  box-shadow:0 2px 8px rgba(0,0,0,.12)}
+.pl-toggle.actif{border-color:#185FA5;color:#185FA5}
+.panneau-lateral{position:fixed;top:64px;right:18px;z-index:1000;
+  width:360px;max-height:80vh;overflow-y:auto;
+  border:1px solid #e0dfda;border-radius:10px;background:#fff;padding:16px;
+  box-shadow:0 6px 24px rgba(0,0,0,.18)}
+.panneau-lateral.ferme{display:none}
 @media (max-width:900px){
-  .resultats-layout{flex-direction:column}
-  .panneau-lateral{width:100%;max-height:none}
+  .panneau-lateral{width:auto;left:18px;right:18px}
 }
 .pl-sous{font-size:11px;color:#999;margin:-4px 0 12px}
-.pl-etat{display:flex;align-items:center;gap:6px;font-size:12px;color:#555;margin-bottom:2px}
-.pl-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
 .pl-lien{font-size:12px;color:#185FA5;cursor:pointer;user-select:none;margin-top:8px;display:inline-block}
 .pl-lien:hover{text-decoration:underline}
-.pl-synthese{background:#f8f8f5;border:1px solid #e0dfda;border-radius:6px;padding:10px 12px;margin-bottom:14px}
-.pl-resume-titre{font-size:13px;font-weight:600;color:#1a1a18;margin:10px 0 4px}
-.pl-chips{display:flex;flex-wrap:wrap;gap:4px 10px;font-size:12px;color:#555}
-.pl-chip{display:inline-flex;align-items:center;gap:5px}
+.pl-resume-titre{font-size:13px;font-weight:600;color:#1a1a18;margin:12px 0 4px}
+.pl-ligne{display:flex;align-items:center;justify-content:space-between;gap:10px;
+  font-size:13px;color:#1a1a18;padding:3px 0}
+.pl-ligne-libelle{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pl-btn-mini{flex-shrink:0;padding:3px 9px;font-size:12px;border:1px solid #ccc;
+  border-radius:6px;background:#f8f8f5;color:#1a1a18;cursor:pointer}
+.pl-btn-mini:hover{background:#eee}
 .pl-btn-vm{margin:6px 0 2px}
+/* Zone réservée aux futurs boutons (issue #380) : volontairement vide pour
+   l'instant — s'efface tant qu'elle ne contient rien (:empty) pour ne pas
+   laisser un espace blanc inutile dans le panneau. */
+.pl-zone-extras{margin:10px 0}
+.pl-zone-extras:empty{display:none;margin:0}
 .pl-sep{border:none;border-top:1px solid #e0dfda;margin:14px 0}
 .pl-actions{display:flex;flex-direction:column;gap:8px}
 .pl-actions button{width:100%}

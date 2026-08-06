@@ -1731,19 +1731,54 @@ function arreterStreamFinIssue() {
   if (sourceFinIssue) { sourceFinIssue.close(); sourceFinIssue = null; }
 }
 
-// ─── Panneau latéral droit de l'onglet Résultats (issue #375, #377) ───────
-// Deux zones EMPILÉES, non exclusives, pilotées par projetCourant/numeroCourant
-// (mêmes variables que la sélection de ligne, voir selectionnerLigne) :
+// ─── Panneau latéral droit de l'onglet Résultats (issue #375, #377, #380) ──
+// Panneau FLOTTANT (position:fixed, voir .panneau-lateral dans style.css),
+// basculé par #pl-toggle, trois zones EMPILÉES, non exclusives, pilotées par
+// projetCourant/numeroCourant (mêmes variables que la sélection de ligne,
+// voir selectionnerLigne) :
 //  - zone haute (#pl-zone-monitoring) : monitoring passif des watchers CCL+CCW
 //    de tous les projets actifs (rendrePanneauLateralMonitoring), TOUJOURS
 //    rendue, sélection ou non — pour garder l'infra sous les yeux en
-//    travaillant sur une issue (issue #377) ;
+//    travaillant sur une issue (issue #377), une ligne par watcher, noir et
+//    blanc, bouton individuel Lancer/Relancer (issue #380) ;
+//  - zone médiane (#pl-zone-extras) : réservée aux futurs boutons, vide,
+//    voir templates/index.html (issue #380) ;
 //  - zone basse (#pl-zone-actions) : actions contextuelles pour le projet/
 //    l'issue sélectionnés (rendrePanneauLateralActions), sans fetch réseau
 //    (données déjà en mémoire : listeIssuesResultats + ccwProjetsConnus) —
 //    vidée (donc invisible) quand aucune ligne n'est sélectionnée.
 
+// Ouvre le panneau flottant par défaut à chaque entrée dans l'onglet
+// Résultats (issue #380) — sauf sur écran étroit, où il reste fermé par
+// défaut pour ne pas masquer la liste (même seuil que le media query CSS
+// associé, 900px). Un panneau déjà ouvert/fermé manuellement par l'utilisateur
+// est donc réinitialisé à chaque changement d'onglet, comportement voulu.
+function ouvrirPanneauLateralParDefaut() {
+  const panneau = document.getElementById('panneau-lateral-resultats');
+  if (!panneau) return;
+  panneau.classList.toggle('ferme', window.innerWidth < 900);
+  mettreAJourToggleLateral();
+}
+
+// Bascule manuel du panneau flottant (clic sur #pl-toggle).
+function basculerPanneauLateral() {
+  const panneau = document.getElementById('panneau-lateral-resultats');
+  if (!panneau) return;
+  panneau.classList.toggle('ferme');
+  mettreAJourToggleLateral();
+}
+
+// Reflète l'état ouvert/fermé du panneau sur le bouton toggle (accent visuel
+// seulement — le bouton reste cliquable et visible dans les deux états).
+function mettreAJourToggleLateral() {
+  const panneau = document.getElementById('panneau-lateral-resultats');
+  const toggle  = document.getElementById('pl-toggle');
+  if (!panneau || !toggle) return;
+  toggle.classList.toggle('actif', !panneau.classList.contains('ferme'));
+}
+
 function demarrerPanneauLateral() {
+  ouvrirPanneauLateralParDefaut();
   rafraichirPanneauLateralResultats();
   arreterPanneauLateral();
   intervalPanneauLateral = setInterval(rafraichirPanneauLateralResultats, 30000);
@@ -1763,13 +1798,6 @@ async function rafraichirPanneauLateralResultats() {
   rendrePanneauLateralActions();
 }
 
-// Couleur de la pastille CCW, même code que ccwChargerProjets (onglet CCW) —
-// répété volontairement ici plutôt que factorisé : deux appelants seulement,
-// une factorisation forcerait à exposer un utilitaire pour si peu.
-function couleurEtatCcw(etat) {
-  return etat === 'running' ? '#2e8b57' : (etat === 'stopped' ? '#c0392b' : '#888');
-}
-
 // Service CCW connu pour ce projet (ou null), depuis la dernière liste chargée
 // (ccwProjetsConnus) — jamais un fetch direct, voir le commentaire sur cette
 // variable en tête de fichier.
@@ -1782,17 +1810,6 @@ function serviceCcwProjet(nom) {
 // et re-rend elle-même ce panneau une fois la réponse reçue.
 async function sidebarChargerCcw() {
   await ccwChargerProjets();
-}
-
-// Fabrique une liste inline de pastilles « nom » (une par projet), sans retour
-// à la ligne par projet — utilisée par les blocs de résumé synthétiques pour
-// montrer d'un coup d'œil qui est actif (vert) / éteint (rouge).
-function pastillesInline(noms, couleurFn) {
-  if (!noms.length) return '<span style="color:#999">aucun</span>';
-  return noms.map(function(nom) {
-    return '<span class="pl-chip"><span class="pl-dot" style="background:'
-      + couleurFn(nom) + '"></span>' + escapeHtml(nom) + '</span>';
-  }).join(' ');
 }
 
 // Démarre la VM CCW depuis le panneau latéral (même endpoint que l'onglet CCW,
@@ -1810,13 +1827,14 @@ async function sidebarDemarrerVm(btn) {
 }
 
 // Monitoring de l'infrastructure, TOUJOURS visible en zone haute du panneau
-// (issue #375/#376, restructuré en zone fixe #377), qu'une issue soit
+// (issue #375/#376/#377, refonte lisibilité #380), qu'une issue soit
 // sélectionnée ou non : état de la VM CCW + bouton de démarrage si éteinte,
-// pastilles watchers CCL colorées PAR PROJET (couleurProjetResultats — un
-// point sombre = éteint, couleur vive = actif) + bouton de relance groupée des
-// éteints, pastilles services CCW par projet (ou lien de vérification si aucun
-// service encore connu). Cible #pl-zone-monitoring, indépendante de la zone
-// d'actions contextuelles (#pl-zone-actions) — voir le commentaire d'en-tête.
+// UNE LIGNE PAR WATCHER CCL (point vert/gris foncé, sans couleur projet —
+// lisible en noir et blanc, issue #380) avec bouton individuel Lancer/
+// Relancer + bouton de relance groupée des éteints, une ligne par service CCW
+// (ou lien de vérification si aucun service encore connu). Cible
+// #pl-zone-monitoring, indépendante de la zone d'actions contextuelles
+// (#pl-zone-actions) — voir le commentaire d'en-tête.
 async function rendrePanneauLateralMonitoring() {
   const zone = document.getElementById('pl-zone-monitoring');
   if (!zone) return;
@@ -1844,70 +1862,73 @@ async function rendrePanneauLateralMonitoring() {
     return;
   }
 
-  html += '<div class="pl-synthese">';
-
-  // 1. VM CCW : allumée (vert) / éteinte (rouge) / inconnu (gris).
-  let vmCouleur = '#888', vmTexte = 'VM : état inconnu', vmEteinte = false;
+  // 1. VM CCW : ligne unique, allumée/éteinte/inconnue.
+  let vmTexte = '⚪ VM : état inconnu', vmEteinte = false;
   if (vmStatut && vmStatut.succes) {
     if (!vmStatut.existe) {
-      vmCouleur = '#c0392b'; vmTexte = 'VM introuvable (non créée)';
+      vmTexte = '🔴 VM introuvable (non créée)';
     } else if (vmStatut.etat === 'running') {
-      vmCouleur = '#2e8b57'; vmTexte = 'VM allumée';
+      vmTexte = '🟢 VM allumée';
     } else {
-      vmCouleur = '#c0392b'; vmTexte = 'VM éteinte (' + escapeHtml(vmStatut.etat || '?') + ')';
+      vmTexte = '🔴 VM éteinte (' + escapeHtml(vmStatut.etat || '?') + ')';
       vmEteinte = true;
     }
   } else if (vmStatut && vmStatut.erreur) {
-    vmTexte = 'VM : ' + escapeHtml(vmStatut.erreur);
+    vmTexte = '⚪ VM : ' + escapeHtml(vmStatut.erreur);
   }
-  html += '<div class="pl-etat"><span class="pl-dot" style="background:'
-        + vmCouleur + '"></span>' + vmTexte + '</div>';
+  html += '<div class="pl-ligne"><span class="pl-ligne-libelle">' + vmTexte + '</span>';
   if (vmEteinte) {
-    html += '<button class="pl-btn-vm" onclick="sidebarDemarrerVm(this)">▶ Démarrer la VM</button>';
+    html += '<button class="pl-btn-mini" onclick="sidebarDemarrerVm(this)">▶ Démarrer</button>';
   }
+  html += '</div>';
 
-  // 2. Watchers CCL : une pastille PAR PROJET colorée à la couleur du projet
-  // (couleurProjetResultats), pas juste vert/rouge — un point sombre indique
-  // un watcher éteint, la couleur vive du projet indique un watcher actif
-  // (issue #377), pour repérer d'un coup d'œil LEQUEL est éteint. Bouton de
+  // 2. Watchers CCL : une ligne PAR watcher (issue #380) — point vert = actif,
+  // gris foncé = éteint, sans couleur projet (monitoring noir et blanc, à
+  // distinguer des pastilles colorées de la liste des issues). Bouton
+  // individuel à droite (Lancer si éteint, Relancer si actif) + bouton de
   // relance groupée si au moins un est éteint.
-  const cclActifs  = noms.filter(n => !!(watchersMap[n] && watchersMap[n].actif));
-  const cclEteints = noms.filter(n => !(watchersMap[n] && watchersMap[n].actif));
-  html += '<div class="pl-resume-titre">' + cclActifs.length + '/' + noms.length
-        + ' watchers CCL actifs</div>'
-        + '<div class="pl-chips">'
-        + pastillesInline(cclActifs, couleurProjetResultats)
-        + (cclEteints.length ? ' ' + pastillesInline(cclEteints, () => '#33322f') : '')
-        + '</div>';
+  html += '<div class="pl-resume-titre">Watchers CCL</div>';
+  const cclEteints = [];
+  noms.forEach(function(nom) {
+    const actif = !!(watchersMap[nom] && watchersMap[nom].actif);
+    if (!actif) cclEteints.push(nom);
+    html += '<div class="pl-ligne">'
+          + '<span class="pl-ligne-libelle">' + (actif ? '🟢' : '⚫') + ' ' + escapeHtml(nom) + '</span>'
+          + '<button class="pl-btn-mini" onclick="sidebarRelancerWatcherCCL(\'' + escapeHtml(nom) + '\', this)">'
+          + (actif ? '↺ Relancer' : '▶ Lancer') + '</button>'
+          + '</div>';
+  });
   if (cclEteints.length) {
     html += '<button class="pl-btn-vm" onclick="sidebarRelancerTousEteints(this)">'
           + '↺ Relancer tous les éteints</button>';
   }
 
-  // 3. Résumé services CCW : seulement si des services sont déjà connus.
+  // 3. Services CCW : même format ligne par ligne, seulement si des services
+  // sont déjà connus (aucun polling automatique — voir ccwProjetsConnus en
+  // tête de fichier). Pas de bouton individuel ici : la relance CCW d'un
+  // service reste une action contextuelle liée à une issue sélectionnée
+  // (#pl-zone-actions, ccwRedemarrerProjet), inchangé depuis #375.
+  html += '<div class="pl-resume-titre">Services CCW</div>';
   if (ccwProjetsConnus.length) {
-    const ccwRunning = ccwProjetsConnus.filter(p => p.etat === 'running');
-    const ccwAutres  = ccwProjetsConnus.filter(p => p.etat !== 'running');
-    html += '<div class="pl-resume-titre">' + ccwRunning.length + '/' + ccwProjetsConnus.length
-          + ' services CCW running</div>'
-          + '<div class="pl-chips">'
-          + pastillesInline(ccwRunning.map(p => p.projet), () => '#2e8b57')
-          + (ccwAutres.length ? ' ' + pastillesInline(ccwAutres.map(p => p.projet),
-              nom => couleurEtatCcw((ccwAutres.find(p => p.projet === nom) || {}).etat)) : '')
-          + '</div>';
+    ccwProjetsConnus.forEach(function(p) {
+      const actif = p.etat === 'running';
+      html += '<div class="pl-ligne"><span class="pl-ligne-libelle">'
+            + (actif ? '🟢' : '⚫') + ' ' + escapeHtml(p.projet)
+            + (actif ? '' : ' (' + escapeHtml(p.etat || '?') + ')') + '</span></div>';
+    });
   } else {
     html += '<div class="pl-lien" onclick="sidebarChargerCcw()">🔄 Vérifier les services CCW</div>';
   }
-  html += '</div>';  // .pl-synthese
   zone.innerHTML = html;
 }
 
 // Actions contextuelles (issue #375, zone basse fixe depuis #377) : projet/
 // issue actuellement sélectionnés (projetCourant/numeroCourant). Aucun fetch
 // réseau — les données viennent de listeIssuesResultats (déjà en mémoire) et
-// ccwProjetsConnus. Cible #pl-zone-actions, sous #pl-zone-monitoring
-// (toujours visible, voir rendrePanneauLateralMonitoring) ; se vide (donc
-// disparaît, séparateur compris) quand aucune ligne n'est sélectionnée.
+// ccwProjetsConnus. Cible #pl-zone-actions, sous #pl-zone-monitoring et la
+// zone réservée #pl-zone-extras (toujours visible, voir
+// rendrePanneauLateralMonitoring) ; se vide (donc disparaît, séparateur
+// compris) quand aucune ligne n'est sélectionnée.
 function rendrePanneauLateralActions() {
   const zone = document.getElementById('pl-zone-actions');
   if (!zone) return;
