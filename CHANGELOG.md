@@ -9,6 +9,47 @@ milliers de caractères sur une seule ligne logique, coûteux à relire et
 
 Convention d'ajout : voir §10 de `BRIDGE_AGENT_DOC.md`.
 
+## 6 août 2026 — issue #381
+
+Améliorations de confort du panneau flottant (suite #380), sans changement
+de layout ni de mécanique existante :
+- **Monitoring watchers CCL** (`rendrePanneauLateralMonitoring`) : bouton
+  global renommé « ↺ Relancer tous les éteints » → « ▶ Lancer les éteints »
+  + nouveau bouton « ↺ Relancer tous les CCL » (`sidebarRelancerTousCCL`) qui
+  relance TOUS les watchers CCL, actifs ou éteints — même mécanique que
+  `sidebarRelancerTousEteints` mais sans filtrer sur l'état. Les deux boutons
+  sont côte à côte (`.pl-boutons-ccl`).
+- **Résumé par projet** (`resumeProjetMonitoring`) : sous chaque watcher CCL,
+  une ligne « X en cours, Y en file » (`.pl-sous-projet`) — calculée
+  uniquement depuis les données déjà en mémoire (`listeIssuesResultats` +
+  `timingIssues`), sans nouveau fetch réseau automatique (pour ne pas
+  reproduire la surconsommation de quota gh déjà corrigée par l'issue #270).
+  Horodatage « Mis à jour à HH:MM:SS » ajouté en bas du monitoring.
+- **Zone actions** (`rendrePanneauLateralActions`) : mode de l'issue
+  sélectionnée affiché en haut (« 📖 Lecture seule » / « ✏️ Lecture active » /
+  « ⚠️ Écriture », `libelleModeIssue`, lu depuis les labels via
+  `modeEcritureDepuisLabels`) ; nouveau bouton « ⛔ Interrompre et relancer
+  (watcher CCL/CCW) » (`interrompreEtRelancer`) qui enchaîne `/interrompre`
+  puis la relance du watcher adapté au label de l'issue (for-linux → CCL,
+  for-windows → CCW) — l'ancien bouton « ⛔ Interrompre l'issue » reste en
+  dessous ; nouveau bouton « ✖ Fermer l'issue » quand l'issue porte le label
+  `needs-human`, réutilisant exactement la route `/fermer-issue` déjà câblée
+  par `fermerIssue()` dans le détail. `interrompreIssue()` retourne désormais
+  un booléen de succès (annulation/échec → false) pour permettre à
+  `interrompreEtRelancer()` de savoir s'il doit enchaîner sur la relance.
+- **Pastilles de notification** (`majPastillesFiltres`) sur les boutons de
+  filtre projet (`.filtres-projets`) : petit badge rouge (`.pastille-notif`)
+  affichant le nombre d'issues ouvertes ni `done` ni `needs-human` du projet,
+  visible même quand son filtre est masqué. Calcul purement local depuis
+  `listeIssuesResultats`, rafraîchi à chaque (re)rendu de la liste
+  (`rendreListeIssues`, `remplacerLigneIssue`, `construireBoutonsFiltre`).
+- **Bouton « ✓ Cocher tout »** (`cocherToutesVisibles`) dans la barre de
+  filtres, à côté du bouton rafraîchir : coche toutes les issues actuellement
+  visibles (projet filtré, ou tous si filtre « Tous »), en réutilisant le
+  mécanisme de case à cocher existant (issue #154, localStorage +
+  `.resultat-traite`).
+- Fichiers touchés : `static/js/app.js`, `static/css/style.css`.
+
 ## 6 août 2026 — issue #380
 
 Refonte du panneau latéral de l'onglet Résultats (#375/#376/#377) en

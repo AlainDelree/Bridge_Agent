@@ -114,10 +114,17 @@ button.danger:hover{background:#f8d7da}
 .issue-badges{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px}
 /* Ligne de boutons toggle « filtre par projet » au-dessus de la combobox. */
 .filtres-projets{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px;align-items:center}
-.filtre-projet{display:inline-flex;align-items:center;gap:6px;font-size:12px;
+.filtre-projet{position:relative;display:inline-flex;align-items:center;gap:6px;font-size:12px;
   font-weight:500;padding:5px 11px;border:1px solid #ccc;border-radius:14px;
   background:#fff;color:#333;cursor:pointer;user-select:none;transition:opacity .12s}
 .filtre-projet .pastille{width:9px;height:9px;border-radius:50%;flex-shrink:0}
+/* Pastille de notification (issue #381) : nombre d'issues ouvertes ni done ni
+   needs-human de ce projet, visible même quand le bouton est inactif (filtre
+   masqué) — c'est justement le cas d'usage principal (savoir qu'un projet
+   masqué a des issues en attente sans avoir à le réafficher). */
+.filtre-projet .pastille-notif{position:absolute;top:-6px;right:-6px;min-width:15px;height:15px;
+  padding:0 3px;border-radius:8px;background:#c0392b;color:#fff;font-size:10px;font-weight:700;
+  line-height:15px;text-align:center;box-shadow:0 0 0 1px #fff}
 /* Pastille désélectionnée lisible (issue #250) : l'ancienne opacity:.4 se
    cumulait à un fond clair et un texte déjà pâle (#999), faisant tomber le
    contraste du texte très en dessous de tout seuil lisible — précisément
@@ -153,6 +160,11 @@ button.danger:hover{background:#f8d7da}
   border-radius:14px;background:#fff;color:#555;cursor:pointer;user-select:none;
   transition:opacity .12s}
 .btn-rafraichir:hover{opacity:.6}
+/* Bouton « Cocher tout » (issue #381), même gabarit que les boutons de filtre. */
+.btn-cocher-tout{font-size:12px;padding:5px 11px;border:1px solid #ccc;
+  border-radius:14px;background:#fff;color:#555;cursor:pointer;user-select:none;
+  transition:opacity .12s}
+.btn-cocher-tout:hover{opacity:.6}
 /* Indicateur discret de rafraîchissement en arrière-plan (cache localStorage). */
 .maj-indicateur{font-size:11px;color:#9a978f;font-style:italic;
   margin:0 2px;user-select:none}
@@ -305,6 +317,15 @@ button.danger:hover{background:#f8d7da}
   border-radius:6px;background:#f8f8f5;color:#1a1a18;cursor:pointer}
 .pl-btn-mini:hover{background:#eee}
 .pl-btn-vm{margin:6px 0 2px}
+/* Résumé « en cours/en file » sous chaque watcher CCL (issue #381). */
+.pl-sous-projet{font-size:11px;color:#999;margin:-2px 0 6px;padding-left:1px}
+/* Boutons de relance groupée CCL côte à côte (issue #381) : « Lancer les
+   éteints » (seulement si au moins un est éteint) et « Relancer tous les CCL »
+   (toujours, actifs ou non). */
+.pl-boutons-ccl{display:flex;gap:6px;flex-wrap:wrap;margin:6px 0 2px}
+.pl-boutons-ccl .pl-btn-vm{margin:0;flex:1}
+/* Mode de l'issue sélectionnée (issue #381), en haut de la zone actions. */
+.pl-mode-issue{font-size:13px;font-weight:600;color:#1a1a18;margin-bottom:10px}
 /* Zone réservée aux futurs boutons (issue #380) : volontairement vide pour
    l'instant — s'efface tant qu'elle ne contient rien (:empty) pour ne pas
    laisser un espace blanc inutile dans le panneau. */
