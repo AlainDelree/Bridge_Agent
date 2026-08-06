@@ -988,6 +988,9 @@ function cocherToutesVisibles() {
     catch(e) { /* localStorage indisponible : la case reste juste visuelle */ }
     ligne.classList.add('resultat-traite');
   });
+  // Pastilles filtre projet (issue #383) : comptent les issues décochées,
+  // donc cocher tout le visible doit rafraîchir immédiatement leur compte.
+  majPastillesFiltres();
 }
 
 // Pastille de notification sur chaque bouton de filtre projet (issue #381) :
@@ -1003,6 +1006,11 @@ function cocherToutesVisibles() {
 // cache plus profond que la limite couramment affichée (N abaissé sans clic
 // sur ↻, cf. commentaire de limiteIssuesProjet) gonflerait la pastille
 // au-delà de ce que l'utilisateur voit réellement dans la liste.
+// Compte les issues DÉCOCHÉES (issue #383) : la case à cocher libre
+// (localStorage, voir estResultatCoche/cleCocheResultat) reflète si Alain a
+// déjà traité/lu ce résultat — indépendamment de son état GitHub (open/closed,
+// labels done/needs-human). Une issue décochée reste à traiter quel que soit
+// son état GitHub, donc plus aucun filtre sur state/labels ici.
 function majPastillesFiltres() {
   const limite = limiteIssuesProjet();
   const vus = {};
@@ -1011,9 +1019,7 @@ function majPastillesFiltres() {
     const v = vus[it.projet] || 0;
     if (v >= limite) return;
     vus[it.projet] = v + 1;
-    if ((it.state || '').toUpperCase() !== 'OPEN') return;
-    const noms = (it.labels || []).map(l => ((l && l.name) || l || '').toLowerCase());
-    if (noms.includes('done') || noms.includes('needs-human')) return;
+    if (estResultatCoche(it.projet, String(it.number))) return;
     comptes[it.projet] = (comptes[it.projet] || 0) + 1;
   });
   document.querySelectorAll('#filtres-projets .filtre-projet[data-projet]').forEach(btn => {
@@ -1131,6 +1137,9 @@ function basculerCocheResultat(event, projet, numero) {
     else       localStorage.removeItem(cleCocheResultat(projet, numero));
   } catch (e) { /* localStorage indisponible : la case reste juste visuelle */ }
   if (ligne) ligne.classList.toggle('resultat-traite', coche);
+  // Pastilles filtre projet (issue #383) : comptent les issues décochées,
+  // donc chaque bascule de case doit rafraîchir immédiatement leur compte.
+  majPastillesFiltres();
 }
 
 // Construit l'élément DOM d'UNE ligne d'issue (case à cocher, pastille,

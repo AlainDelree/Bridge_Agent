@@ -9,6 +9,28 @@ milliers de caractères sur une seule ligne logique, coûteux à relire et
 
 Convention d'ajout : voir §10 de `BRIDGE_AGENT_DOC.md`.
 
+## 6 août 2026 — issue #383
+
+Correctif suite #381/#382 : les pastilles de notification des boutons de
+filtre projet comptaient les issues **OPEN** ni `done` ni `needs-human`
+(état GitHub), au lieu des issues **décochées** localement — la case à
+cocher libre (issue #154), persistée en `localStorage` via
+`cleCocheResultat`/`estResultatCoche`, indépendante de l'état GitHub.
+- `majPastillesFiltres()` : remplacement du filtre `state`/labels
+  (`OPEN`/`done`/`needs-human`) par `estResultatCoche(it.projet, it.number)`
+  — une issue est comptée si elle n'est PAS cochée, quel que soit son état
+  GitHub. Le filtre GitHub est supprimé entièrement (une issue décochée
+  reste décochée quel que soit son état). La portée courante
+  (`limiteIssuesProjet()`, issue #382) est conservée inchangée.
+- Effet de bord nécessaire : ni `basculerCocheResultat()` (case individuelle)
+  ni `cocherToutesVisibles()` (bouton « Tout cocher ») n'appelaient
+  `majPastillesFiltres()` — sans ce fix, une pastille basée sur les cases
+  restait figée jusqu'au prochain rendu complet de la liste après un clic
+  sur une case. Ajout de l'appel dans les deux fonctions pour un
+  rafraîchissement immédiat.
+- Fichier touché : `static/js/app.js` (`majPastillesFiltres`,
+  `basculerCocheResultat`, `cocherToutesVisibles`).
+
 ## 6 août 2026 — issue #382
 
 Correctif suite #381 : les pastilles de notification des boutons de filtre
