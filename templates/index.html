@@ -247,11 +247,17 @@
 
     </div><!-- /resultats-liste-col -->
 
-    <!-- Panneau latéral droit (issue #375) : monitoring passif des watchers
-         (aucune issue sélectionnée) ou actions contextuelles (issue
-         sélectionnée). Peuplé par rafraichirPanneauLateralResultats()
-         (static/js/app.js) — jamais rempli côté serveur. -->
-    <div id="panneau-lateral-resultats" class="panneau-lateral"></div>
+    <!-- Panneau latéral droit (issue #375, restructuré #377) : deux zones
+         empilées, peuplées par rafraichirPanneauLateralResultats()
+         (static/js/app.js) — jamais rempli côté serveur.
+         - #pl-zone-monitoring : monitoring de l'infrastructure, TOUJOURS
+           visible (VM CCW, watchers CCL, services CCW).
+         - #pl-zone-actions : actions contextuelles sur l'issue sélectionnée,
+           vide (donc invisible) tant qu'aucune ligne n'est sélectionnée. -->
+    <div id="panneau-lateral-resultats" class="panneau-lateral">
+      <div id="pl-zone-monitoring"></div>
+      <div id="pl-zone-actions"></div>
+    </div>
 
    </div><!-- /resultats-layout -->
   </div>

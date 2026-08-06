@@ -287,8 +287,6 @@ button.danger:hover{background:#f8d7da}
   .panneau-lateral{width:100%;max-height:none}
 }
 .pl-sous{font-size:11px;color:#999;margin:-4px 0 12px}
-.pl-projet{border-left:3px solid #ccc;padding:6px 0 6px 10px;margin-bottom:10px}
-.pl-projet-nom{font-size:13px;font-weight:600;color:#1a1a18;margin-bottom:3px}
 .pl-etat{display:flex;align-items:center;gap:6px;font-size:12px;color:#555;margin-bottom:2px}
 .pl-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
 .pl-lien{font-size:12px;color:#185FA5;cursor:pointer;user-select:none;margin-top:8px;display:inline-block}
@@ -299,7 +297,6 @@ button.danger:hover{background:#f8d7da}
 .pl-chip{display:inline-flex;align-items:center;gap:5px}
 .pl-btn-vm{margin:6px 0 2px}
 .pl-sep{border:none;border-top:1px solid #e0dfda;margin:14px 0}
-.pl-issue-ref{font-size:12px;color:#999;margin-bottom:12px}
 .pl-actions{display:flex;flex-direction:column;gap:8px}
 .pl-actions button{width:100%}
 .issue-body{background:#f8f8f5;border:1px solid #e0dfda;border-radius:6px;padding:12px;

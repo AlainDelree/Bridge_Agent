@@ -9,6 +9,51 @@ milliers de caractères sur une seule ligne logique, coûteux à relire et
 
 Convention d'ajout : voir §10 de `BRIDGE_AGENT_DOC.md`.
 
+## 6 août 2026 — issue #377
+
+Panneau latéral de l'onglet Résultats (#375/#376) : les deux états
+mutuellement exclusifs (monitoring OU actions) deviennent **deux zones
+empilées non exclusives**, chacune dans son propre conteneur DOM
+(`#pl-zone-monitoring` / `#pl-zone-actions`, sous `#panneau-lateral-resultats`,
+`templates/index.html`) :
+- **Zone haute — monitoring, toujours visible**, même issue sélectionnée
+  (`rendrePanneauLateralMonitoring`, `static/js/app.js`) : VM CCW inchangée ;
+  watchers CCL désormais colorés **par projet** (`couleurProjetResultats`,
+  et non plus vert/rouge générique — pastille sombre `#33322f` = éteint,
+  couleur vive du projet = actif) avec un nouveau bouton « ↺ Relancer tous les
+  éteints » (`sidebarRelancerTousEteints`) qui relit `/watchers` au clic puis
+  relance séquentiellement, un par un via `/lancer-watcher`, chaque watcher
+  éteint (une relance en échec n'interrompt pas les suivantes) ; services CCW
+  inchangés. Le détail par projet (`.pl-projet`, pid, état CCW ligne par
+  ligne) est retiré : redondant avec les pastilles par projet ci-dessus et
+  avec la pastille projet désormais sur chaque ligne de résultat (voir
+  ci-dessous).
+- **Zone basse — actions contextuelles, visible uniquement si une issue est
+  sélectionnée** (`rendrePanneauLateralActions`), avec un séparateur
+  `<hr class="pl-sep">` et un titre unique « Actions — `<projet>` #`<numero>` »
+  (fusion de l'ancien titre + de la référence séparée). Se vide (donc
+  disparaît entièrement, séparateur compris) dès qu'aucune ligne n'est
+  sélectionnée, au lieu de remplacer le monitoring. Boutons inchangés sur le
+  fond (relancer watcher CCL, interrompre l'issue si ouverte et ni `done` ni
+  `needs-human`, relancer watcher CCW, verrous CCW désactivé en attendant
+  #378), icône de relance alignée sur celle du monitoring (« ↺ » au lieu de
+  « 🔁 »).
+- `rafraichirPanneauLateralResultats()` rend désormais TOUJOURS le monitoring
+  puis (re)rend/vide les actions, au lieu de choisir l'un OU l'autre — appelé
+  sans changement par le SSE `fin_issue`, l'intervalle 30s et chaque
+  changement de sélection de ligne.
+
+La pastille colorée de projet sur chaque ligne de résultat
+(`.pastille-ligne`, `construireLigneIssueDOM`) existait déjà (issue #66,
+héritée de l'extraction du frontend) et couvrait déjà le besoin exprimé par
+cette issue pour le filtre « Tous » — aucune modification nécessaire sur ce
+point, vérifié seulement.
+
+CSS (`static/css/style.css`) : classes `.pl-projet`, `.pl-projet-nom` et
+`.pl-issue-ref` retirées (plus aucun appelant après la restructuration) ;
+`.pl-synthese`, `.pl-chips`, `.pl-btn-vm`, `.pl-sep`, `.pl-actions`
+inchangées, réutilisées telles quelles par les deux zones.
+
 ## 6 août 2026 — issue #376
 
 Panneau monitoring de l'onglet Résultats (`rendrePanneauLateralMonitoring`,
