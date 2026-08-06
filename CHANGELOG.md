@@ -9,6 +9,26 @@ milliers de caractères sur une seule ligne logique, coûteux à relire et
 
 Convention d'ajout : voir §10 de `BRIDGE_AGENT_DOC.md`.
 
+## 6 août 2026 — issue #382
+
+Correctif suite #381 : les pastilles de notification des boutons de filtre
+projet ne respectaient pas la portée courante.
+- Investigation des deux causes suspectées par l'issue : l'attribut
+  `data-projet` posé sur `.filtre-projet` (`construireBoutonsFiltre`) et
+  l'ordre d'appel de `majPastillesFiltres()` après le peuplement de
+  `listeIssuesResultats` (`appliquerListeIssues`, `rendreListeIssues`,
+  `remplacerLigneIssue`) étaient déjà corrects — aucune des deux ne causait
+  l'absence de pastilles.
+- **Cause réelle** : `majPastillesFiltres()` comptait sur la totalité de
+  `listeIssuesResultats`, sans tenir compte de la portée du champ
+  « par projet : N » (`limiteIssuesProjet()`) — un compte pouvant dépasser ce
+  que l'utilisateur voit réellement dans la liste dès que N est abaissé sans
+  cliquer sur ↻ (la saisie seule n'invalide que le cache, pas les données déjà
+  en mémoire). Le comptage se limite désormais aux N premières issues de
+  chaque projet (même lecture de la limite que le téléchargement), avant
+  d'appliquer le filtre ouvert/ni-done/ni-needs-human.
+- Fichier touché : `static/js/app.js` (`majPastillesFiltres`).
+
 ## 6 août 2026 — issue #381
 
 Améliorations de confort du panneau flottant (suite #380), sans changement

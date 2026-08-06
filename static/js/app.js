@@ -997,9 +997,20 @@ function cocherToutesVisibles() {
 // listeIssuesResultats (déjà en mémoire) — aucun fetch réseau. Appelée à
 // chaque (re)construction des boutons et à chaque mise à jour de la liste
 // (rendreListeIssues, remplacerLigneIssue).
+// Portée respectée (issue #382) : ne compte que dans les N premières issues
+// de CHAQUE projet (N = limiteIssuesProjet(), le champ « par projet : N »),
+// même lecture de la limite que celle qui borne le téléchargement — sinon un
+// cache plus profond que la limite couramment affichée (N abaissé sans clic
+// sur ↻, cf. commentaire de limiteIssuesProjet) gonflerait la pastille
+// au-delà de ce que l'utilisateur voit réellement dans la liste.
 function majPastillesFiltres() {
+  const limite = limiteIssuesProjet();
+  const vus = {};
   const comptes = {};
   listeIssuesResultats.forEach(it => {
+    const v = vus[it.projet] || 0;
+    if (v >= limite) return;
+    vus[it.projet] = v + 1;
     if ((it.state || '').toUpperCase() !== 'OPEN') return;
     const noms = (it.labels || []).map(l => ((l && l.name) || l || '').toLowerCase());
     if (noms.includes('done') || noms.includes('needs-human')) return;
