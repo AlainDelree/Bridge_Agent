@@ -66,7 +66,8 @@ def _enregistrer_routes(app: Flask) -> None:
                               arreter_watcher_route, statut)
     from app.issues import (apercu, envoyer, issues_liste, issue_detail,
                             diff_commit, issues_en_attente, annuler_issue,
-                            fermer_issue, joindre_image, recherche_issues)
+                            fermer_issue, joindre_image, recherche_issues,
+                            modifier_label_notif)
     from app.templates import (templates_liste, templates_sauvegarder,
                                templates_supprimer)
     from app.journal import journal
@@ -99,6 +100,7 @@ def _enregistrer_routes(app: Flask) -> None:
     app.add_url_rule("/issues-en-attente/<nom_projet>", "issues_en_attente", login_requis(issues_en_attente))
     app.add_url_rule("/annuler-issue/<nom_projet>/<numero>", "annuler_issue", login_requis(annuler_issue), methods=["POST"])
     app.add_url_rule("/fermer-issue/<nom_projet>/<numero>", "fermer_issue", login_requis(fermer_issue), methods=["POST"])
+    app.add_url_rule("/modifier-label-notif", "modifier_label_notif", login_requis(modifier_label_notif), methods=["POST"])
     app.add_url_rule("/config/<nom_projet>", "get_config", login_requis(get_config), methods=["GET"])
     app.add_url_rule("/config/<nom_projet>", "post_config", login_requis(post_config), methods=["POST"])
     app.add_url_rule("/nouveau-projet/verifier", "verifier_nouveau_projet", login_requis(verifier_nouveau_projet), methods=["GET"])

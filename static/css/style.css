@@ -334,6 +334,12 @@ button.danger:hover{background:#f8d7da}
 .pl-sep{border:none;border-top:1px solid #e0dfda;margin:14px 0}
 .pl-actions{display:flex;flex-direction:column;gap:8px}
 .pl-actions button{width:100%}
+/* Toggles notif_pc/notif_gsm/notif_tous de l'issue sélectionnée (issue #384). */
+.pl-notifs{margin-bottom:10px}
+.pl-notifs-titre{font-size:13px;font-weight:600;color:#1a1a18;margin-bottom:4px}
+.pl-notif-ligne{display:block;font-size:13px;color:#1a1a18;padding:2px 0;cursor:pointer}
+.pl-notif-ligne input{margin-right:6px}
+.pl-notif-erreur{font-size:12px;color:#b3261e;min-height:14px;margin-top:2px}
 .issue-body{background:#f8f8f5;border:1px solid #e0dfda;border-radius:6px;padding:12px;
   font-family:monospace;font-size:12px;white-space:pre-wrap;word-break:break-word;
   max-height:200px;overflow-y:auto;line-height:1.6;margin-bottom:16px}

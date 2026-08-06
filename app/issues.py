@@ -24,7 +24,8 @@ from app.auth import login_requis  # noqa: F401 (exporté pour l'enregistrement 
 # du watcher fonctionne. On réutilise ses primitives pour éviter toute dérive
 # entre le calcul du watcher et celui du badge (issues #91 et #106).
 from watcher import (est_titre_chef, deduire_type_issue, PAUSE_ENTRE_TENTATIVES,
-                     _est_depot_git, LABEL_ECRITURE, LABEL_SCRATCH)
+                     _est_depot_git, LABEL_ECRITURE, LABEL_SCRATCH,
+                     LABEL_NOTIF_PC, LABEL_NOTIF_GSM, LABEL_NOTIF_TOUS)
 
 # Racine du projet (dossier parent du package app/).
 DOSSIER_SCRIPT = Path(__file__).resolve().parent.parent
@@ -1032,6 +1033,54 @@ def annuler_issue(nom_projet, numero):
         return jsonify(succes=False, message="gh introuvable dans le PATH.")
     except Exception as e:
         return jsonify(succes=False, message=str(e))
+
+
+# ─── Toggle des labels de notification depuis le panneau flottant (issue #384) ─
+# Les labels notif_pc/notif_gsm/notif_tous peuvent être modifiés en cours de
+# traitement — le watcher les relit au moment de la clôture (voir LABEL_NOTIF_*
+# dans watcher.py). Cette route permet de les basculer sans passer par GitHub.
+# Whitelist STRICTE : aucun autre label ne peut être posé/retiré via cette route.
+LABELS_NOTIF_AUTORISES = {LABEL_NOTIF_PC, LABEL_NOTIF_GSM, LABEL_NOTIF_TOUS}
+
+
+def modifier_label_notif():
+    """Pose ou retire un label de notification (notif_pc/notif_gsm/notif_tous)
+    sur une issue GitHub, depuis le panneau flottant d'actions.
+
+    Paramètres JSON : projet, numero, label, actif (bool). Retourne
+    {succes: true} ou {succes: false, erreur: ...}."""
+    data       = request.json or {}
+    nom_projet = (data.get("projet") or "").strip()
+    numero     = data.get("numero")
+    label      = (data.get("label") or "").strip()
+    actif      = bool(data.get("actif"))
+
+    cfg = projet_par_nom(nom_projet)
+    if not cfg:
+        return jsonify(succes=False, erreur="Projet introuvable.")
+    if not str(numero).isdigit():
+        return jsonify(succes=False, erreur="Numéro d'issue invalide.")
+    if label not in LABELS_NOTIF_AUTORISES:
+        return jsonify(succes=False, erreur=f"Label non autorisé : « {label} ».")
+
+    option = "--add-label" if actif else "--remove-label"
+    try:
+        res = subprocess.run(
+            ["gh", "issue", "edit", str(numero),
+             "--repo", cfg.depot,
+             option,   label],
+            capture_output=True, text=True, timeout=30
+        )
+        if res.returncode == 0:
+            return jsonify(succes=True)
+        return jsonify(succes=False,
+                       erreur=res.stderr.strip() or "Erreur inconnue de gh.")
+    except subprocess.TimeoutExpired:
+        return jsonify(succes=False, erreur="Timeout (gh n'a pas répondu en 30s).")
+    except FileNotFoundError:
+        return jsonify(succes=False, erreur="gh introuvable dans le PATH.")
+    except Exception as e:
+        return jsonify(succes=False, erreur=str(e))
 
 
 def fermer_issue(nom_projet, numero):

@@ -9,6 +9,31 @@ milliers de caractères sur une seule ligne logique, coûteux à relire et
 
 Convention d'ajout : voir §10 de `BRIDGE_AGENT_DOC.md`.
 
+## 6 août 2026 — issue #384
+
+Panneau flottant actions : toggles `notif_pc`/`notif_gsm`/`notif_tous` sur
+l'issue sélectionnée, sans passer par GitHub — ces labels peuvent être
+modifiés pendant le traitement, le watcher les relit au moment de la
+clôture.
+- Nouvelle route `POST /modifier-label-notif` (`app/issues.py`,
+  `modifier_label_notif`) : `gh issue edit --add-label`/`--remove-label`
+  selon `actif`, whitelist stricte sur `notif_pc`/`notif_gsm`/`notif_tous`
+  (constantes `LABEL_NOTIF_*` de `watcher.py`, réutilisées telles quelles) —
+  aucun autre label ne peut être modifié via cette route. Protégée par
+  `login_requis`, enregistrée dans `app/__init__.py`.
+- `rendrePanneauLateralActions()` (`static/js/app.js`) : bloc « 🔔
+  Notifications » (3 checkboxes) inséré sous le mode de l'issue, affiché
+  seulement si l'issue est interrompible (ouverte, ni `done` ni
+  `needs-human` — même condition que les boutons d'interruption). État
+  initial coché/décoché lu depuis `listeIssuesResultats`. Au clic :
+  appel `/modifier-label-notif`, mise à jour locale de
+  `listeIssuesResultats` + re-rendu du panneau si succès ; en cas
+  d'échec, la checkbox revient à son état précédent et un message
+  d'erreur discret (`#pl-notif-erreur`, sans `alert()`) s'affiche puis
+  s'efface après 4 s.
+- CSS : `.pl-notifs`/`.pl-notifs-titre`/`.pl-notif-ligne`/`.pl-notif-erreur`
+  (`static/css/style.css`).
+
 ## 6 août 2026 — issue #383
 
 Correctif suite #381/#382 : les pastilles de notification des boutons de

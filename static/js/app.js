@@ -2096,6 +2096,19 @@ function rendrePanneauLateralActions() {
   if (it) {
     html += '<div class="pl-mode-issue">' + libelleModeIssue(nomsLabels) + '</div>';
   }
+  // Toggles des labels de notification (issue #384) : mêmes conditions que les
+  // boutons d'interruption (issue ouverte, ni done ni needs-human) — pas de
+  // notification à reconfigurer sur une issue déjà terminée. État initial
+  // coché/décoché reflète les labels actuels de l'issue (listeIssuesResultats).
+  if (interromptible) {
+    html += '<div class="pl-notifs">'
+          + '<div class="pl-notifs-titre">🔔 Notifications</div>'
+          + rendreCheckboxNotif(nom, numero, 'notif_pc',   'Bureau', nomsLabels)
+          + rendreCheckboxNotif(nom, numero, 'notif_gsm',  'GSM',    nomsLabels)
+          + rendreCheckboxNotif(nom, numero, 'notif_tous', 'Tous',   nomsLabels)
+          + '<div id="pl-notif-erreur" class="pl-notif-erreur"></div>'
+          + '</div>';
+  }
   html += '<div class="pl-actions">'
         + '<button onclick="sidebarRelancerWatcherCCL(\'' + escapeHtml(nom) + '\', this)">'
         + '↺ Relancer watcher CCL</button>';
@@ -2123,6 +2136,73 @@ function rendrePanneauLateralActions() {
     html += '<div class="pl-lien" onclick="sidebarChargerCcw()">🔄 Vérifier le service CCW de ce projet</div>';
   }
   zone.innerHTML = html;
+}
+
+// Une ligne « ☐ Libellé » du bloc Notifications (issue #384). Coché si `label`
+// (ex. notif_pc) figure parmi les labels actuels de l'issue (nomsLabels, déjà
+// en minuscules — voir rendrePanneauLateralActions).
+function rendreCheckboxNotif(nom, numero, label, libelle, nomsLabels) {
+  const coche = nomsLabels.includes(label) ? ' checked' : '';
+  return '<label class="pl-notif-ligne">'
+       + '<input type="checkbox"' + coche + ' onchange="toggleLabelNotif(\''
+       + escapeHtml(nom) + '\', ' + Number(numero) + ', \'' + label + '\', this)"> '
+       + escapeHtml(libelle) + '</label>';
+}
+
+// Bascule un label de notification (notif_pc/notif_gsm/notif_tous) sur l'issue
+// sélectionnée via /modifier-label-notif (issue #384), sans passer par GitHub.
+// En cas d'échec (réseau ou refus serveur) : la checkbox revient à son état
+// précédent et un message d'erreur discret s'affiche brièvement sous les
+// toggles, sans bloquer l'interface (pas d'alert()).
+async function toggleLabelNotif(nom, numero, label, cb) {
+  const actif = cb.checked;
+  cb.disabled = true;
+  let ok = false, erreur = '';
+  try {
+    const rep = await fetch('/modifier-label-notif', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({projet: nom, numero: numero, label: label, actif: actif})
+    });
+    const json = await rep.json();
+    ok = !!json.succes;
+    if (!ok) erreur = json.erreur || 'échec de la mise à jour du label.';
+  } catch(e) {
+    erreur = 'Erreur réseau : ' + e.message;
+  }
+  cb.disabled = false;
+  if (!ok) {
+    cb.checked = !actif;
+    afficherErreurNotifDiscrete(erreur);
+    return;
+  }
+  // Mise à jour locale de listeIssuesResultats (sans refetch réseau), puis
+  // re-rendu du panneau d'actions pour rester cohérent avec l'état affiché
+  // ailleurs (ex. si un autre widget lit aussi les labels de cette issue).
+  const it = listeIssuesResultats.find(
+    x => x.projet === nom && String(x.number) === String(numero));
+  if (it) {
+    const dejaPresent = (it.labels || []).some(
+      l => ((l && l.name) || l || '').toLowerCase() === label);
+    if (actif && !dejaPresent) {
+      it.labels = (it.labels || []).concat([{name: label}]);
+    } else if (!actif && dejaPresent) {
+      it.labels = (it.labels || []).filter(
+        l => ((l && l.name) || l || '').toLowerCase() !== label);
+    }
+  }
+  rendrePanneauLateralActions();
+}
+
+// Message d'erreur discret (pas d'alert()) sous les toggles de notification —
+// s'efface tout seul après quelques secondes.
+function afficherErreurNotifDiscrete(message) {
+  const zone = document.getElementById('pl-notif-erreur');
+  if (!zone) return;
+  zone.textContent = '⚠ ' + message;
+  setTimeout(function() {
+    if (zone.textContent === '⚠ ' + message) zone.textContent = '';
+  }, 4000);
 }
 
 // Relance (ou lance) le watcher CCL du projet donné — même endpoint que
