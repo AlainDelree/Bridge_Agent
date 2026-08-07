@@ -137,7 +137,11 @@ def _copier(base: list[str], source_local: Path, timeout: int):
 
 
 def _executer_ps(base: list[str], nom_script: str, args_ps: list[str], timeout: int):
-    """Exécute un script .ps1 (déjà poussé dans DEST_DIR_INVITE) via powershell.exe."""
+    """Exécute un script .ps1 (déjà poussé dans DEST_DIR_INVITE) via powershell.exe.
+
+    stdout/stderr proviennent de la console Windows de la VM, encodée en
+    CP1252 (page de code par défaut), pas en UTF-8 — d'où le décodage
+    explicite ci-dessous (errors="replace" en filet de sécurité)."""
     dest = DEST_DIR_INVITE + nom_script
     cmd = base + [
         "run",
@@ -147,7 +151,8 @@ def _executer_ps(base: list[str], nom_script: str, args_ps: list[str], timeout: 
         "powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass",
         "-File", dest,
     ] + args_ps
-    return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+    return subprocess.run(cmd, capture_output=True, encoding="cp1252",
+                           errors="replace", timeout=timeout)
 
 
 def _executer_commande_ps(base: list[str], commande: str, timeout: int):
@@ -156,7 +161,10 @@ def _executer_commande_ps(base: list[str], commande: str, timeout: int):
     Utilisé pour lancer un exécutable déjà présent dans le PATH de la VM (ex.
     « nssm ») sans avoir à pousser un script .ps1 pour une commande triviale.
     Passe par powershell.exe -Command afin de bénéficier de la résolution du
-    PATH (guestcontrol run --exe exige sinon un chemin absolu vers l'exe)."""
+    PATH (guestcontrol run --exe exige sinon un chemin absolu vers l'exe).
+
+    Même remarque que _executer_ps : sortie de la console Windows en
+    CP1252, pas en UTF-8."""
     cmd = base + [
         "run",
         "--exe", POWERSHELL_INVITE,
@@ -165,7 +173,8 @@ def _executer_commande_ps(base: list[str], commande: str, timeout: int):
         "powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass",
         "-Command", commande,
     ]
-    return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+    return subprocess.run(cmd, capture_output=True, encoding="cp1252",
+                           errors="replace", timeout=timeout)
 
 
 def _message_echec(action: str, res) -> str:

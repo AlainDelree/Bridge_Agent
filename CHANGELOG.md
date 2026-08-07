@@ -9,6 +9,19 @@ milliers de caractères sur une seule ligne logique, coûteux à relire et
 
 Convention d'ajout : voir §10 de `BRIDGE_AGENT_DOC.md`.
 
+## 7 août 2026 — issue #389
+
+Fix `UnicodeDecodeError: 'utf-8' codec can't decode byte 0x82` lors de la
+finalisation d'un projet CCW : la sortie de `powershell.exe` exécuté dans
+la VM invitée est encodée en CP1252 (page de code Windows par défaut), pas
+en UTF-8.
+- `app/ccw.py` : `_executer_ps` et `_executer_commande_ps` (même schéma —
+  toutes deux lancent `powershell.exe` via `guestcontrol run`) décodent
+  désormais `stdout`/`stderr` en `encoding="cp1252"` avec `errors="replace"`
+  en filet de sécurité, au lieu de `text=True` (UTF-8 implicite côté hôte
+  Linux). `_copier` (guestcontrol `copyto`, ne lance aucun processus dans
+  la VM) n'était pas concernée, laissée inchangée.
+
 ## 6 août 2026 — issue #384
 
 Panneau flottant actions : toggles `notif_pc`/`notif_gsm`/`notif_tous` sur
