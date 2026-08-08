@@ -81,6 +81,16 @@ build suit déjà ce schéma de staging local et, si oui, étendre le
 
 - **Chemin du clone CCW** : `Z:\CCW\rummikub`
 - **Script de build** : `build\rebuild_rummikub.bat` (6 étapes)
+- **Mise à jour du clone (issue #406)** : NE PAS utiliser
+  `git pull --ff-only` en étape 1 — le clone CCW accumule entre chaque
+  build des commits locaux non poussés (`version.json`, backup), donc le
+  fast-forward échoue systématiquement. Utiliser `fetch` + `reset --hard`,
+  qui aligne proprement le clone sur `origin/master` sans merge ni
+  conflit, quel que soit l'état local :
+  ```
+  git -C Z:\CCW\rummikub fetch origin
+  git -C Z:\CCW\rummikub reset --hard origin/master
+  ```
 - **`.spec`** : `rummikub.spec` — liste explicite des `datas`
   (`src/rummikub/ui/web/`), aucun `collect_tree` en bloc
 - **TIMEOUT de référence observé** : 1200s (build réel : ~333s)
