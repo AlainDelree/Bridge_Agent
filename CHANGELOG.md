@@ -9,6 +9,17 @@ milliers de caractères sur une seule ligne logique, coûteux à relire et
 
 Convention d'ajout : voir §10 de `BRIDGE_AGENT_DOC.md`.
 
+## 8 août 2026 — issue #401
+
+Onglet Résultats : les titres des issues ne s'alignaient pas horizontalement,
+la zone d'icônes à gauche (case à cocher, pastille, badges Diff/All, etc.)
+ayant une largeur variable selon le nombre d'icônes présents sur chaque ligne.
+- `static/css/style.css` : `.ligne-issue .ligne-gauche` (préfixe type/OS +
+  badges ✏️/✅/⚠️/○/Diff/All + pastille projet) reçoit un `min-width:130px`
+  — largeur fixe couvrant le cas le plus chargé (chef/ouvrier + for-windows +
+  mode_write+done+Diff+All), tous les titres démarrent désormais à la même
+  position, les icônes restant alignées à gauche (flex-start).
+
 ## 7 août 2026 — issue #389
 
 Fix `UnicodeDecodeError: 'utf-8' codec can't decode byte 0x82` lors de la

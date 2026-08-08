@@ -203,7 +203,14 @@ button.danger:hover{background:#f8d7da}
 .ligne-issue.resultat-traite.selectionnee .ligne-texte{color:#2a2a28;text-decoration:none}
 .ligne-issue.selectionnee{background:var(--bg-sel);font-weight:600}
 .ligne-issue.selectionnee:hover{background:var(--bg-sel)}
-.ligne-issue .ligne-gauche{display:inline-flex;align-items:center;gap:6px;flex-shrink:0}
+/* Largeur fixe (issue #401) : le nombre d'icônes (préfixe type/OS, badges
+   ✏️/✅/⚠️/○, Diff/All) varie d'une ligne à l'autre, ce qui décalait le début
+   du titre. min-width (et non width, pour ne jamais tronquer les badges dans
+   le cas rare — chef/ouvrier + for-windows + mode_write+done+Diff+All — le
+   plus large) fige cette zone : tous les titres démarrent à la même position
+   horizontale, les icônes restant alignées à gauche (flex-start par défaut). */
+.ligne-issue .ligne-gauche{display:inline-flex;align-items:center;gap:6px;flex-shrink:0;
+  min-width:130px}
 .ligne-issue .ligne-badges{font-size:13px;white-space:nowrap}
 .ligne-issue .badge-copie-ccl{cursor:pointer}
 /* Badge « All » (issue #95, rôle #116) : copie la réponse CCL complète + le diff.
