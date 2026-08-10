@@ -70,3 +70,11 @@
   projet/TYPE/mode/complexite) : sans lui, la valeur par défaut `normal` est
   utilisée. Cette consigne ne concerne QUE les issues que TU rédiges — les
   issues rédigées par Claude Chat suivent leurs propres instructions.
+- **Champ RESEAU (optionnel) dans les issues que tu crées toi-même
+  (chef/ouvrier) :** si la tâche confiée implique de lourdes opérations
+  réseau (téléchargements, builds avec fetch de dépendances, etc.), inclus
+  `| RESEAU | oui |` dans l'en-tête ; si elle est purement locale, `| RESEAU
+  | non |`. Ce champ alimente le facteur d'ambiance F de la calibration
+  automatique du TIMEOUT (`F_reseau`/`F_local`) — absent, il n'a aucun
+  effet. Comme pour COMPLEXITE, cette consigne ne concerne que les issues
+  que TU rédiges.

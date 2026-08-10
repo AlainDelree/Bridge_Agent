@@ -868,15 +868,21 @@ def _compter_etapes_checklist(body: str) -> int | None:
 
 
 def _detecter_tag_reseau(body: str) -> bool | None:
-    """Déduit tag_reseau depuis un marqueur explicite de l'en-tête (issue #220).
-
-    Aucun champ de ce type n'existe aujourd'hui dans le format d'en-tête bridge
-    (§6 du DOC : SOURCE/DEST/RETOUR/MODE/PRIORITE/TIMEOUT/PROJET/TYPE/MODELE/
-    FICHIER_CONTEXTE/SUITE_DE — pas de champ réseau). On ne fabrique donc PAS de
-    détection ici (pas de mot-clé deviné dans le corps) : ceci renvoie toujours
-    None pour l'instant, en attendant qu'un futur champ d'en-tête dédié soit
-    ajouté par Claude Chat à la rédaction des issues. enregistrer_duree omet la
-    clé tag_reseau de l'entrée tant que cette fonction renvoie None."""
+    """Extrait tag_reseau depuis le champ d'en-tête RESEAU (issue #220, implémenté
+    #435) — « | RESEAU | oui | » / « | RESEAU | non | », calqué sur
+    extraire_complexite. Insensible à la casse. 'oui' → True, 'non' → False,
+    champ absent ou valeur non reconnue → None (aucun mot-clé deviné dans le
+    corps). enregistrer_duree omet la clé tag_reseau de l'entrée tant que
+    cette fonction renvoie None."""
+    for ligne in (body or "").splitlines():
+        if "| RESEAU" in ligne.upper():
+            parts = ligne.split("|")
+            if len(parts) >= 3:
+                valeur = parts[2].strip().lower()
+                if valeur == "oui":
+                    return True
+                if valeur == "non":
+                    return False
     return None
 
 
@@ -1190,7 +1196,8 @@ def maj_calibration_timeout(*, projet: str, type_issue: str, mode: str,
     return suggere
 
 
-def lire_timeout_suggere(projet: str, type_issue: str, mode: str, complexite: str = "normal") -> float | None:
+def lire_timeout_suggere(projet: str, type_issue: str, mode: str, complexite: str = "normal",
+                         body: str = "") -> float | None:
     """Lit (sans écrire ni verrouiller) le TIMEOUT_suggéré actuellement en
     vigueur pour la combinaison (projet, TYPE, mode, complexite — issue
     #434), à partir de l'état déjà persisté par maj_calibration_timeout
@@ -1203,7 +1210,11 @@ def lire_timeout_suggere(projet: str, type_issue: str, mode: str, complexite: st
     fois la même observation. Une simple lecture de l'état déjà à jour suffit.
     Best-effort : retourne None si l'état est illisible ou si aucun succès n'a
     encore été enregistré pour cette combinaison (mêmes conditions que
-    maj_calibration_timeout)."""
+    maj_calibration_timeout).
+
+    body (issue #435) : corps de l'issue échouée, pour lire le tag_reseau via
+    _detecter_tag_reseau — même logique que maj_calibration_timeout. Absent
+    (chaîne vide) ou tag non trouvé → repli sur F_local, comme avant."""
     try:
         cle = _cle_combinaison(projet, type_issue, mode, complexite)
         combo = _lire_json_best_effort(FICHIER_ETAT_TIMEOUT).get(cle)
@@ -1215,10 +1226,12 @@ def lire_timeout_suggere(projet: str, type_issue: str, mode: str, complexite: st
         variabilite = combo.get("variabilite") or 0.0
         backoff = combo.get("multiplicateur_backoff", 1.0)
 
-        # F_local par défaut (hypothèse la moins généreuse) : cette lecture
-        # est hors contexte d'une issue précise, donc sans tag_reseau connu —
-        # même choix par défaut que maj_calibration_timeout en l'absence de tag.
-        f_brut = (_lire_json_best_effort(FICHIER_ETAT_AMBIANCE).get("F_local") or {}).get("valeur_ewma")
+        # F_reseau si le tag RESEAU de cette issue est explicitement connu et
+        # positif, F_local sinon (hypothèse la moins généreuse par défaut) —
+        # même choix que maj_calibration_timeout.
+        tag_reseau = _detecter_tag_reseau(body)
+        cle_f = "F_reseau" if tag_reseau else "F_local"
+        f_brut = (_lire_json_best_effort(FICHIER_ETAT_AMBIANCE).get(cle_f) or {}).get("valeur_ewma")
         f_pertinent = max(1.0, f_brut) if f_brut is not None else 1.0
 
         return max((duree_typique + K_VARIABILITE * variabilite) * f_pertinent * backoff,
@@ -3333,7 +3346,7 @@ def _traiter_issue_synchrone(issue: dict, dry_run: bool, chemin_worktree: Path |
                     mode_echec        = _etiquette_calibration(mode)
                     complexite_echec  = extraire_complexite(body)
                     duree_echec       = time.monotonic() - debut_traitement
-                    suggere_echec     = lire_timeout_suggere(CFG.nom, type_issue_echec, mode_echec, complexite_echec)
+                    suggere_echec     = lire_timeout_suggere(CFG.nom, type_issue_echec, mode_echec, complexite_echec, body)
                     message_echec += formater_bloc_calibration(duree_echec, timeout, suggere_echec)
                     commenter_issue(numero, message_echec)
                     ajouter_label(numero, LABEL_ECHEC)

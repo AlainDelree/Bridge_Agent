@@ -311,6 +311,7 @@ Le watcher lit ces champs dans le tableau markdown de l'en-tête :
 | `FICHIER_CONTEXTE` | ex. chemin relatif | Fichier additionnel fourni en contexte à CCL pour cette issue (modifiable via l'onglet Configuration, voir §12) |
 | `SUITE_DE` | ex. `#5` | Indique que cette issue fait suite à l'issue #N (discussion ou tâche complémentaire). Absent = issue inédite. |
 | `COMPLEXITE` | `rapide` / `court` / `normal` / `lourd` | 4e dimension de la clé EWMA de calibration TIMEOUT (issue #434, voir §19), estimée par Claude Chat au moment de rédiger l'issue. Absent ou valeur non reconnue = `normal` (défaut, ~300s). CCL/CCW doit l'inclure dans les issues chef/ouvrier qu'il crée (voir `consignes/globales.md`) ; pour les issues de Claude Chat, c'est géré côté doc/prompt. |
+| `RESEAU` | `oui` ou `non` | Tag réseau pour la calibration TIMEOUT (issue #220/#435, voir §19) : `oui` = issue impliquant de lourdes opérations réseau (téléchargements, builds avec fetch, etc.), `non` = issue purement locale. Lu par `_detecter_tag_reseau(body)`. Absent ou valeur non reconnue = `None` (F ignoré, facteur d'ambiance neutre). Optionnel (voir `consignes/globales.md`). |
 
 Format dans le corps :
 ```markdown
@@ -2138,20 +2139,6 @@ issues de la même combinaison s'il le juge utile.
 
 ### 19.6 Limitations connues, à traiter plus tard
 
-- **`tag_reseau` n'est peuplé nulle part actuellement** :
-  `_detecter_tag_reseau` retourne toujours `None` (aucun champ d'en-tête
-  bridge dédié n'existe aujourd'hui pour signaler qu'une issue s'est
-  déroulée dans des conditions réseau particulières). Conséquence : `F_reseau`
-  et `F_local` restent tous deux à leur valeur neutre (`F` planché à 1.0,
-  jamais mis à jour) tant qu'un futur champ d'en-tête dédié n'est pas créé et
-  que `_detecter_tag_reseau` n'est pas branché dessus.
-- **Incohérence inerte sur échec définitif** : `lire_timeout_suggere()`
-  retombe toujours sur `F_local` par défaut, sans lire le tag réel de
-  l'issue en échec — contrairement au cas succès (`maj_calibration_timeout`),
-  qui choisit `F_reseau`/`F_local` selon `_detecter_tag_reseau(body)`. Sans
-  effet tant que `tag_reseau` n'est jamais peuplé (point précédent), mais à
-  corriger le jour où il le sera (lire le tag de l'issue en échec plutôt que
-  de supposer `F_local`).
 - **Démarrage à froid trompeur** : la toute première observation réussie
   d'une combinaison (projet, `TYPE`, mode) donne `variabilite = 0` (pas
   d'écart mesurable sans historique préalable), donc un `TIMEOUT_suggéré`
@@ -2184,16 +2171,29 @@ issues de la même combinaison s'il le juge utile.
 - **#223** — exclusion des entrées `expiree=true` du calcul du badge
   d'estimation de durée de l'interface web (`estimer_duree`), pour ne pas
   fausser la médiane affichée à Alain avec des tentatives avortées.
+- **#435** — `_detecter_tag_reseau` implémenté : lecture du champ d'en-tête
+  `RESEAU` (`oui`/`non`, §6), calquée sur `extraire_complexite`. `F_reseau`/
+  `F_local` sont désormais réellement alimentés. `lire_timeout_suggere`
+  reçoit en plus un paramètre `body` pour choisir le bon `F` sur le chemin
+  échec définitif, au lieu de toujours retomber sur `F_local`.
 
 ---
 
 *Dernière mise à jour : 10 août 2026 — §6 « Champs spéciaux dans le corps
-de l'issue » : nouveau champ `COMPLEXITE` documenté (issue #434) — 4e
-dimension de la clé EWMA de calibration TIMEOUT (§19), quatre niveaux
-`rapide`/`court`/`normal`/`lourd`, défaut `normal` (~300s) si absent. §19.1
-et §19.3 mis à jour en conséquence : la clé `etat_timeout.json` passe de
-`projet|TYPE|mode` à `projet|TYPE|mode|complexite` — nouvelles clés
-distinctes, historique existant traité comme `normal`, aucune régression.
+de l'issue » : nouveau champ `RESEAU` documenté (issue #435, `oui`/`non`,
+lu par `_detecter_tag_reseau`, optionnel). §19.6 : les deux limitations
+« `tag_reseau` n'est peuplé nulle part » et « incohérence inerte sur échec
+définitif » sont levées — `_detecter_tag_reseau(body)` lit désormais le
+champ `RESEAU`, et `lire_timeout_suggere()` reçoit `body` pour choisir
+`F_reseau`/`F_local` selon le tag réel de l'issue en échec, au lieu de
+toujours retomber sur `F_local` (voir §19.7).
+Précédemment — §6 « Champs spéciaux dans le corps de l'issue » : nouveau
+champ `COMPLEXITE` documenté (issue #434) — 4e dimension de la clé EWMA de
+calibration TIMEOUT (§19), quatre niveaux `rapide`/`court`/`normal`/`lourd`,
+défaut `normal` (~300s) si absent. §19.1 et §19.3 mis à jour en conséquence :
+la clé `etat_timeout.json` passe de `projet|TYPE|mode` à
+`projet|TYPE|mode|complexite` — nouvelles clés distinctes, historique
+existant traité comme `normal`, aucune régression.
 Précédemment — §17 « Notifications centralisées » : nouvelle sous-section
 17.3 documentant le SSE de fin d'issue (issue #350) — `scripts/bip.py`
 renommé `scripts/traitement_fin.py` (clé de config `SCRIPT_BIP` inchangée,
