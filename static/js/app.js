@@ -3299,6 +3299,14 @@ async function copierToutEtDiffDepuisBadge(event, nom, numero) {
   // silencieuse, pas de ✓ trompeur.
   if (texteCopieVide(texte)) { feedbackBadgeVide(badge, original, titreOriginal); return; }
 
+  // Avertissement diff volumineux (issue #441) : Claude.ai tronque silencieusement
+  // les collages trop longs. La copie a quand même lieu — le toast est purement
+  // informatif, sans bouton de confirmation.
+  const nbLignes = texte.split('\n').length;
+  if (nbLignes > 1000) {
+    afficherToast('⚠ Diff volumineux (' + nbLignes + ' lignes) — Claude.ai pourrait ne pas le lire');
+  }
+
   // Copie dans le presse-papier (fallback silencieux si indisponible / non-HTTPS).
   if (navigator.clipboard && navigator.clipboard.writeText) {
     try {
