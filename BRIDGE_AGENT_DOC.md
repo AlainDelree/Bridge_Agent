@@ -1102,6 +1102,14 @@ séquentiellement dans `REP_TRAVAIL` (hors périmètre de cette issue).
   qu'un thread `mode_write` tourne encore, même si `DELAI_INACTIVITE_MIN`
   est dépassé — réévalué à chaque cycle, dès qu'un thread se termine
   l'extinction redevient possible.
+- **Alerte accumulation de worktrees (issue #432)** : en début de chaque
+  cycle de polling, juste après le `git pull --ff-only` (§13), le watcher
+  compte les worktrees secondaires actifs (`git worktree list`, hors
+  `REP_TRAVAIL`) et émet un `log.warning` clair (chemin + branche de
+  chacun) dès que ce nombre dépasse `SEUIL_ALERTE_WORKTREES` (`.conf`,
+  entier, défaut **3**) — visible dans l'onglet Journal watcher de
+  l'interface. Aucune notification ntfy/bureau ; le nettoyage reste
+  entièrement manuel (Alain).
 
 > Pour le détail du workflow et les procédures de récupération, voir
 > [`WORKTREES.md`](WORKTREES.md).

@@ -9,6 +9,28 @@ milliers de caractères sur une seule ligne logique, coûteux à relire et
 
 Convention d'ajout : voir §10 de `BRIDGE_AGENT_DOC.md`.
 
+## 10 août 2026 — issue #432
+
+Alerte accumulation de worktrees : depuis l'issue #337, les worktrees
+créés pour la parallélisation mode_write ne sont jamais supprimés
+automatiquement (nettoyage manuel par Alain) et pouvaient s'accumuler
+silencieusement, sans aucun signal.
+- `watcher.py` : nouvelle fonction `_lister_worktrees_secondaires()`
+  (parse `git worktree list --porcelain` dans `REP_TRAVAIL`, exclut le
+  worktree principal) et `verifier_accumulation_worktrees()`, appelée en
+  début de chaque cycle de polling juste après `rafraichir_depot()`
+  (`git pull --ff-only`). Au-delà de `SEUIL_ALERTE_WORKTREES` worktrees
+  secondaires actifs (nouvelle clé `.conf`, entier, défaut **3**),
+  émet un `log.warning` listant chemin + branche de chacun — visible
+  dans l'onglet Journal watcher de l'interface. En dessous du seuil,
+  silence total ; clé absente du `.conf` → défaut 3, aucune erreur.
+  Pas de notification ntfy/bureau, volontairement — un warning dans le
+  log suffit.
+- `WORKTREES.md` (§5) et `BRIDGE_AGENT_DOC.md` (§13, sous-section
+  parallélisation mode_write) documentent le mécanisme ; la limite
+  « pas d'alerte sur l'accumulation de worktrees » de `WORKTREES.md`
+  §5 est levée.
+
 ## 8 août 2026 — issue #401
 
 Onglet Résultats : les titres des issues ne s'alignaient pas horizontalement,

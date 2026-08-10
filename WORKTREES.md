@@ -180,11 +180,14 @@ au quotidien.
   protection inter-process réelle reste le fichier verrou par chemin de
   travail (§2). Deux watchers distincts visant le même `REP_TRAVAIL` par
   erreur de configuration restent exposés au même risque qu'avant #337.
-- **Pas d'alerte sur l'accumulation de worktrees.** Rien ne prévient
-  Alain si des worktrees s'accumulent faute de merge/nettoyage régulier
-  (§3, étape 5) — seul `git worktree list` donne l'état réel. Un projet
-  laissé sans repasse pendant longtemps peut accumuler plusieurs
-  répertoires frères oubliés.
+- **Alerte accumulation de worktrees (issue #432).** En début de chaque
+  cycle de polling, juste après `git pull --ff-only`, `watcher.py` compte
+  les worktrees secondaires actifs (`git worktree list`, hors
+  `REP_TRAVAIL`) et émet un `log.warning` (chemin + branche de chacun) dès
+  que ce nombre dépasse `SEUIL_ALERTE_WORKTREES` (clé `.conf`, entier,
+  défaut **3**) — visible dans l'onglet Journal watcher de l'interface.
+  Simple signal dans le log, pas de notification ntfy/bureau ; le
+  nettoyage (§3, étape 5) reste entièrement manuel.
 - **`mode_lecture` / `mode_scratch` non parallélisés.** Le mécanisme ne
   couvre que `mode_write` — les issues en lecture seule ou en lecture
   active (scratch) restent strictement séquentielles dans `REP_TRAVAIL`,

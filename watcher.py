@@ -247,6 +247,7 @@ class Config:
     delai_inactivite_min: int = 20  # auto-extinction : minutes sans aucune issue traitable avant que le watcher ne s'arrête proprement (issue #200). 0 = désactivé (le watcher tourne indéfiniment, comportement historique).
     libelle_agent: str     = ""    # libellé de l'agent affiché dans l'ACK (ex. "agent Linux", "agent Windows") — vide = déduit automatiquement de la plateforme (issue #239)
     max_write_parallele: int = 2   # parallélisation mode_write via git worktrees (issue #337) : nombre max de tâches mode_write concurrentes. 1 = comportement séquentiel historique (aucun worktree, aucun thread). 0 = désactivé (identique à 1).
+    seuil_alerte_worktrees: int = 3  # alerte accumulation de worktrees (issue #432) : au-delà de ce nombre de worktrees secondaires actifs (hors REP_TRAVAIL), un log.warning est émis à chaque cycle — le nettoyage (merge + git worktree remove + git branch -d) reste manuel, cf. WORKTREES.md.
 
     @property
     def url_ntfy(self) -> str:
@@ -340,6 +341,7 @@ def charger_config(chemin: Path) -> Config:
         delai_inactivite_min = entier("DELAI_INACTIVITE_MIN", 20),
         libelle_agent       = brut.get("LIBELLE_AGENT", ""),
         max_write_parallele = entier("MAX_WRITE_PARALLELE", 2),
+        seuil_alerte_worktrees = entier("SEUIL_ALERTE_WORKTREES", 3),
     )
 
 
@@ -616,6 +618,76 @@ def rafraichir_depot(rep: Path, dry_run: bool = False):
     else:
         premiere = err.splitlines()[0] if err else "erreur inconnue"
         log.warning(f"  [pull] échoué : {premiere} — poursuite sur le code local.")
+
+
+def _lister_worktrees_secondaires() -> list[dict]:
+    """Liste les worktrees git du projet AUTRES que le worktree principal
+    (`CFG.rep_travail`) — les répertoires frères créés pour la
+    parallélisation mode_write (issue #337), via `git worktree list
+    --porcelain`. Chaque entrée : {"chemin": str, "branche": str}.
+
+    Best-effort : dossier absent ou pas un dépôt git, ou toute erreur
+    d'exécution git → liste vide, jamais d'exception propagée."""
+    if not CFG.rep_travail.is_dir() or not _est_depot_git(CFG.rep_travail):
+        return []
+    try:
+        res = subprocess.run(
+            ["git", "-C", str(CFG.rep_travail), "worktree", "list", "--porcelain"],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=15,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return []
+    if res.returncode != 0:
+        return []
+
+    worktrees: list[dict] = []
+    courant: dict = {}
+    for ligne in res.stdout.splitlines():
+        if not ligne.strip():
+            if courant:
+                worktrees.append(courant)
+                courant = {}
+            continue
+        cle, sep, valeur = ligne.partition(" ")
+        if cle == "worktree":
+            courant = {"chemin": valeur}
+        elif cle == "branch":
+            courant["branche"] = valeur.removeprefix("refs/heads/")
+    if courant:
+        worktrees.append(courant)
+
+    principal = str(CFG.rep_travail.resolve())
+    return [
+        w for w in worktrees
+        if w.get("chemin") and str(Path(w["chemin"]).resolve()) != principal
+    ]
+
+
+def verifier_accumulation_worktrees() -> None:
+    """Alerte accumulation de worktrees (issue #432) : appelée en début de
+    cycle, juste après `rafraichir_depot()`. Les worktrees créés pour la
+    parallélisation mode_write (issue #337) ne sont jamais supprimés
+    automatiquement — Alain merge et nettoie manuellement (`git worktree
+    remove` + `git branch -d`, cf. WORKTREES.md §3). Sans signal, ils
+    peuvent s'accumuler silencieusement.
+
+    Au-delà de `CFG.seuil_alerte_worktrees` worktrees secondaires actifs
+    (défaut 3), émet un log.warning listant chemin + branche de chacun, à
+    CHAQUE cycle tant que le nombre reste au-dessus du seuil. En dessous,
+    silence total — pas de log superflu. Pas de notification ntfy/bureau,
+    volontairement : un WARNING dans le journal watcher suffit, visible
+    depuis l'onglet Journal de l'interface web."""
+    secondaires = _lister_worktrees_secondaires()
+    if len(secondaires) <= CFG.seuil_alerte_worktrees:
+        return
+    detail = "; ".join(
+        f"{w['chemin']} (branche {w.get('branche', '?')})" for w in secondaires
+    )
+    log.warning(
+        f"⚠️  {len(secondaires)} worktrees git actifs pour {CFG.nom} "
+        f"(seuil {CFG.seuil_alerte_worktrees}) — pensez à merger/nettoyer "
+        f"(git worktree remove + git branch -d) : {detail}"
+    )
 
 
 def lister_issues():
@@ -3455,6 +3527,9 @@ def main():
             # PAS rafraîchis ici : ce sont des dépôts-cibles d'audit, pas le clone
             # de travail du watcher. Best-effort, jamais bloquant.
             rafraichir_depot(CFG.rep_travail, dry_run=args.dry_run)
+            # Alerte accumulation de worktrees (issue #432), best-effort et
+            # silencieuse en dessous du seuil — voir verifier_accumulation_worktrees().
+            verifier_accumulation_worktrees()
             issues = lister_issues()
             # Activité = présence d'au moins une issue réellement traitable (ni
             # done, ni needs-human). On réarme AVANT le traitement : le cycle qui
