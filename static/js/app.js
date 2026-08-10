@@ -509,6 +509,48 @@ async function ccwArreterProjet(nom, btn) {
   }
 }
 
+// Nettoie les verrous CCW orphelins d'un projet (issue #431, prévu par #378) :
+// arrête le service, supprime tous les .lock de son dossier de verrous, puis
+// relance — en un seul appel serveur (/ccw/nettoyer-verrous). Cas d'usage :
+// un verrou orphelin bloque le watcher CCW sans issue précise à interrompre
+// (à la différence du bouton « Interrompre l'issue », qui exige une issue
+// ouverte). Même pattern que ccwRedemarrerProjet/ccwArreterProjet, utilisé
+// depuis le panneau latéral (#pl-zone-actions) : la zone #ccw-message de
+// l'onglet CCW n'y existe pas, ccwMessage()/ccwAfficherSortie() y sont donc
+// des no-op silencieux — le retour visuel se fait via le libellé du bouton.
+async function ccwNettoyerVerrous(nom, btn) {
+  if (!nom) return;
+  if (!confirm('Nettoyer les verrous CCW du projet « ' + nom + ' » ?\n\n'
+             + 'Le service sera ARRÊTÉ, tous les fichiers .lock de son dossier de '
+             + 'verrous seront supprimés, puis le service sera relancé.')) return;
+  const labelInitial = btn ? btn.textContent : null;
+  if (btn) { btn.disabled = true; btn.textContent = 'Nettoyage…'; }
+  ccwMessage('ccw-message', 'Nettoyage des verrous de « ' + nom + ' » dans la VM…', '');
+  ccwAfficherSortie('');
+  try {
+    const rep = await fetch('/ccw/nettoyer-verrous', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({nom: nom})
+    });
+    const j = await rep.json();
+    ccwAfficherSortie(j.sortie);
+    if (j.statut === 'succes') {
+      ccwMessage('ccw-message', j.message || 'Verrous nettoyés, service relancé.', 'succes');
+      alert('✅ ' + (j.message || 'Verrous nettoyés, service relancé.'));
+    } else {
+      ccwMessage('ccw-message', j.message || 'Échec du nettoyage des verrous.', 'erreur');
+      alert('❌ ' + (j.message || 'Échec du nettoyage des verrous CCW.'));
+    }
+    ccwChargerProjets();
+  } catch (e) {
+    ccwMessage('ccw-message', 'Erreur réseau : ' + e.message, 'erreur');
+    alert('Erreur réseau : ' + e.message);
+  } finally {
+    if (btn) { btn.disabled = false; if (labelInitial !== null) btn.textContent = labelInitial; }
+  }
+}
+
 async function ccwAjouterProjet() {
   const nom   = document.getElementById('ccw-add-nom').value.trim();
   const depot = document.getElementById('ccw-add-depot').value.trim();
@@ -2157,7 +2199,7 @@ function rendrePanneauLateralActions() {
   if (service) {
     html += '<button onclick="ccwRedemarrerProjet(\'' + escapeHtml(nom) + '\', this)">'
           + '↺ Relancer watcher CCW</button>'
-          + '<button disabled title="Prévu par l\'issue #378 (à venir) — pas encore implémenté">'
+          + '<button class="danger" onclick="ccwNettoyerVerrous(\'' + escapeHtml(nom) + '\', this)">'
           + '🔒 Nettoyer verrous CCW + redémarrer</button>';
   }
   html += '</div>';

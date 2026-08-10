@@ -26,6 +26,7 @@ MOT DE PASSE ccw-admin (point 5 de l'issue) :
 
 import contextlib
 import json
+import ntpath
 import os
 import re
 import shutil
@@ -515,3 +516,97 @@ def ccw_arreter_projet():
     arrêter temporairement un service (économie de ressources VM) sans le
     relancer aussitôt. Voir _piloter_service_ccw."""
     return _piloter_service_ccw("stop", "arrêt")
+
+
+def _texte_erreur_json(reponse_json) -> str:
+    """Extrait le champ erreur d'une réponse jsonify(...) d'échec (_preparer,
+    _lister_projets_vm) — même logique que _erreur_de dans app/interruption.py,
+    dupliquée ici pour éviter un import circulaire (interruption.py importe déjà
+    depuis ce module)."""
+    try:
+        return reponse_json.get_json().get("erreur") or "Erreur inconnue."
+    except Exception:
+        return "Erreur inconnue."
+
+
+def ccw_nettoyer_verrous():
+    """Nettoie les verrous CCW orphelins d'un projet (issue #431, bouton
+    « 🔒 Nettoyer verrous CCW + redémarrer » prévu par #378) : arrête le
+    service, supprime tous les .lock de son dossier de verrous, puis relance
+    — un seul aller-retour guestcontrol (copie + exécution de
+    nettoyer_verrous_ccw.ps1), sur le modèle d'interrompre_windows()
+    (app/interruption.py).
+
+    Cas d'usage : un verrou orphelin bloque le watcher CCW sans qu'il y ait
+    d'issue précise à interrompre (le bouton « Interrompre » n'est disponible
+    que sur une issue ouverte précise)."""
+    data = request.json or {}
+    nom  = (data.get("nom") or "").strip()
+    if not nom or re.search(r"[\\/\s]", nom):
+        return jsonify(statut="echec",
+            message="Nom de projet requis, sans espace ni séparateur de chemin.")
+
+    ctx, err = _preparer()
+    if err:
+        return jsonify(statut="echec", message=_texte_erreur_json(err))
+    vbox, mot_de_passe = ctx
+
+    projets, err = _lister_projets_vm(vbox, mot_de_passe)
+    if err:
+        return jsonify(statut="echec", message=_texte_erreur_json(err))
+
+    service = config_path = None
+    for p in projets:
+        if isinstance(p, dict) and str(p.get("projet", "")).strip().lower() == nom.lower():
+            service     = (p.get("service") or "").strip()
+            config_path = (p.get("config") or "").strip()
+            break
+    if not service:
+        return jsonify(statut="echec",
+            message=f"Projet « {nom} » introuvable parmi les services CCW-Watcher de la VM. "
+                    f"Rafraîchissez la liste des projets.")
+    # Même garde-fou que _piloter_service_ccw avant d'injecter le nom du
+    # service dans la commande PowerShell.
+    if not re.match(r"^CCW-Watcher(-\w+)?$", service):
+        return jsonify(statut="echec",
+            message=f"Nom de service inattendu (« {service} ») — abandon par précaution.")
+
+    # RepDepot dérivé du champ « config » (…\<NomProjet>\configs\*.conf) —
+    # même règle que interrompre_windows() (app/interruption.py).
+    rep_depot = (ntpath.dirname(ntpath.dirname(config_path)) if config_path
+                 else ntpath.join("C:\\CCW", nom))
+
+    script = DOSSIER_WINDOWS / "nettoyer_verrous_ccw.ps1"
+    if not script.exists():
+        return jsonify(statut="echec", message=f"Script introuvable : {script.name}")
+
+    try:
+        with _fichier_mot_de_passe(mot_de_passe) as pf:
+            base = _base_guest(vbox, pf)
+            r = _copier(base, script, TIMEOUT_COURT)
+            if r.returncode != 0:
+                return jsonify(statut="echec",
+                    message=_message_echec("copie du script vers la VM", r))
+            r = _executer_ps(base, script.name, ["-Service", service, "-RepDepot", rep_depot], TIMEOUT_LONG)
+    except subprocess.TimeoutExpired:
+        return jsonify(statut="echec",
+            message="Délai dépassé pendant le nettoyage des verrous (guestcontrol).")
+    except subprocess.SubprocessError as e:
+        return jsonify(statut="echec", message=f"Erreur guestcontrol : {e}")
+
+    etapes = _extraire_projets(r.stdout)
+    if etapes is None:
+        return jsonify(statut="echec",
+            message=_message_echec("nettoyage des verrous CCW", r))
+
+    resume = next((e for e in etapes if isinstance(e, dict) and e.get("etape") == "resume"), None)
+    if resume is None:
+        return jsonify(statut="echec", message="Réponse de la VM vide ou illisible.")
+
+    return jsonify(
+        statut=resume.get("statut", "echec"),
+        message=resume.get("message", ""),
+        service=service,
+        etapes=etapes,
+        sortie=_sortie_lisible(r),
+    )

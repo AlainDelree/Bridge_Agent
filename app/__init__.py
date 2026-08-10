@@ -74,7 +74,7 @@ def _enregistrer_routes(app: Flask) -> None:
     from app.ccw import (ccw_vm_statut, ccw_demarrer_vm, ccw_projets,
                          ccw_ajouter_projet, ccw_finaliser_projet,
                          ccw_redemarrer_projet, ccw_demarrer_projet,
-                         ccw_arreter_projet)
+                         ccw_arreter_projet, ccw_nettoyer_verrous)
     from app.interruption import route_interrompre
     from app.cycle_vie import heartbeat, events, quitter
     from app.fin_issue import notifier_fin_issue, stream_fin_issue
@@ -118,6 +118,8 @@ def _enregistrer_routes(app: Flask) -> None:
     app.add_url_rule("/ccw/redemarrer-projet", "ccw_redemarrer_projet", login_requis(ccw_redemarrer_projet), methods=["POST"])
     app.add_url_rule("/ccw/demarrer-projet", "ccw_demarrer_projet", login_requis(ccw_demarrer_projet), methods=["POST"])
     app.add_url_rule("/ccw/arreter-projet", "ccw_arreter_projet", login_requis(ccw_arreter_projet), methods=["POST"])
+    # Nettoyage des verrous CCW orphelins (issue #431, prévu par #378).
+    app.add_url_rule("/ccw/nettoyer-verrous", "ccw_nettoyer_verrous", login_requis(ccw_nettoyer_verrous), methods=["POST"])
     # ─── Interruption ciblée d'une issue en cours (issue #323, suite #320) ────
     app.add_url_rule("/interrompre", "route_interrompre", login_requis(route_interrompre), methods=["POST"])
     app.add_url_rule("/heartbeat", "heartbeat", heartbeat, methods=["POST"])
