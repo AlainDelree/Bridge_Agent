@@ -310,6 +310,7 @@ Le watcher lit ces champs dans le tableau markdown de l'en-tête :
 | `TYPE` | `chef` ou `ouvrier` | Identifie le rôle de l'issue dans le pattern multi-agent. `chef` = orchestre les ouvriers. `ouvrier` = sous-tâche créée par le chef, masquée par défaut dans l'onglet Résultats. Absent = issue normale. |
 | `FICHIER_CONTEXTE` | ex. chemin relatif | Fichier additionnel fourni en contexte à CCL pour cette issue (modifiable via l'onglet Configuration, voir §12) |
 | `SUITE_DE` | ex. `#5` | Indique que cette issue fait suite à l'issue #N (discussion ou tâche complémentaire). Absent = issue inédite. |
+| `COMPLEXITE` | `rapide` / `court` / `normal` / `lourd` | 4e dimension de la clé EWMA de calibration TIMEOUT (issue #434, voir §19), estimée par Claude Chat au moment de rédiger l'issue. Absent ou valeur non reconnue = `normal` (défaut, ~300s). CCL/CCW doit l'inclure dans les issues chef/ouvrier qu'il crée (voir `consignes/globales.md`) ; pour les issues de Claude Chat, c'est géré côté doc/prompt. |
 
 Format dans le corps :
 ```markdown
@@ -2016,8 +2017,18 @@ Le champ `TIMEOUT` de l'en-tête d'une issue (§6) est aujourd'hui choisi « à
 vue de nez » par Claude Chat (souvent le défaut du formulaire, 300s, ou
 600s pour une tâche qui semble plus lourde). Ce système calcule, à partir de
 l'**historique réel** des durées de traitement, une valeur suggérée —
-`TIMEOUT_suggéré` — par combinaison (projet, `TYPE`, mode), pour aider
-Claude Chat à mieux calibrer ce champ au fil du temps.
+`TIMEOUT_suggéré` — par combinaison (projet, `TYPE`, mode, `COMPLEXITE` —
+issue #434), pour aider Claude Chat à mieux calibrer ce champ au fil du
+temps.
+
+> ℹ️ **4e dimension `COMPLEXITE` (issue #434) :** la clé à 3 dimensions
+> `projet|TYPE|mode` mélangeait des populations incompatibles dans la même
+> case (ex. une issue de doc de 250s et une refonte de 1800s). Le champ
+> `COMPLEXITE` de l'en-tête (§6 — `rapide` / `court` / `normal` / `lourd`,
+> défaut `normal` si absent) est désormais inclus dans la clé EWMA :
+> `projet|TYPE|mode|complexite`. Les issues sans ce champ (historique
+> existant) sont traitées comme `normal` — aucune régression, nouvelles
+> clés distinctes, recalibration progressive.
 
 Principe d'inspiration explicitement choisi (validé avec Alain) : l'algorithme
 de calcul du **RTO (Retransmission TimeOut) de TCP**, Jacobson/Karels — durée
@@ -2062,7 +2073,8 @@ piloté — donc **partagé entre tous les process watcher**, quel que soit le
 projet, et déjà **gitignoré** comme le reste de `logs/`) :
 
 - **`logs/etat_timeout.json`** — une entrée par combinaison
-  **`projet|TYPE|mode`** : EWMA `duree_typique` et `variabilite` (à
+  **`projet|TYPE|mode|complexite`** (4e dimension `complexite` ajoutée par
+  l'issue #434, cf. §19.1) : EWMA `duree_typique` et `variabilite` (à
   **demi-vie EN NOMBRE D'ISSUES**, `DEMI_VIE_ISSUES`), `multiplicateur_backoff`,
   compteur `succes_rapides_consecutifs`, `n_observations`.
 - **`logs/etat_ambiance.json`** — `F_reseau` et `F_local`, chacun une EWMA à
@@ -2175,17 +2187,24 @@ issues de la même combinaison s'il le juge utile.
 
 ---
 
-*Dernière mise à jour : 3 août 2026 — §17 « Notifications centralisées » :
-nouvelle sous-section 17.3 documentant le SSE de fin d'issue (issue #350) —
-`scripts/bip.py` renommé `scripts/traitement_fin.py` (clé de config
-`SCRIPT_BIP` inchangée, chemin à mettre à jour manuellement dans les
-`configs/*.conf` existants) et devenu, en plus du bip, le déclencheur
-best-effort d'un POST `/notifier-fin-issue` → SSE `GET /stream`
-(`app/fin_issue.py`, une `queue.Queue` par onglet Résultats ouvert) consommé
-côté navigateur par `demarrerStreamFinIssue()`, qui réutilise le fetch de
-vérification de #334 (`verifierIssueApresDepassement`) sans dupliquer sa
-logique. Rafraîchissement toujours opt-in via les labels `notif_*` (comme le
-bip lui-même) ; sans label, la ligne reste soumise au ↻ manuel ou au fetch
+*Dernière mise à jour : 10 août 2026 — §6 « Champs spéciaux dans le corps
+de l'issue » : nouveau champ `COMPLEXITE` documenté (issue #434) — 4e
+dimension de la clé EWMA de calibration TIMEOUT (§19), quatre niveaux
+`rapide`/`court`/`normal`/`lourd`, défaut `normal` (~300s) si absent. §19.1
+et §19.3 mis à jour en conséquence : la clé `etat_timeout.json` passe de
+`projet|TYPE|mode` à `projet|TYPE|mode|complexite` — nouvelles clés
+distinctes, historique existant traité comme `normal`, aucune régression.
+Précédemment — §17 « Notifications centralisées » : nouvelle sous-section
+17.3 documentant le SSE de fin d'issue (issue #350) — `scripts/bip.py`
+renommé `scripts/traitement_fin.py` (clé de config `SCRIPT_BIP` inchangée,
+chemin à mettre à jour manuellement dans les `configs/*.conf` existants) et
+devenu, en plus du bip, le déclencheur best-effort d'un POST
+`/notifier-fin-issue` → SSE `GET /stream` (`app/fin_issue.py`, une
+`queue.Queue` par onglet Résultats ouvert) consommé côté navigateur par
+`demarrerStreamFinIssue()`, qui réutilise le fetch de vérification de #334
+(`verifierIssueApresDepassement`) sans dupliquer sa logique.
+Rafraîchissement toujours opt-in via les labels `notif_*` (comme le bip
+lui-même) ; sans label, la ligne reste soumise au ↻ manuel ou au fetch
 post-TIMEOUT de #334. Précédemment — §11 « Conventions de code » : deux
 notes informant les projets utilisant Bridge_Agent des conséquences de la
 parallélisation `mode_write` par worktrees (issue #337) — risque de conflit
@@ -2195,19 +2214,6 @@ possible) et workflow de vérification/push désormais attendu d'Alain
 (`git worktree list`, `python3 scripts/fusionner_changelog.py` avant tout
 merge ou push, merge manuel de chaque branche `worktree-issue-<N>`,
 nettoyage `git worktree remove`/`git branch -d`) — renvoi vers
-`WORKTREES.md` pour le détail complet (issue #342). Précédemment — §13
-« Commandes utiles » (nouvelle sous-section « Interrompre une issue
-bloquée ») et §16.4 « Interrompre une issue CCW coincée » : les deux
-boutons ⛔ « Interrompre » (CCL et CCW, issue #323) sont désormais
-documentés comme implémentés et fonctionnels — le renvoi mort vers
-`TACHES.md` du §16.4 est supprimé (issue #333). §16.4 décrit maintenant au
-présent ce que fait `interrompre_windows()` (`app/interruption.py`) via
-`provisioning/windows/interrompre_projet_ccw.ps1` : arrêt du service NSSM,
-vérification bornée de l'arbre de process, suppression conditionnelle des
-`.lock`. La nouvelle sous-section de §13 documente le pendant côté CCL
-(`interrompre_linux()`) : arbre de process retrouvé par remontée
-`/proc/<pid>/status` (PPID, jamais par nom d'exécutable), `SIGKILL`,
-attente confirmée de la mort de l'arbre avant suppression du verrou — ainsi
-que l'équivalent manuel (`kill -9` + suppression du `.lock`).*
+`WORKTREES.md` pour le détail complet (issue #342).*
 
 Historique complet : voir [`CHANGELOG.md`](CHANGELOG.md).

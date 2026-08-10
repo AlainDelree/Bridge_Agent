@@ -9,6 +9,35 @@ milliers de caractères sur une seule ligne logique, coûteux à relire et
 
 Convention d'ajout : voir §10 de `BRIDGE_AGENT_DOC.md`.
 
+## 10 août 2026 — issue #434
+
+Champ `COMPLEXITE` dans les issues : 4e dimension de la clé EWMA de
+calibration TIMEOUT. La clé `projet|TYPE|mode` mélangeait des populations
+incompatibles (ex. une issue de doc de 250s et une refonte de 1800s dans
+la même case).
+- `watcher.py` : nouvelle fonction `extraire_complexite(body)` (même
+  pattern que `extraire_timeout`/`extraire_modele`) — lit `| COMPLEXITE |
+  ... |` dans l'en-tête, valeurs reconnues `rapide`/`court`/`normal`/`lourd`
+  (insensible à la casse), toute valeur non reconnue ou champ absent →
+  `normal`. `_cle_combinaison()` prend désormais un 4e paramètre
+  `complexite` et produit `f"{projet}|{type_issue}|{mode}|{complexite}"`
+  au lieu de `f"{projet}|{type_issue}|{mode}"`. `maj_calibration_timeout()`
+  et `lire_timeout_suggere()` reçoivent un nouveau paramètre optionnel
+  `complexite` (défaut `"normal"`) répercuté dans la clé ; les trois sites
+  d'appel (succès, tentative expirée, échec définitif) calculent
+  `extraire_complexite(body)` au même endroit que `deduire_type_issue`/
+  `_etiquette_calibration` et le transmettent. Nouvelles clés distinctes
+  par complexité — l'historique existant (sans ce champ) n'est pas
+  affecté, recalibration progressive.
+- `consignes/globales.md` : nouvelle consigne demandant à CCL/CCW d'inclure
+  `| COMPLEXITE | <niveau> |` dans l'en-tête de toute issue chef/ouvrier
+  qu'il crée lui-même. Ne concerne pas les issues rédigées par Claude
+  Chat — géré côté doc/prompt, hors de ce fichier.
+- `BRIDGE_AGENT_DOC.md` : §6 (table des champs spéciaux) documente le
+  nouveau champ `COMPLEXITE` ; §19.1 et §19.3 (calibration TIMEOUT)
+  mentionnent son rôle de 4e dimension de la clé EWMA et le changement de
+  format de la clé dans `etat_timeout.json`.
+
 ## 10 août 2026 — issue #432
 
 Alerte accumulation de worktrees : depuis l'issue #337, les worktrees

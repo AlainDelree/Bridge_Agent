@@ -1037,8 +1037,8 @@ def _alpha_temporel(delta_heures: float, demi_vie_heures: float) -> float:
     return 1 - 0.5 ** (delta_heures / demi_vie_heures)
 
 
-def _cle_combinaison(projet: str, type_issue: str, mode: str) -> str:
-    return f"{projet}|{type_issue}|{mode}"
+def _cle_combinaison(projet: str, type_issue: str, mode: str, complexite: str) -> str:
+    return f"{projet}|{type_issue}|{mode}|{complexite}"
 
 
 def _maj_combinaison_timeout(donnees: dict, cle: str, *, duree_s: float,
@@ -1114,20 +1114,21 @@ def _maj_ambiance(donnees: dict, cle_f: str, ratio: float, date_iso: str):
 
 def maj_calibration_timeout(*, projet: str, type_issue: str, mode: str,
                             duree_s: float, timeout_courant: int, expiree: bool,
-                            body: str, date_iso: str) -> float | None:
+                            body: str, date_iso: str, complexite: str = "normal") -> float | None:
     """Point d'entrée de la calibration automatique du TIMEOUT (issue #221),
     appelé après CHAQUE clôture d'issue (succès ou timeout), au même site que
     enregistrer_duree. Met à jour etat_timeout.json (combinaison projet/TYPE/
-    mode) et, sur succès avec tag_reseau connu, etat_ambiance.json (F_reseau/
-    F_local, global à tous les projets). Journalise et retourne le
-    TIMEOUT_suggéré (secondes, plancher appliqué) pour cette combinaison, ou
-    None si le calcul n'a pas pu aboutir (verrou d'état non obtenu, ou aucune
-    observation de succès encore enregistrée pour cette combinaison).
+    mode/complexite, issue #434) et, sur succès avec tag_reseau connu,
+    etat_ambiance.json (F_reseau/F_local, global à tous les projets).
+    Journalise et retourne le TIMEOUT_suggéré (secondes, plancher appliqué)
+    pour cette combinaison, ou None si le calcul n'a pas pu aboutir (verrou
+    d'état non obtenu, ou aucune observation de succès encore enregistrée
+    pour cette combinaison).
 
     N'APPLIQUE RIEN au comportement d'exécution actuel : le TIMEOUT réellement
     utilisé pour lancer claude reste exclusivement celui de extraire_timeout()
     — cette fonction ne fait que calculer et journaliser."""
-    cle = _cle_combinaison(projet, type_issue, mode)
+    cle = _cle_combinaison(projet, type_issue, mode, complexite)
     capture = {}
 
     def _maj_timeout(donnees):
@@ -1189,10 +1190,11 @@ def maj_calibration_timeout(*, projet: str, type_issue: str, mode: str,
     return suggere
 
 
-def lire_timeout_suggere(projet: str, type_issue: str, mode: str) -> float | None:
+def lire_timeout_suggere(projet: str, type_issue: str, mode: str, complexite: str = "normal") -> float | None:
     """Lit (sans écrire ni verrouiller) le TIMEOUT_suggéré actuellement en
-    vigueur pour la combinaison (projet, TYPE, mode), à partir de l'état déjà
-    persisté par maj_calibration_timeout (issue #221).
+    vigueur pour la combinaison (projet, TYPE, mode, complexite — issue
+    #434), à partir de l'état déjà persisté par maj_calibration_timeout
+    (issue #221).
 
     Sert au commentaire de clôture d'une issue en ÉCHEC définitif (issue
     #222) : contrairement au cas succès, l'appel à maj_calibration_timeout
@@ -1203,7 +1205,7 @@ def lire_timeout_suggere(projet: str, type_issue: str, mode: str) -> float | Non
     encore été enregistré pour cette combinaison (mêmes conditions que
     maj_calibration_timeout)."""
     try:
-        cle = _cle_combinaison(projet, type_issue, mode)
+        cle = _cle_combinaison(projet, type_issue, mode, complexite)
         combo = _lire_json_best_effort(FICHIER_ETAT_TIMEOUT).get(cle)
         if not combo:
             return None
@@ -1279,6 +1281,27 @@ def extraire_modele(body: str) -> str:
                 if valeur and valeur.lower() not in ("", "-", "défaut", "defaut"):
                     return valeur
     return CFG.modele_ccl
+
+def extraire_complexite(body: str) -> str:
+    """Extrait la COMPLEXITE depuis le body de l'issue (en-tête bridge, issue
+    #434) — 4e dimension de la clé EWMA de calibration TIMEOUT, aux côtés de
+    projet/TYPE/mode : sépare les populations « issue de doc de 250s » et
+    « refonte de 1800s » que la clé à 3 dimensions mélangeait.
+
+    Calquée sur extraire_timeout/extraire_modele. Quatre niveaux reconnus
+    (insensible à la casse) : rapide / court / normal / lourd. Champ absent
+    ou valeur non reconnue → 'normal' (défaut, ~300s = TIMEOUT standard) —
+    n'affecte pas l'historique des issues déjà closes, qui n'ont pas ce
+    champ (nouvelles clés, recalibration progressive)."""
+    niveaux = ("rapide", "court", "normal", "lourd")
+    for ligne in body.splitlines():
+        if "| COMPLEXITE" in ligne.upper():
+            parts = ligne.split("|")
+            if len(parts) >= 3:
+                valeur = parts[2].strip().lower()
+                if valeur in niveaux:
+                    return valeur
+    return "normal"
 
 def extraire_repo_cible(body: str) -> str:
     """Extrait le REPO_CIBLE depuis le body de l'issue (en-tête bridge).
@@ -3179,6 +3202,7 @@ def _traiter_issue_synchrone(issue: dict, dry_run: bool, chemin_worktree: Path |
                 # catégorisée par projet/type/mode, pour l'estimation prédictive.
                 type_issue_close = deduire_type_issue(titre, body)
                 mode_close        = _etiquette_calibration(mode)
+                complexite_close  = extraire_complexite(body)
                 duree_reelle      = time.monotonic() - debut_traitement
                 date_iso_close    = datetime.now().isoformat(timespec="seconds")
                 enregistrer_duree(
@@ -3198,6 +3222,7 @@ def _traiter_issue_synchrone(issue: dict, dry_run: bool, chemin_worktree: Path |
                     projet=CFG.nom,
                     type_issue=type_issue_close,
                     mode=mode_close,
+                    complexite=complexite_close,
                     duree_s=duree_reelle,
                     timeout_courant=timeout,
                     expiree=False,
@@ -3240,6 +3265,7 @@ def _traiter_issue_synchrone(issue: dict, dry_run: bool, chemin_worktree: Path |
             if sortie.startswith("Timeout après"):
                 type_issue_expire = deduire_type_issue(titre, body)
                 mode_expire        = _etiquette_calibration(mode)
+                complexite_expire  = extraire_complexite(body)
                 duree_expiree      = time.monotonic() - debut_traitement
                 date_iso_expire    = datetime.now().isoformat(timespec="seconds")
                 enregistrer_duree(
@@ -3259,6 +3285,7 @@ def _traiter_issue_synchrone(issue: dict, dry_run: bool, chemin_worktree: Path |
                     projet=CFG.nom,
                     type_issue=type_issue_expire,
                     mode=mode_expire,
+                    complexite=complexite_expire,
                     duree_s=duree_expiree,
                     timeout_courant=timeout,
                     expiree=True,
@@ -3304,8 +3331,9 @@ def _traiter_issue_synchrone(issue: dict, dry_run: bool, chemin_worktree: Path |
                     # même observation dans l'EWMA.
                     type_issue_echec = deduire_type_issue(titre, body)
                     mode_echec        = _etiquette_calibration(mode)
+                    complexite_echec  = extraire_complexite(body)
                     duree_echec       = time.monotonic() - debut_traitement
-                    suggere_echec     = lire_timeout_suggere(CFG.nom, type_issue_echec, mode_echec)
+                    suggere_echec     = lire_timeout_suggere(CFG.nom, type_issue_echec, mode_echec, complexite_echec)
                     message_echec += formater_bloc_calibration(duree_echec, timeout, suggere_echec)
                     commenter_issue(numero, message_echec)
                     ajouter_label(numero, LABEL_ECHEC)

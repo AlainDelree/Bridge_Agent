@@ -61,3 +61,12 @@
   garde-fou technique dans `watcher.py` détecte et annule automatiquement
   toute modification de `configs/*.conf` survenue malgré tout au cours du
   traitement.
+- **Champ COMPLEXITE dans les issues que tu crées toi-même (chef/ouvrier) :**
+  inclus systématiquement une ligne `| COMPLEXITE | <niveau> |` dans l'en-tête
+  de toute issue que tu ouvres (que ce soit une issue chef vers un ouvrier, ou
+  une issue ouvrier). Quatre niveaux possibles : `rapide` / `court` / `normal`
+  / `lourd` — estime celui qui correspond le mieux à l'ampleur de la tâche
+  confiée. Ce champ alimente la calibration automatique du TIMEOUT (EWMA par
+  projet/TYPE/mode/complexite) : sans lui, la valeur par défaut `normal` est
+  utilisée. Cette consigne ne concerne QUE les issues que TU rédiges — les
+  issues rédigées par Claude Chat suivent leurs propres instructions.
