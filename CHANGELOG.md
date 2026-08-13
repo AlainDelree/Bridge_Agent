@@ -9,6 +9,23 @@ milliers de caractères sur une seule ligne logique, coûteux à relire et
 
 Convention d'ajout : voir §10 de `BRIDGE_AGENT_DOC.md`.
 
+## 13 août 2026 — issue #443
+
+DOC — extension de la convention de présentation des issues (issue #153)
+au cas mono-issue. Le §3 de `BRIDGE_AGENT_DOC.md` ne formulait la règle du
+bloc de code unique que pour le mode lot ; en pratique Claude Chat enveloppe
+aussi une issue unique dans un bloc de code afin qu'Alain puisse utiliser le
+bouton copier du bloc, mais ce n'était pas explicite dans la doc.
+- `BRIDGE_AGENT_DOC.md` : §3 « Convention de présentation côté Claude Chat
+  (issue #153) » complétée pour couvrir explicitement le cas mono-issue —
+  une issue unique est elle aussi présentée dans un bloc de code, pas
+  seulement un lot de plusieurs issues.
+- `BRIDGE_AGENT_DOC.md` : §11 « Conventions de code », bullet « Issues »,
+  précise désormais que le corps est toujours présenté dans un bloc de
+  code, qu'il s'agisse d'une issue seule ou d'un lot.
+- Pied de page mis à jour (glissement des trois dernières entrées d'un
+  cran).
+
 ## 10 août 2026 — issue #434
 
 Champ `COMPLEXITE` dans les issues : 4e dimension de la clé EWMA de

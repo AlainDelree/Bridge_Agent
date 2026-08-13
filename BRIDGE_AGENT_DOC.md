@@ -199,11 +199,14 @@ le titre + le lien de l'issue créée ou le message d'erreur, puis le corps est
 vidé. Un seul bloc `#Titre:` conserve le comportement mono-issue habituel
 (bouton « Envoyer sur <projet> », détection automatique du titre).
 
-**Convention de présentation côté Claude Chat (issue #153) :** quand Claude
-Chat prépare plusieurs issues à la fois pour ce mode lot, il les présente
-toutes à la suite dans **un seul bloc de code** (pas un bloc séparé par
-issue), afin qu'Alain puisse copier l'ensemble en un clic et le coller
-directement dans le champ Corps.
+**Convention de présentation côté Claude Chat (issue #153, étendue par
+#443) :** quand Claude Chat prépare plusieurs issues à la fois pour ce mode
+lot, il les présente toutes à la suite dans **un seul bloc de code** (pas un
+bloc séparé par issue), afin qu'Alain puisse copier l'ensemble en un clic et
+le coller directement dans le champ Corps. Cette règle vaut **aussi pour une
+issue unique** (mode mono-issue) : le corps est lui aussi enveloppé dans un
+bloc de code, afin qu'Alain puisse utiliser le bouton copier du bloc plutôt
+qu'une sélection manuelle.
 
 > ⚠️ **Claude Chat doit toujours inclure** `| PROJET | <nom> |` dans l'en-tête
 > des issues qu'il génère (nom exact du projet cible : `bridge_agent`,
@@ -490,6 +493,9 @@ la même opération, en plus du point ci-dessus :
   les contrats existants (noms de labels GitHub, drapeaux CLI, mots-clés Python).
 - **Issues** : produire titre + corps avec `#Titre:` en première ligne du corps.
   Alain colle le tout dans le champ Corps de new_issue.py — un seul copier-coller.
+  Le corps est toujours présenté dans **un seul bloc de code**, qu'il s'agisse
+  d'une issue unique ou d'un lot de plusieurs issues (issue #153, étendue par
+  #443), afin qu'Alain puisse utiliser le bouton copier du bloc.
 - **Mode par défaut** : lecture seule. N'armer `mode_write` que si la tâche
   demande explicitement une modification de fichier.
 - **Scripts PowerShell (`.ps1`) : BOM UTF-8 obligatoire dès la création.**
@@ -2179,9 +2185,17 @@ issues de la même combinaison s'il le juge utile.
 
 ---
 
-*Dernière mise à jour : 10 août 2026 — §6 « Champs spéciaux dans le corps
-de l'issue » : nouveau champ `RESEAU` documenté (issue #435, `oui`/`non`,
-lu par `_detecter_tag_reseau`, optionnel). §19.6 : les deux limitations
+*Dernière mise à jour : 13 août 2026 — §3 « Convention de présentation côté
+Claude Chat » (issue #443) : la règle du bloc de code unique (issue #153),
+jusqu'ici formulée pour le mode lot seulement, est étendue explicitement au
+cas mono-issue — une issue unique est elle aussi présentée dans un bloc de
+code, afin qu'Alain puisse utiliser le bouton copier du bloc. §11
+« Conventions de code » : le bullet « Issues » précise désormais que le
+corps est toujours présenté dans un bloc de code, qu'il s'agisse d'une issue
+seule ou d'un lot.
+Précédemment — §6 « Champs spéciaux dans le corps de l'issue » : nouveau
+champ `RESEAU` documenté (issue #435, `oui`/`non`, lu par
+`_detecter_tag_reseau`, optionnel). §19.6 : les deux limitations
 « `tag_reseau` n'est peuplé nulle part » et « incohérence inerte sur échec
 définitif » sont levées — `_detecter_tag_reseau(body)` lit désormais le
 champ `RESEAU`, et `lire_timeout_suggere()` reçoit `body` pour choisir
@@ -2193,27 +2207,6 @@ calibration TIMEOUT (§19), quatre niveaux `rapide`/`court`/`normal`/`lourd`,
 défaut `normal` (~300s) si absent. §19.1 et §19.3 mis à jour en conséquence :
 la clé `etat_timeout.json` passe de `projet|TYPE|mode` à
 `projet|TYPE|mode|complexite` — nouvelles clés distinctes, historique
-existant traité comme `normal`, aucune régression.
-Précédemment — §17 « Notifications centralisées » : nouvelle sous-section
-17.3 documentant le SSE de fin d'issue (issue #350) — `scripts/bip.py`
-renommé `scripts/traitement_fin.py` (clé de config `SCRIPT_BIP` inchangée,
-chemin à mettre à jour manuellement dans les `configs/*.conf` existants) et
-devenu, en plus du bip, le déclencheur best-effort d'un POST
-`/notifier-fin-issue` → SSE `GET /stream` (`app/fin_issue.py`, une
-`queue.Queue` par onglet Résultats ouvert) consommé côté navigateur par
-`demarrerStreamFinIssue()`, qui réutilise le fetch de vérification de #334
-(`verifierIssueApresDepassement`) sans dupliquer sa logique.
-Rafraîchissement toujours opt-in via les labels `notif_*` (comme le bip
-lui-même) ; sans label, la ligne reste soumise au ↻ manuel ou au fetch
-post-TIMEOUT de #334. Précédemment — §11 « Conventions de code » : deux
-notes informant les projets utilisant Bridge_Agent des conséquences de la
-parallélisation `mode_write` par worktrees (issue #337) — risque de conflit
-de merge entre deux issues touchant les mêmes fichiers (recommandation :
-scoper les issues sur des périmètres de fichiers aussi distincts que
-possible) et workflow de vérification/push désormais attendu d'Alain
-(`git worktree list`, `python3 scripts/fusionner_changelog.py` avant tout
-merge ou push, merge manuel de chaque branche `worktree-issue-<N>`,
-nettoyage `git worktree remove`/`git branch -d`) — renvoi vers
-`WORKTREES.md` pour le détail complet (issue #342).*
+existant traité comme `normal`, aucune régression.*
 
 Historique complet : voir [`CHANGELOG.md`](CHANGELOG.md).
