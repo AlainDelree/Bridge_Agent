@@ -1211,6 +1211,12 @@ function basculerCocheResultat(event, projet, numero) {
   // Pastilles filtre projet (issue #383) : comptent les issues décochées,
   // donc chaque bascule de case doit rafraîchir immédiatement leur compte.
   majPastillesFiltres();
+  // Cocher la case déclenche, pour cette SEULE issue, la même copie
+  // réponse+diff que le badge « All » (issue #444). Décocher ne fait rien
+  // (pas de « décopie »). copierToutEtDiffDepuisBadge gère déjà sans erreur
+  // le cas d'une issue sans réponse/commit (garde « copie vide », feedback
+  // ⚠/∅) : appel sans condition sur l'état de l'issue.
+  if (coche) copierToutEtDiffDepuisBadge(event, projet, numero);
 }
 
 // Construit l'élément DOM d'UNE ligne d'issue (case à cocher, pastille,
