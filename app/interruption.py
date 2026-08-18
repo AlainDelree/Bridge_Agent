@@ -44,6 +44,7 @@ from watcher import _chemin_verrou, DOSSIER_LOGS  # noqa: E402
 
 LABEL_NEEDS_HUMAN         = "needs-human"
 COMMENTAIRE_INTERRUPTION  = "⛔ Interrompu via new_issue.py"
+COMMENTAIRE_RELANCE       = "🔄 Relancée via new_issue.py (retrait de needs-human)."
 
 # Étapes dont un échec rend le statut global 'echec_critique' (arbre de
 # process non confirmé mort → lock volontairement non nettoyé, risque de
@@ -61,6 +62,23 @@ def _ajouter_label_gh(depot: str, numero: int, label: str) -> tuple[str, str]:
         )
         if res.returncode == 0:
             return "succes", f"Label « {label} » posé."
+        return "echec", (res.stderr or res.stdout or "erreur gh inconnue").strip()
+    except subprocess.TimeoutExpired:
+        return "echec", "Timeout (gh n'a pas répondu en 30s)."
+    except FileNotFoundError:
+        return "echec", "gh introuvable dans le PATH."
+    except Exception as e:
+        return "echec", str(e)
+
+
+def _retirer_label_gh(depot: str, numero: int, label: str) -> tuple[str, str]:
+    try:
+        res = subprocess.run(
+            ["gh", "issue", "edit", str(numero), "--repo", depot, "--remove-label", label],
+            capture_output=True, text=True, timeout=30,
+        )
+        if res.returncode == 0:
+            return "succes", f"Label « {label} » retiré."
         return "echec", (res.stderr or res.stdout or "erreur gh inconnue").strip()
     except subprocess.TimeoutExpired:
         return "echec", "Timeout (gh n'a pas répondu en 30s)."
@@ -422,3 +440,34 @@ def route_interrompre():
 
     reponse = dict(succes=True, agent=agent, statut_global=statut_global, etapes=etapes)
     return jsonify(**reponse)
+
+
+def route_relancer():
+    """POST /relancer-issue — remet en file d'attente une issue bloquée en
+    needs-human (issue #460), sans recréer une nouvelle issue.
+
+    Il n'existe PAS de label « pending » dans ce projet : le watcher
+    (watcher.py) traite déjà toute issue OUVERTE for-linux/for-windows tant
+    qu'elle ne porte ni `done` ni `needs-human` (voir LABEL_ECHEC/LABEL_FAIT
+    dans watcher.py) — retirer needs-human suffit donc à la rendre de nouveau
+    éligible au prochain cycle. Ne relance PAS le watcher lui-même (même
+    esprit que route_interrompre ci-dessus : action manuelle séparée si le
+    watcher est éteint)."""
+    data   = request.json or {}
+    depot  = (data.get("depot") or "").strip()
+    numero = data.get("numero")
+
+    if not depot:
+        return jsonify(succes=False, erreur="Dépôt GitHub manquant."), 400
+    if not str(numero).isdigit():
+        return jsonify(succes=False, erreur="Numéro d'issue invalide."), 400
+    numero = int(numero)
+
+    statut_label, msg_label = _retirer_label_gh(depot, numero, LABEL_NEEDS_HUMAN)
+    etapes = [{"etape": "retrait_label_needs_human", "statut": statut_label, "message": msg_label}]
+
+    statut_comment, msg_comment = _commenter_gh(depot, numero, COMMENTAIRE_RELANCE)
+    etapes.append({"etape": "commentaire", "statut": statut_comment, "message": msg_comment})
+
+    statut_global = "echec" if any(e["statut"] == "echec" for e in etapes) else "ok"
+    return jsonify(succes=True, statut_global=statut_global, etapes=etapes)

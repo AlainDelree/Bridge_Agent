@@ -75,7 +75,7 @@ def _enregistrer_routes(app: Flask) -> None:
                          ccw_ajouter_projet, ccw_finaliser_projet,
                          ccw_redemarrer_projet, ccw_demarrer_projet,
                          ccw_arreter_projet, ccw_nettoyer_verrous)
-    from app.interruption import route_interrompre
+    from app.interruption import route_interrompre, route_relancer
     from app.cycle_vie import heartbeat, events, quitter
     from app.fin_issue import notifier_fin_issue, stream_fin_issue
     from app.diag_heartbeat import visibilite as diag_visibilite   # DIAGNOSTIC TEMPORAIRE — issue #157, à retirer
@@ -120,6 +120,7 @@ def _enregistrer_routes(app: Flask) -> None:
     app.add_url_rule("/ccw/nettoyer-verrous", "ccw_nettoyer_verrous", login_requis(ccw_nettoyer_verrous), methods=["POST"])
     # ─── Interruption ciblée d'une issue en cours (issue #323, suite #320) ────
     app.add_url_rule("/interrompre", "route_interrompre", login_requis(route_interrompre), methods=["POST"])
+    app.add_url_rule("/relancer-issue", "route_relancer", login_requis(route_relancer), methods=["POST"])
     app.add_url_rule("/heartbeat", "heartbeat", heartbeat, methods=["POST"])
     app.add_url_rule("/events", "events", login_requis(events))
     app.add_url_rule("/quitter", "quitter", login_requis(quitter), methods=["POST"])

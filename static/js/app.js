@@ -2131,6 +2131,8 @@ function rendrePanneauLateralActions() {
   // détail (construireHtmlIssue, issue #80) — /fermer-issue via fermerIssue(),
   // réutilisée à l'identique, aucune nouvelle route.
   if (!ferme && nomsLabels.includes('needs-human')) {
+    html += '<button onclick="relancerIssue(\'' + escapeHtml(nom) + '\', '
+          + Number(numero) + ')">🔄 Relancer</button>';
     html += '<button class="danger-plein" onclick="fermerIssue(\'' + escapeHtml(nom) + '\', '
           + Number(numero) + ')">✖ Fermer l\'issue</button>';
   }
@@ -3584,6 +3586,50 @@ async function interrompreEtRelancer(nom, numero) {
     await ccwRedemarrerProjet(nom);
   } else {
     await sidebarRelancerWatcherCCL(nom);
+  }
+}
+
+// Relance une issue bloquée en needs-human (issue #460) : retire simplement
+// ce label côté GitHub (route Flask /relancer-issue, app/interruption.py) —
+// il n'existe PAS de label « pending » dans ce projet, une issue ouverte
+// sans needs-human ni done est déjà éligible au prochain cycle du watcher
+// (voir watcher.py). Ne relance PAS le watcher lui-même : si celui-ci est
+// éteint, une relance manuelle depuis l'onglet Watchers reste nécessaire.
+async function relancerIssue(nom, numero) {
+  const depot = depotDuProjet(nom);
+  if (!depot) {
+    alert('Dépôt GitHub introuvable pour le projet « ' + nom + ' » — impossible de relancer.');
+    return;
+  }
+  if (!confirm("Relancer l'issue #" + numero + " ?\n\n"
+             + "Le label needs-human sera retiré : l'issue sera reprise par le watcher "
+             + "à son prochain cycle (s'il tourne).")) return;
+
+  let resultat;
+  try {
+    const rep = await fetch('/relancer-issue', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({depot: depot, numero: Number(numero)})
+    });
+    resultat = await rep.json();
+  } catch(e) {
+    alert('Erreur réseau : ' + e.message);
+    return;
+  }
+  if (!resultat.succes || resultat.statut_global === 'echec') {
+    const detail = (resultat.etapes || []).map(e => e.message).filter(Boolean).join(' / ');
+    alert('Erreur : ' + (resultat.erreur || detail || 'échec de la relance.'));
+    return;
+  }
+
+  // Recharge la liste (l'issue a perdu needs-human) puis réaffiche si visible.
+  await chargerListeIssues();
+  const numStr = String(numero);
+  const ligne = [...document.querySelectorAll('#liste-issues .ligne-issue')]
+    .find(l => l.dataset.projet === nom && l.dataset.numero === numStr);
+  if (ligne && ligne.style.display !== 'none') {
+    await afficherIssue(nom, numStr);
   }
 }
 
