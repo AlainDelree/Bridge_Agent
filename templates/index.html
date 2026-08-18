@@ -28,7 +28,11 @@
   <!-- ─── Bandeau d'avertissement échéance éval Windows CCW (issue #454) : visible
        sur tous les onglets, hors des panneaux, tant que l'échéance approche. ─ -->
   {% if eval_windows %}
-  <div class="bandeau-eval-windows {{ eval_windows.niveau }}">{{ eval_windows.message }}</div>
+  <div class="bandeau-eval-windows {{ eval_windows.niveau }}">
+    {% for message in eval_windows.messages %}
+    <div>{{ message }}</div>
+    {% endfor %}
+  </div>
   {% endif %}
 
   <!-- ─── Bandeau global : sélecteur de projet (pilote tous les onglets sauf Watchers) ─ -->
