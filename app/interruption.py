@@ -31,8 +31,8 @@ from flask import jsonify, request
 
 from app.projets import projet_par_depot
 from app.ccw import (
-    _preparer, _base_guest, _fichier_mot_de_passe, _copier, _executer_ps,
-    _lister_projets_vm, _extraire_projets, _etat_vm, _message_echec,
+    _preparer, _copier, _executer_ps,
+    _lister_projets_vm, _extraire_projets, _message_echec,
     DOSSIER_WINDOWS, TIMEOUT_COURT, TIMEOUT_LONG,
 )
 
@@ -300,7 +300,7 @@ def interrompre_linux(cfg) -> list:
     return etapes
 
 
-# ─── for-windows : via guestcontrol (pattern app/ccw.py) ───────────────────
+# ─── for-windows : via SSH sur le PC fixe (pattern app/ccw.py) ─────────────
 
 ETAPES_WINDOWS_TECHNIQUES = ("arret_service_ccw", "verification_orphelin_claude", "suppression_verrou_ccw")
 
@@ -321,9 +321,9 @@ def interrompre_windows(cfg) -> list:
     ctx, err = _preparer()
     if err:
         return _etapes_windows_echec(_erreur_de(err))
-    vbox, mot_de_passe = ctx
+    hote, utilisateur, cle_privee = ctx
 
-    projets, err = _lister_projets_vm(vbox, mot_de_passe)
+    projets, err = _lister_projets_vm(hote, utilisateur, cle_privee)
     if err:
         return _etapes_windows_echec(_erreur_de(err))
 
@@ -335,7 +335,7 @@ def interrompre_windows(cfg) -> list:
             break
     if not service:
         return _etapes_windows_echec(
-            f"Projet « {cfg.nom} » introuvable parmi les services CCW-Watcher de la VM.")
+            f"Projet « {cfg.nom} » introuvable parmi les services CCW-Watcher du PC fixe.")
 
     # RepDepot dérivé du champ « config » (…\<NomProjet>\configs\*.conf) —
     # jamais reconstruit depuis cfg.nom (Linux) ou le nom du service.
@@ -347,16 +347,15 @@ def interrompre_windows(cfg) -> list:
         return _etapes_windows_echec(f"Script introuvable : {script.name}")
 
     try:
-        with _fichier_mot_de_passe(mot_de_passe) as pf:
-            base = _base_guest(vbox, pf)
-            r = _copier(base, script, TIMEOUT_COURT)
-            if r.returncode != 0:
-                return _etapes_windows_echec(_message_echec("copie du script vers la VM", r))
-            r = _executer_ps(base, script.name, ["-Service", service, "-RepDepot", rep_depot], TIMEOUT_LONG)
+        r = _copier(hote, utilisateur, cle_privee, script, TIMEOUT_COURT)
+        if r.returncode != 0:
+            return _etapes_windows_echec(_message_echec("copie du script vers le PC fixe", r))
+        r = _executer_ps(hote, utilisateur, cle_privee, script.name,
+                         ["-Service", service, "-RepDepot", rep_depot], TIMEOUT_LONG)
     except subprocess.TimeoutExpired:
-        return _etapes_windows_echec("Délai dépassé pendant l'interruption (guestcontrol).")
+        return _etapes_windows_echec("Délai dépassé pendant l'interruption (SSH).")
     except subprocess.SubprocessError as e:
-        return _etapes_windows_echec(f"Erreur guestcontrol : {e}")
+        return _etapes_windows_echec(f"Erreur SSH : {e}")
 
     resultats = _extraire_projets(r.stdout)
     if resultats is None:
@@ -422,6 +421,4 @@ def route_interrompre():
         statut_global = "ok"
 
     reponse = dict(succes=True, agent=agent, statut_global=statut_global, etapes=etapes)
-    if agent == "windows":
-        reponse["vm_running"] = (_etat_vm() == "running")
     return jsonify(**reponse)
