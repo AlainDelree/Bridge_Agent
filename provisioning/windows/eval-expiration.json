@@ -1,6 +1,6 @@
 {
   "_commentaire": "Métadonnées de l'évaluation 90 jours de la VM CCW-Build (Windows 11 IoT Enterprise LTSC 2024). Lu par verifier_expiration_ccw.py. Voir BRIDGE_AGENT_DOC.md §16 et issue #167.",
-  "vm": "CCW-Build",
+  "machine": "PC-fixe-CCW",
   "windows": "Windows 11 IoT Enterprise LTSC 2024",
   "eval_jours": 90,
   "date_installation": "2026-08-17",

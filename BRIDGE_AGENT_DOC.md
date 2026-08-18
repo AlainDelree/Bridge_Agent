@@ -1147,7 +1147,7 @@ create`, puis surveille sa fermeture avant de livrer sa réponse.
 - **⚠️ Contrepartie opérationnelle** : le rallumage automatique du watcher à
   la création d'issue (§13, mécanisme 2) ne s'applique PAS aux issues
   `for-windows`. Avant d'envoyer une issue `for-windows` directe, vérifier
-  dans l'onglet CCW (§16.2) que la VM `CCW-Build` tourne et que le service
+  dans l'onglet CCW (§16.2) que le PC fixe est joignable et que le service
   `CCW-Watcher` est démarré ; sinon l'issue restera ouverte sans aucun
   signal. (Le nom `CCW-Watcher-<Projet>` venait du modèle multi-projets,
   abandonné par #231 — voir §16.)
