@@ -86,9 +86,3 @@ Confirmer que `CCW-Watcher` est bien à l'état `running`, soit localement
 (`nssm status CCW-Watcher` ou services.msc sur le PC fixe), soit depuis
 CCL via l'onglet **CCW** de l'interface web (`new_issue.py`) — voir
 `BRIDGE_AGENT_DOC.md` §16.2.
-
----
-
-> **Note.** `configurer_ssh_ccw.ps1` est référencé par cette procédure mais
-> n'existe pas encore dans ce dossier au moment de la rédaction — à créer
-> séparément avant de pouvoir dérouler l'étape 2 telle quelle.
