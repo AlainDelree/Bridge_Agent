@@ -8,10 +8,12 @@ from flask import render_template
 
 from app.projets import lister_projets
 from app.issues import formats_image_acceptes
+from app.eval_windows import etat_eval_windows
 from app import etat
 
 
 def index():
     return render_template("index.html", projets=lister_projets(),
                            auth_active=bool(etat.get("MOT_DE_PASSE")),
-                           formats_image=formats_image_acceptes())
+                           formats_image=formats_image_acceptes(),
+                           eval_windows=etat_eval_windows())

@@ -25,6 +25,12 @@
             style="font-size:12px;padding:5px 12px">Quitter</button>
   </div>
 
+  <!-- ─── Bandeau d'avertissement échéance éval Windows CCW (issue #454) : visible
+       sur tous les onglets, hors des panneaux, tant que l'échéance approche. ─ -->
+  {% if eval_windows %}
+  <div class="bandeau-eval-windows {{ eval_windows.niveau }}">{{ eval_windows.message }}</div>
+  {% endif %}
+
   <!-- ─── Bandeau global : sélecteur de projet (pilote tous les onglets sauf Watchers) ─ -->
   <div class="bandeau-projet">
 
