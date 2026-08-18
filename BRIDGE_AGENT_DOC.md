@@ -43,7 +43,7 @@ Claude Chat → crée une issue → GitHub → watcher.py détecte → CCL exéc
 > lui-même** :
 > - **Côté CCL** : `REP_TRAVAIL` **EST** le clone du dépôt Bridge_Agent, donc
 >   ce pull met bien à jour le code du watcher en plus des fichiers projet.
-> - **Côté CCW en modèle unifié** (#231) : `REP_TRAVAIL = \\VBOXSVR\CCW_Share`
+> - **Côté CCW en modèle unifié** (#231) : `REP_TRAVAIL = C:\CCW_Share`
 >   n'est **même pas un dépôt git** (§16), et le clone qui contient
 >   `watcher.py` (`C:\CCW\Bridge_Agent`) vit **ailleurs** — ce pull ne le
 >   touche donc **jamais**. Voir le bloc d'avertissement du §16 pour la
@@ -1212,23 +1212,35 @@ finale.
 
 ## 16. Agent Windows CCW
 
-**But :** disposer d'un agent **Claude Code Windows (CCW)** tournant dans une VM
-Windows, pour traiter les issues `for-windows` — principalement les builds `.exe`
-(PyInstaller) qui exigent un environnement Windows natif.
+**But :** disposer d'un agent **Claude Code Windows (CCW)** tournant sur un
+**PC fixe physique dédié**, pour traiter les issues `for-windows` —
+principalement les builds `.exe` (PyInstaller) qui exigent un environnement
+Windows natif.
 
-**Modèle unifié (depuis juillet 2026).** Un seul service NSSM `CCW-Watcher`
+> **⚠️ Changement de plateforme (depuis août 2026, issue #446).** CCW ne
+> tourne plus dans une VM VirtualBox mais **sur un PC fixe physique**
+> (Pentium G2020). De nombreux paragraphes ci-dessous décrivent encore
+> l'ancienne architecture VM (VirtualBox, `VBoxManage`, chemin UNC, éval 90
+> jours) : ils sont conservés à titre **historique** et signalés comme tels
+> au fil du texte, mais ne décrivent plus le fonctionnement réel. Les deux
+> paramètres qui changent partout dans ce §16 : `REP_TRAVAIL = C:\CCW_Share`
+> (chemin **local**, plus de partage VirtualBox) et le service NSSM
+> `CCW-Watcher` tourne sous le compte **`AlainW`** (utilisateur non-admin) et
+> non plus sous `LocalSystem`.
+
+**Modèle actuel (PC physique).** Un seul service NSSM `CCW-Watcher`
 surveille les issues `for-windows` du dépôt `AlainDelree/Bridge_Agent`.
-`REP_TRAVAIL = \\VBOXSVR\CCW_Share` (chemin UNC du partage VirtualBox, accessible
-depuis Linux à `/home/alain/Bridge_Agent_CCW_Share/`). Chaque projet buildé
-est cloné dans un sous-dossier dédié : `\\VBOXSVR\CCW_Share\CCW\<projet>\`
-(ex. `Z:\CCW\actualise\` depuis la VM). Ce modèle garantit le séquencement
-strict des builds par construction (un seul process `watcher.py`, une issue
-à la fois) et supprime tout risque de contention CPU/RAM entre deux builds
-parallèles.
+`REP_TRAVAIL = C:\CCW_Share` — répertoire de travail **local** sur le PC
+physique, partagé entre CCL (qui y accède via le réseau local) et CCW (qui
+y accède en chemin local direct). Chaque projet buildé est cloné dans un
+sous-dossier dédié : `C:\CCW_Share\CCW\<projet>\`. Ce modèle garantit le
+séquencement strict des builds par construction (un seul process
+`watcher.py`, une issue à la fois) et supprime tout risque de contention
+CPU/RAM entre deux builds parallèles.
 
 > **⚠️ Le clone `C:\CCW\Bridge_Agent` n'est JAMAIS mis à jour automatiquement
 > (issue #240).** Le `git pull --ff-only` automatique de début de cycle (§1)
-> porte sur `REP_TRAVAIL` — ici `\\VBOXSVR\CCW_Share`, qui **n'est même pas un
+> porte sur `REP_TRAVAIL` — ici `C:\CCW_Share`, qui **n'est même pas un
 > dépôt git**. Le code réellement exécuté par le service `CCW-Watcher` vit
 > dans un clone **distinct**, `C:\CCW\Bridge_Agent` (cloné en lecture seule
 > par `provisionner.ps1`, cf. tableau de provisioning ci-dessous) : **personne
@@ -1267,13 +1279,13 @@ le dépôt à titre historique uniquement ; ne pas les utiliser.
 
 | Fichier | Rôle |
 |---------|------|
-| `creer_vm_ccw.py` | **(phase 1)** Crée la VM VirtualBox `CCW-Build` (VBoxManage : 6 Go RAM, 4 CPU, disque fixe 40 Go, dossier partagé). Flag `--recreate` pour reconstruire à l'expiration de l'éval 90 jours. |
-| `autounattend.xml` | **(phase 1)** Réponse d'installation Windows automatisée (OOBE, compte admin **local** `ccw-admin`, activation de PowerShell Remoting pour le pilotage à distance). |
-| `provisionner.ps1` | **(phase 2)** Script PowerShell exécuté **dans** la VM : installe Git, GitHub CLI, Python 3, pyinstaller (winget) + Claude Code (installeur natif, sans Node.js), clone le dépôt en lecture seule dans `C:\CCW\Bridge_Agent`, écrit `configs\ccw.conf` (`LABEL=for-windows`, `NOM=ccw`, `REP_TRAVAIL` sur le partage `CCW_Share` via son chemin UNC `\\VBOXSVR\CCW_Share` — accessible depuis LocalSystem, contrairement au lecteur automonté en session, issue #149 — `TOPIC_NTFY` placeholder), et enregistre le service Windows `CCW-Watcher` via NSSM (lance le watcher au démarrage sans session, redémarrage automatique sur échec). |
-| `lancer_provisioning.py` | **(phase 2)** Orchestration côté **Linux (CCL)** : pousse et exécute `provisionner.ps1` dans la VM via `VBoxManage guestcontrol` (copyto + run) sous le compte `ccw-admin`. Mot de passe lu via `CCW_ADMIN_PASSWORD` (jamais en clair ni committé). Préféré à WinRM : pas de dépendance réseau/pare-feu, juste les Guest Additions. |
-| `demarrer_ccw.sh` | Wrapper de démarrage de la VM `CCW-Build` depuis CCL (issue #166) : `--type headless` par défaut (silencieux si déjà démarrée), `--gui`/`--fenetre` pour une fenêtre (`--type separate`), `--status` pour l'état (`VMState`) sans rien démarrer. |
-| `eval-expiration.json` | Métadonnées de l'évaluation 90 jours (issue #167) : `date_installation` (**2026-07-19**), `eval_jours` (90), `date_expiration` (informative, **2026-10-17**). |
-| `verifier_expiration_ccw.py` | **(côté Linux)** Lit `eval-expiration.json`, recalcule l'expiration (`date_installation` + `eval_jours`) et le nombre de jours restants. À ≤ 10 j restants (ou déjà expiré) : avertissement + **code de sortie 2** (intégrable à une vérif automatisée) ; sinon confirmation calme + code 0. Sans dépendance externe. |
+| `creer_vm_ccw.py` | **(obsolète — gérait la création de la VM VirtualBox, conservé à titre historique)** **(ex-phase 1)** Créait la VM VirtualBox `CCW-Build` (VBoxManage : 6 Go RAM, 4 CPU, disque fixe 40 Go, dossier partagé). Flag `--recreate` pour reconstruire à l'expiration de l'éval 90 jours. Sans objet depuis le passage à un PC fixe physique (plus de VM à créer). |
+| `autounattend.xml` | **(obsolète — réponse d'installation Windows pour la VM, conservé à titre historique)** **(ex-phase 1)** Réponse d'installation Windows automatisée (OOBE, compte admin **local** `ccw-admin`, activation de PowerShell Remoting pour le pilotage à distance). Sans objet sur PC physique. |
+| `provisionner.ps1` | **(ex-phase 2)** Script PowerShell historiquement exécuté **dans** la VM : installe Git, GitHub CLI, Python 3, pyinstaller (winget) + Claude Code (installeur natif, sans Node.js), clone le dépôt en lecture seule dans `C:\CCW\Bridge_Agent`, écrit `configs\ccw.conf` (`LABEL=for-windows`, `NOM=ccw`, `REP_TRAVAIL=C:\CCW_Share` — chemin **local** sur le PC physique —, `TOPIC_NTFY` placeholder), et enregistre le service Windows `CCW-Watcher` via NSSM sous le compte **`AlainW`** (non-admin). Reste utilisable comme référence des étapes d'installation logicielle, à rejouer manuellement sur le PC physique le cas échéant. |
+| `lancer_provisioning.py` | **(obsolète — orchestrait le provisioning distant via `VBoxManage guestcontrol`, conservé à titre historique)** **(ex-phase 2)** Orchestration côté **Linux (CCL)** : poussait et exécutait `provisionner.ps1` dans la VM via `VBoxManage guestcontrol` (copyto + run) sous le compte `ccw-admin`. Mot de passe lu via `CCW_ADMIN_PASSWORD` (jamais en clair ni committé). Sans objet sur PC physique (pas de VM à piloter à distance) : le provisioning logiciel s'y fait directement, en local. |
+| `demarrer_ccw.sh` | **(obsolète — démarrait la VM VirtualBox, conservé à titre historique)** Wrapper de démarrage de la VM `CCW-Build` depuis CCL (issue #166) : `--type headless` par défaut (silencieux si déjà démarrée), `--gui`/`--fenetre` pour une fenêtre (`--type separate`), `--status` pour l'état (`VMState`) sans rien démarrer. Sans objet sur PC physique (pas de VM à démarrer — le PC est allumé en permanence). |
+| `eval-expiration.json` | **(obsolète — liée à l'éval 90 jours de la VM, conservé à titre historique)** Métadonnées de l'évaluation 90 jours (issue #167) : `date_installation` (**2026-07-19**), `eval_jours` (90), `date_expiration` (informative, **2026-10-17**). Sans objet sur PC physique (licence Windows normale, pas d'éval à durée limitée). |
+| `verifier_expiration_ccw.py` | **(obsolète — vérifiait l'expiration de l'éval de la VM, conservé à titre historique)** **(côté Linux)** Lit `eval-expiration.json`, recalcule l'expiration (`date_installation` + `eval_jours`) et le nombre de jours restants. À ≤ 10 j restants (ou déjà expiré) : avertissement + **code de sortie 2** (intégrable à une vérif automatisée) ; sinon confirmation calme + code 0. Sans dépendance externe. Sans objet sur PC physique. |
 | `mettre_a_jour_tokens_ccw.ps1` | **(dans la VM)** Renouvellement des tokens d'un service CCW sans manipuler à la main la chaîne PowerShell (issue #168). Demande `GH_TOKEN` puis `CLAUDE_CODE_OAUTH_TOKEN` en `Read-Host -AsSecureString` (jamais affichés en clair), reconstruit `AppEnvironmentExtra` avec le saut de ligne `` `n`` **impératif** entre les deux (un simple espace corrompt silencieusement `GH_TOKEN` → « Bad credentials »), applique via `nssm set … AppEnvironmentExtra`, fait `nssm restart`, attend puis affiche les 10 dernières lignes du log de service et conclut OK / à vérifier (code 2 si `ERROR`). Paramétrable (`-NomService`, `-RepDepot`, et `-NomLog` pour cibler le bon log de service, ex. `ccw-scrabble-service.log`, issue #173) : sert aussi bien à `CCW-Watcher` qu'aux services multi-projets `CCW-Watcher-<NomProjet>` (issue #170). Depuis l'issue #174, accepte aussi `-FichierTokens <chemin>` : les deux valeurs sont alors **lues dans un fichier** « clé=valeur » (au lieu de `Read-Host`), ce qui permet à l'onglet CCW de poser les tokens à distance sans saisie dans la VM et sans jamais les passer en argument de commande. |
 | `ajouter_projet_ccw.ps1` | **(obsolète — modèle multi-projets abandonné, conservé à titre historique)** **(dans la VM)** Instancie un projet CCW **supplémentaire** sur le modèle multi-projets (issue #170), sans rien réinstaller. Paramétrable (`-NomProjet`, `-Depot owner/repo`, ou prompt interactif) : clone le dépôt en lecture seule dans `C:\CCW\<NomProjet>`, écrit `configs\<nom>-ccw.conf` (`NOM=<nom>-ccw`, `LABEL=for-windows`, `REP_TRAVAIL`/`PERIMETRE`=`C:\CCW\<NomProjet>`, `TOPIC_NTFY` placeholder), et enregistre un service NSSM dédié `CCW-Watcher-<NomProjet>` (mêmes réglages que `CCW-Watcher` : `SERVICE_AUTO_START`, `AppExit Default Restart`, `AppRestartDelay`, `logs\ccw-<nom>-service.log`). Idempotent (clone mis à jour par pull, service arrêté/supprimé avant recréation). Ne configure **pas** `AppEnvironmentExtra` : chaque projet a son propre token dédié, posé ensuite en **une seule commande** via `finaliser_projet_ccw.ps1` (rappel affiché en fin de script). |
 | `lister_projets_ccw.ps1` | **(dans la VM, appelé à distance — issue #174)** Inventaire **JSON** des projets CCW : énumère les services `CCW-Watcher*` (NSSM), et pour chacun émet le nom du service, le projet dérivé, l'état (`running`/`stopped`) et le statut du placeholder `TOPIC_NTFY` (lu dans le config, sans jamais renvoyer la valeur réelle du topic). Sortie encadrée par `<<<CCW_JSON>>>…<<<CCW_END>>>` pour extraction fiable côté Linux. Exécuté par l'onglet CCW de l'interface web. |
@@ -1281,15 +1293,23 @@ le dépôt à titre historique uniquement ; ne pas les utiliser.
 | `finaliser_projet_ccw.ps1` | **(obsolète — modèle multi-projets abandonné, conservé à titre historique)** **(dans la VM)** Finalise en **une seule commande** un projet déjà créé par `ajouter_projet_ccw.ps1` (issue #173, suite #170), regroupant les 3 étapes manuelles auparavant dispersées. À partir du seul `-NomProjet` (argument ou prompt), **dérive** `CCW-Watcher-<NomProjet>`, `C:\CCW\<NomProjet>` et `configs\<nom>-ccw.conf` (même logique qu'`ajouter_projet_ccw.ps1`) et **vérifie** leur existence (sinon renvoie vers `ajouter_projet_ccw.ps1`). Puis : (1) demande `TOPIC_NTFY` (`Read-Host`, pas un secret) et remplace le placeholder `###TOPIC_NTFY_A_DEFINIR###` **dans** le config par édition ciblée (le reste du fichier préservé, UTF-8 sans BOM) ; (2) rappelle les réglages du token dédié à créer (repo unique, permissions, expiration alignée) avec une **pause** ; (3) **appelle** `mettre_a_jour_tokens_ccw.ps1` (pas de duplication) avec les paramètres déduits — dont `-NomLog ccw-<nom>-service.log` — pour la saisie masquée + pose des tokens + redémarrage + vérif des logs ; (4) résumé final selon le code renvoyé. |
 | `surveiller_builds.ps1` | **(dans la VM, lancé manuellement — issue #370)** Surveille en continu, pendant un build en cours (PyInstaller/ISCC), les processus de build et la croissance du dossier de sortie. Paramètre `-Dossier` **obligatoire** (chemin du dossier de sortie à surveiller, ex. `installeur\output`) ; `-Processus` optionnel (liste de noms de process à surveiller, défaut `claude, ISCC, python, pyinstaller`) ; `-IntervalleSecondes` optionnel (défaut `10`). À chaque passage : affiche pour chaque process surveillé son PID/CPU/mémoire/durée de vie s'il est actif, et la taille du dossier avec le delta depuis le dernier passage et depuis le début. Exemple : `powershell -ExecutionPolicy Bypass -File provisioning\windows\surveiller_builds.ps1 -Dossier C:\CCW\actualise\installeur\output -IntervalleSecondes 15`. **Attention** : le nom de process Claude Code (`claude` par défaut dans `-Processus`) est une hypothèse à vérifier via `Get-Process` pendant un build réel — l'installeur natif Windows peut l'enregistrer sous un nom différent, auquel cas le passer explicitement en paramètre. |
 
-La VM cible **Windows 11 IoT Enterprise LTSC 2024** en évaluation 90 jours,
-d'où la recréation facile prévue.
+> **⚠️ Obsolète (PC physique, issue #446).** Les deux paragraphes qui suivent
+> décrivent l'ancienne VM **Windows 11 IoT Enterprise LTSC 2024 en évaluation
+> 90 jours** et sa procédure de recréation. Le PC fixe physique tourne sous
+> une licence Windows normale, sans éval à durée limitée : il n'y a **plus
+> aucune expiration à surveiller ni de VM à recréer**. Conservés ci-dessous
+> à titre historique.
 
-**Expiration de l'évaluation (issue #167).** L'évaluation 90 jours de
-`CCW-Build` a été installée le **19 juillet 2026** et expire le
-**17 octobre 2026**. Après expiration, Windows redémarre automatiquement toutes
-les heures, ce qui casse en continu le service `CCW-Watcher` : il faut recréer
-la VM **avant** cette date (sans urgence, via `creer_vm_ccw.py --recreate`).
-Pour connaître les jours restants à tout moment :
+**(obsolète)** La VM cible **Windows 11 IoT Enterprise LTSC 2024** en
+évaluation 90 jours, d'où la recréation facile prévue.
+
+**(obsolète) Expiration de l'évaluation (issue #167).** L'évaluation 90
+jours de `CCW-Build` a été installée le **19 juillet 2026** et expire le
+**17 octobre 2026**. Après expiration, Windows redémarre automatiquement
+toutes les heures, ce qui casse en continu le service `CCW-Watcher` : il
+faut recréer la VM **avant** cette date (sans urgence, via
+`creer_vm_ccw.py --recreate`). Pour connaître les jours restants à tout
+moment :
 
 ```bash
 python3 provisioning/windows/verifier_expiration_ccw.py
@@ -1327,18 +1347,24 @@ LIBELLE_AGENT = agent Windows
 Le watcher tourne comme **vrai service Windows** enregistré via NSSM (issue #148) —
 équivalent direct des services systemd du §13 : démarrage au boot **sans
 session ouverte** (`SERVICE_AUTO_START`) et redémarrage automatique sur
-échec (`AppExit Default Restart` + `AppRestartDelay 5000`), sous LocalSystem
-donc sans stocker les identifiants `ccw-admin`. Cela remplace l'ancienne
-tâche planifiée `-AtLogOn`, qui ne redémarrait pas au boot sans session ; la
-boucle interne du watcher reste la première ligne de robustesse. Comme le
-service tourne sous LocalSystem, `REP_TRAVAIL` pointe vers le **chemin UNC**
-`\\VBOXSVR\CCW_Share` (nom du partage VirtualBox défini en phase 1) et non
-vers la lettre de lecteur automontée `$LettrePartage` (issue #149) : les
-lecteurs réseau montés en session interactive ne sont pas visibles pour
-LocalSystem, alors que le chemin UNC l'est. Le paramètre `$LettrePartage`
-est conservé pour référence mais ne sert plus à construire `REP_TRAVAIL`.
+échec (`AppExit Default Restart` + `AppRestartDelay 5000`). Cela remplace
+l'ancienne tâche planifiée `-AtLogOn`, qui ne redémarrait pas au boot sans
+session ; la boucle interne du watcher reste la première ligne de
+robustesse.
 
-**Lancer le provisioning (une fois Windows installé et la session ouverte) :**
+> **Compte NSSM — `AlainW`, pas `LocalSystem` (issue #446).** Sur le PC fixe
+> physique, le service `CCW-Watcher` tourne sous le compte **`AlainW`**
+> (utilisateur non-admin), et non plus sous `LocalSystem`. `REP_TRAVAIL`
+> pointe vers `C:\CCW_Share`, un chemin **local** au PC. La justification
+> historique de `LocalSystem` — un chemin UNC (`\\VBOXSVR\CCW_Share`)
+> inaccessible aux lecteurs réseau montés en session interactive, alors que
+> `LocalSystem` y accédait — **ne s'applique plus** : un chemin local est
+> accessible normalement à n'importe quel compte, y compris `AlainW`. Le
+> paramètre `$LettrePartage` (issue #149) et sa logique de résolution de
+> lettre de lecteur réseau n'ont donc plus lieu d'être.
+
+**(obsolète — provisioning distant via VM, conservé à titre historique)
+Lancer le provisioning (une fois Windows installé et la session ouverte) :**
 
 ```bash
 # Côté CCL (Linux), VM démarrée avec Guest Additions :
@@ -1349,7 +1375,8 @@ python3 provisioning/windows/lancer_provisioning.py             # copie + exécu
 
 Puis, dans la VM : renseigner `TOPIC_NTFY` dans `configs\ccw.conf` et
 authentifier Claude (`ANTHROPIC_API_KEY` en variable d'environnement, ou
-`claude auth login` une fois).
+`claude auth login` une fois). Sur le PC physique, ces étapes se font
+directement en local, sans orchestration distante via `VBoxManage`.
 
 **Renouveler les tokens du service (issue #168).** Les tokens `GH_TOKEN` et
 `CLAUDE_CODE_OAUTH_TOKEN` du service `CCW-Watcher` sont passés via
@@ -1357,7 +1384,7 @@ authentifier Claude (`ANTHROPIC_API_KEY` en variable d'environnement, ou
 séparées par un **saut de ligne** `` `n`` et non par un espace — un espace
 corrompt silencieusement `GH_TOKEN` (erreur « Bad credentials » à la
 prochaine opération `gh`). Pour éviter de reconstruire cette chaîne à la main
-à chaque renouvellement (~90 j, cf. issue #167), lancer **dans la VM** :
+à chaque renouvellement, lancer **sur le PC physique** :
 
 ```powershell
 # Depuis C:\CCW\Bridge_Agent, dans une console PowerShell admin :
@@ -1441,6 +1468,15 @@ Fine-grained tokens) :
 > script se contente de rappeler la marche à suivre.
 
 ### 16.1 Maintenance périodique (renouvellement à 90 jours)
+
+> **⚠️ Sous-section entièrement obsolète (PC physique, issue #446), conservée
+> à titre historique.** Elle décrit la procédure de recréation de la VM
+> `CCW-Build` à l'expiration de son éval Windows 90 jours. Sur le PC fixe
+> physique, il n'y a **plus de VM ni d'éval à durée limitée** — cette
+> procédure ne s'applique plus. Le renouvellement des tokens GitHub/Claude
+> (étape 2 ci-dessous) reste en revanche une opération valide en tant que
+> telle, indépendamment de la VM, à refaire simplement à l'échéance propre
+> de chaque token.
 
 > **Procédure unique à suivre le jour de l'échéance.** Cette sous-section est
 > un mode d'emploi séquentiel autonome : elle renvoie aux scripts existants
@@ -1531,6 +1567,16 @@ la VM (`creer_vm_ccw.py --recreate` + ré-attacher un ISO frais +
 
 ### 16.2 Onglet « CCW » de l'interface web (issue #174)
 
+> **⚠️ Partiellement obsolète (PC physique, issue #446).** Tout ce qui repose
+> sur `VBoxManage guestcontrol` — démarrer la VM, pousser/exécuter des
+> scripts à distance (points 1, 2, 3, 4 ci-dessous) — est **inopérant** sur
+> un PC physique : il n'y a plus de VM à piloter. L'onglet reste décrit
+> ci-dessous tel qu'il a été conçu (utile pour comprendre le pattern de
+> pose sécurisée des tokens, §16.2 « Sécurité des tokens »), en attendant
+> une **refonte** adaptée au nouveau contexte (pilotage d'un service NSSM
+> sur un PC physique, sans VM à démarrer ni à interroger via
+> `guestcontrol`).
+
 **Rôle.** Piloter CCW (la VM et ses projets) **entièrement depuis Linux**, via
 l'onglet **CCW** de `new_issue.py` — même style que les autres onglets. Il
 **remplace l'usage manuel de PowerShell dans la VM** pour les opérations
@@ -1588,42 +1634,58 @@ nécessaire — l'issue est directe.
 
 **Template d'issue build (à adapter par projet) :**
 
-Étape 0 — Ajouter l'exception `safe.directory` (nécessaire sur chemin UNC,
-une seule fois par sous-dossier) :
+> **⚠️ Étape 0 et note `safe.directory` obsolètes (PC physique, issue #446).**
+> La contrainte `safe.directory` de git ne se déclenche que sur un chemin
+> **UNC** dont le propriétaire diffère de l'utilisateur courant — c'était le
+> cas de l'ancien partage VirtualBox `\\VBoxSvr\CCW_Share`. `C:\CCW_Share`
+> est un chemin **local** appartenant au compte `AlainW` qui exécute
+> `CCW-Watcher` : cette contrainte ne se pose plus, l'étape 0 est donc à
+> **sauter**. Conservée ci-dessous à titre historique.
+
+~~Étape 0 — Ajouter l'exception `safe.directory` (nécessaire sur chemin UNC,
+une seule fois par sous-dossier) :~~
 
 ```bash
 git config --global --add safe.directory '%(prefix)///VBoxSvr/CCW_Share/CCW/<projet>'
 ```
 
-Étape 1 — Si `Z:\CCW\<projet>\` n'existe pas ou n'est pas un dépôt git :
-cloner `https://github.com/AlainDelree/<Projet>.git` dans `Z:\CCW\<projet>\`.
-Sinon : `git pull --ff-only`.
+Étape 1 — Si `C:\CCW_Share\CCW\<projet>\` n'existe pas ou n'est pas un dépôt
+git : cloner `https://github.com/AlainDelree/<Projet>.git` dans
+`C:\CCW_Share\CCW\<projet>\`. Sinon : `git pull --ff-only`.
 
-Étape 2 — `pip install -r requirements.txt` depuis `Z:\CCW\<projet>\`.
+Étape 2 — `pip install -r requirements.txt` depuis `C:\CCW_Share\CCW\<projet>\`.
 
-Étape 3 — Build PyInstaller depuis `Z:\CCW\<projet>\` :
+Étape 3 — Build PyInstaller depuis `C:\CCW_Share\CCW\<projet>\` :
 
 ```bash
 python -m PyInstaller --noconfirm --onedir --noconsole --name <Projet> <entrypoint>.py
 ```
 
-Étape 4 — Confirmer la présence de `Z:\CCW\<projet>\dist\<Projet>\<Projet>.exe`
-et l'absence d'erreur PyInstaller. Ne pas committer ni pousser.
+Étape 4 — Confirmer la présence de
+`C:\CCW_Share\CCW\<projet>\dist\<Projet>\<Projet>.exe` et l'absence d'erreur
+PyInstaller. Ne pas committer ni pousser.
 
-**Récupération des artefacts :** manuelle, depuis Linux via
-`/home/alain/Bridge_Agent_CCW_Share/CCW/<projet>/dist/<Projet>/`.
+**Récupération des artefacts :** manuelle, depuis Linux via le point de
+montage réseau local vers `C:\CCW_Share` (accès réseau local au PC
+physique — plus de partage VirtualBox ; chemin exact de montage côté CCL
+selon la configuration réseau en place).
 
 **Dépôts sources :** publics sur GitHub — aucun token Contents requis.
 Le token `CCW-Watcher` (Issues read/write sur Bridge_Agent) suffit.
 
-**Note safe.directory :** git refuse de travailler sur un chemin UNC dont
-le propriétaire diffère de l'utilisateur courant. L'exception est à ajouter
-en étape 0 de chaque première issue sur un nouveau sous-dossier. Les issues
-suivantes la trouvent déjà en place.
+**Note safe.directory (obsolète, conservée à titre historique) :** git
+refusait de travailler sur le chemin UNC de l'ancien partage VirtualBox
+dont le propriétaire différait de l'utilisateur courant. L'exception était
+à ajouter en étape 0 de chaque première issue sur un nouveau sous-dossier.
+Sans objet avec le chemin local `C:\CCW_Share` du PC physique.
 
-**Note staging local (issue #297) :** pattern général de contournement de
-la corruption de fichiers sur `\\VBOXSVR\CCW_Share`, et checklist par
-projet buildé (dont Scrabble) — voir `BUILD_WINDOWS_CCW.md`.
+**Note staging local (issue #297, historique — partage VirtualBox) :**
+pattern général de contournement de la corruption de fichiers constatée sur
+l'ancien partage VirtualBox `\\VBOXSVR\CCW_Share`, et checklist par projet
+buildé (dont Scrabble) — voir `BUILD_WINDOWS_CCW.md`. À revalider sur le
+chemin local `C:\CCW_Share` du PC physique (la cause du problème étant
+spécifique aux partages réseau VirtualBox, elle ne s'applique probablement
+plus, mais ce n'est pas encore confirmé).
 
 ### 16.4 Interrompre une issue CCW coincée (issue #287)
 
@@ -1631,7 +1693,7 @@ projet buildé (dont Scrabble) — voir `BUILD_WINDOWS_CCW.md`.
 mais log en boucle, sans jamais progresser :
 
 ```
-Issue différée : un autre traitement détient déjà le verrou sur \\VBOXSVR\CCW_Share\
+Issue différée : un autre traitement détient déjà le verrou sur C:\CCW_Share\
 ```
 
 **Cause :** un fichier verrou laissé dans
@@ -1655,7 +1717,15 @@ fichier existe, même après redémarrage.
    Remove-Item C:\CCW\Bridge_Agent\logs\verrous\<fichier>.lock
    ```
 
-**Bouton « Interrompre » (issue #323, implémenté).** Le bouton ⛔ « Interrompre
+**Bouton « Interrompre » (issue #323, implémenté).**
+
+> **⚠️ Obsolète sur PC physique (issue #446).** Comme pour l'onglet CCW
+> (§16.2), ce bouton s'appuie sur `VBoxManage guestcontrol` pour agir à
+> distance sur la VM : il est **inopérant** sur un PC physique. En
+> attendant sa refonte, utiliser la **procédure manuelle** décrite
+> ci-dessus (redémarrage du service + suppression des `.lock`).
+
+Le bouton ⛔ « Interrompre
 cette issue », affiché sur toute issue ouverte ni `done` ni `needs-human` dans
 l'interface, automatise cette procédure à distance depuis Linux pour les
 issues `for-windows` : `POST /interrompre` (`app/interruption.py::
@@ -2185,14 +2255,32 @@ issues de la même combinaison s'il le juge utile.
 
 ---
 
-*Dernière mise à jour : 13 août 2026 — §3 « Convention de présentation côté
-Claude Chat » (issue #443) : la règle du bloc de code unique (issue #153),
-jusqu'ici formulée pour le mode lot seulement, est étendue explicitement au
-cas mono-issue — une issue unique est elle aussi présentée dans un bloc de
-code, afin qu'Alain puisse utiliser le bouton copier du bloc. §11
-« Conventions de code » : le bullet « Issues » précise désormais que le
-corps est toujours présenté dans un bloc de code, qu'il s'agisse d'une issue
-seule ou d'un lot.
+*Dernière mise à jour : 18 août 2026 — §16 « Agent Windows CCW » (issue
+#446) : mise à jour pour le passage de CCW d'une VM VirtualBox à un **PC
+fixe physique dédié** (Pentium G2020). Introduction reformulée en
+conséquence. Paramètres corrigés partout dans le §16 : `REP_TRAVAIL =
+C:\CCW_Share` (chemin local, remplace `\\VBOXSVR\CCW_Share`) ; service NSSM
+`CCW-Watcher` tournant sous le compte **`AlainW`** (non-admin), et non plus
+`LocalSystem` — la justification historique de `LocalSystem` (chemin UNC
+inaccessible aux lecteurs montés en session) ne s'applique plus avec un
+chemin local. Scripts `creer_vm_ccw.py`, `lancer_provisioning.py`,
+`demarrer_ccw.sh` (+ `autounattend.xml`, `eval-expiration.json`,
+`verifier_expiration_ccw.py`) marqués **obsolètes** dans le tableau de
+provisioning (conservés à titre historique). §16.1 (maintenance/recréation
+VM à 90 jours) et la contrainte `safe.directory` (§16.3) marquées
+obsolètes dans leur ensemble — plus de VM ni de chemin UNC à gérer.
+L'onglet CCW (§16.2) et le bouton « Interrompre » (§16.4) signalés
+**partiellement obsolètes** : leurs fonctions reposant sur `VBoxManage
+guestcontrol` sont inopérantes sur un PC physique, en attendant une refonte
+adaptée (pas de VM à piloter).
+Précédemment — §3 « Convention de présentation côté Claude Chat » (issue
+#443) : la règle du bloc de code unique (issue #153), jusqu'ici formulée
+pour le mode lot seulement, est étendue explicitement au cas mono-issue —
+une issue unique est elle aussi présentée dans un bloc de code, afin
+qu'Alain puisse utiliser le bouton copier du bloc. §11 « Conventions de
+code » : le bullet « Issues » précise désormais que le corps est toujours
+présenté dans un bloc de code, qu'il s'agisse d'une issue seule ou d'un
+lot.
 Précédemment — §6 « Champs spéciaux dans le corps de l'issue » : nouveau
 champ `RESEAU` documenté (issue #435, `oui`/`non`, lu par
 `_detecter_tag_reseau`, optionnel). §19.6 : les deux limitations
@@ -2200,13 +2288,6 @@ champ `RESEAU` documenté (issue #435, `oui`/`non`, lu par
 définitif » sont levées — `_detecter_tag_reseau(body)` lit désormais le
 champ `RESEAU`, et `lire_timeout_suggere()` reçoit `body` pour choisir
 `F_reseau`/`F_local` selon le tag réel de l'issue en échec, au lieu de
-toujours retomber sur `F_local` (voir §19.7).
-Précédemment — §6 « Champs spéciaux dans le corps de l'issue » : nouveau
-champ `COMPLEXITE` documenté (issue #434) — 4e dimension de la clé EWMA de
-calibration TIMEOUT (§19), quatre niveaux `rapide`/`court`/`normal`/`lourd`,
-défaut `normal` (~300s) si absent. §19.1 et §19.3 mis à jour en conséquence :
-la clé `etat_timeout.json` passe de `projet|TYPE|mode` à
-`projet|TYPE|mode|complexite` — nouvelles clés distinctes, historique
-existant traité comme `normal`, aucune régression.*
+toujours retomber sur `F_local` (voir §19.7).*
 
 Historique complet : voir [`CHANGELOG.md`](CHANGELOG.md).
