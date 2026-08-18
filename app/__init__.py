@@ -71,7 +71,7 @@ def _enregistrer_routes(app: Flask) -> None:
     from app.templates import (templates_liste, templates_sauvegarder,
                                templates_supprimer)
     from app.journal import journal
-    from app.ccw import (ccw_vm_statut, ccw_demarrer_vm, ccw_projets,
+    from app.ccw import (ccw_projets,
                          ccw_ajouter_projet, ccw_finaliser_projet,
                          ccw_redemarrer_projet, ccw_demarrer_projet,
                          ccw_arreter_projet, ccw_nettoyer_verrous)
@@ -109,9 +109,7 @@ def _enregistrer_routes(app: Flask) -> None:
     app.add_url_rule("/lancer-watcher", "lancer_watcher", login_requis(lancer_watcher), methods=["POST"])
     app.add_url_rule("/arreter-watcher", "arreter_watcher_route", login_requis(arreter_watcher_route), methods=["POST"])
     app.add_url_rule("/statut/<nom_projet>", "statut", login_requis(statut))
-    # ─── Onglet CCW (issue #174) : pilotage de la VM Windows et de ses projets ─
-    app.add_url_rule("/ccw/vm-statut", "ccw_vm_statut", login_requis(ccw_vm_statut), methods=["GET"])
-    app.add_url_rule("/ccw/demarrer-vm", "ccw_demarrer_vm", login_requis(ccw_demarrer_vm), methods=["POST"])
+    # ─── Onglet CCW (issue #174, SSH depuis #447) : pilotage du PC fixe Windows et de ses projets ─
     app.add_url_rule("/ccw/projets", "ccw_projets", login_requis(ccw_projets), methods=["GET"])
     app.add_url_rule("/ccw/ajouter-projet", "ccw_ajouter_projet", login_requis(ccw_ajouter_projet), methods=["POST"])
     app.add_url_rule("/ccw/finaliser-projet", "ccw_finaliser_projet", login_requis(ccw_finaliser_projet), methods=["POST"])

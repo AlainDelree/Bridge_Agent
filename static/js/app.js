@@ -7,7 +7,7 @@ let intervalWatchers = null;
 // fin_issue (#350) + sur chaque changement de sélection de ligne. Dernière
 // liste connue des services CCW (projet/service/etat), alimentée par
 // ccwChargerProjets() — jamais interrogée directement depuis ce panneau, pour
-// ne pas ajouter un second polling des appels guestcontrol coûteux de l'onglet
+// ne pas ajouter un second polling des appels SSH coûteux de l'onglet
 // CCW (voir ccwOuvrirOnglet) : seul un clic sur le lien « Vérifier les
 // services CCW » du panneau (sidebarChargerCcw) ou une action déjà existante
 // de l'onglet CCW la met à jour.
@@ -89,7 +89,7 @@ function basculerOnglet(nom) {
   }
   if (nom === 'config') chargerConfig();
   // Onglet CCW (issue #174) : chargé à l'ouverture, PAS de polling automatique
-  // (chaque requête déclenche des guestcontrol coûteux — l'utilisateur
+  // (chaque requête déclenche des appels SSH coûteux — l'utilisateur
   // rafraîchit à la demande via les boutons dédiés).
   if (nom === 'ccw') ccwOuvrirOnglet();
 }
@@ -213,9 +213,9 @@ async function sauvegarderConfig(relancer) {
   }
 }
 
-// ─── Onglet CCW (issue #174) ────────────────────────────────────────────────
-// Pilotage de la VM Windows CCW-Build et de ses projets depuis Linux, via les
-// routes /ccw/* (qui exécutent VBoxManage guestcontrol côté serveur). Aucune
+// ─── Onglet CCW (issue #174, SSH depuis #447) ──────────────────────────────
+// Pilotage du PC fixe Windows CCW et de ses projets depuis Linux, via les
+// routes /ccw/* (qui exécutent des commandes SSH/SCP côté serveur). Aucune
 // valeur de token n'est jamais journalisée ni passée en argument : la sortie
 // affichée provient des scripts distants, qui ne les affichent pas.
 
@@ -241,7 +241,7 @@ function ccwAfficherSortie(sortie) {
   }
 }
 
-// Active/désactive un bouton pendant une opération longue (guestcontrol).
+// Active/désactive un bouton pendant une opération longue (SSH).
 function ccwOccupe(idBtn, occupe, labelOccupe) {
   const b = document.getElementById(idBtn);
   if (!b) return;
@@ -255,70 +255,16 @@ function ccwOccupe(idBtn, occupe, labelOccupe) {
   }
 }
 
-// Ouverture de l'onglet : état de la VM + liste des projets.
+// Ouverture de l'onglet : liste des projets (le PC fixe est toujours allumé,
+// plus d'état de VM à vérifier — issue #447).
 function ccwOuvrirOnglet() {
-  ccwRafraichirVm();
   ccwChargerProjets();
-}
-
-async function ccwRafraichirVm() {
-  const dot   = document.getElementById('ccw-dot-vm');
-  const texte = document.getElementById('ccw-etat-vm');
-  const btn   = document.getElementById('ccw-btn-demarrer');
-  texte.textContent = 'Vérification…';
-  dot.style.background = '#ccc';
-  btn.style.display = 'none';
-  try {
-    const rep = await fetch('/ccw/vm-statut');
-    const j   = await rep.json();
-    if (!j.succes) {
-      dot.style.background = '#c0392b';
-      texte.textContent = j.erreur || 'Erreur inconnue';
-      return;
-    }
-    if (!j.existe) {
-      dot.style.background = '#c0392b';
-      texte.textContent = 'VM introuvable (non créée).';
-      return;
-    }
-    if (j.etat === 'running') {
-      dot.style.background = '#2e8b57';
-      texte.textContent = 'VM démarrée (running).';
-    } else {
-      dot.style.background = '#e0a800';
-      texte.textContent = 'VM arrêtée (' + j.etat + ').';
-      btn.style.display = 'inline-block';
-    }
-  } catch (e) {
-    dot.style.background = '#c0392b';
-    texte.textContent = 'Erreur réseau : ' + e.message;
-  }
-}
-
-async function ccwDemarrerVm() {
-  ccwOccupe('ccw-btn-demarrer', true, 'Démarrage…');
-  ccwMessage('ccw-message', '', '');
-  try {
-    const rep = await fetch('/ccw/demarrer-vm', {method: 'POST'});
-    const j   = await rep.json();
-    ccwAfficherSortie(j.sortie);
-    if (j.succes) {
-      ccwMessage('ccw-message', 'VM démarrée.', 'succes');
-    } else {
-      ccwMessage('ccw-message', j.erreur || 'Échec du démarrage.', 'erreur');
-    }
-  } catch (e) {
-    ccwMessage('ccw-message', 'Erreur réseau : ' + e.message, 'erreur');
-  } finally {
-    ccwOccupe('ccw-btn-demarrer', false);
-    ccwRafraichirVm();
-  }
 }
 
 async function ccwChargerProjets() {
   const corps = document.getElementById('ccw-corps-projets');
   const selectFin = document.getElementById('ccw-fin-nom');
-  ccwMessage('ccw-msg-projets', 'Interrogation de la VM…', '');
+  ccwMessage('ccw-msg-projets', 'Interrogation du PC fixe…', '');
   corps.innerHTML = '';
   try {
     const rep = await fetch('/ccw/projets');
@@ -330,13 +276,13 @@ async function ccwChargerProjets() {
     const projets = j.projets || [];
     // Seul point d'écriture de ccwProjetsConnus (issue #375) : le panneau
     // latéral de l'onglet Résultats lit cette variable sans jamais fetcher
-    // /ccw/projets lui-même (pas de second polling des appels guestcontrol).
+    // /ccw/projets lui-même (pas de second polling des appels SSH).
     ccwProjetsConnus = projets;
     rafraichirPanneauLateralResultats();
     // Mémorise la sélection courante pour la restaurer si le projet existe encore.
     const selectionCourante = selectFin ? selectFin.value : '';
     if (projets.length === 0) {
-      ccwMessage('ccw-msg-projets', 'Aucun service CCW-Watcher* enregistré dans la VM.', '');
+      ccwMessage('ccw-msg-projets', 'Aucun service CCW-Watcher* enregistré sur le PC fixe.', '');
       if (selectFin)
         selectFin.innerHTML = '<option value="" disabled selected>-- Choisir un projet --</option>';
       return;
@@ -423,7 +369,7 @@ async function ccwRedemarrerProjet(nom, btn) {
              + '(Redémarrage simple : ni le TOPIC_NTFY ni les tokens ne sont modifiés.)')) return;
   const labelInitial = btn ? btn.textContent : null;
   if (btn) { btn.disabled = true; btn.textContent = 'Redémarrage…'; }
-  ccwMessage('ccw-message', 'Redémarrage du service de « ' + nom + ' » dans la VM…', '');
+  ccwMessage('ccw-message', 'Redémarrage du service de « ' + nom + ' » sur le PC fixe…', '');
   ccwAfficherSortie('');
   try {
     const rep = await fetch('/ccw/redemarrer-projet', {
@@ -453,7 +399,7 @@ async function ccwDemarrerProjet(nom, btn) {
   if (!nom) return;
   const labelInitial = btn ? btn.textContent : null;
   if (btn) { btn.disabled = true; btn.textContent = 'Démarrage…'; }
-  ccwMessage('ccw-message', 'Démarrage du service de « ' + nom + ' » dans la VM…', '');
+  ccwMessage('ccw-message', 'Démarrage du service de « ' + nom + ' » sur le PC fixe…', '');
   ccwAfficherSortie('');
   try {
     const rep = await fetch('/ccw/demarrer-projet', {
@@ -485,7 +431,7 @@ async function ccwArreterProjet(nom, btn) {
              + '(Le service restera arrêté jusqu\'à un « Démarrer » ou « Redémarrer ».)')) return;
   const labelInitial = btn ? btn.textContent : null;
   if (btn) { btn.disabled = true; btn.textContent = 'Arrêt…'; }
-  ccwMessage('ccw-message', 'Arrêt du service de « ' + nom + ' » dans la VM…', '');
+  ccwMessage('ccw-message', 'Arrêt du service de « ' + nom + ' » sur le PC fixe…', '');
   ccwAfficherSortie('');
   try {
     const rep = await fetch('/ccw/arreter-projet', {
@@ -525,7 +471,7 @@ async function ccwNettoyerVerrous(nom, btn) {
              + 'verrous seront supprimés, puis le service sera relancé.')) return;
   const labelInitial = btn ? btn.textContent : null;
   if (btn) { btn.disabled = true; btn.textContent = 'Nettoyage…'; }
-  ccwMessage('ccw-message', 'Nettoyage des verrous de « ' + nom + ' » dans la VM…', '');
+  ccwMessage('ccw-message', 'Nettoyage des verrous de « ' + nom + ' » sur le PC fixe…', '');
   ccwAfficherSortie('');
   try {
     const rep = await fetch('/ccw/nettoyer-verrous', {
@@ -559,7 +505,7 @@ async function ccwAjouterProjet() {
     return;
   }
   ccwOccupe('ccw-btn-ajouter', true, 'Création…');
-  ccwMessage('ccw-message', 'Création du projet dans la VM (clone + config + service)…', '');
+  ccwMessage('ccw-message', 'Création du projet sur le PC fixe (clone + config + service)…', '');
   ccwAfficherSortie('');
   try {
     const rep = await fetch('/ccw/ajouter-projet', {
@@ -1971,20 +1917,6 @@ function serviceCcwProjet(nom) {
 // et re-rend elle-même ce panneau une fois la réponse reçue.
 async function sidebarChargerCcw() {
   await ccwChargerProjets();
-}
-
-// Démarre la VM CCW depuis le panneau latéral (même endpoint que l'onglet CCW,
-// ccwDemarrerVm) sans dépendre des éléments DOM propres à cet onglet : le
-// bouton vit ici, dans le panneau de monitoring. Re-rend le panneau ensuite
-// pour refléter le nouvel état de la VM.
-async function sidebarDemarrerVm(btn) {
-  if (btn) { btn.disabled = true; btn.textContent = 'Démarrage…'; }
-  try {
-    await fetch('/ccw/demarrer-vm', {method: 'POST'});
-  } catch(e) {
-    alert('Erreur réseau : ' + e.message);
-  }
-  await rafraichirPanneauLateralResultats();
 }
 
 // Résumé « X en cours, Y en file » d'un projet (issue #381), calculé
@@ -3526,7 +3458,7 @@ async function fermerEtInterrompre(nom, numero) {
 // ─── Interruption ciblée d'une issue en cours (issue #323, suite #320) ──────
 // Contrairement à fermerEtInterrompre() (#144, ci-dessus) : ne ferme PAS
 // l'issue (needs-human + commentaire seulement, trace conservée), et gère
-// aussi bien for-linux (CCL) que for-windows (CCW via guestcontrol/nssm).
+// aussi bien for-linux (CCL) que for-windows (CCW via SSH/nssm).
 // Le dépôt GitHub est lu depuis le <select id="projet"> peuplé côté serveur
 // (« nom — depot », cf. templates/index.html et ajouterProjetAuSelecteur) —
 // JAMAIS déduit du nom du projet (les deux peuvent diverger, voir la route
