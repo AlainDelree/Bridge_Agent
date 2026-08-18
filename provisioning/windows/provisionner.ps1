@@ -1,13 +1,18 @@
 ﻿<#
-  provisionner.ps1 — Provisioning LOGICIEL de la VM Windows CCW (phase 2, issue #147).
+  provisionner.ps1 — Provisioning LOGICIEL du PC fixe Windows CCW (issue #450,
+  suite #447 — le PC fixe physique a remplacé la VM VirtualBox CCW-Build).
 
-  Ce script s'exécute DANS la VM « CCW-Build » (créée en phase 1, issue #146),
-  soit au premier logon, soit manuellement dans une console PowerShell élevée.
-  Il installe l'outillage nécessaire à l'agent Claude Code Windows (CCW) puis
-  met en place le service Windows (NSSM) qui lancera le watcher au démarrage.
+  Ce script s'exécute SUR le PC fixe, manuellement dans une console
+  PowerShell ADMINISTRATEUR, après une réinstallation Windows (Windows 11
+  IoT Enterprise LTSC, éval 90 jours) ET après configurer_ssh_ccw.ps1 — voir
+  ce dernier pour l'étape 1 (accès SSH depuis CCL). Il installe l'outillage
+  nécessaire à l'agent Claude Code Windows (CCW) puis met en place le
+  service Windows (NSSM) qui lancera le watcher au démarrage.
 
-  Il est POUSSÉ et EXÉCUTÉ à distance depuis CCL par lancer_provisioning.py
-  (VBoxManage guestcontrol) — mais reste utilisable seul.
+  Historiquement (phase 2, issue #147), il était poussé et exécuté à
+  distance depuis CCL par lancer_provisioning.py (VBoxManage guestcontrol)
+  dans la VM CCW-Build — ce mode reste documenté à titre historique mais
+  n'a plus lieu d'être sur le PC physique : lancement manuel uniquement.
 
   Ce qu'il fait :
     1. installe via winget : Git, GitHub CLI (gh), Python 3, NSSM ;
@@ -36,22 +41,21 @@
 
   Prérequis : Windows 11, exécution en administrateur. winget (App Installer)
   est bootstrappé automatiquement s'il est absent — cas des éditions LTSC/IoT
-  sans Microsoft Store, comme la VM CCW-Build (issue #152).
+  sans Microsoft Store, comme le PC fixe CCW (Windows 11 IoT Enterprise LTSC,
+  issue #152).
 #>
 
 [CmdletBinding()]
 param(
-    # Dossier de travail dédié côté invité.
+    # Dossier de travail dédié sur le PC fixe.
     [string]$RepCCW = 'C:\CCW',
     # Dépôt cloné (lecture seule).
     [string]$Depot = 'AlainDelree/Bridge_Agent',
-    # Lettre du lecteur réseau où VirtualBox automonte le partage CCW_Share
-    # (phase 1 : sharedfolder add … --automount). Conservé pour
-    # référence/documentation UNIQUEMENT : REP_TRAVAIL n'utilise PLUS cette
-    # lettre mais le chemin UNC \\VBOXSVR\CCW_Share, seul accessible depuis
-    # LocalSystem (issue #149, suite #148). Les lecteurs automontés en session
-    # interactive ne sont pas visibles pour le service tournant sous LocalSystem.
-    [string]$LettrePartage = 'E:'
+    # Compte Windows non-admin sous lequel tourne le service CCW-Watcher
+    # (NSSM ObjectName) — PC fixe physique, plus de justification LocalSystem
+    # (issue #446, suite #447 : REP_TRAVAIL est désormais un chemin local,
+    # accessible normalement à n'importe quel compte).
+    [string]$CompteService = 'AlainW'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -414,21 +418,20 @@ if (Test-Path (Join-Path $RepDepot '.git')) {
 
 # ---------------------------------------------------------------------------
 # 5. Écriture de configs\ccw.conf.
-#    REP_TRAVAIL pointe vers le partage CCW_Share via son chemin UNC
-#    \\VBOXSVR\CCW_Share (accessible depuis LocalSystem, contrairement au
-#    lecteur automonté en session interactive — issue #149).
+#    REP_TRAVAIL pointe vers C:\CCW_Share, un chemin LOCAL au PC fixe
+#    (issue #446, suite #447) — plus de partage réseau VirtualBox.
 #    TOPIC_NTFY est un placeholder à renseigner (comme le mot de passe phase 1).
 # ---------------------------------------------------------------------------
 $RepConfigs = Join-Path $RepDepot 'configs'
 if (-not (Test-Path $RepConfigs)) { New-Item -ItemType Directory -Path $RepConfigs | Out-Null }
 $CheminConf = Join-Path $RepConfigs 'ccw.conf'
 
-# Chemin du répertoire de travail partagé hôte<->invité. On utilise le chemin
-# UNC direct du partage VirtualBox (NOM_PARTAGE = "CCW_Share" en phase 1,
-# creer_vm_ccw.py) plutôt que la lettre $LettrePartage : le service CCW-Watcher
-# tourne sous LocalSystem (issue #148), qui ne voit pas les lecteurs réseau
-# automontés en session interactive. \\VBOXSVR\<partage> reste, lui, accessible.
-$RepTravail = "\\VBOXSVR\CCW_Share"
+# Répertoire de travail local au PC fixe. Remplace l'ancien chemin UNC
+# \\VBOXSVR\CCW_Share (partage réseau VirtualBox, phase 1, creer_vm_ccw.py) :
+# un chemin local est accessible normalement à n'importe quel compte, y
+# compris $CompteService — plus besoin de contourner un lecteur automonté
+# invisible depuis un compte de service (issue #446, suite #447).
+$RepTravail = "C:\CCW_Share"
 
 $contenuConf = @"
 # configs/ccw.conf — Config du watcher pour l'agent Claude Code Windows (CCW).
@@ -438,9 +441,7 @@ $contenuConf = @"
 NOM         = ccw
 DEPOT       = $Depot
 LABEL       = for-windows
-# REP_TRAVAIL : partage CCW_Share (phase 1), via son chemin UNC \\VBOXSVR\CCW_Share.
-# Chemin UNC choisi car le service CCW-Watcher tourne sous LocalSystem (issue #148),
-# qui n'a pas accès aux lecteurs réseau automontés en session interactive.
+# REP_TRAVAIL : chemin local au PC fixe (C:\CCW_Share, issue #446/#450).
 REP_TRAVAIL = $RepTravail
 
 # ─── ntfy ─────────────────────────────────────────────────────────────────────
@@ -467,10 +468,15 @@ Info "Écriture de $CheminConf…"
 #
 #    ✅ Équivalent DIRECT des services systemd --user du §13 : démarrage au
 #    boot sans session (SERVICE_AUTO_START), redémarrage automatique sur échec
-#    (AppExit Default Restart + AppRestartDelay), et exécution sous LocalSystem
-#    sans avoir à stocker les identifiants ccw-admin. NSSM remplace l'ancienne
+#    (AppExit Default Restart + AppRestartDelay). NSSM remplace l'ancienne
 #    tâche planifiée -AtLogOn, qui ne redémarrait pas au boot sans session.
 #    Le watcher lui-même reste la première ligne de robustesse (boucle interne).
+#
+#    Compte de service — $CompteService (AlainW par défaut), PAS LocalSystem
+#    (issue #446, suite #447) : PC physique, non-admin, cohérent avec un
+#    compte utilisateur normal du PC. NSSM exige le mot de passe du compte
+#    pour ObjectName (sauf comptes virtuels type LocalSystem) — demandé de
+#    façon interactive et masquée (Get-Credential), jamais stocké ni journalisé.
 # ---------------------------------------------------------------------------
 $NomService = 'CCW-Watcher'
 $pythonExe  = (Get-Command python -ErrorAction SilentlyContinue).Source
@@ -500,6 +506,15 @@ nssm set $NomService AppRestartDelay  5000
 # Rediriger stdout/stderr du service vers un fichier de log dédié.
 nssm set $NomService AppStdout        $LogService
 nssm set $NomService AppStderr        $LogService
+
+# Compte de service $CompteService (non-admin) au lieu de LocalSystem. Un
+# compte utilisateur réel nécessite son mot de passe pour ObjectName (les
+# comptes virtuels comme LocalSystem/LocalService/NetworkService n'en ont
+# pas besoin) — saisie interactive masquée, jamais stockée ni journalisée.
+Info "Mot de passe du compte « $CompteService » requis pour l'exécution du service :"
+$identifiants = Get-Credential -UserName $CompteService `
+    -Message "Compte de service NSSM pour « $NomService » (non-admin, PC physique)"
+nssm set $NomService ObjectName $identifiants.UserName $identifiants.GetNetworkCredential().Password
 
 # Démarrer immédiatement (le service repartira ensuite seul à chaque boot).
 nssm start $NomService | Out-Null
