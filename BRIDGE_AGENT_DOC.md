@@ -1217,6 +1217,10 @@ finale.
 principalement les builds `.exe` (PyInstaller) qui exigent un environnement
 Windows natif.
 
+**Réinstallation du PC fixe :** procédure complète (Windows →
+`configurer_ssh_ccw.ps1` → `provisionner.ps1` → tokens → vérification) dans
+`provisioning/windows/REINSTALLATION_CCW.md` (issue #451).
+
 > **⚠️ Changement de plateforme (depuis août 2026, issue #446).** CCW ne
 > tourne plus dans une VM VirtualBox mais **sur un PC fixe physique**
 > (Pentium G2020). De nombreux paragraphes ci-dessous décrivent encore
