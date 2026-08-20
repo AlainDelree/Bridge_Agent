@@ -1165,6 +1165,23 @@ function basculerCocheResultat(event, projet, numero) {
   if (coche) copierToutEtDiffDepuisBadge(event, projet, numero);
 }
 
+// Relit le LocalStorage et resynchronise l'état de TOUTES les cases à cocher
+// « résultat » actuellement dans le DOM (issue #462). construireLigneIssueDOM
+// lit déjà le LocalStorage à la CONSTRUCTION d'une ligne, mais rien ne
+// garantissait qu'un futur redessin partiel (heartbeat, SSE) passe par cette
+// construction — ce filet de sécurité resynchronise explicitement après
+// coup, pour que l'état coché/décoché survive à toute mise à jour dynamique
+// du DOM exactement comme il survit à un F5.
+function restaurerCasesCocheesResultats() {
+  document.querySelectorAll('.ligne-issue').forEach(ligne => {
+    const cb = ligne.querySelector('.coche-resultat');
+    if (!cb) return;
+    const coche = estResultatCoche(ligne.dataset.projet, ligne.dataset.numero);
+    cb.checked = coche;
+    ligne.classList.toggle('resultat-traite', coche);
+  });
+}
+
 // Construit l'élément DOM d'UNE ligne d'issue (case à cocher, pastille,
 // badges ✅/Diff/All, titre) — markup PARTAGÉ entre la liste principale de
 // l'onglet Résultats (rendreListeIssues) et la fenêtre de recherche par titre
@@ -1335,6 +1352,7 @@ function rendreListeIssues(reset) {
   }
   appliquerFiltresListe();
   appliquerLargeurTitre();
+  restaurerCasesCocheesResultats();
   majBadgesTempsRestant();
   majPastillesFiltres();
   if (reset) selectionnerPremiereVisible();
@@ -1711,6 +1729,7 @@ function formaterBadgeTempsRestant(badge, t, projet, numero) {
 // Actualise tous les badges de temps restant des lignes ouvertes (recalcul pur,
 // aucun appel réseau). Appelée chaque seconde et après chaque rendu de liste.
 function majBadgesTempsRestant() {
+  restaurerCasesCocheesResultats();
   document.querySelectorAll('#liste-issues .ligne-issue').forEach(ligne => {
     const t = timingIssues[cleTiming(ligne.dataset.projet, ligne.dataset.numero)];
     // Estimation prédictive (issue #108) : affichée JUSTE AVANT le décompte.
@@ -1753,6 +1772,7 @@ function remplacerLigneIssue(ligneAncienne, it) {
   if (ligneAncienne.classList.contains('selectionnee')) nouvelle.classList.add('selectionnee');
   ligneAncienne.replaceWith(nouvelle);
   appliquerFiltresListe();
+  restaurerCasesCocheesResultats();
   majBadgesTempsRestant();
   majPastillesFiltres();
 }
@@ -2707,6 +2727,7 @@ function rendreResultatsRecherche(resultats) {
     };
     zone.appendChild(ligne);
   }
+  restaurerCasesCocheesResultats();
 }
 
 function ouvrirModalRechercheTitre() {
