@@ -1176,6 +1176,12 @@ function restaurerCasesCocheesResultats() {
   document.querySelectorAll('.ligne-issue').forEach(ligne => {
     const cb = ligne.querySelector('.coche-resultat');
     if (!cb) return;
+    // Garde #463 : ne jamais écraser la case sur laquelle l'utilisateur est
+    // EN TRAIN d'agir (focus actif au moment de l'appel). basculerCocheResultat
+    // gère déjà cette case précise ; la resynchroniser ici en pleine bascule
+    // recréerait la course qui, sur Edge/Firefox Windows, pouvait annuler le
+    // clic avant même que le onchange ne déclenche la copie (régression #462).
+    if (document.activeElement === cb) return;
     const coche = estResultatCoche(ligne.dataset.projet, ligne.dataset.numero);
     cb.checked = coche;
     ligne.classList.toggle('resultat-traite', coche);
@@ -1728,8 +1734,15 @@ function formaterBadgeTempsRestant(badge, t, projet, numero) {
 
 // Actualise tous les badges de temps restant des lignes ouvertes (recalcul pur,
 // aucun appel réseau). Appelée chaque seconde et après chaque rendu de liste.
+// Ne resynchronise PAS les cases cochées (issue #463) : cette fonction ne
+// reconstruit jamais les nœuds DOM des cases, donc rien à restaurer ici — cet
+// appel superflu, exécuté chaque seconde via setInterval, créait une fenêtre
+// de course avec le clic utilisateur (annulait parfois la coche AVANT que le
+// onchange ne déclenche la copie résultat+diff, régression Windows-only
+// introduite par #462). La restauration reste faite là où le DOM est
+// effectivement reconstruit : rendreListeIssues, remplacerLigneIssue,
+// rendreResultatsRecherche.
 function majBadgesTempsRestant() {
-  restaurerCasesCocheesResultats();
   document.querySelectorAll('#liste-issues .ligne-issue').forEach(ligne => {
     const t = timingIssues[cleTiming(ligne.dataset.projet, ligne.dataset.numero)];
     // Estimation prédictive (issue #108) : affichée JUSTE AVANT le décompte.
