@@ -17,6 +17,7 @@
 #
 # Usage — identique à new_issue.py, tous les arguments sont transmis :
 #     ./lancer_new_issue.sh                 # mode local
+#     ./lancer_new_issue.sh --lan           # accès réseau local (sans tunnel, sans mdp)
 #     ./lancer_new_issue.sh --externe       # mode externe (tunnel)
 #     ./lancer_new_issue.sh --port 5100 --no-browser
 #

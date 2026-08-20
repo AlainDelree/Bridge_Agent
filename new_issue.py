@@ -5,6 +5,7 @@ Lit les configs configs/*.conf, propose un formulaire pour chaque projet.
 
 Usage :
     python3 new_issue.py                  # mode local (127.0.0.1, HTTP, sans SSL)
+    python3 new_issue.py --lan            # accès réseau local (0.0.0.0, HTTP, sans mdp)
     python3 new_issue.py --externe        # exposition réseau (0.0.0.0, HTTPS + mdp)
     python3 new_issue.py --port 5100
     python3 new_issue.py --no-browser
@@ -51,7 +52,17 @@ def main():
                              "host 0.0.0.0 + HTTPS + mot de passe obligatoire. "
                              "Sans cette option : mode local (127.0.0.1, HTTP, "
                              "sans SSL)")
+    parser.add_argument("--lan", action="store_true",
+                        help="Accès réseau local uniquement : host 0.0.0.0, "
+                             "HTTP, sans mot de passe, sans tunnel Cloudflare. "
+                             "Destiné à un LAN de confiance (ex. PC fixe "
+                             "Windows sur le même réseau). Incompatible avec "
+                             "--externe.")
     args = parser.parse_args()
+
+    if args.lan and args.externe:
+        print("Erreur : --lan et --externe sont incompatibles.")
+        sys.exit(1)
 
     # Utilitaire : génération du hash du mot de passe d'accès (ne démarre pas le
     # serveur). Le mot de passe est demandé deux fois pour confirmation et n'est
@@ -75,14 +86,23 @@ def main():
     app = create_app()
     app.config["MOT_DE_PASSE"] = etat.charger_mot_de_passe()
 
-    # Deux modes de fonctionnement :
+    # Trois modes de fonctionnement :
     #   • local (défaut)      : host 127.0.0.1, HTTP simple, sans SSL. Destiné à
     #     un usage sur place (devant le ThinkPad) — pas d'exposition réseau. Le
     #     mot de passe n'est PAS requis (mais reste appliqué s'il est configuré,
     #     via le décorateur @login_requis : aucune régression en mode local).
+    #   • LAN (--lan)         : host 0.0.0.0, HTTP simple, sans SSL, sans
+    #     tunnel Cloudflare et sans mot de passe (MODE_EXTERNE reste False,
+    #     donc @login_requis ne l'exige pas — cf. app/auth.py). Accès confiné
+    #     au réseau local (ex. PC fixe Windows) ; rien n'est exposé vers
+    #     l'extérieur.
     #   • externe (--externe) : host 0.0.0.0, HTTPS + mot de passe OBLIGATOIRES.
     #     Destiné à l'accès distant (téléphone via tunnel).
-    if args.externe:
+    if args.lan:
+        host        = "0.0.0.0"
+        schema      = "http"
+        ssl_context = None
+    elif args.externe:
         app.config["MODE_EXTERNE"] = True
         host   = "0.0.0.0"
         schema = "https"
@@ -143,8 +163,12 @@ def main():
     if not args.no_browser:
         Timer(1.2, lambda: webbrowser.open(f"{schema}://localhost:{args.port}")).start()
 
+    mode_label = "externe" if args.externe else ("lan" if args.lan else "local")
     print(f"Bridge Agent — interface web sur {schema}://localhost:{args.port}"
-          f" ({'externe' if args.externe else 'local'})")
+          f" ({mode_label})")
+    if args.lan:
+        print(f"Accessible depuis le réseau local sur {schema}://<IP-de-cette-machine>:{args.port}"
+              " (sans mot de passe — LAN de confiance uniquement).")
     print("Ctrl-C pour arrêter.")
     app.run(
         host=host,

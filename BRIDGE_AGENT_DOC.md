@@ -88,6 +88,11 @@ Via l'interface web `new_issue.py` (Flask, port 5100) :
 # Mode local (devant le ThinkPad)
 python3 new_issue.py
 
+# Mode LAN (accès depuis le réseau local, ex. PC fixe Windows) — issue #461
+python3 new_issue.py --lan
+# → écoute sur 0.0.0.0:5100, HTTP, sans tunnel, sans mot de passe
+# → destiné à un LAN de confiance uniquement, rien n'est exposé vers l'extérieur
+
 # Mode externe (accès depuis téléphone via Cloudflare)
 python3 new_issue.py --externe
 # → tunnel cloudflared automatique sur https://bridge.frederiqueferette.be
@@ -104,6 +109,7 @@ inchangé.
 
 ```bash
 ./lancer_new_issue.sh                 # mode local, avec log
+./lancer_new_issue.sh --lan           # mode LAN, avec log
 ./lancer_new_issue.sh --externe       # mode externe, avec log
 # Après un plantage : voir les dernières lignes de logs/new_issue.log
 ```
@@ -379,6 +385,15 @@ https://bridge.frederiqueferette.be
 Lancé automatiquement par `python3 new_issue.py --externe`.
 Nécessite : cloudflared installé + `~/.cloudflared/config.yml` configuré
 + `MOT_DE_PASSE` dans le `.conf`.
+
+**Accès réseau local — mode `--lan` (issue #461).** Mode intermédiaire entre
+local et externe : `python3 new_issue.py --lan` fait écouter Flask sur
+`0.0.0.0:5100` (toutes les interfaces réseau) sans démarrer le tunnel
+Cloudflare et sans exiger de mot de passe (`MODE_EXTERNE` reste `False`,
+donc `@login_requis` ne s'active pas — cf. `app/auth.py`). Destiné à un
+accès depuis un autre poste du réseau local de confiance (ex. le PC fixe
+Windows sur le même réseau), sans aucune exposition vers l'extérieur.
+`lancer_new_issue.sh --lan` fait de même avec journalisation.
 
 **Accès à la doc sans token** : le repo étant public, `BRIDGE_AGENT_DOC.md`
 est accessible directement (sans authentification) — utile pour les
