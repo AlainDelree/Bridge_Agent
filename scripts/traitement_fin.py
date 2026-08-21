@@ -97,7 +97,7 @@ def main():
                         help="Numéro de l'issue (déclenche le POST /notifier-fin-issue avec --projet)")
     args = parser.parse_args()
 
-    bip()
+    bip_plat()
 
     if args.projet and args.numero:
         notifier_fin_issue(args.projet, args.numero)
