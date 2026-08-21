@@ -95,7 +95,7 @@ FICHIER_HISTORIQUE = DOSSIER_LOGS / "historique_durees.json"
 FICHIER_ETAT_TIMEOUT   = DOSSIER_LOGS / "etat_timeout.json"
 FICHIER_ETAT_AMBIANCE  = DOSSIER_LOGS / "etat_ambiance.json"
 
-K_VARIABILITE               = 4     # constante de départ de la formule (à backtester plus tard)
+K_VARIABILITE               = 3     # issue #475 : backtest sur 1070 observations (96% couverture, -20% de gaspillage vs K=4)
 DEMI_VIE_ISSUES             = 15    # demi-vie de l'EWMA duree_typique/variabilite, EN NOMBRE D'ISSUES
 ALPHA_EWMA_ISSUES           = 1 - 0.5 ** (1 / DEMI_VIE_ISSUES)
 DEMI_VIE_AMBIANCE_HEURES    = 4.0   # demi-vie de l'EWMA F_reseau/F_local, TEMPORELLE (pas en nb d'issues)
@@ -920,6 +920,7 @@ def enregistrer_duree(projet: str, type_issue: str, mode: str,
             "nb_fichiers_cibles": None,
             "nb_projets_actifs_au_lancement": nb_projets_actifs,
             "expiree": expiree,
+            "k_utilise": K_VARIABILITE,
         }
         tag_reseau = _detecter_tag_reseau(body)
         if tag_reseau is not None:
