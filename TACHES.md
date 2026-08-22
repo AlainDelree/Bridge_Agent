@@ -24,25 +24,17 @@ sans polluer bridge_agent.
 bascule à partir d'une date, adaptation du provisioning CCW (clone du
 nouveau dépôt, config NSSM), labels à recréer sur le nouveau dépôt.
 
-**Statut** : idée en attente, setup physique (fixe Windows) pas encore
-en place. À reprendre quand le nouveau hardware sera opérationnel.
+**Statut** : évalué le 2026-08-21 — coût de migration élevé pour un
+bénéfice surtout esthétique. Le label `for-windows` sur bridge_agent fait
+le travail sans friction. À reconsidérer si des projets exclusivement
+Windows voient le jour et justifient un espace dédié.
 
 ## Calibration TIMEOUT — v2 (backtest des constantes)
 
-**Contexte** : la formule du §19 est
-`TIMEOUT_suggéré = max((duree_typique + k × variabilite) × F × backoff, plancher)`
-— EWMA par `projet|TYPE|mode|complexite`, demi-vie 15 issues, k=4,
-plancher 30 s, facteur d'ambiance `F` de demi-vie 4 h. Cette valeur reste
-purement INDICATIVE : le TIMEOUT réellement appliqué est celui de
-l'en-tête de l'issue (`extraire_timeout`).
-
-**Les trois défauts identifiés le 29/07/2026 sont corrigés** :
-- Défaut 1+2 : champ `RESEAU` implémenté, `F_reseau`/`F_local` alimentés,
-  fallback corrigé dans `lire_timeout_suggere` (#435).
-- Défaut 3 : champ `COMPLEXITE` ajouté comme 4e dimension de la clé EWMA
-  (#434).
-
-**Ce qui reste** : valider empiriquement les constantes
-(`K_VARIABILITE=4`, `DEMI_VIE_ISSUES=15`, `DEMI_VIE_AMBIANCE_HEURES=4`)
-par backtest sur `historique_durees.json` une fois ~20 observations
-accumulées par clé `projet|TYPE|mode|complexite`.
+**Statut** : ✅ Réalisé le 2026-08-21 — backtest effectué sur 1070
+observations (issues #475). Résultats : K=4 → 97% couverture (ratio
+médian 6.63x), K=3 → 96% couverture (ratio médian 5.36x). K passé à 3
+(issue #475), `k_utilise` enregistré dans `historique_durees.json` pour
+permettre la comparaison a posteriori. `DEMI_VIE_ISSUES=15` validée —
+toutes les demi-vies testées donnent 97% globalement. Pas de v2 nécessaire
+pour l'instant.
