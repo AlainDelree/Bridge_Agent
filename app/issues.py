@@ -607,17 +607,69 @@ LIMITE_ISSUES_MAX = 50
 
 
 def _filtrer_issues_bridge(issues: list) -> list:
-    """Ignore silencieusement les issues ne portant ni 'for-linux' ni
-    'for-windows' (issue #478, pendant côté affichage du garde-fou #477 dans
-    watcher.py::lister_issues). Certains dépôts (ex. FF_Galerie) génèrent
-    leurs propres issues applicatives qui n'ont aucun rapport avec le bridge
-    et ne doivent pas apparaître dans la fenêtre Résultats, qu'elles soient
-    ouvertes ou fermées."""
+    """Garde-fou secondaire (issue #479) : ignore silencieusement toute issue
+    ne portant ni 'for-linux' ni 'for-windows' qui aurait malgré tout franchi
+    le filtrage côté gh de `_lister_issues_labels`. Le filtrage primaire se
+    fait désormais côté GitHub CLI (--label, avant application de la limite) ;
+    cette fonction reste une seconde ligne de défense bon marché, héritée du
+    filtrage 100% Python d'origine (issue #478)."""
     return [
         i for i in issues
         if any(l.get("name", "") in ("for-linux", "for-windows")
                for l in i.get("labels", []))
     ]
+
+
+def _lister_issues_labels(depot: str, limite: int, state: str = "all"):
+    """Interroge gh une fois par label bridge (for-linux, for-windows) puis
+    fusionne les résultats (issue #479). Objectif : appliquer le filtre
+    for-linux/for-windows côté GitHub CLI, AVANT que la limite ne tronque la
+    liste, plutôt qu'en Python après coup (limite du filtrage a posteriori de
+    #478) — sur les dépôts générant beaucoup d'issues applicatives sans label
+    bridge (ex. FF_Galerie), ces dernières occupaient des slots de la limite
+    et pouvaient évincer les vraies issues Bridge_Agent de la fenêtre
+    Résultats.
+
+    `--label` combine plusieurs labels en ET logique côté gh (confirmé par
+    l'usage déjà en place dans issues_en_attente) ; or for-linux et
+    for-windows sont mutuellement exclusifs (§16), donc un seul appel avec
+    --label for-linux,for-windows ne retournerait jamais rien. D'où deux
+    appels gh (un par label, chacun borné par `limite`), fusionnés,
+    dédoublonnés par numéro, triés par date de création décroissante, puis
+    tronqués à `limite`.
+
+    Retourne (issues, None) en cas de succès, ou (None, (reponse, code)) en
+    cas d'erreur — l'appelant renvoie alors `reponse` tel quel."""
+    issues = []
+    vus = set()
+    for label in ("for-linux", "for-windows"):
+        try:
+            res = subprocess.run(
+                ["gh", "issue", "list",
+                 "--repo",  depot,
+                 "--label", label,
+                 "--state", state,
+                 "--limit", str(limite),
+                 "--json",  "number,title,state,labels,createdAt"],
+                capture_output=True, text=True, timeout=30
+            )
+        except subprocess.TimeoutExpired:
+            return None, (jsonify(erreur="Timeout (gh n'a pas répondu en 30s)."), 504)
+        except FileNotFoundError:
+            return None, (jsonify(erreur="gh introuvable dans le PATH."), 500)
+        except Exception as e:
+            return None, (jsonify(erreur=str(e)), 500)
+        if res.returncode != 0:
+            return None, (jsonify(erreur=res.stderr.strip() or "Erreur de gh."), 502)
+        for it in json.loads(res.stdout or "[]"):
+            # Dédoublonnage par numéro : une issue portant les deux labels
+            # (cas rare, non nominal) ne doit apparaître qu'une fois.
+            if it.get("number") in vus:
+                continue
+            vus.add(it.get("number"))
+            issues.append(it)
+    issues.sort(key=lambda i: i.get("createdAt") or "", reverse=True)
+    return issues[:limite], None
 
 
 def _limite_issues_requete():
@@ -637,31 +689,19 @@ def _limite_issues_requete():
 
 
 def issues_liste(nom_projet):
-    """Retourne les dernières issues (tous états) du projet via gh, jusqu'à
-    LIMITE_ISSUES_DEFAUT (30) sauf si le paramètre `limite` en fournit une
-    autre (issue #271)."""
+    """Retourne les dernières issues bridge (labels for-linux/for-windows,
+    tous états) du projet via gh, jusqu'à LIMITE_ISSUES_DEFAUT (30) sauf si
+    le paramètre `limite` en fournit une autre (issue #271). Filtrage
+    for-linux/for-windows appliqué côté gh, avant la limite (issue #479) —
+    voir `_lister_issues_labels`."""
     cfg = projet_par_nom(nom_projet)
     if not cfg:
         return jsonify(erreur="Projet introuvable."), 404
     limite = _limite_issues_requete()
-    try:
-        res = subprocess.run(
-            ["gh", "issue", "list",
-             "--repo",  cfg.depot,
-             "--state", "all",
-             "--limit", str(limite),
-             "--json",  "number,title,state,labels,createdAt"],
-            capture_output=True, text=True, timeout=30
-        )
-        if res.returncode != 0:
-            return jsonify(erreur=res.stderr.strip() or "Erreur de gh."), 502
-        return jsonify(_filtrer_issues_bridge(json.loads(res.stdout or "[]")))
-    except subprocess.TimeoutExpired:
-        return jsonify(erreur="Timeout (gh n'a pas répondu en 30s)."), 504
-    except FileNotFoundError:
-        return jsonify(erreur="gh introuvable dans le PATH."), 500
-    except Exception as e:
-        return jsonify(erreur=str(e)), 500
+    issues, erreur = _lister_issues_labels(cfg.depot, limite)
+    if erreur:
+        return erreur
+    return jsonify(_filtrer_issues_bridge(issues))
 
 
 def _normaliser_recherche(texte: str) -> str:
@@ -681,31 +721,18 @@ def recherche_issues(nom_projet):
     logique gh que issues_liste : --state all (une issue déjà fermée/done est
     justement ce qu'on cherche à retrouver, cf. doublon #315/#316), --limit
     borné par _limite_issues_requete (portée de recherche PAR PROJET,
-    INDÉPENDANTE de la limite d'affichage de l'onglet). Le filtrage se fait
-    ici côté serveur, sur le titre uniquement."""
+    INDÉPENDANTE de la limite d'affichage de l'onglet), filtrage
+    for-linux/for-windows appliqué côté gh avant la limite (issue #479, voir
+    `_lister_issues_labels`). Le filtrage par titre se fait ensuite côté
+    serveur, sur le titre uniquement."""
     cfg = projet_par_nom(nom_projet)
     if not cfg:
         return jsonify(erreur="Projet introuvable."), 404
     limite = _limite_issues_requete()
     titre_cherche = _normaliser_recherche(request.args.get("titre", ""))
-    try:
-        res = subprocess.run(
-            ["gh", "issue", "list",
-             "--repo",  cfg.depot,
-             "--state", "all",
-             "--limit", str(limite),
-             "--json",  "number,title,state,labels,createdAt"],
-            capture_output=True, text=True, timeout=30
-        )
-        if res.returncode != 0:
-            return jsonify(erreur=res.stderr.strip() or "Erreur de gh."), 502
-        toutes = json.loads(res.stdout or "[]")
-    except subprocess.TimeoutExpired:
-        return jsonify(erreur="Timeout (gh n'a pas répondu en 30s)."), 504
-    except FileNotFoundError:
-        return jsonify(erreur="gh introuvable dans le PATH."), 500
-    except Exception as e:
-        return jsonify(erreur=str(e)), 500
+    toutes, erreur = _lister_issues_labels(cfg.depot, limite)
+    if erreur:
+        return erreur
     toutes = _filtrer_issues_bridge(toutes)
     if not titre_cherche:
         return jsonify(toutes)
