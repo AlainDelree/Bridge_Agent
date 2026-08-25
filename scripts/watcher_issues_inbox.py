@@ -48,7 +48,8 @@ from pathlib import Path
 DOSSIER_SCRIPT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(DOSSIER_SCRIPT))
 
-from watcher import charger_config, lire_conf, est_titre_chef  # noqa: E402
+from watcher import (charger_config, lire_conf, est_titre_chef,  # noqa: E402
+                     LABEL_NOTIF_PC, LABEL_NOTIF_GSM, LABEL_NOTIF_TOUS)
 from app.watchers import demarrer_watcher  # noqa: E402 (issue #486)
 
 log = logging.getLogger("watcher_issues_inbox")
@@ -247,6 +248,9 @@ def valider(champs: dict):
 LABELS_RE = re.compile(r"^\s*\|\s*LABELS\s*\|([^|]*)\|", re.IGNORECASE | re.MULTILINE)
 
 
+LABELS_NOTIF = {LABEL_NOTIF_PC, LABEL_NOTIF_GSM, LABEL_NOTIF_TOUS}
+
+
 def construire_labels(champs: dict) -> str:
     extras = [lab.strip() for lab in (champs["labels_brut"] or "").split(",") if lab.strip()]
     labels = ["bridge"]
@@ -258,6 +262,11 @@ def construire_labels(champs: dict) -> str:
     for extra in extras:
         if extra not in labels:
             labels.append(extra)
+    # Label de notification par défaut (issue #490) : notif_pc, sauf si le
+    # champ LABELS demande déjà explicitement notif_gsm/notif_tous (miroir du
+    # comportement le plus courant côté formulaire, app/issues.py::construire_labels).
+    if not (LABELS_NOTIF & set(labels)):
+        labels.append(LABEL_NOTIF_PC)
     return ",".join(labels)
 
 

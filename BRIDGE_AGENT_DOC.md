@@ -2321,6 +2321,15 @@ Même format qu'une issue produite par Claude Chat pour le formulaire web
 | `MODE`    | Reconnu de façon tolérante (§5) — absent/non reconnu → `lecture`     |
 | `LABELS`  | Labels GitHub additionnels, séparés par des virgules                 |
 
+Label de notification par défaut (issue #490) : `construire_labels()` pose
+systématiquement **`notif_pc`** (miroir du comportement le plus courant côté
+formulaire web), sauf si `LABELS` demande déjà explicitement `notif_gsm` ou
+`notif_tous` — dans ce cas `notif_pc` n'est pas ajouté en plus, pour ne
+jamais empiler plusieurs labels de notification. Sans ce label, une issue
+créée via `issues_inbox/` ne déclenchait aucun bip à sa clôture
+(`notifications.bip()`, cf. `watcher.py`), contrairement à celles créées via
+le formulaire.
+
 Le fichier est reparsé avec les mêmes regex que `static/js/app.js` (détection
 de champ d'en-tête à la frappe côté formulaire web), pour ne jamais diverger
 du format déjà produit par Claude Chat.
