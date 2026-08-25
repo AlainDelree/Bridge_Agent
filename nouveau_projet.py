@@ -69,7 +69,12 @@ PALETTE_COULEURS = [
 # Topic ntfy partagé par tous les projets existants (voir configs/*.conf).
 # Proposé par défaut ; l'utilisateur peut le changer pour un topic dédié.
 TOPIC_NTFY_DEFAUT = "hippocampe-ff-galerie-xyz123"
-SCRIPT_BIP_DEFAUT = "/home/alain/NicLink/bip.py"
+SCRIPT_BIP_DEFAUT = "/home/alain/Bridge_Agent/scripts/bip_Cloche.py"
+
+# Modèle CCL forcé par défaut sur tout nouveau projet (voir configs/*.conf) :
+# évite tout repli silencieux vers Opus sur le plan Max. Reste modifiable
+# à la main dans le .conf après génération (issue #489).
+MODELE_CCL_DEFAUT = "claude-sonnet-5"
 
 # Propriétaire GitHub par défaut pour le dépôt proposé (owner/Nom).
 OWNER_DEFAUT = "AlainDelree"
@@ -237,6 +242,7 @@ def ecrire_conf(nom: str, depot: str, rep: str, perimetre: str,
         topic_ntfy=topic,
         script_bip=script_bip,
         couleur=couleur,
+        modele_ccl=MODELE_CCL_DEFAUT,
     )
     chemin.write_text(contenu, encoding="utf-8")
     return chemin
@@ -655,6 +661,7 @@ def etape_conf(nom: str, depot: str, rep: str, perimetre: str) -> Path:
         topic_ntfy=topic,
         script_bip=SCRIPT_BIP_DEFAUT,
         couleur=couleur,
+        modele_ccl=MODELE_CCL_DEFAUT,
     )
     chemin.write_text(contenu, encoding="utf-8")
     print(f"   ✓ {chemin.relative_to(RACINE)} créé (à partir du gabarit).")
@@ -913,7 +920,7 @@ LOG_ARCHIVES      = 5
 DELAI_INACTIVITE_MIN = 20
 
 # ─── Modèle CCL forcé (vide = défaut) ─────────────────────────────────────────
-MODELE_CCL        =
+MODELE_CCL        = {modele_ccl}
 
 # ─── Mot de passe interface (sha256 ; vide = pas d'authentification) ──────────
 # MOT_DE_PASSE    =
