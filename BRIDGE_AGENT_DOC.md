@@ -74,6 +74,7 @@ Claude Chat → crée une issue → GitHub → watcher.py détecte → CCL exéc
 | `actualise` | AlainDelree/Actualise | ~/Actualise | (conf local) |
 | `bloc_score` | AlainDelree/Bloc_score | ~/Bloc_score | (conf local) |
 | `rummikub` | AlainDelree/Rummikub | ~/Rummikub | (conf local) |
+| `elevage_reine` | AlainDelree/Elevage_reine | ~/Elevage_reine | (conf local) |
 
 Chaque projet a son propre watcher (`watcher.py --config configs/<nom>.conf`)
 et son propre journal de log (`logs/watcher-<nom>.log`).
@@ -356,6 +357,7 @@ hors périmètre même si l'issue le demande explicitement :
 | `actualise` | /home/alain/Actualise |
 | `bloc_score` | /home/alain/Bloc_score |
 | `rummikub` | /home/alain/Rummikub |
+| `elevage_reine` | /home/alain/Elevage_reine |
 
 ---
 
