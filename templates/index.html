@@ -73,6 +73,9 @@
   <div class="onglets">
     <div class="onglet actif" onclick="basculerOnglet('creation')">Nouvelle issue</div>
     <div class="onglet" onclick="basculerOnglet('resultats')">Résultats</div>
+    <div class="onglet" onclick="basculerOnglet('inbox')">Résultats inbox
+      <span id="badge-alarme-inbox" class="badge-alarme-inbox" style="display:none" title="Des fichiers issues_inbox/rejected/ attendent une correction manuelle">🚨</span>
+    </div>
     <div class="onglet" onclick="basculerOnglet('journal')">Journal watcher</div>
     <div class="onglet" onclick="basculerOnglet('config')">Configuration</div>
     <div class="onglet" onclick="basculerOnglet('watchers')">Watchers</div>
@@ -284,6 +287,38 @@
       <div id="pl-zone-actions"></div>
     </div>
 
+  </div>
+
+  <!-- ─── Onglet « Résultats inbox » (issue #483) : état du watcher
+       issues_inbox/ — alarme pilotée UNIQUEMENT par la présence de fichiers
+       dans issues_inbox/rejected/ (pas de parsing de log), rafraîchie
+       périodiquement par rafraichirInbox() (static/js/app.js) via
+       /issues-inbox/etat, indépendamment de l'onglet actif (le badge sur
+       l'onglet lui-même doit rester à jour même hors de cette vue). -->
+  <div id="panneau-inbox" class="panneau">
+    <div id="alarme-inbox" class="alarme-inbox" style="display:none">
+      🚨 Des issues déposées dans <code>issues_inbox/</code> ont été rejetées —
+      correction manuelle requise dans <code>issues_inbox/rejected/</code>.
+    </div>
+    <div id="inbox-sans-alarme" class="message succes" style="display:block">✅ Aucun fichier en attente de correction dans <code>issues_inbox/rejected/</code>.</div>
+
+    <div class="titre-section">Fichiers rejetés</div>
+    <table style="width:100%;border-collapse:collapse" id="tableau-inbox-rejetes">
+      <thead>
+        <tr style="border-bottom:1px solid #eee">
+          <th style="text-align:left;font-size:12px;color:#666;font-weight:500;padding:8px 0">Fichier</th>
+          <th style="text-align:left;font-size:12px;color:#666;font-weight:500;padding:8px 0;width:200px">Déposé le</th>
+        </tr>
+      </thead>
+      <tbody id="corps-inbox-rejetes"></tbody>
+    </table>
+
+    <div class="titre-section" style="margin-top:18px">Historique (logs/issues_inbox.log)</div>
+    <div id="inbox-historique" class="inbox-historique"></div>
+
+    <div style="display:flex;justify-content:flex-end;margin-top:12px">
+      <button onclick="rafraichirInbox()">Rafraîchir</button>
+    </div>
   </div>
 
   <!-- ─── Onglet 2 : gestion des watchers ──────────────────────────────── -->

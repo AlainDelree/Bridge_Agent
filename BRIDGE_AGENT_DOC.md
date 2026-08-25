@@ -443,8 +443,11 @@ méthode par défaut recommandée.
     tunnel.py         — tunnel Cloudflare (mode externe)
     vues.py           — routes Flask et rendu des pages
     etat.py           — état partagé de l'application
+    issues_inbox.py   — état de l'onglet « Résultats inbox » (§20, issue #483)
   templates/          — gabarits HTML (Jinja2)
   static/             — CSS, JS, assets statiques
+  issues_inbox/       — gitignoré : dépôt de fichiers .txt d'issues à créer (§20)
+    rejected/         — issues malformées, à corriger manuellement (§20)
   consignes/          — consignes injectées dans le prompt CCL par watcher.py (§12.1)
     globales.md       — NON-optionnel : rappels de sécurité, TOUTE issue
     type_chef.md      — optionnel : consignes du TYPE « chef »
@@ -2279,7 +2282,129 @@ issues de la même combinaison s'il le juge utile.
 
 ---
 
-*Dernière mise à jour : 18 août 2026 — §16 « Agent Windows CCW » (issue
+## 20. Watcher `issues_inbox` centralisé (issue #483)
+
+### 20.1 Objectif
+
+Jusqu'ici, une issue générée par Claude Chat devait être copiée-collée à la
+main dans l'onglet **« Nouvelle issue »** de `new_issue.py` (§3). Le watcher
+**`scripts/watcher_issues_inbox.py`** automatise ce geste : Claude Chat (ou
+Alain en CLI) dépose un fichier `.txt` dans **`~/Bridge_Agent/issues_inbox/`**,
+le watcher le détecte, le valide, crée l'issue via `gh issue create` et
+nettoie — sans repasser par le formulaire web.
+
+### 20.2 Structure disque
+
+- **`issues_inbox/`** (gitignoré, créé automatiquement au premier lancement
+  du watcher s'il n'existe pas) : fichiers `.txt` en attente, nommage libre
+  (le watcher ne se fie qu'au contenu, pas au nom de fichier).
+- **`issues_inbox/rejected/`** : fichiers rejetés (en-tête malformé, projet
+  inconnu, échec de `gh issue create`...), renommés
+  `<nom-original>__REJETE-<slug-du-motif>.txt` pour que le motif soit visible
+  sans ouvrir le fichier. Laissés en place pour correction manuelle — le
+  watcher ne les retraite jamais automatiquement.
+
+### 20.3 Format attendu du fichier
+
+Même format qu'une issue produite par Claude Chat pour le formulaire web
+(§3) : un en-tête `| CHAMP | Valeur |` optionnel suivi d'une ligne
+`#Titre: ...` puis le corps. Champs d'en-tête reconnus, tous optionnels sauf
+`PROJET` :
+
+| Champ     | Rôle                                                                |
+|-----------|----------------------------------------------------------------------|
+| `PROJET`  | **Obligatoire** — doit correspondre à `configs/<PROJET>.conf`        |
+| `TIMEOUT` | Nombre (secondes, suffixe `s` toléré) — sinon défaut du projet       |
+| `MODELE`  | Doit être une valeur reconnue (`claude-sonnet-5`, etc.) si fourni    |
+| `MODE`    | Reconnu de façon tolérante (§5) — absent/non reconnu → `lecture`     |
+| `LABELS`  | Labels GitHub additionnels, séparés par des virgules                 |
+
+Le fichier est reparsé avec les mêmes regex que `static/js/app.js` (détection
+de champ d'en-tête à la frappe côté formulaire web), pour ne jamais diverger
+du format déjà produit par Claude Chat.
+
+### 20.4 Validation avant création
+
+Un fichier est rejeté (déplacé vers `rejected/`, jamais créé sur GitHub) si :
+`PROJET` absent/vide, `configs/<PROJET>.conf` introuvable ou invalide,
+`#Titre:` absent/vide, `MODELE` fourni mais non reconnu, ou `TIMEOUT` fourni
+mais non numérique. Un échec de `gh issue create` (réseau, dépôt inaccessible,
+timeout de 30s...) provoque le même sort, avec le message d'erreur de `gh`
+en détail.
+
+### 20.5 Journalisation (rotation par nombre de lignes)
+
+Chaque traitement (réussi ou rejeté) ajoute une ligne à
+**`logs/issues_inbox.log`** :
+`<horodatage> | <projet> | OK|REJECTED | <titre> [— <détail si rejet>]`.
+Rotation propre à ce watcher, **distincte** de la rotation par taille des
+autres watchers (§13) : dès que le fichier dépasse **`MAX_LOG_LINES`**
+(défaut 50), les lignes les plus anciennes sont supprimées — pas de fichier
+`.1`/`.2`, un seul fichier plat borné en permanence à 50 lignes.
+
+### 20.6 Concurrence
+
+Avant de traiter un fichier `.txt`, le watcher vérifie que sa date de
+dernière modification remonte à **au moins 1 seconde** — sinon il le laisse
+pour le cycle de polling suivant, pour ne jamais lire un fichier encore en
+cours d'écriture (dépôt via un outil qui écrit progressivement).
+
+### 20.7 Config (optionnelle)
+
+`configs/watcher_issues_inbox.conf` — clés `NOM`, `REP_TRAVAIL`,
+`POLLING_INTERVAL` (défaut 5s), `MAX_LOG_LINES` (défaut 50), `INBOX_DIR`,
+`REJECTED_DIR`, `GH_TOKEN`. Toutes optionnelles : le watcher tourne avec des
+défauts sensés (dossiers sous `~/Bridge_Agent`) même sans ce fichier.
+**Ce `.conf` n'est pas créé automatiquement par CCL** — garde-fou §11 (CCL ne
+modifie/crée jamais `configs/*.conf`) : c'est à Alain de le créer à la main
+s'il veut surcharger les défauts.
+
+Lancement : `python3 scripts/watcher_issues_inbox.py` (boucle continue),
+`--config <chemin>` pour un `.conf` alternatif, `--once` pour un seul cycle
+(tests). Peut être supervisé en systemd/NSSM comme les autres watchers (§13),
+en dehors du cycle de vie de `watcher.py` (générique, par projet) puisqu'il
+ne traite pas des issues GitHub existantes mais alimente leur création.
+
+### 20.8 Onglet « Résultats inbox » de `new_issue.py`
+
+Nouvel onglet dans l'interface web, alimenté par la route
+**`GET /issues-inbox/etat`** (`app/issues_inbox.py`, pure lecture disque —
+aucun appel `gh`, aucune dépendance à un watcher en cours d'exécution) :
+
+- **Alarme** pilotée **uniquement** par l'état du dossier
+  `issues_inbox/rejected/` — non vide → badge 🚨 clignotant sur l'onglet
+  lui-même (visible même hors de cette vue) + bandeau rouge dans le panneau ;
+  vide → aucun indicateur. Volontairement **pas** de parsing de log pour cette
+  décision (§ Tâche demandée de l'issue #483) : l'état du dossier est la
+  seule source de vérité, plus simple et plus fiable qu'un état dérivé du log.
+- **Zone détail** : tableau des fichiers présents dans `rejected/` (nom +
+  date de dépôt), et un historique **purement informatif** des dernières
+  lignes de `logs/issues_inbox.log` — celui-ci n'influence jamais l'alarme.
+- **Rafraîchissement** : `rafraichirInbox()` (`static/js/app.js`) tourne en
+  polling continu (7s) indépendamment de l'onglet actif, pour que le badge
+  reste à jour même quand un autre onglet est ouvert ; bouton « Rafraîchir »
+  pour un rafraîchissement immédiat.
+
+### 20.9 Workflow utilisateur final
+
+1. Claude Chat (ou Alain) dépose un fichier `.txt` dans `issues_inbox/`.
+2. Le watcher le détecte au cycle de polling suivant, crée l'issue GitHub
+   (mêmes labels/en-tête que le formulaire web), supprime le fichier, journalise.
+3. Alain voit le statut dans l'onglet « Résultats inbox » de `new_issue.py`.
+4. Un fichier rejeté reste visible dans `issues_inbox/rejected/` — alarme
+   allumée tant qu'il n'est pas corrigé/supprimé à la main.
+
+---
+
+*Dernière mise à jour : 25 août 2026 — §10/§20 « Watcher `issues_inbox`
+centralisé » (issue #483) : nouveau flux de création d'issues sans passage
+par le formulaire web — `scripts/watcher_issues_inbox.py` scrute
+`issues_inbox/`, valide et crée via `gh issue create`, journalise dans
+`logs/issues_inbox.log` (rotation à 50 lignes) ; fichiers rejetés déplacés
+vers `issues_inbox/rejected/`. Nouvel onglet « Résultats inbox » dans
+`new_issue.py` (`app/issues_inbox.py`, route `/issues-inbox/etat`), alarme
+visuelle pilotée uniquement par l'état (vide/non-vide) de `rejected/`.
+Précédemment — 18 août 2026 — §16 « Agent Windows CCW » (issue
 #446) : mise à jour pour le passage de CCW d'une VM VirtualBox à un **PC
 fixe physique dédié** (Pentium G2020). Introduction reformulée en
 conséquence. Paramètres corrigés partout dans le §16 : `REP_TRAVAIL =
@@ -2304,14 +2429,6 @@ une issue unique est elle aussi présentée dans un bloc de code, afin
 qu'Alain puisse utiliser le bouton copier du bloc. §11 « Conventions de
 code » : le bullet « Issues » précise désormais que le corps est toujours
 présenté dans un bloc de code, qu'il s'agisse d'une issue seule ou d'un
-lot.
-Précédemment — §6 « Champs spéciaux dans le corps de l'issue » : nouveau
-champ `RESEAU` documenté (issue #435, `oui`/`non`, lu par
-`_detecter_tag_reseau`, optionnel). §19.6 : les deux limitations
-« `tag_reseau` n'est peuplé nulle part » et « incohérence inerte sur échec
-définitif » sont levées — `_detecter_tag_reseau(body)` lit désormais le
-champ `RESEAU`, et `lire_timeout_suggere()` reçoit `body` pour choisir
-`F_reseau`/`F_local` selon le tag réel de l'issue en échec, au lieu de
-toujours retomber sur `F_local` (voir §19.7).*
+lot.*
 
 Historique complet : voir [`CHANGELOG.md`](CHANGELOG.md).

@@ -69,7 +69,7 @@ function appliquerAccentProjet(nom) {
 }
 
 function basculerOnglet(nom) {
-  const noms = ['creation', 'resultats', 'journal', 'config', 'watchers', 'ccw'];
+  const noms = ['creation', 'resultats', 'inbox', 'journal', 'config', 'watchers', 'ccw'];
   document.querySelectorAll('.onglet').forEach((o, i) =>
     o.classList.toggle('actif', noms[i] === nom));
   noms.forEach(n =>
@@ -92,6 +92,10 @@ function basculerOnglet(nom) {
   // (chaque requête déclenche des appels SSH coûteux — l'utilisateur
   // rafraîchit à la demande via les boutons dédiés).
   if (nom === 'ccw') ccwOuvrirOnglet();
+  // Onglet « Résultats inbox » (issue #483) : rafraîchissement immédiat à
+  // l'ouverture — le polling continu (rafraichirInbox, tout en bas de ce
+  // fichier) garde le badge de l'onglet à jour même hors de cette vue.
+  if (nom === 'inbox') rafraichirInbox();
 }
 
 // reinitialiserTimeout : un changement de projet MANUEL (sélecteur, chargement
@@ -4923,6 +4927,55 @@ async function lancerWatcher() {
   onProjetChange();
 })();
 setInterval(verifierStatut, 5000);
+
+// ─── Onglet « Résultats inbox » (issue #483) ──────────────────────────────
+// État du watcher_issues_inbox (scripts/watcher_issues_inbox.py), lu depuis
+// /issues-inbox/etat (aucun appel gh — pure lecture disque côté serveur).
+// L'alarme (badge sur l'onglet + bandeau) est pilotée UNIQUEMENT par l'état
+// (vide/non-vide) de issues_inbox/rejected/, jamais par l'historique de log —
+// ce polling tourne en continu, indépendamment de l'onglet actif, pour que le
+// badge reste à jour même quand un autre onglet est ouvert.
+function formaterDateInbox(epochSecondes) {
+  try {
+    return new Date(epochSecondes * 1000).toLocaleString('fr-FR');
+  } catch(e) {
+    return '';
+  }
+}
+
+async function rafraichirInbox() {
+  try {
+    const rep = await fetch('/issues-inbox/etat');
+    if (!rep.ok) return;
+    const data = await rep.json();
+
+    const badge = document.getElementById('badge-alarme-inbox');
+    const bandeau = document.getElementById('alarme-inbox');
+    const sansAlarme = document.getElementById('inbox-sans-alarme');
+    if (badge)      badge.style.display = data.alarme ? '' : 'none';
+    if (bandeau)     bandeau.style.display = data.alarme ? 'block' : 'none';
+    if (sansAlarme)  sansAlarme.style.display = data.alarme ? 'none' : 'block';
+
+    const corps = document.getElementById('corps-inbox-rejetes');
+    if (corps) {
+      corps.innerHTML = (data.rejetes || []).map(r =>
+        '<tr><td>' + escapeHtml(r.nom) + '</td><td>' + formaterDateInbox(r.date) + '</td></tr>'
+      ).join('') || '<tr><td colspan="2" style="color:#999;padding:6px 0">Aucun fichier rejeté.</td></tr>';
+    }
+
+    const historique = document.getElementById('inbox-historique');
+    if (historique) {
+      historique.textContent = (data.historique && data.historique.length)
+        ? data.historique.join('\n')
+        : '(aucun historique pour le moment)';
+    }
+  } catch(e) {
+    // Best-effort, silencieux : le badge garde son dernier état connu plutôt
+    // qu'une erreur bruyante sur un simple polling d'arrière-plan.
+  }
+}
+rafraichirInbox();
+setInterval(rafraichirInbox, 7000);
 
 // ─── Cycle de vie : onglet ↔ serveur ──────────────────────────────────────
 // Deux liens : (1) heartbeat navigateur → serveur, qui laisse le serveur se

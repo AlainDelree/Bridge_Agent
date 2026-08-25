@@ -11,3 +11,6 @@ provisioning/windows/autounattend.local.xml
 # Bibliothèque de templates d'issues récurrentes par projet (issue #284) :
 # état de formulaire local, pas du code — jamais committé.
 configs/templates_*.json
+# Dossier inbox du watcher_issues_inbox (issue #483) : fichiers .txt déposés
+# par Claude Chat / traités par le watcher — état transitoire, pas du code.
+issues_inbox/

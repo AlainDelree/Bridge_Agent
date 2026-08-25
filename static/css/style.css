@@ -454,3 +454,17 @@ button.danger-plein:hover{background:#8f2626}
 .etape-interrompre.etape-echec{color:#a32d2d}
 .etape-interrompre.etape-rien_a_faire{color:#888}
 .etape-interrompre.etape-succes{color:#22803a}
+/* Onglet « Résultats inbox » (issue #483) : alarme pilotée UNIQUEMENT par
+   l'état (vide/non-vide) de issues_inbox/rejected/ — badge clignotant sur
+   l'onglet lui-même (visible même hors de cette vue) + bandeau dans le panneau. */
+@keyframes clignoter-alarme{0%,100%{opacity:1}50%{opacity:.25}}
+.badge-alarme-inbox{display:inline-block;margin-left:4px;font-size:13px;
+  animation:clignoter-alarme 1.1s ease-in-out infinite}
+.alarme-inbox{padding:12px 14px;border-radius:6px;font-size:13px;
+  margin-bottom:14px;background:#f8d7da;color:#721c24;
+  border:1px solid #f5c6cb;font-weight:600;
+  animation:clignoter-alarme 1.6s ease-in-out infinite}
+.inbox-historique{max-height:320px;overflow-y:auto;font-family:monospace;
+  font-size:12px;white-space:pre-wrap;background:#f8f8f5;
+  border:1px solid #e0dfda;border-radius:6px;padding:10px 12px;color:#444}
+#corps-inbox-rejetes td{padding:6px 0;font-size:13px;border-bottom:1px solid #f0efe9}

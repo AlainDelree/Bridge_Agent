@@ -1,0 +1,443 @@
+#!/usr/bin/env python3
+"""
+watcher_issues_inbox.py — Watcher centralisé du dossier issues_inbox/ (issue #483).
+
+Scrute en continu ~/Bridge_Agent/issues_inbox/ : chaque fichier .txt déposé
+(par Claude Chat ou manuellement) est parsé, validé, puis transformé en issue
+GitHub via `gh issue create` — même format d'en-tête et de labels que
+app/issues.py (construire_body/construire_labels), pour rester cohérent avec
+le flux du formulaire web. Le fichier traité est supprimé après création
+réussie ; un fichier invalide (PROJET inconnu, titre vide, etc.) est déplacé
+vers issues_inbox/rejected/ avec le détail de l'erreur en suffixe de nom.
+
+Usage :
+    python3 scripts/watcher_issues_inbox.py
+    python3 scripts/watcher_issues_inbox.py --config configs/watcher_issues_inbox.conf
+    python3 scripts/watcher_issues_inbox.py --once   # un seul cycle (tests)
+
+Config (configs/watcher_issues_inbox.conf, optionnelle — voir charger_config_inbox
+ci-dessous) : NOM, REP_TRAVAIL, POLLING_INTERVAL, MAX_LOG_LINES, INBOX_DIR,
+REJECTED_DIR, GH_TOKEN. Toutes les clés sont optionnelles ; en son absence, le
+watcher tourne avec des défauts sensés (dossiers sous ~/Bridge_Agent). Ce
+fichier .conf n'est PAS créé automatiquement par CCL — garde-fou §11 de
+BRIDGE_AGENT_DOC.md (CCL ne modifie/crée jamais configs/*.conf) : c'est à
+Alain de le créer à la main s'il veut surcharger les défauts.
+"""
+
+import argparse
+import logging
+import os
+import re
+import subprocess
+import sys
+import tempfile
+import time
+import unicodedata
+from dataclasses import dataclass
+from datetime import datetime
+from pathlib import Path
+
+DOSSIER_SCRIPT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(DOSSIER_SCRIPT))
+
+from watcher import charger_config, lire_conf, est_titre_chef  # noqa: E402
+
+log = logging.getLogger("watcher_issues_inbox")
+
+# ─── Config ─────────────────────────────────────────────────────────────────
+
+DEFAUT_CHEMIN_CONFIG = DOSSIER_SCRIPT / "configs" / "watcher_issues_inbox.conf"
+
+
+@dataclass
+class ConfigInbox:
+    nom: str              = "watcher_issues_inbox"
+    rep_travail: Path     = DOSSIER_SCRIPT
+    polling_interval: int = 5
+    max_log_lines: int    = 50
+    inbox_dir: Path       = DOSSIER_SCRIPT / "issues_inbox"
+    rejected_dir: Path    = DOSSIER_SCRIPT / "issues_inbox" / "rejected"
+    gh_token: str         = ""
+
+    @property
+    def fichier_log(self) -> Path:
+        return DOSSIER_SCRIPT / "logs" / "issues_inbox.log"
+
+
+def charger_config_inbox(chemin: Path) -> ConfigInbox:
+    """Charge configs/watcher_issues_inbox.conf s'il existe ; sinon retourne les
+    défauts. Toutes les clés sont optionnelles (contrairement à charger_config()
+    des projets) : ce watcher est utilisable dès l'installation, sans .conf."""
+    if not chemin.exists():
+        return ConfigInbox()
+
+    brut = lire_conf(chemin)
+    rep_travail = Path(brut.get("REP_TRAVAIL") or str(DOSSIER_SCRIPT)).expanduser()
+    inbox_dir = Path(brut.get("INBOX_DIR") or str(rep_travail / "issues_inbox")).expanduser()
+    rejected_dir = Path(brut.get("REJECTED_DIR") or str(inbox_dir / "rejected")).expanduser()
+
+    def entier(cle: str, defaut: int) -> int:
+        val = (brut.get(cle) or "").strip()
+        return int(val) if val.isdigit() else defaut
+
+    return ConfigInbox(
+        nom              = brut.get("NOM") or "watcher_issues_inbox",
+        rep_travail      = rep_travail,
+        polling_interval = entier("POLLING_INTERVAL", 5),
+        max_log_lines    = entier("MAX_LOG_LINES", 50),
+        inbox_dir        = inbox_dir,
+        rejected_dir     = rejected_dir,
+        gh_token         = brut.get("GH_TOKEN") or "",
+    )
+
+
+# ─── Parsing d'en-tête (miroir Python de lireChampEntete/retirerLigneEntete de
+# static/js/app.js — même regex, pour ne jamais diverger du format produit par
+# Claude Chat / reconnu par le formulaire web) ──────────────────────────────
+
+def _regex_champ(champ: str) -> re.Pattern:
+    return re.compile(rf"^\s*\|\s*{champ}\s*\|([^|]*)\|", re.IGNORECASE | re.MULTILINE)
+
+
+def lire_champ_entete(corps: str, champ: str) -> str | None:
+    m = _regex_champ(champ).search(corps or "")
+    if not m:
+        return None
+    valeur = m.group(1).strip()
+    return valeur or None
+
+
+def retirer_ligne_entete(corps: str, champ: str) -> str:
+    m = _regex_champ(champ).search(corps or "")
+    if not m:
+        return corps
+    debut = m.start()
+    fin = corps.find("\n", debut)
+    fin = len(corps) if fin == -1 else fin
+    if fin < len(corps) and corps[fin] == "\n":
+        return corps[:debut] + corps[fin + 1:]
+    if debut > 0 and corps[debut - 1] == "\n":
+        return corps[:debut - 1] + corps[fin:]
+    return corps[:debut] + corps[fin:]
+
+
+TITRE_RE = re.compile(r"^#Titre:\s*(.*)$", re.IGNORECASE | re.MULTILINE)
+
+CHAMPS_ENTETE = ("PROJET", "TIMEOUT", "MODELE", "MODE", "LABELS")
+
+
+def extraire_champs(contenu: str) -> dict:
+    """Extrait les champs d'en-tête optionnels, le #Titre: et le corps restant
+    (en-tête + ligne #Titre retirés, comme le fait le formulaire web à la
+    frappe — cf. detecterProjetDansCorps/detecterTimeoutDansCorps/
+    detecterModeDansCorps de static/js/app.js)."""
+    valeurs = {champ: lire_champ_entete(contenu, champ) for champ in CHAMPS_ENTETE}
+
+    reste = contenu
+    for champ in CHAMPS_ENTETE:
+        reste = retirer_ligne_entete(reste, champ)
+
+    m = TITRE_RE.search(reste)
+    titre = m.group(1).strip() if m else ""
+    if m:
+        debut = m.start()
+        fin = reste.find("\n", debut)
+        fin = len(reste) if fin == -1 else fin + 1
+        reste = reste[:debut] + reste[fin:]
+
+    return {
+        "projet":       (valeurs["PROJET"] or "").strip(),
+        "timeout_brut": valeurs["TIMEOUT"],
+        "modele":       (valeurs["MODELE"] or "").strip(),
+        "mode_brut":    valeurs["MODE"],
+        "labels_brut":  valeurs["LABELS"],
+        "titre":        titre,
+        "corps":        reste.strip("\n"),
+    }
+
+
+# ─── Mode (miroir de app.js::reconnaitreModeTexte / app/issues.py::MODES) ──
+# Reconnaissance tolérante — jamais un motif de rejet en soi (§6 du DOC :
+# défaut LECTURE si absent/non reconnu), seulement §3 du DOC demande de la
+# « reconnaître », pas de la valider strictement.
+MODE_SYNONYMES = (
+    ("ecriture",       ("écriture", "ecriture", "write", "mode_write")),
+    ("lecture_active", ("lecture active", "scratch", "mode_scratch")),
+    ("lecture",        ("lecture seule", "lecture", "read", "mode_read")),
+)
+MODES = {
+    "lecture":        ("lecture", None),
+    "lecture_active": ("lecture active", "mode_scratch"),
+    "ecriture":       ("écriture", "mode_write"),
+}
+
+
+def _sans_accents(texte: str) -> str:
+    decompose = unicodedata.normalize("NFKD", texte or "")
+    return "".join(c for c in decompose if not unicodedata.combining(c))
+
+
+def reconnaitre_mode(brut: str | None) -> str:
+    if not brut:
+        return "lecture"
+    normalise = _sans_accents(brut.strip().lower())
+    for valeur, motifs in MODE_SYNONYMES:
+        for motif in motifs:
+            if _sans_accents(motif.lower()) in normalise:
+                return valeur
+    return "lecture"
+
+
+MODELES_VALIDES = {"claude-sonnet-5", "claude-opus-4-8", "claude-haiku-4-5", "claude-fable-5"}
+
+
+# ─── Validation ─────────────────────────────────────────────────────────────
+
+def valider(champs: dict):
+    """Retourne (True, "", cfg_projet) si le fichier est exploitable, sinon
+    (False, détail_erreur, None)."""
+    if not champs["projet"]:
+        return False, "en-tête malformé : champ PROJET manquant ou vide.", None
+
+    chemin_conf = DOSSIER_SCRIPT / "configs" / f"{champs['projet']}.conf"
+    if not chemin_conf.exists():
+        return False, f"projet inconnu : « {champs['projet']} » (configs/{champs['projet']}.conf introuvable).", None
+    try:
+        cfg_projet = charger_config(chemin_conf)
+    except SystemExit as e:
+        return False, f"config du projet « {champs['projet']} » invalide : {e}", None
+
+    if not champs["titre"]:
+        return False, "titre manquant (ligne « #Titre: » absente ou vide).", None
+
+    if champs["modele"] and champs["modele"] not in MODELES_VALIDES:
+        return False, (f"MODELE inconnu : « {champs['modele']} » "
+                        f"(valeurs acceptées : {', '.join(sorted(MODELES_VALIDES))})."), None
+
+    if champs["timeout_brut"]:
+        valeur = champs["timeout_brut"].strip().lower().rstrip("s")
+        if not valeur.isdigit():
+            return False, f"TIMEOUT invalide : « {champs['timeout_brut']} » (doit être un nombre).", None
+
+    return True, "", cfg_projet
+
+
+# ─── Construction body/labels (miroir de app/issues.py::construire_body /
+# construire_labels, pour produire des issues indiscernables de celles créées
+# via le formulaire web) ────────────────────────────────────────────────────
+
+LABELS_RE = re.compile(r"^\s*\|\s*LABELS\s*\|([^|]*)\|", re.IGNORECASE | re.MULTILINE)
+
+
+def construire_labels(champs: dict) -> str:
+    extras = [lab.strip() for lab in (champs["labels_brut"] or "").split(",") if lab.strip()]
+    labels = ["bridge"]
+    if "for-windows" not in extras:
+        labels.append("for-linux")
+    _, label_mode = MODES[reconnaitre_mode(champs["mode_brut"])]
+    if label_mode:
+        labels.append(label_mode)
+    for extra in extras:
+        if extra not in labels:
+            labels.append(extra)
+    return ",".join(labels)
+
+
+def construire_body(champs: dict, cfg_projet) -> str:
+    mode_valeur = reconnaitre_mode(champs["mode_brut"])
+    mode_label, _ = MODES[mode_valeur]
+
+    chef = est_titre_chef(champs["titre"])
+    if champs["timeout_brut"]:
+        timeout = int(champs["timeout_brut"].strip().lower().rstrip("s"))
+        if chef:
+            timeout = max(timeout, cfg_projet.timeout_chef)
+    else:
+        timeout = cfg_projet.timeout_chef if chef else cfg_projet.timeout_claude
+
+    lignes = [
+        "## En-tête\n",
+        "| Champ    | Valeur |",
+        "|----------|--------|",
+        "| SOURCE   | CC |",
+        "| DEST     | CCL |",
+        "| RETOUR   | CC |",
+        f"| MODE     | {mode_label} |",
+        "| PRIORITE | normale |",
+        f"| TIMEOUT  | {timeout}s |",
+        f"| PROJET   | {cfg_projet.nom} |",
+    ]
+    if champs["modele"]:
+        lignes.append(f"| MODELE   | {champs['modele']} |")
+
+    entete = "\n".join(lignes)
+    parties = [p for p in (entete, champs["corps"]) if p]
+    return "\n\n".join(parties)
+
+
+# ─── Journalisation (rotation par NOMBRE DE LIGNES — max_log_lines, distincte
+# de la rotation par taille des watchers de projet, cf. issue #483) ────────
+
+def _ecrire_ligne_log(cfg: ConfigInbox, projet: str, statut: str, texte: str) -> None:
+    horodatage = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    ligne = f"{horodatage} | {projet} | {statut} | {texte}"
+
+    cfg.fichier_log.parent.mkdir(parents=True, exist_ok=True)
+    lignes = []
+    if cfg.fichier_log.exists():
+        lignes = cfg.fichier_log.read_text(encoding="utf-8").splitlines()
+    lignes.append(ligne)
+    if len(lignes) > cfg.max_log_lines:
+        lignes = lignes[-cfg.max_log_lines:]
+    cfg.fichier_log.write_text("\n".join(lignes) + "\n", encoding="utf-8")
+
+
+# ─── Rejet ──────────────────────────────────────────────────────────────────
+
+def _slug(texte: str, longueur_max: int = 40) -> str:
+    normalise = _sans_accents(texte or "").lower()
+    slug = re.sub(r"[^a-z0-9]+", "-", normalise).strip("-")
+    return slug[:longueur_max] or "erreur"
+
+
+def _rejeter(cfg: ConfigInbox, chemin: Path, titre: str, projet: str, detail: str) -> None:
+    cfg.rejected_dir.mkdir(parents=True, exist_ok=True)
+    nom_cible = f"{chemin.stem}__REJETE-{_slug(detail)}{chemin.suffix}"
+    cible = cfg.rejected_dir / nom_cible
+    i = 1
+    while cible.exists():
+        cible = cfg.rejected_dir / f"{chemin.stem}__REJETE-{_slug(detail)}-{i}{chemin.suffix}"
+        i += 1
+    try:
+        chemin.rename(cible)
+    except OSError as e:
+        log.error(f"Impossible de déplacer {chemin.name} vers rejected/ : {e}")
+        return
+
+    texte = f"{titre} — {detail}" if titre else detail
+    _ecrire_ligne_log(cfg, projet or "(unknown)", "REJECTED", texte)
+    log.warning(f"Rejeté : {chemin.name} → {cible.name} ({detail})")
+
+
+# ─── Création de l'issue via gh (miroir de app/issues.py::envoyer) ─────────
+
+def _creer_issue(cfg: ConfigInbox, cfg_projet, titre: str, labels: str, body: str):
+    # GH_TOKEN n'est surchargé que si explicitement fourni dans le .conf — sinon
+    # `gh` utilise son authentification habituelle (session `gh auth login` ou
+    # GH_TOKEN déjà exporté dans l'environnement du process, comme new_issue.py).
+    env = dict(os.environ, GH_TOKEN=cfg.gh_token) if cfg.gh_token else None
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".md", delete=False, encoding="utf-8") as f:
+        f.write(body)
+        chemin_body = f.name
+    try:
+        res = subprocess.run(
+            ["gh", "issue", "create",
+             "--repo",  cfg_projet.depot,
+             "--title", titre,
+             "--label", labels,
+             "--body-file", chemin_body],
+            capture_output=True, text=True, timeout=30, env=env,
+        )
+        if res.returncode == 0:
+            return True, res.stdout.strip()
+        return False, res.stderr.strip() or "erreur inconnue de gh."
+    except subprocess.TimeoutExpired:
+        return False, "timeout (gh n'a pas répondu en 30s)."
+    except FileNotFoundError:
+        return False, "gh introuvable dans le PATH."
+    except Exception as e:
+        return False, str(e)
+    finally:
+        Path(chemin_body).unlink(missing_ok=True)
+
+
+# ─── Traitement d'un fichier ────────────────────────────────────────────────
+
+def _fichier_pret(chemin: Path) -> bool:
+    """Faux si le fichier a été modifié il y a moins d'1s (encore en cours
+    d'écriture) — repris au cycle de polling suivant."""
+    try:
+        return (time.time() - chemin.stat().st_mtime) >= 1.0
+    except OSError:
+        return False
+
+
+def traiter_fichier(cfg: ConfigInbox, chemin: Path) -> None:
+    try:
+        contenu = chemin.read_text(encoding="utf-8")
+    except OSError as e:
+        _rejeter(cfg, chemin, "", "", f"lecture impossible : {e}")
+        return
+
+    champs = extraire_champs(contenu)
+    ok, detail, cfg_projet = valider(champs)
+    if not ok:
+        _rejeter(cfg, chemin, champs["titre"], champs["projet"], detail)
+        return
+
+    labels = construire_labels(champs)
+    body = construire_body(champs, cfg_projet)
+    succes, resultat = _creer_issue(cfg, cfg_projet, champs["titre"], labels, body)
+    if not succes:
+        _rejeter(cfg, chemin, champs["titre"], champs["projet"],
+                  f"gh issue create a échoué : {resultat}")
+        return
+
+    try:
+        chemin.unlink()
+    except OSError as e:
+        log.warning(f"Issue créée ({resultat}) mais suppression de {chemin.name} échouée : {e}")
+
+    _ecrire_ligne_log(cfg, champs["projet"], "OK", champs["titre"])
+    log.info(f"Créée : {chemin.name} → {resultat}")
+
+
+def traiter_dossier(cfg: ConfigInbox) -> None:
+    if not cfg.inbox_dir.is_dir():
+        return
+    for chemin in sorted(cfg.inbox_dir.glob("*.txt")):
+        if not chemin.is_file() or not _fichier_pret(chemin):
+            continue
+        try:
+            traiter_fichier(cfg, chemin)
+        except Exception as e:
+            log.error(f"Erreur inattendue en traitant {chemin.name} : {e}")
+
+
+# ─── Boucle principale ──────────────────────────────────────────────────────
+
+def configurer_logs() -> None:
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(message)s",
+        handlers=[logging.StreamHandler(sys.stdout)],
+    )
+
+
+def boucle(cfg: ConfigInbox, once: bool = False) -> None:
+    cfg.inbox_dir.mkdir(parents=True, exist_ok=True)
+    cfg.rejected_dir.mkdir(parents=True, exist_ok=True)
+    log.info(f"watcher_issues_inbox démarré — {cfg.inbox_dir} "
+              f"(intervalle {cfg.polling_interval}s, log max {cfg.max_log_lines} lignes)")
+    while True:
+        traiter_dossier(cfg)
+        if once:
+            return
+        time.sleep(cfg.polling_interval)
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Watcher issues_inbox — bridge_agent (issue #483)")
+    parser.add_argument("--config", default=str(DEFAUT_CHEMIN_CONFIG),
+                        help="Chemin du .conf (optionnel — défauts sensés sinon)")
+    parser.add_argument("--once", action="store_true",
+                        help="Un seul cycle de traitement puis quitte (tests)")
+    args = parser.parse_args()
+
+    configurer_logs()
+    cfg = charger_config_inbox(Path(args.config))
+    boucle(cfg, once=args.once)
+
+
+if __name__ == "__main__":
+    main()

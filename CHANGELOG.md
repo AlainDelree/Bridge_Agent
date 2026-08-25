@@ -9,6 +9,51 @@ milliers de caractères sur une seule ligne logique, coûteux à relire et
 
 Convention d'ajout : voir §10 de `BRIDGE_AGENT_DOC.md`.
 
+## 25 août 2026 — issue #483
+
+Watcher `issues_inbox` centralisé + onglet « Résultats inbox » : nouveau
+flux de création d'issues sans passage par le formulaire web. La
+volumétrie d'issues créées à la main (copier-coller depuis Claude Chat
+dans `new_issue.py`) montait et demandait des allers-retours ; ce watcher
+automatise le dépôt → création → nettoyage.
+- `scripts/watcher_issues_inbox.py` (nouveau) : scrute
+  `~/Bridge_Agent/issues_inbox/` en continu (polling, 5s par défaut),
+  parse l'en-tête de chaque fichier `.txt` (`PROJET`, `TIMEOUT`, `MODELE`,
+  `MODE`, `LABELS`, `#Titre:` — mêmes regex que `static/js/app.js`), valide
+  (`PROJET` existe dans `configs/`, titre non vide, `MODELE`/`TIMEOUT`
+  bien formés si fournis), crée l'issue via `gh issue create` (même
+  format de body/labels que `app/issues.py`), supprime le fichier traité.
+  Fichier invalide ou échec de `gh` → déplacé vers `issues_inbox/rejected/`
+  (suffixe `__REJETE-<motif>`), jamais retraité automatiquement. Ignore un
+  fichier modifié il y a moins d'1s (protection contre une lecture en
+  cours d'écriture). Dossiers `issues_inbox/` et `issues_inbox/rejected/`
+  créés automatiquement au premier lancement. Config optionnelle
+  `configs/watcher_issues_inbox.conf` (non créée par CCL — garde-fou §11 :
+  CCL ne modifie/crée jamais `configs/*.conf`, à créer à la main par Alain
+  s'il veut surcharger les défauts).
+- Journalisation : `logs/issues_inbox.log`, une ligne par traitement
+  (`<horodatage> | <projet> | OK|REJECTED | <titre>`), rotation par
+  **nombre de lignes** (défaut 50 — distincte de la rotation par taille
+  des autres watchers).
+- `app/issues_inbox.py` (nouveau) : route `GET /issues-inbox/etat`, pure
+  lecture disque (aucun appel `gh`) — renvoie l'état de `rejected/`
+  (déclenche l'alarme) et les dernières lignes du log (historique
+  informatif, sans effet sur l'alarme).
+- `templates/index.html` / `static/js/app.js` / `static/css/style.css` :
+  nouvel onglet « Résultats inbox », badge 🚨 clignotant sur l'onglet
+  piloté **uniquement** par la présence de fichiers dans
+  `issues_inbox/rejected/` (jamais par un parsing de log), tableau des
+  fichiers rejetés (nom + date), historique de log affiché à titre
+  informatif, rafraîchissement en polling continu (7s, indépendant de
+  l'onglet actif) + bouton « Rafraîchir ».
+- `.gitignore` : ajout de `issues_inbox/` (état transitoire, pas du code).
+- `BRIDGE_AGENT_DOC.md` : nouveau §20 « Watcher `issues_inbox` centralisé »
+  (structure disque, format de fichier, validation, journalisation,
+  concurrence, config, onglet web, workflow utilisateur final) ; §10
+  (structure du dépôt) complété avec `app/issues_inbox.py` et
+  `issues_inbox/`. Pied de page mis à jour (glissement des trois dernières
+  entrées d'un cran, la plus ancienne — #435 — sort du pied de page).
+
 ## 13 août 2026 — issue #443
 
 DOC — extension de la convention de présentation des issues (issue #153)
