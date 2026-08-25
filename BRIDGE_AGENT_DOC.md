@@ -2433,6 +2433,36 @@ nouvelle durée : `demarrer_watcher_inbox()` arrête TOUJOURS l'ancien process
 (`SIGTERM`) avant de relancer — pas de refus silencieux, la nouvelle durée
 remplace systématiquement l'ancienne, quel que soit l'état courant.
 
+### 20.11 Démarrage auto du watcher CCL du projet après création d'issue (issue #486)
+
+Pour un vrai fonctionnement « pool d'impression » (dépose et oublie), le
+watcher spool ne se contente pas de créer l'issue : dans `traiter_fichier()`,
+juste après suppression du fichier traité et avant la ligne de log `OK`, il
+vérifie si le watcher CCL du projet concerné (`watcher.py --config
+configs/<projet>.conf`) est déjà actif, et le démarre sinon — faute de quoi
+l'issue resterait en attente indéfiniment tant qu'Alain ne lance pas ce
+watcher à la main depuis le panneau Infrastructure.
+
+Réutilise directement `demarrer_watcher(cfg_projet, forcer=False)` de
+`app/watchers.py` (import direct, même principe que l'import déjà fait de
+`watcher.py::charger_config/lire_conf/est_titre_chef`) — pas de logique
+dupliquée :
+
+- **Watcher déjà actif** : `demarrer_watcher(forcer=False)` ne fait rien
+  (pas de `SIGTERM`, pas de redémarrage) — contrairement au comportement du
+  watcher spool lui-même sur relance (§20.10), il ne faut surtout pas
+  interrompre un traitement d'issue potentiellement en cours sur ce projet.
+- **Watcher inactif** : démarré avec les mêmes modalités que le bouton
+  « ▶ Lancer » du panneau Infrastructure (`subprocess.Popen` +
+  `logs/watcher-<projet>.pid`).
+
+Traçabilité : si le watcher a dû être démarré, la ligne `OK` de
+`logs/issues_inbox.log` (§20.5) est complétée par le suffixe
+`— watcher CCL démarré (pid <pid>)` ; sinon la ligne reste inchangée (watcher
+déjà actif). Un échec de démarrage (exception de `demarrer_watcher`) est
+seulement journalisé en `WARNING` du logger du watcher — n'empêche jamais la
+création de l'issue elle-même, déjà actée à ce stade.
+
 **Arrêt manuel.** `POST /issues-inbox/arreter-watcher` envoie un `SIGTERM`
 et nettoie PID + échéance. Contrairement aux watchers CCL de projet (pas de
 bouton « Arrêter » dans `#pl-zone-monitoring`, seulement Lancer/Relancer),

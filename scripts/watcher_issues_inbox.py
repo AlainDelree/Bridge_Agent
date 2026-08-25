@@ -13,6 +13,11 @@ après création réussie ; un fichier invalide (PROJET inconnu, titre vide,
 extension différente de .txt, etc.) est déplacé vers issues_inbox/rejected/
 avec le détail de l'erreur en suffixe de nom.
 
+Après création réussie de l'issue, le watcher CCL du projet concerné
+(`watcher.py --config configs/<projet>.conf`) est démarré automatiquement
+s'il n'est pas déjà actif (issue #486, mode « dépose et oublie ») — via
+`demarrer_watcher(forcer=False)` de app/watchers.py, réutilisée telle quelle.
+
 Usage :
     python3 scripts/watcher_issues_inbox.py
     python3 scripts/watcher_issues_inbox.py --config configs/watcher_issues_inbox.conf
@@ -44,6 +49,7 @@ DOSSIER_SCRIPT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(DOSSIER_SCRIPT))
 
 from watcher import charger_config, lire_conf, est_titre_chef  # noqa: E402
+from app.watchers import demarrer_watcher  # noqa: E402 (issue #486)
 
 log = logging.getLogger("watcher_issues_inbox")
 
@@ -404,7 +410,23 @@ def traiter_fichier(cfg: ConfigInbox, chemin: Path) -> None:
     except OSError as e:
         log.warning(f"Issue créée ({resultat}) mais suppression de {chemin.name} échouée : {e}")
 
-    _ecrire_ligne_log(cfg, champs["projet"], "OK", champs["titre"])
+    # Démarrage auto du watcher CCL du projet concerné (issue #486) — sans quoi
+    # l'issue fraîchement créée resterait en attente indéfiniment si Alain
+    # n'a pas déjà lancé ce watcher depuis le panneau Infrastructure. Réutilise
+    # demarrer_watcher(forcer=False) de app/watchers.py (mêmes modalités que le
+    # bouton « Lancer ») : ne fait rien si le watcher tourne déjà (pas question
+    # d'interrompre un traitement d'issue potentiellement en cours sur ce
+    # projet), le démarre sinon.
+    texte_log = champs["titre"]
+    try:
+        demarre, pid = demarrer_watcher(cfg_projet, forcer=False)
+        if demarre:
+            texte_log += f" — watcher CCL démarré (pid {pid})"
+            log.info(f"Watcher CCL démarré pour le projet « {champs['projet']} » (pid {pid}).")
+    except Exception as e:
+        log.warning(f"Démarrage auto du watcher CCL « {champs['projet']} » échoué : {e}")
+
+    _ecrire_ligne_log(cfg, champs["projet"], "OK", texte_log)
     log.info(f"Créée : {chemin.name} → {resultat}")
 
 
