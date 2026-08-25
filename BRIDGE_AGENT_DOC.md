@@ -2394,9 +2394,77 @@ aucun appel `gh`, aucune dépendance à un watcher en cours d'exécution) :
 4. Un fichier rejeté reste visible dans `issues_inbox/rejected/` — alarme
    allumée tant qu'il n'est pas corrigé/supprimé à la main.
 
+### 20.10 Pilotage du watcher depuis le panneau Infrastructure (issue #485)
+
+Jusqu'ici, le watcher devait être lancé manuellement en CLI, sans suivi
+depuis l'interface. Il est maintenant pilotable comme les watchers de
+projet (§ « Cycle de vie des watchers », `app/watchers.py`), mais avec sa
+propre logique dans `app/issues_inbox.py` puisqu'il n'y a **qu'un seul**
+watcher spool (pas de paramètre projet).
+
+**Fichier PID** : `logs/watcher-issues_inbox.pid`, même convention que les
+watchers de projet (`logs/watcher-<nom>.pid`). Écrit par le lanceur
+(`demarrer_watcher_inbox()`) au démarrage — le script
+`scripts/watcher_issues_inbox.py` ne l'écrit jamais lui-même, seulement à sa
+propre auto-extinction où il le supprime (avec le fichier d'échéance) pour
+ne jamais laisser un PID orphelin visible dans l'interface.
+
+**Durée configurable au démarrage.** Contrairement aux watchers de projet
+(`DELAI_INACTIVITE_MIN` dans le `.conf`, § « Cycle de vie des watchers »),
+le watcher spool tourne par défaut **indéfiniment** — il n'y a pas de notion
+d'« inactivité » pertinente pour un dossier de dépôt. Au clic sur
+« ▶ Démarrer », un modal (`#modal-duree-watcher-inbox`) propose trois choix
+par case à cocher : Indéfiniment (défaut), 30 min, ou un nombre de minutes
+libre. Le choix est transmis à `POST /issues-inbox/demarrer-watcher`
+(`{duree_min: N}`, 0/absent = indéfini), qui lance le script avec l'argument
+CLI `--duree-min <N>`. L'**auto-extinction est interne au script** (fonction
+`boucle()`), sur le même principe que l'extinction pour inactivité de
+`watcher.py` (horloge **monotone**, insensible à un changement d'heure
+système) : à l'écoulement du délai, arrêt propre (`sys.exit(0)`) après
+suppression de son propre fichier PID et de son fichier d'échéance.
+
+Un fichier d'échéance séparé, **`logs/watcher-issues_inbox.echeance`**
+(epoch, écrit par `demarrer_watcher_inbox()` si une durée a été choisie),
+permet à l'interface d'afficher le temps restant sans dépendre de l'horloge
+interne du process watcher, qui tourne dans un process séparé de Flask.
+
+**Si le watcher tourne déjà** et qu'on clique « ↺ Relancer » avec une
+nouvelle durée : `demarrer_watcher_inbox()` arrête TOUJOURS l'ancien process
+(`SIGTERM`) avant de relancer — pas de refus silencieux, la nouvelle durée
+remplace systématiquement l'ancienne, quel que soit l'état courant.
+
+**Arrêt manuel.** `POST /issues-inbox/arreter-watcher` envoie un `SIGTERM`
+et nettoie PID + échéance. Contrairement aux watchers CCL de projet (pas de
+bouton « Arrêter » dans `#pl-zone-monitoring`, seulement Lancer/Relancer),
+le watcher spool expose un bouton « ⏹ Arrêter » explicite dans le panneau :
+son comportement par défaut étant « Indéfiniment », il doit pouvoir être
+coupé manuellement à tout moment.
+
+**Interface — zone `#pl-zone-extras`.** Cette zone du panneau flottant
+« Infrastructure » (onglet Résultats), réservée aux futurs boutons depuis
+l'issue #380 et restée vide jusqu'ici, est occupée par
+`rendrePanneauLateralExtras()` (`static/js/app.js`) : une ligne d'état
+🟢/⚫ « Watcher spool (issues_inbox) », alimentée par le même
+`GET /issues-inbox/etat` que l'onglet « Résultats inbox » (étendu avec
+`watcher_actif`/`watcher_pid`/`watcher_restant_s`). Watcher actif : temps
+restant avant extinction (ou « indéfini »), boutons « ↺ Relancer » et
+« ⏹ Arrêter ». Watcher inactif : bouton « ▶ Démarrer ». Les deux boutons de
+démarrage ouvrent le modal de choix de durée. Rafraîchie sur le même cycle
+que le reste du panneau (30 s, `rafraichirPanneauLateralResultats`).
+
 ---
 
-*Dernière mise à jour : 25 août 2026 — §10/§20 « Watcher `issues_inbox`
+*Dernière mise à jour : 25 août 2026 — §20.10 « Pilotage du watcher depuis
+le panneau Infrastructure » (issue #485) : le watcher spool `issues_inbox`
+devient pilotable (démarrer avec durée, relancer, arrêter) depuis
+`#pl-zone-extras` (zone réservée depuis l'issue #380), au lieu d'un
+lancement CLI manuel non suivi. `app/issues_inbox.py` gère le fichier PID
+`logs/watcher-issues_inbox.pid` (même convention que `app/watchers.py`),
+`demarrer_watcher_inbox`/`arreter_watcher_inbox` (routes
+`/issues-inbox/demarrer-watcher` et `/issues-inbox/arreter-watcher`) ;
+`scripts/watcher_issues_inbox.py` reçoit `--duree-min` et s'auto-éteint en
+interne à l'échéance (horloge monotone, nettoyage de son propre PID).
+Précédemment — 25 août 2026 — §10/§20 « Watcher `issues_inbox`
 centralisé » (issue #483) : nouveau flux de création d'issues sans passage
 par le formulaire web — `scripts/watcher_issues_inbox.py` scrute
 `issues_inbox/`, valide et crée via `gh issue create`, journalise dans
