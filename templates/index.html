@@ -275,9 +275,9 @@
          - #pl-zone-monitoring : monitoring de l'infrastructure, TOUJOURS
            visible, une ligne par watcher CCL/service CCW (VM CCW, watchers
            CCL, services CCW).
-         - #pl-zone-extras : zone réservée aux futurs boutons (issue #380) —
-           volontairement vide, prête à accueillir de nouveaux boutons sans
-           restructurer le panneau. NE PAS remplir dans cette issue.
+         - #pl-zone-extras : zone réservée aux futurs boutons (issue #380),
+           occupée depuis l'issue #485 par le contrôle du watcher spool
+           (issues_inbox) — rendrePanneauLateralExtras() (static/js/app.js).
          - #pl-zone-actions : actions contextuelles sur l'issue sélectionnée,
            vide (donc invisible) tant qu'aucune ligne n'est sélectionnée. -->
     <div id="panneau-lateral-resultats" class="panneau-lateral">
@@ -647,6 +647,35 @@
     <div id="modal-interrompre-rappel" class="message avertissement" style="margin-bottom:14px"></div>
     <div class="modal-boutons">
       <button id="btn-fermer-interrompre" onclick="fermerModalInterrompre()">OK</button>
+    </div>
+  </div>
+</div>
+
+<!-- ─── Modal « Durée du watcher spool » (issue #485) ─────────────────────────
+     Ouverte au clic sur Démarrer/Relancer dans #pl-zone-extras
+     (sidebarOuvrirDureeWatcherInbox) : choix par case à cocher (radio) de la
+     durée avant auto-extinction du watcher — Indéfiniment (défaut),
+     30 min, ou un nombre de minutes libre. Transmis à POST
+     /issues-inbox/demarrer-watcher (sidebarConfirmerDureeWatcherInbox). -->
+<div id="modal-duree-watcher-inbox" class="modal-overlay">
+  <div class="modal-carte" style="max-width:420px">
+    <div class="modal-titre" id="dwi-titre">▶ Démarrer le watcher spool (issues_inbox)</div>
+    <label style="display:block;margin-bottom:10px;font-size:13px;color:#333">
+      <input type="radio" name="dwi-choix" id="dwi-indefini" value="indefini" checked>
+      Indéfiniment
+    </label>
+    <label style="display:block;margin-bottom:10px;font-size:13px;color:#333">
+      <input type="radio" name="dwi-choix" value="30">
+      30 min
+    </label>
+    <label style="display:block;margin-bottom:14px;font-size:13px;color:#333">
+      <input type="radio" name="dwi-choix" value="perso">
+      Choix en minutes :
+      <input type="number" id="dwi-minutes" min="1" step="1" style="width:70px;margin-left:6px">
+    </label>
+    <div class="modal-boutons">
+      <button id="dwi-annuler" onclick="sidebarFermerDureeWatcherInbox()">Annuler</button>
+      <button class="primaire" id="dwi-confirmer" onclick="sidebarConfirmerDureeWatcherInbox(this)">Confirmer</button>
     </div>
   </div>
 </div>

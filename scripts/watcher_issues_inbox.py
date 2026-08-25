@@ -51,6 +51,15 @@ log = logging.getLogger("watcher_issues_inbox")
 
 DEFAUT_CHEMIN_CONFIG = DOSSIER_SCRIPT / "configs" / "watcher_issues_inbox.conf"
 
+# Fichiers PID/échéance — mêmes chemins que app/issues_inbox.py::CHEMIN_PID /
+# CHEMIN_ECHEANCE (issue #485). Ce script ne les CRÉE jamais lui-même (c'est
+# le lanceur, app.issues_inbox.demarrer_watcher_inbox(), qui écrit le PID au
+# lancement — même logique que app/watchers.py::demarrer_watcher) ; il se
+# contente de les supprimer à sa propre auto-extinction, pour que l'interface
+# ne montre pas un PID orphelin.
+CHEMIN_PID      = DOSSIER_SCRIPT / "logs" / "watcher-issues_inbox.pid"
+CHEMIN_ECHEANCE = DOSSIER_SCRIPT / "logs" / "watcher-issues_inbox.echeance"
+
 
 @dataclass
 class ConfigInbox:
@@ -423,15 +432,35 @@ def configurer_logs() -> None:
     )
 
 
-def boucle(cfg: ConfigInbox, once: bool = False) -> None:
+def boucle(cfg: ConfigInbox, once: bool = False, duree_min: int = 0) -> None:
     cfg.inbox_dir.mkdir(parents=True, exist_ok=True)
     cfg.rejected_dir.mkdir(parents=True, exist_ok=True)
     log.info(f"watcher_issues_inbox démarré — {cfg.inbox_dir} "
               f"(intervalle {cfg.polling_interval}s, log max {cfg.max_log_lines} lignes)")
+
+    # Auto-extinction interne sur une durée fixe (issue #485), même principe
+    # que l'auto-extinction par inactivité de watcher.py (§20 du DOC) : à
+    # l'écoulement du délai, arrêt propre (sys.exit(0)) et suppression du
+    # fichier PID (+ échéance) pour que l'interface ne montre pas un PID
+    # orphelin. Horloge MONOTONE (comme watcher.py) : insensible à un
+    # changement d'heure système pendant que le watcher tourne.
+    if duree_min > 0:
+        log.info(f"Auto-extinction activée : arrêt après {duree_min} min (issue #485).")
+        echeance_monotone = time.monotonic() + duree_min * 60
+    else:
+        log.info("Auto-extinction désactivée (durée non fixée) — watcher permanent.")
+        echeance_monotone = None
+
     while True:
         traiter_dossier(cfg)
         if once:
             return
+        if echeance_monotone is not None and time.monotonic() >= echeance_monotone:
+            log.info(f"⏻ Auto-extinction : durée de {duree_min} min écoulée — "
+                      f"arrêt propre du watcher.")
+            CHEMIN_PID.unlink(missing_ok=True)
+            CHEMIN_ECHEANCE.unlink(missing_ok=True)
+            sys.exit(0)
         time.sleep(cfg.polling_interval)
 
 
@@ -441,11 +470,13 @@ def main() -> None:
                         help="Chemin du .conf (optionnel — défauts sensés sinon)")
     parser.add_argument("--once", action="store_true",
                         help="Un seul cycle de traitement puis quitte (tests)")
+    parser.add_argument("--duree-min", type=int, default=0,
+                        help="Auto-extinction après ce délai en minutes (0/absent = désactivé, tourne indéfiniment ; issue #485)")
     args = parser.parse_args()
 
     configurer_logs()
     cfg = charger_config_inbox(Path(args.config))
-    boucle(cfg, once=args.once)
+    boucle(cfg, once=args.once, duree_min=args.duree_min)
 
 
 if __name__ == "__main__":

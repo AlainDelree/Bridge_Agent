@@ -1885,8 +1885,9 @@ function arreterStreamFinIssue() {
 //    rendue, sélection ou non — pour garder l'infra sous les yeux en
 //    travaillant sur une issue (issue #377), une ligne par watcher, noir et
 //    blanc, bouton individuel Lancer/Relancer (issue #380) ;
-//  - zone médiane (#pl-zone-extras) : réservée aux futurs boutons, vide,
-//    voir templates/index.html (issue #380) ;
+//  - zone médiane (#pl-zone-extras) : réservée aux futurs boutons (issue
+//    #380), occupée depuis l'issue #485 par le contrôle du watcher spool
+//    (issues_inbox) — rendrePanneauLateralExtras(), fetch /issues-inbox/etat ;
 //  - zone basse (#pl-zone-actions) : actions contextuelles pour le projet/
 //    l'issue sélectionnés (rendrePanneauLateralActions), sans fetch réseau
 //    (données déjà en mémoire : listeIssuesResultats + ccwProjetsConnus) —
@@ -1939,6 +1940,7 @@ async function rafraichirPanneauLateralResultats() {
   // rafraîchit toujours, les actions contextuelles se (re)rendent — ou se
   // vident — selon la sélection courante, sans attendre le fetch du monitoring.
   await rendrePanneauLateralMonitoring();
+  await rendrePanneauLateralExtras();
   rendrePanneauLateralActions();
 }
 
@@ -2094,6 +2096,120 @@ async function rendrePanneauLateralMonitoring() {
         + new Date().toLocaleTimeString('fr-FR', {hour: '2-digit', minute: '2-digit', second: '2-digit'})
         + '</div>';
   zone.innerHTML = html;
+}
+
+// Zone réservée #pl-zone-extras (issue #380), occupée depuis l'issue #485 par
+// le contrôle du watcher spool issues_inbox (scripts/watcher_issues_inbox.py)
+// — un seul watcher, pas de paramètre projet, contrairement aux watchers CCL
+// de #pl-zone-monitoring. Fetch dédié /issues-inbox/etat (même route que
+// l'onglet « Résultats inbox », étendue par l'issue #485 avec watcher_actif/
+// watcher_pid/watcher_restant_s). Contrairement aux watchers CCL, un bouton
+// « Arrêter » explicite est affiché : le watcher spool n'a par défaut aucune
+// auto-extinction (« Indéfiniment »), il doit pouvoir être coupé à tout
+// moment.
+async function rendrePanneauLateralExtras() {
+  const zone = document.getElementById('pl-zone-extras');
+  if (!zone) return;
+  let etat = null;
+  try {
+    const rep = await fetch('/issues-inbox/etat');
+    etat = await rep.json();
+  } catch(e) { etat = null; }
+  if (!etat) { zone.innerHTML = ''; return; }
+
+  const actif = !!etat.watcher_actif;
+  let html = '<div class="pl-resume-titre">Watcher spool</div>';
+  html += '<div class="pl-ligne"><span class="pl-ligne-libelle">'
+        + (actif ? '🟢' : '⚫') + ' Watcher spool (issues_inbox)</span>'
+        + '<button class="pl-btn-mini" onclick="sidebarOuvrirDureeWatcherInbox()">'
+        + (actif ? '↺ Relancer' : '▶ Démarrer') + '</button>'
+        + '</div>';
+  if (actif) {
+    const restant = (etat.watcher_restant_s === null || etat.watcher_restant_s === undefined)
+      ? 'indéfini' : formaterDureeRestante(etat.watcher_restant_s);
+    html += '<div class="pl-sous-projet">Extinction : ' + restant + '</div>';
+    html += '<div class="pl-boutons-ccl">'
+          + '<button class="pl-btn-vm" onclick="sidebarArreterWatcherInbox(this)">⏹ Arrêter</button>'
+          + '</div>';
+  }
+  zone.innerHTML = html;
+}
+
+// Formate un nombre de secondes restant avant auto-extinction en « Xh0Y » /
+// « Y min » (arrondi à la minute supérieure — jamais « 0 min » tant qu'il
+// reste du temps, cohérent avec un compte à rebours affiché toutes les 30s).
+function formaterDureeRestante(secondes) {
+  const totalMin = Math.max(1, Math.ceil(secondes / 60));
+  const h = Math.floor(totalMin / 60);
+  const m = totalMin % 60;
+  return h > 0 ? (h + 'h' + String(m).padStart(2, '0')) : (m + ' min');
+}
+
+// Ouvre le choix de durée (modal-duree-watcher-inbox, issue #485) avant tout
+// démarrage/relance du watcher spool — remis à « Indéfiniment » à chaque
+// ouverture, pour ne jamais reproposer silencieusement un choix précédent.
+function sidebarOuvrirDureeWatcherInbox() {
+  const overlay = document.getElementById('modal-duree-watcher-inbox');
+  if (!overlay) return;
+  const radioIndef = document.getElementById('dwi-indefini');
+  if (radioIndef) radioIndef.checked = true;
+  const champMin = document.getElementById('dwi-minutes');
+  if (champMin) champMin.value = '';
+  overlay.classList.add('actif');
+}
+
+function sidebarFermerDureeWatcherInbox() {
+  const overlay = document.getElementById('modal-duree-watcher-inbox');
+  if (overlay) overlay.classList.remove('actif');
+}
+
+// Lit le choix de durée du modal puis démarre (ou relance) le watcher spool
+// via POST /issues-inbox/demarrer-watcher — le serveur redémarre TOUJOURS s'il
+// tourne déjà (issue #485 : pas de refus silencieux, la nouvelle durée
+// remplace l'ancienne, quel que soit l'état courant).
+async function sidebarConfirmerDureeWatcherInbox(btn) {
+  const choix = document.querySelector('input[name="dwi-choix"]:checked');
+  let dureeMin = 0;
+  if (choix && choix.value === '30') {
+    dureeMin = 30;
+  } else if (choix && choix.value === 'perso') {
+    const champ = document.getElementById('dwi-minutes');
+    dureeMin = parseInt(champ ? champ.value : '', 10);
+    if (!Number.isFinite(dureeMin) || dureeMin <= 0) {
+      alert('Indiquez un nombre de minutes valide (> 0).');
+      return;
+    }
+  }
+  const label = btn ? btn.textContent : null;
+  if (btn) { btn.disabled = true; btn.textContent = 'Démarrage…'; }
+  try {
+    await fetch('/issues-inbox/demarrer-watcher', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({duree_min: dureeMin})
+    });
+  } catch(e) {
+    alert('Erreur réseau : ' + e.message);
+  }
+  if (btn) { btn.disabled = false; if (label !== null) btn.textContent = label; }
+  sidebarFermerDureeWatcherInbox();
+  await rafraichirPanneauLateralResultats();
+}
+
+// Arrête le watcher spool (bouton explicite, issue #485 — à la différence des
+// watchers CCL de projet, ce watcher n'a par défaut aucune auto-extinction,
+// il doit donc pouvoir être coupé manuellement à tout moment).
+async function sidebarArreterWatcherInbox(btn) {
+  if (!confirm('Arrêter le watcher spool (issues_inbox) ?')) return;
+  const label = btn ? btn.textContent : null;
+  if (btn) { btn.disabled = true; btn.textContent = 'Arrêt…'; }
+  try {
+    await fetch('/issues-inbox/arreter-watcher', {method: 'POST'});
+  } catch(e) {
+    alert('Erreur réseau : ' + e.message);
+  }
+  if (btn) { btn.disabled = false; if (label !== null) btn.textContent = label; }
+  await rafraichirPanneauLateralResultats();
 }
 
 // Actions contextuelles (issue #375, zone basse fixe depuis #377) : projet/

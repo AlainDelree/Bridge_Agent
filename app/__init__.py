@@ -78,7 +78,8 @@ def _enregistrer_routes(app: Flask) -> None:
     from app.interruption import route_interrompre, route_relancer
     from app.cycle_vie import heartbeat, events, quitter
     from app.fin_issue import notifier_fin_issue, stream_fin_issue
-    from app.issues_inbox import etat_inbox
+    from app.issues_inbox import (etat_inbox, demarrer_watcher_inbox_route,
+                                  arreter_watcher_inbox_route)
     from app.diag_heartbeat import visibilite as diag_visibilite   # DIAGNOSTIC TEMPORAIRE — issue #157, à retirer
     from app.vues import index
 
@@ -133,4 +134,7 @@ def _enregistrer_routes(app: Flask) -> None:
     app.add_url_rule("/stream", "stream_fin_issue", login_requis(stream_fin_issue))
     # ─── Onglet « Résultats inbox » (issue #483) : état du watcher_issues_inbox ─
     app.add_url_rule("/issues-inbox/etat", "etat_inbox", login_requis(etat_inbox))
+    # ─── Pilotage du watcher spool depuis #pl-zone-extras (issue #485) ────────
+    app.add_url_rule("/issues-inbox/demarrer-watcher", "demarrer_watcher_inbox_route", login_requis(demarrer_watcher_inbox_route), methods=["POST"])
+    app.add_url_rule("/issues-inbox/arreter-watcher", "arreter_watcher_inbox_route", login_requis(arreter_watcher_inbox_route), methods=["POST"])
     app.add_url_rule("/diag-visibilite", "diag_visibilite", diag_visibilite, methods=["POST"])   # DIAGNOSTIC TEMPORAIRE — issue #157, à retirer
