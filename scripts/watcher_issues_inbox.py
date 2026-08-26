@@ -11,7 +11,10 @@ de labels que app/issues.py (construire_body/construire_labels), pour rester
 cohérent avec le flux du formulaire web. Le fichier traité est supprimé
 après création réussie ; un fichier invalide (PROJET inconnu, titre vide,
 extension différente de .txt, etc.) est déplacé vers issues_inbox/rejected/
-avec le détail de l'erreur en suffixe de nom.
+avec le détail de l'erreur en suffixe de nom. Anti-doublon (issue #491) :
+avant création, réutilise app/issues.py::_issue_ouverte_meme_titre() (garde
+du formulaire web, issue #189) pour rejeter un titre déjà porté par une
+issue ouverte du même dépôt.
 
 Après création réussie de l'issue, le watcher CCL du projet concerné
 (`watcher.py --config configs/<projet>.conf`) est démarré automatiquement
@@ -51,6 +54,7 @@ sys.path.insert(0, str(DOSSIER_SCRIPT))
 from watcher import (charger_config, lire_conf, est_titre_chef,  # noqa: E402
                      LABEL_NOTIF_PC, LABEL_NOTIF_GSM, LABEL_NOTIF_TOUS)
 from app.watchers import demarrer_watcher  # noqa: E402 (issue #486)
+from app.issues import _issue_ouverte_meme_titre  # noqa: E402 (issue #491)
 
 log = logging.getLogger("watcher_issues_inbox")
 
@@ -404,6 +408,17 @@ def traiter_fichier(cfg: ConfigInbox, chemin: Path) -> None:
     ok, detail, cfg_projet = valider(champs)
     if not ok:
         _rejeter(cfg, chemin, champs["titre"], champs["projet"], detail)
+        return
+
+    # Anti-doublon (issue #491) : réutilise telle quelle la garde du formulaire
+    # web (_issue_ouverte_meme_titre, app/issues.py — issue #189) pour refuser
+    # une issue dont le titre correspond exactement à une issue déjà OUVERTE du
+    # même dépôt. Best-effort par construction (cf. docstring de la fonction) :
+    # si `gh issue list` échoue, elle retourne None et la création se poursuit.
+    doublon = _issue_ouverte_meme_titre(cfg_projet, champs["titre"])
+    if doublon is not None:
+        _rejeter(cfg, chemin, champs["titre"], champs["projet"],
+                  f"doublon : une issue #{doublon} portant ce titre est déjà ouverte")
         return
 
     labels = construire_labels(champs)

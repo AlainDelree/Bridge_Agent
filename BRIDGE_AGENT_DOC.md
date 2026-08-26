@@ -2343,6 +2343,19 @@ mais non numérique. Un échec de `gh issue create` (réseau, dépôt inaccessib
 timeout de 30s...) provoque le même sort, avec le message d'erreur de `gh`
 en détail.
 
+Anti-doublon (issue #491) : juste après cette validation et avant l'appel à
+`gh issue create`, le watcher réutilise **telle quelle**
+`_issue_ouverte_meme_titre(cfg, titre)` de `app/issues.py` (garde du formulaire
+web, issue #189) pour vérifier qu'aucune issue **OUVERTE** du même dépôt ne
+porte déjà exactement ce titre (comparaison stricte après `strip()`). Si oui →
+rejet (motif : `doublon : une issue #<n> portant ce titre est déjà ouverte`),
+même sort que les autres validations ci-dessus. Comme pour le formulaire,
+c'est du best-effort : un échec de l'appel `gh issue list` sous-jacent
+(réseau, timeout) fait retourner `None` à la fonction, et la création se
+poursuit normalement plutôt que d'être bloquée par une panne de vérification.
+Aucune logique dupliquée entre les deux flux (formulaire web et
+`issues_inbox/`) : une seule fonction, importée par les deux.
+
 ### 20.5 Journalisation (rotation par nombre de lignes)
 
 Chaque traitement (réussi ou rejeté) ajoute une ligne à
@@ -2495,7 +2508,14 @@ que le reste du panneau (30 s, `rafraichirPanneauLateralResultats`).
 
 ---
 
-*Dernière mise à jour : 25 août 2026 — §20.10 « Pilotage du watcher depuis
+*Dernière mise à jour : 26 août 2026 — §20.4 « Anti-doublon » (issue #491) :
+`scripts/watcher_issues_inbox.py::traiter_fichier` réutilise telle quelle
+`_issue_ouverte_meme_titre()` de `app/issues.py` (garde du formulaire web,
+issue #189) pour rejeter un fichier `issues_inbox/` dont le titre correspond
+exactement à une issue déjà ouverte du même dépôt — comble le trou révélé par
+les issues jumelles #486/#487 (25 août 2026), créées et traitées en parallèle
+faute de cette garde côté flux `issues_inbox/`.
+Précédemment — 25 août 2026 — §20.10 « Pilotage du watcher depuis
 le panneau Infrastructure » (issue #485) : le watcher spool `issues_inbox`
 devient pilotable (démarrer avec durée, relancer, arrêter) depuis
 `#pl-zone-extras` (zone réservée depuis l'issue #380), au lieu d'un
