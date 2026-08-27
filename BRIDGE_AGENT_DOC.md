@@ -1968,6 +1968,20 @@ new_issue.py (ThinkPad) → polling gh → détecte la transition → bip/bulle/
   vers lui. **La clé de config reste `SCRIPT_BIP`** (renommer impliquerait de
   modifier les `configs/*.conf` gitignorés, hors périmètre agent — voir §17.3
   pour la marche à suivre manuelle).
+- **Choix du son : `scripts/son_actif.txt` (#498).** Le script contient deux
+  implémentations de bip — `bip_plat()` (440 Hz, sinusoïde plate) et `bip()`
+  (880 Hz, cloche à enveloppe exponentielle décroissante ; voir #437 et sa
+  révocation). Historiquement un projet isolé (ex. ff_galerie) pouvait obtenir
+  la cloche en pointant `SCRIPT_BIP` vers un script dédié
+  (`scripts/bip_Cloche.py`) — lourd, et il aurait fallu éditer `SCRIPT_BIP`
+  dans chaque `.conf` pour changer le son de tous les projets à la fois.
+  `main()` lit désormais un fichier unique `scripts/son_actif.txt` (une seule
+  ligne : `plat` ou `cloche`) au démarrage, **avant** d'appeler `bip_plat()`
+  ou `bip()` — un seul endroit pilote donc le son pour **tous** les projets
+  utilisant le script partagé. Fichier absent, illisible, ou valeur non
+  reconnue → défaut inchangé (`plat`), pour ne rien casser silencieusement.
+  Ce fichier n'est **pas** un `configs/*.conf` : le garde-fou §11 ne s'y
+  applique pas.
 
 **Éviter le spam de vieilles issues au démarrage.** Deux garde-fous combinés :
 - **filtre de récence** : seules les transitions horodatées dans les
