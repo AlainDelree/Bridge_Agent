@@ -81,156 +81,300 @@ et son propre journal de log (`logs/watcher-<nom>.log`).
 
 ---
 
-## 3. Créer une issue — la méthode normale
+## 3. Créer une issue — la méthode normale : watcher `issues_inbox` (issue #483)
 
-Via l'interface web `new_issue.py` (Flask, port 5100) :
+### 3.1 Objectif
 
-```bash
-# Mode local (devant le ThinkPad)
-python3 new_issue.py
+Jusqu'ici, une issue générée par Claude Chat devait être copiée-collée à la
+main dans l'onglet **« Nouvelle issue »** de `new_issue.py` (§20). Le watcher
+**`scripts/watcher_issues_inbox.py`** automatise ce geste : Claude Chat (ou
+Alain en CLI) dépose un fichier `.txt` dans **`~/Bridge_Agent/issues_inbox/`**,
+le watcher le détecte, le valide, crée l'issue via `gh issue create` et
+nettoie — sans repasser par le formulaire web.
 
-# Mode LAN (accès depuis le réseau local, ex. PC fixe Windows) — issue #461
-python3 new_issue.py --lan
-# → écoute sur 0.0.0.0:5100, HTTP, sans tunnel, sans mot de passe
-# → destiné à un LAN de confiance uniquement, rien n'est exposé vers l'extérieur
+### 3.2 Structure disque
 
-# Mode externe (accès depuis téléphone via Cloudflare)
-python3 new_issue.py --externe
-# → tunnel cloudflared automatique sur https://bridge.frederiqueferette.be
-# → login mot de passe requis
-```
+- **`issues_inbox/`** (gitignoré, créé automatiquement au premier lancement
+  du watcher s'il n'existe pas) : fichiers `.txt` en attente, nommage libre
+  (le watcher ne se fie qu'au contenu, pas au nom de fichier).
+- **`issues_inbox/rejected/`** : fichiers rejetés (en-tête malformé, projet
+  inconnu, échec de `gh issue create`...), renommés
+  `<nom-original>__REJETE-<slug-du-motif>.txt` pour que le motif soit visible
+  sans ouvrir le fichier. Laissés en place pour correction manuelle — le
+  watcher ne les retraite jamais automatiquement.
 
-**Lancement supervisé avec log (recommandé, issue #150) :** le wrapper
-`lancer_new_issue.sh` fait exactement la même chose que `python3 new_issue.py`
-(mêmes arguments) mais horodate le démarrage/arrêt/code de sortie et capture
-stdout+stderr dans `logs/new_issue.log` (rotation par taille, comme les
-watchers) — utile pour diagnostiquer un plantage silencieux. La sortie reste
-affichée dans le terminal (`tee`). `python3 new_issue.py` reste valable et
-inchangé.
+### 3.3 Format attendu du fichier
 
-```bash
-./lancer_new_issue.sh                 # mode local, avec log
-./lancer_new_issue.sh --lan           # mode LAN, avec log
-./lancer_new_issue.sh --externe       # mode externe, avec log
-# Après un plantage : voir les dernières lignes de logs/new_issue.log
-```
+Même format qu'une issue produite par Claude Chat pour le formulaire web
+(§20) : un en-tête `| CHAMP | Valeur |` optionnel suivi d'une ligne
+`#Titre: ...` puis le corps. Champs d'en-tête reconnus, tous optionnels sauf
+`PROJET` :
 
-**Bouton « Aperçu de la commande » (issue #285) :** avant d'envoyer, ce
-bouton appelle la route `/apercu` (fonction `apercu()` de `app/issues.py`),
-qui construit — à partir des champs actuellement remplis dans le
-formulaire — la commande `gh issue create` exacte qui serait exécutée
-(dépôt, titre, labels, `--body-file`), suivie en commentaire du corps
-complet qui serait envoyé. Cette commande est renvoyée en JSON et affichée
-telle quelle, en texte brut, dans la zone `zone-apercu` sous le formulaire
-(fonction `afficherApercu()` de `static/js/app.js`). C'est un aperçu pur :
-aucune issue n'est créée, aucune commande n'est réellement exécutée — rien
-n'est modifié tant que le bouton d'envoi n'est pas cliqué séparément.
+| Champ     | Rôle                                                                |
+|-----------|----------------------------------------------------------------------|
+| `PROJET`  | **Obligatoire** — doit correspondre à `configs/<PROJET>.conf`        |
+| `TIMEOUT` | Nombre (secondes, suffixe `s` toléré) — sinon défaut du projet       |
+| `MODELE`  | Doit être une valeur reconnue (`claude-sonnet-5`, etc.) si fourni    |
+| `MODE`    | Reconnu de façon tolérante (§5) — absent/non reconnu → `lecture`     |
+| `LABELS`  | Labels GitHub additionnels, séparés par des virgules                 |
 
-**Format du corps pour copier-coller depuis Claude Chat :**
+Label de notification par défaut (issue #490) : `construire_labels()` pose
+systématiquement **`notif_pc`** (miroir du comportement le plus courant côté
+formulaire web), sauf si `LABELS` demande déjà explicitement `notif_gsm` ou
+`notif_tous` — dans ce cas `notif_pc` n'est pas ajouté en plus, pour ne
+jamais empiler plusieurs labels de notification. Sans ce label, une issue
+créée via `issues_inbox/` ne déclenchait aucun bip à sa clôture
+(`notifications.bip()`, cf. `watcher.py`), contrairement à celles créées via
+le formulaire.
 
-La première ligne du corps peut contenir `#Titre:` — new_issue.py détecte
-ce tag et remplit automatiquement le champ Titre. Un seul copier-coller suffit :
+Ce défaut (issue #492) reproduit le comportement du tout premier usage du
+formulaire web, pas un état courant : côté formulaire, le label de
+notification coché reflète en réalité `localStorage` (clé
+`bridge_notif_pc`, issue #93), mémorisé côté navigateur d'Alain — un état
+que le watcher spool ne peut pas lire (pas de serveur web ni de session
+navigateur impliqués). `construire_labels()` ne cherche donc jamais à
+synchroniser dynamiquement ce choix avec le formulaire ; seul le champ
+`LABELS` explicite du fichier permet de s'écarter du défaut `notif_pc`.
 
-```
-#Titre: Titre court et actionnable
+Le fichier est reparsé avec les mêmes regex que `static/js/app.js` (détection
+de champ d'en-tête à la frappe côté formulaire web), pour ne jamais diverger
+du format déjà produit par Claude Chat.
 
-## Contexte
-Pourquoi cette tâche existe.
+### 3.4 Validation avant création
 
-## Tâche demandée
-Description précise. Indiquer explicitement si LECTURE SEULE.
+Un fichier est rejeté (déplacé vers `rejected/`, jamais créé sur GitHub) si :
+`PROJET` absent/vide, `configs/<PROJET>.conf` introuvable ou invalide,
+`#Titre:` absent/vide, `MODELE` fourni mais non reconnu, ou `TIMEOUT` fourni
+mais non numérique. Un échec de `gh issue create` (réseau, dépôt inaccessible,
+timeout de 30s...) provoque le même sort, avec le message d'erreur de `gh`
+en détail.
 
-## Résultat attendu
-Ce que CCL doit produire ou confirmer.
-```
+Anti-doublon (issue #491) : juste après cette validation et avant l'appel à
+`gh issue create`, le watcher réutilise **telle quelle**
+`_issue_ouverte_meme_titre(cfg, titre)` de `app/issues.py` (garde du formulaire
+web, issue #189) pour vérifier qu'aucune issue **OUVERTE** du même dépôt ne
+porte déjà exactement ce titre (comparaison stricte après `strip()`). Si oui →
+rejet (motif : `doublon : une issue #<n> portant ce titre est déjà ouverte`),
+même sort que les autres validations ci-dessus. Comme pour le formulaire,
+c'est du best-effort : un échec de l'appel `gh issue list` sous-jacent
+(réseau, timeout) fait retourner `None` à la fonction, et la création se
+poursuit normalement plutôt que d'être bloquée par une panne de vérification.
+Aucune logique dupliquée entre les deux flux (formulaire web et
+`issues_inbox/`) : une seule fonction, importée par les deux.
 
-**Champs d'en-tête optionnels reconnus (`PROJET`, `TIMEOUT`, `MODELE`, `MODE`,
-`LABELS`) :**
+### 3.5 Journalisation (rotation par nombre de lignes)
 
-`| MODE | … |` (issue #326) est détecté par `new_issue.py`
-(`detecterModeDansCorps`) exactement comme `TIMEOUT`/`PROJET`/`MODELE` :
-la valeur reconnue pré-sélectionne le radio Mode du formulaire, puis la
-ligne est retirée du corps collé (le tableau d'en-tête final est reconstruit
-depuis le formulaire, pas depuis ce que Claude Chat a tapé). Seules deux
-valeurs sont fonctionnelles à ce jour : `| MODE | lecture |` et
-`| MODE | écriture |` (voir §5 pour le détail des modes). La reconnaissance
-est **tolérante** — insensible à la casse et aux accents, plusieurs libellés
-acceptés par valeur (ex. « écriture »/« ecriture »/« write » ;
-« lecture »/« lecture seule »/« read ») — et le **défaut est LECTURE** si le
-champ `MODE` est absent du corps ou si sa valeur n'est reconnue par aucun
-synonyme : une issue doit toujours déclarer explicitement l'écriture pour
-l'obtenir, jamais par omission.
+Chaque traitement (réussi ou rejeté) ajoute une ligne à
+**`logs/issues_inbox.log`** :
+`<horodatage> | <projet> | OK|REJECTED | <titre> [— <détail si rejet>]`.
+Rotation propre à ce watcher, **distincte** de la rotation par taille des
+autres watchers (§13) : dès que le fichier dépasse **`MAX_LOG_LINES`**
+(défaut 50), les lignes les plus anciennes sont supprimées — pas de fichier
+`.1`/`.2`, un seul fichier plat borné en permanence à 50 lignes.
 
-Au même titre que `PROJET`/`TIMEOUT`/`MODELE`, `new_issue.py` reconnaît aussi
-un champ `| LABELS | … |` dans l'en-tête du corps collé. Sa valeur est une liste de
-labels séparés par des virgules (les espaces superflus autour de chacun sont
-ignorés) qui **s'ajoutent** aux labels standards posés automatiquement (`bridge`,
-`for-linux`, `mode_write` selon le MODE, notifications) — ils ne les remplacent
-pas. Cas d'usage concret : `| LABELS | for-windows |` pour créer, depuis le flux
-web habituel, une issue destinée à l'agent Windows CCW (label `for-windows`, cf.
-§16) sans repasser par `gh issue create` en ligne de commande. Voir §14 pour
-le critère de choix entre cette issue `for-windows` directe et le pattern
-chef → ouvrier. Plusieurs labels
-sont possibles : `| LABELS | for-windows,urgent |`. Aucun contrôle d'existence du
-label n'est fait ici : si le label n'existe pas sur le dépôt, `gh issue create`
-échoue avec un message clair. En mode lot, chaque bloc `#Titre:` peut porter ses
-propres `LABELS`.
+### 3.6 Concurrence
 
-> ⚠️ `for-windows` **retire** `for-linux` (issue #164) : `for-linux` et
-> `for-windows` sont mutuellement exclusifs — une tâche cible CCL *ou* CCW,
-> rarement les deux. Une issue `| LABELS | for-windows |` créée par ce flux ne
-> portera donc *pas* `for-linux` et ne sera vue que par le watcher CCW. Les
-> autres labels standards (`bridge`, `mode_write`, notifications) restent posés
-> normalement, et tout autre label listé dans `LABELS` est ajouté tel quel. Pour
-> forcer les deux watchers sur une même issue (cas rare), ajouter `for-linux`
-> manuellement sur GitHub après création.
+Avant de traiter un fichier `.txt`, le watcher vérifie que sa date de
+dernière modification remonte à **au moins 1 seconde** — sinon il le laisse
+pour le cycle de polling suivant, pour ne jamais lire un fichier encore en
+cours d'écriture (dépôt via un outil qui écrit progressivement).
 
-**Envoi en lot (plusieurs issues d'un seul copier-coller) — issue #135 :**
-coller *plusieurs* blocs `#Titre:` à la suite dans le même corps déclenche
-automatiquement le **mode lot** : le bouton d'envoi devient
-« Envoyer le lot (N issues) ». Chaque bloc va de son `#Titre:` jusqu'au
-`#Titre:` suivant et est traité comme une issue indépendante, avec ses propres
-champs d'en-tête optionnels (`PROJET`, `TIMEOUT`, `MODELE`, `LABELS`) — à défaut,
-les valeurs du formulaire (projet sélectionné, timeout, modèle) s'appliquent en
-repli (le champ `LABELS`, lui, est propre à chaque bloc : sans fallback). Le
-`MODE` (lecture/écriture) et les notifications sont communs à tout le lot :
-contrairement au mono-issue (ci-dessus), où `MODE` est auto-détecté par bloc
-depuis l'en-tête, en mode lot un éventuel `| MODE | … |` dans un bloc est
-ignoré — seul le radio du formulaire, choisi une fois pour tout le lot,
-décide. Les issues partent **en séquence** (une à la fois, jamais en parallèle),
-**sans validation intermédiaire** (aucune modale « issues en attente » ni
-d'incohérence projet) : un bloc dont le `PROJET` diffère du projet sélectionné
-part quand même sur *son* `PROJET` et c'est simplement signalé ; un bloc en
-échec n'interrompt pas le lot. À la fin, un **résumé** liste, pour chaque bloc,
-le titre + le lien de l'issue créée ou le message d'erreur, puis le corps est
-vidé. Un seul bloc `#Titre:` conserve le comportement mono-issue habituel
-(bouton « Envoyer sur <projet> », détection automatique du titre).
+### 3.7 Config (optionnelle)
 
-**Convention de présentation côté Claude Chat (issue #153, étendue par
-#443) :** quand Claude Chat prépare plusieurs issues à la fois pour ce mode
-lot, il les présente toutes à la suite dans **un seul bloc de code** (pas un
-bloc séparé par issue), afin qu'Alain puisse copier l'ensemble en un clic et
-le coller directement dans le champ Corps. Cette règle vaut **aussi pour une
-issue unique** (mode mono-issue) : le corps est lui aussi enveloppé dans un
-bloc de code, afin qu'Alain puisse utiliser le bouton copier du bloc plutôt
-qu'une sélection manuelle.
+`configs/watcher_issues_inbox.conf` — clés `NOM`, `REP_TRAVAIL`,
+`POLLING_INTERVAL` (défaut 5s), `MAX_LOG_LINES` (défaut 50), `INBOX_DIR`,
+`REJECTED_DIR`, `GH_TOKEN`. Toutes optionnelles : le watcher tourne avec des
+défauts sensés (dossiers sous `~/Bridge_Agent`) même sans ce fichier.
+**Ce `.conf` n'est pas créé automatiquement par CCL** — garde-fou §11 (CCL ne
+modifie/crée jamais `configs/*.conf`) : c'est à Alain de le créer à la main
+s'il veut surcharger les défauts.
 
-> ⚠️ **Claude Chat doit toujours inclure** `| PROJET | <nom> |` dans l'en-tête
-> des issues qu'il génère (nom exact du projet cible : `bridge_agent`,
-> `alchess`, `ff_galerie`). Détaillé au §6 « Champs spéciaux ».
+Lancement : `python3 scripts/watcher_issues_inbox.py` (boucle continue),
+`--config <chemin>` pour un `.conf` alternatif, `--once` pour un seul cycle
+(tests). Peut être supervisé en systemd/NSSM comme les autres watchers (§13),
+en dehors du cycle de vie de `watcher.py` (générique, par projet) puisqu'il
+ne traite pas des issues GitHub existantes mais alimente leur création.
 
-> ⚠️ **Exception pour les issues `for-windows` (modèle CCW unifié, §16.3) :**
-> `PROJET` reste toujours `bridge_agent`, même si le build cible un autre projet
-> (ex. `actualise`) — c'est la config du watcher CCW unique, pas le projet
-> réellement construit. Le nom du projet cible s'exprime en texte dans le corps
-> de l'issue (chemins, commandes `git clone`/`git pull`), voir le template du
-> §16.3.
+### 3.8 Onglet « Résultats inbox » de `new_issue.py`
 
-> 🔗 **Issue de suivi** : si l'issue fait suite à une discussion sur une issue
-> existante #N, préfixer le titre par `Suite #N : ` et inclure
-> `| SUITE_DE | #N |` dans l'en-tête. Sans ce préfixe/champ, l'issue est
-> considérée comme inédite. (Convention cohérente avec `Chef :`/`Ouvrier N :`
-> du §14 ; voir aussi le champ `SUITE_DE` au §6.)
+Nouvel onglet dans l'interface web, alimenté par la route
+**`GET /issues-inbox/etat`** (`app/issues_inbox.py`, pure lecture disque —
+aucun appel `gh`, aucune dépendance à un watcher en cours d'exécution) :
+
+- **Alarme** pilotée **uniquement** par l'état du dossier
+  `issues_inbox/rejected/` — non vide → badge 🚨 clignotant sur l'onglet
+  lui-même (visible même hors de cette vue) + bandeau rouge dans le panneau ;
+  vide → aucun indicateur. Volontairement **pas** de parsing de log pour cette
+  décision (§ Tâche demandée de l'issue #483) : l'état du dossier est la
+  seule source de vérité, plus simple et plus fiable qu'un état dérivé du log.
+- **Zone détail** : tableau des fichiers présents dans `rejected/` (nom +
+  date de dépôt), et un historique **purement informatif** des dernières
+  lignes de `logs/issues_inbox.log` — celui-ci n'influence jamais l'alarme.
+- **Rafraîchissement** : `rafraichirInbox()` (`static/js/app.js`) tourne en
+  polling continu (7s) indépendamment de l'onglet actif, pour que le badge
+  reste à jour même quand un autre onglet est ouvert ; bouton « Rafraîchir »
+  pour un rafraîchissement immédiat.
+
+### 3.9 Workflow utilisateur final
+
+1. Claude Chat (ou Alain) dépose un fichier `.txt` dans `issues_inbox/`.
+2. Le watcher le détecte au cycle de polling suivant, crée l'issue GitHub
+   (mêmes labels/en-tête que le formulaire web), supprime le fichier, journalise.
+3. Alain voit le statut dans l'onglet « Résultats inbox » de `new_issue.py`.
+4. Un fichier rejeté reste visible dans `issues_inbox/rejected/` — alarme
+   allumée tant qu'il n'est pas corrigé/supprimé à la main.
+
+### 3.10 Pilotage du watcher depuis le panneau Infrastructure (issue #485)
+
+Jusqu'ici, le watcher devait être lancé manuellement en CLI, sans suivi
+depuis l'interface. Il est maintenant pilotable comme les watchers de
+projet (§ « Cycle de vie des watchers », `app/watchers.py`), mais avec sa
+propre logique dans `app/issues_inbox.py` puisqu'il n'y a **qu'un seul**
+watcher spool (pas de paramètre projet).
+
+**Fichier PID** : `logs/watcher-issues_inbox.pid`, même convention que les
+watchers de projet (`logs/watcher-<nom>.pid`). Écrit par le lanceur
+(`demarrer_watcher_inbox()`) au démarrage — le script
+`scripts/watcher_issues_inbox.py` ne l'écrit jamais lui-même, seulement à sa
+propre auto-extinction où il le supprime (avec le fichier d'échéance) pour
+ne jamais laisser un PID orphelin visible dans l'interface.
+
+**Durée configurable au démarrage.** Contrairement aux watchers de projet
+(`DELAI_INACTIVITE_MIN` dans le `.conf`, § « Cycle de vie des watchers »),
+le watcher spool tourne par défaut **indéfiniment** — il n'y a pas de notion
+d'« inactivité » pertinente pour un dossier de dépôt. Au clic sur
+« ▶ Démarrer », un modal (`#modal-duree-watcher-inbox`) propose trois choix
+par case à cocher : Indéfiniment (défaut), 30 min, ou un nombre de minutes
+libre. Le choix est transmis à `POST /issues-inbox/demarrer-watcher`
+(`{duree_min: N}`, 0/absent = indéfini), qui lance le script avec l'argument
+CLI `--duree-min <N>`. L'**auto-extinction est interne au script** (fonction
+`boucle()`), sur le même principe que l'extinction pour inactivité de
+`watcher.py` (horloge **monotone**, insensible à un changement d'heure
+système) : à l'écoulement du délai, arrêt propre (`sys.exit(0)`) après
+suppression de son propre fichier PID et de son fichier d'échéance.
+
+Un fichier d'échéance séparé, **`logs/watcher-issues_inbox.echeance`**
+(epoch, écrit par `demarrer_watcher_inbox()` si une durée a été choisie),
+permet à l'interface d'afficher le temps restant sans dépendre de l'horloge
+interne du process watcher, qui tourne dans un process séparé de Flask.
+
+**Si le watcher tourne déjà** et qu'on clique « ↺ Relancer » avec une
+nouvelle durée : `demarrer_watcher_inbox()` arrête TOUJOURS l'ancien process
+(`SIGTERM`) avant de relancer — pas de refus silencieux, la nouvelle durée
+remplace systématiquement l'ancienne, quel que soit l'état courant.
+
+Depuis l'issue #496 (§3.12), ces boutons manuels ne pilotent plus le cas
+normal — devenu automatique — mais servent d'**override ponctuel** pendant
+que `new_issue.py` tourne (ex. couper temporairement le spool sans fermer
+toute l'interface, ou le relancer avec une durée bornée).
+
+### 3.11 Démarrage auto du watcher CCL du projet après création d'issue (issue #486)
+
+Pour un vrai fonctionnement « pool d'impression » (dépose et oublie), le
+watcher spool ne se contente pas de créer l'issue : dans `traiter_fichier()`,
+juste après suppression du fichier traité et avant la ligne de log `OK`, il
+vérifie si le watcher CCL du projet concerné (`watcher.py --config
+configs/<projet>.conf`) est déjà actif, et le démarre sinon — faute de quoi
+l'issue resterait en attente indéfiniment tant qu'Alain ne lance pas ce
+watcher à la main depuis le panneau Infrastructure.
+
+Réutilise directement `demarrer_watcher(cfg_projet, forcer=False)` de
+`app/watchers.py` (import direct, même principe que l'import déjà fait de
+`watcher.py::charger_config/lire_conf/est_titre_chef`) — pas de logique
+dupliquée :
+
+- **Watcher déjà actif** : `demarrer_watcher(forcer=False)` ne fait rien
+  (pas de `SIGTERM`, pas de redémarrage) — contrairement au comportement du
+  watcher spool lui-même sur relance (§3.10), il ne faut surtout pas
+  interrompre un traitement d'issue potentiellement en cours sur ce projet.
+- **Watcher inactif** : démarré avec les mêmes modalités que le bouton
+  « ▶ Lancer » du panneau Infrastructure (`subprocess.Popen` +
+  `logs/watcher-<projet>.pid`).
+
+Traçabilité : si le watcher a dû être démarré, la ligne `OK` de
+`logs/issues_inbox.log` (§3.5) est complétée par le suffixe
+`— watcher CCL démarré (pid <pid>)` ; sinon la ligne reste inchangée (watcher
+déjà actif). Un échec de démarrage (exception de `demarrer_watcher`) est
+seulement journalisé en `WARNING` du logger du watcher — n'empêche jamais la
+création de l'issue elle-même, déjà actée à ce stade.
+
+**Arrêt manuel.** `POST /issues-inbox/arreter-watcher` envoie un `SIGTERM`
+et nettoie PID + échéance. Contrairement aux watchers CCL de projet (pas de
+bouton « Arrêter » dans `#pl-zone-monitoring`, seulement Lancer/Relancer),
+le watcher spool expose un bouton « ⏹ Arrêter » explicite dans le panneau :
+son comportement par défaut étant « Indéfiniment », il doit pouvoir être
+coupé manuellement à tout moment.
+
+**Interface — zone `#pl-zone-extras`.** Cette zone du panneau flottant
+« Infrastructure » (onglet Résultats), réservée aux futurs boutons depuis
+l'issue #380 et restée vide jusqu'ici, est occupée par
+`rendrePanneauLateralExtras()` (`static/js/app.js`) : une ligne d'état
+🟢/⚫ « Watcher spool (issues_inbox) », alimentée par le même
+`GET /issues-inbox/etat` que l'onglet « Résultats inbox » (étendu avec
+`watcher_actif`/`watcher_pid`/`watcher_restant_s`). Watcher actif : temps
+restant avant extinction (ou « indéfini »), boutons « ↺ Relancer » et
+« ⏹ Arrêter ». Watcher inactif : bouton « ▶ Démarrer ». Les deux boutons de
+démarrage ouvrent le modal de choix de durée. Rafraîchie sur le même cycle
+que le reste du panneau (30 s, `rafraichirPanneauLateralResultats`).
+
+### 3.12 Cycle de vie lié à `new_issue.py` (issue #496)
+
+**Problème structurel.** Un vrai démarrage automatique « à la dépose d'un
+fichier » est impossible : l'événement déclencheur serait le dépôt dans
+`issues_inbox/`, mais si le watcher spool est éteint, rien ne surveille ce
+dossier pour détecter ce dépôt. Une sentinelle séparée a été envisagée puis
+jugée disproportionnée : dans l'usage réel d'Alain, `new_issue.py` est
+systématiquement ouvert pendant les périodes de travail (c'est là qu'il
+consulte les résultats) et fermé le reste du temps — un fichier déposé
+pendant que `new_issue.py` est fermé n'a de toute façon pas d'intérêt
+pratique à être traité immédiatement, puisque le résultat ne serait vu
+qu'au prochain démarrage de l'interface.
+
+**Décision retenue.** Le cycle de vie du watcher spool est lié directement à
+celui du **processus `new_issue.py`** lui-même, plutôt qu'à une durée choisie
+manuellement (§3.10) ou à une horloge d'inactivité indépendante :
+
+- **Démarrage** — juste après l'enregistrement des gestionnaires de signal
+  dans `main()` (avant le démarrage du tunnel `--externe` et des threads de
+  surveillance), `new_issue.py` teste `watcher_inbox_actif()` et, s'il est
+  inactif, appelle `demarrer_watcher_inbox()` sans `duree_min` (indéfini).
+  S'il tourne déjà (relance après un plantage, ou manip manuelle antérieure),
+  rien n'est fait : `demarrer_watcher_inbox()` **redémarre toujours** le
+  process existant (§3.10), ce qui couperait inutilement un watcher déjà en
+  cours de traitement.
+- **Arrêt** — le gestionnaire `gestionnaire_arret` (`SIGINT`/`SIGTERM`)
+  appelle `arreter_watcher_inbox()` de façon **inconditionnelle**, avant
+  `arreter_tunnel()` et la fin du process (`os._exit(0)` différé de 1,5 s) :
+  même mécanisme que le bouton « ⏹ Arrêter » (`SIGTERM` + nettoyage PID et
+  fichier d'échéance). Le watcher spool est donc coupé même s'il tournait
+  suite à un override manuel (relance avec une durée choisie) fait pendant la
+  session.
+- **Tous modes** (local/`--lan`/`--externe`) et les deux points d'entrée
+  (`python3 new_issue.py` et `./lancer_new_issue.sh`) sont concernés : le
+  wrapper `lancer_new_issue.sh` (§10, issue #150) ne fait qu'exécuter
+  `new_issue.py` comme process enfant du même groupe — un `Ctrl-C` (donc
+  `SIGINT`) atteint directement `new_issue.py`, qui gère l'arrêt lui-même ;
+  aucune modification du wrapper n'était nécessaire.
+- **Override manuel conservé.** Les boutons « ▶ Démarrer » / « ↺ Relancer » /
+  « ⏹ Arrêter » du panneau Infrastructure (§3.10), avec choix de durée,
+  restent pleinement fonctionnels pendant que `new_issue.py` tourne — ils ne
+  pilotent plus le cas normal (devenu automatique) mais un override ponctuel
+  (ex. couper temporairement sans fermer toute l'interface).
+
+**Valeur par défaut du modal de durée inchangée (« Indéfiniment »).**
+L'auto-démarrage ne fixe jamais de durée : le cas normal ne passe donc plus
+jamais par ce modal. Un clic sur « ▶ Démarrer »/« ↺ Relancer » pendant que
+`new_issue.py` tourne est désormais toujours un override délibéré ; garder
+« Indéfiniment » comme choix par défaut reste l'hypothèse la plus sûre (ne
+pas couper le watcher tout seul par surprise), une durée bornée restant un
+choix explicite quand Alain veut couper temporairement sans fermer toute
+l'interface.
+
+**Fichier déposé pendant que `new_issue.py` est fermé.** Il attend
+simplement dans `issues_inbox/` jusqu'au prochain démarrage de l'interface,
+qui relance alors le watcher spool et le traite au premier cycle de
+polling — comportement assumé (voir « Problème structurel » ci-dessus), pas
+un bug.
 
 ---
 
@@ -312,7 +456,7 @@ Le watcher lit ces champs dans le tableau markdown de l'en-tête :
 
 | Champ | Valeur | Effet |
 |-------|--------|-------|
-| `MODE` | `lecture` ou `écriture` | Auto-détecté par `new_issue.py` (§3, issue #326) pour pré-sélectionner le radio Mode du formulaire ; c'est ce radio, pas la valeur du champ, qui arme (ou non) le label `mode_write` posé sur l'issue — donc le mode écriture de CCL. Défaut lecture si absent/non reconnu. Voir §5 pour le comportement de chaque mode. |
+| `MODE` | `lecture` ou `écriture` | Auto-détecté par `new_issue.py` (§20, issue #326) pour pré-sélectionner le radio Mode du formulaire ; c'est ce radio, pas la valeur du champ, qui arme (ou non) le label `mode_write` posé sur l'issue — donc le mode écriture de CCL. Défaut lecture si absent/non reconnu. Voir §5 pour le comportement de chaque mode. |
 | `PRIORITE` | `haute` ou `critique` | Retry infini (au lieu de 3 max) |
 | `TIMEOUT` | ex. `600s` | Surcharge le timeout par défaut (300s) |
 | `MODELE` | ex. `claude-opus-4-5` | Force un modèle CCL spécifique pour cette issue |
@@ -337,7 +481,7 @@ Format dans le corps :
 
 > ℹ️ Le champ `| LABELS | … |` (issue #161) n'est **pas** lu par le watcher :
 > il est consommé par `new_issue.py` au moment de la création pour ajouter des
-> labels supplémentaires (ex. `for-windows`) à ceux posés d'office. Voir §3.
+> labels supplémentaires (ex. `for-windows`) à ceux posés d'office. Voir §20.
 
 ---
 
@@ -445,11 +589,11 @@ méthode par défaut recommandée.
     tunnel.py         — tunnel Cloudflare (mode externe)
     vues.py           — routes Flask et rendu des pages
     etat.py           — état partagé de l'application
-    issues_inbox.py   — état de l'onglet « Résultats inbox » (§20, issue #483)
+    issues_inbox.py   — état de l'onglet « Résultats inbox » (§3, issue #483)
   templates/          — gabarits HTML (Jinja2)
   static/             — CSS, JS, assets statiques
-  issues_inbox/       — gitignoré : dépôt de fichiers .txt d'issues à créer (§20)
-    rejected/         — issues malformées, à corriger manuellement (§20)
+  issues_inbox/       — gitignoré : dépôt de fichiers .txt d'issues à créer (§3)
+    rejected/         — issues malformées, à corriger manuellement (§3)
   consignes/          — consignes injectées dans le prompt CCL par watcher.py (§12.1)
     globales.md       — NON-optionnel : rappels de sécurité, TOUTE issue
     type_chef.md      — optionnel : consignes du TYPE « chef »
@@ -639,7 +783,7 @@ curl -sL "https://raw.githubusercontent.com/AlainDelree/Bridge_Agent/master/cons
 **Couverture universelle (issue #211).** Une issue peut naître de trois chemins :
 (1) le formulaire web (`new_issue.py`), (2) un CCL « chef » via `gh issue create`
 en ligne de commande (§14, pattern Chef → Ouvrier), (3) une création manuelle
-directe sur GitHub (§3). En #209 les consignes étaient écrites dans le **corps**
+directe sur GitHub (§20). En #209 les consignes étaient écrites dans le **corps**
 de l'issue par `app/issues.py`, ce qui ne couvrait QUE le chemin 1 — les issues
 ouvrières créées par un chef (chemin 2), justement de vraies tâches `mode_write`,
 échappaient à l'injection. Depuis #211, l'injection se fait dans le **prompt CCL**
@@ -1156,7 +1300,7 @@ create`, puis surveille sa fermeture avant de livrer sa réponse.
 - **Critère de décision** : le chef se justifie quand la tâche comporte du
   travail réel côté Linux (avant et/ou après) dans la même unité de travail.
   Si la TOTALITÉ de la tâche s'exécute sous Windows, créer directement
-  l'issue avec `| LABELS | for-windows |` (§3) — pas de chef.
+  l'issue avec `| LABELS | for-windows |` (§20) — pas de chef.
 - **Contre-exemple explicite** : un chef qui se contente de créer un ouvrier
   puis d'attendre sa fermeture, sans orchestration réelle, est du surcoût
   pur (deux issues, deux invocations `claude`, TIMEOUT long, attente
@@ -2284,362 +2428,195 @@ issues de la même combinaison s'il le juge utile.
 
 ---
 
-## 20. Watcher `issues_inbox` centralisé (issue #483)
+## 20. Formulaire web `new_issue.py` — méthode de backup (issue #483)
 
-### 20.1 Objectif
+Depuis l'issue #483, la méthode normale de création d'issue est le watcher `issues_inbox` (§3) : déposer un fichier `.txt` dans `issues_inbox/`, sans interaction manuelle. Le formulaire web `new_issue.py` reste pleinement fonctionnel et documenté ci-dessous, comme méthode de **backup**, avec des cas d'usage propres : consulter l'**aperçu de la commande** `gh issue create` avant envoi (bouton « Aperçu de la commande », voir plus bas) ; création manuelle par Alain directement depuis l'interface, sans passer par un fichier ; et repli si le watcher spool `issues_inbox` est indisponible ou arrêté (§3.10).
 
-Jusqu'ici, une issue générée par Claude Chat devait être copiée-collée à la
-main dans l'onglet **« Nouvelle issue »** de `new_issue.py` (§3). Le watcher
-**`scripts/watcher_issues_inbox.py`** automatise ce geste : Claude Chat (ou
-Alain en CLI) dépose un fichier `.txt` dans **`~/Bridge_Agent/issues_inbox/`**,
-le watcher le détecte, le valide, crée l'issue via `gh issue create` et
-nettoie — sans repasser par le formulaire web.
+Via l'interface web `new_issue.py` (Flask, port 5100) :
 
-### 20.2 Structure disque
+```bash
+# Mode local (devant le ThinkPad)
+python3 new_issue.py
 
-- **`issues_inbox/`** (gitignoré, créé automatiquement au premier lancement
-  du watcher s'il n'existe pas) : fichiers `.txt` en attente, nommage libre
-  (le watcher ne se fie qu'au contenu, pas au nom de fichier).
-- **`issues_inbox/rejected/`** : fichiers rejetés (en-tête malformé, projet
-  inconnu, échec de `gh issue create`...), renommés
-  `<nom-original>__REJETE-<slug-du-motif>.txt` pour que le motif soit visible
-  sans ouvrir le fichier. Laissés en place pour correction manuelle — le
-  watcher ne les retraite jamais automatiquement.
+# Mode LAN (accès depuis le réseau local, ex. PC fixe Windows) — issue #461
+python3 new_issue.py --lan
+# → écoute sur 0.0.0.0:5100, HTTP, sans tunnel, sans mot de passe
+# → destiné à un LAN de confiance uniquement, rien n'est exposé vers l'extérieur
 
-### 20.3 Format attendu du fichier
+# Mode externe (accès depuis téléphone via Cloudflare)
+python3 new_issue.py --externe
+# → tunnel cloudflared automatique sur https://bridge.frederiqueferette.be
+# → login mot de passe requis
+```
 
-Même format qu'une issue produite par Claude Chat pour le formulaire web
-(§3) : un en-tête `| CHAMP | Valeur |` optionnel suivi d'une ligne
-`#Titre: ...` puis le corps. Champs d'en-tête reconnus, tous optionnels sauf
-`PROJET` :
+**Lancement supervisé avec log (recommandé, issue #150) :** le wrapper
+`lancer_new_issue.sh` fait exactement la même chose que `python3 new_issue.py`
+(mêmes arguments) mais horodate le démarrage/arrêt/code de sortie et capture
+stdout+stderr dans `logs/new_issue.log` (rotation par taille, comme les
+watchers) — utile pour diagnostiquer un plantage silencieux. La sortie reste
+affichée dans le terminal (`tee`). `python3 new_issue.py` reste valable et
+inchangé.
 
-| Champ     | Rôle                                                                |
-|-----------|----------------------------------------------------------------------|
-| `PROJET`  | **Obligatoire** — doit correspondre à `configs/<PROJET>.conf`        |
-| `TIMEOUT` | Nombre (secondes, suffixe `s` toléré) — sinon défaut du projet       |
-| `MODELE`  | Doit être une valeur reconnue (`claude-sonnet-5`, etc.) si fourni    |
-| `MODE`    | Reconnu de façon tolérante (§5) — absent/non reconnu → `lecture`     |
-| `LABELS`  | Labels GitHub additionnels, séparés par des virgules                 |
+```bash
+./lancer_new_issue.sh                 # mode local, avec log
+./lancer_new_issue.sh --lan           # mode LAN, avec log
+./lancer_new_issue.sh --externe       # mode externe, avec log
+# Après un plantage : voir les dernières lignes de logs/new_issue.log
+```
 
-Label de notification par défaut (issue #490) : `construire_labels()` pose
-systématiquement **`notif_pc`** (miroir du comportement le plus courant côté
-formulaire web), sauf si `LABELS` demande déjà explicitement `notif_gsm` ou
-`notif_tous` — dans ce cas `notif_pc` n'est pas ajouté en plus, pour ne
-jamais empiler plusieurs labels de notification. Sans ce label, une issue
-créée via `issues_inbox/` ne déclenchait aucun bip à sa clôture
-(`notifications.bip()`, cf. `watcher.py`), contrairement à celles créées via
-le formulaire.
+**Bouton « Aperçu de la commande » (issue #285) :** avant d'envoyer, ce
+bouton appelle la route `/apercu` (fonction `apercu()` de `app/issues.py`),
+qui construit — à partir des champs actuellement remplis dans le
+formulaire — la commande `gh issue create` exacte qui serait exécutée
+(dépôt, titre, labels, `--body-file`), suivie en commentaire du corps
+complet qui serait envoyé. Cette commande est renvoyée en JSON et affichée
+telle quelle, en texte brut, dans la zone `zone-apercu` sous le formulaire
+(fonction `afficherApercu()` de `static/js/app.js`). C'est un aperçu pur :
+aucune issue n'est créée, aucune commande n'est réellement exécutée — rien
+n'est modifié tant que le bouton d'envoi n'est pas cliqué séparément.
 
-Ce défaut (issue #492) reproduit le comportement du tout premier usage du
-formulaire web, pas un état courant : côté formulaire, le label de
-notification coché reflète en réalité `localStorage` (clé
-`bridge_notif_pc`, issue #93), mémorisé côté navigateur d'Alain — un état
-que le watcher spool ne peut pas lire (pas de serveur web ni de session
-navigateur impliqués). `construire_labels()` ne cherche donc jamais à
-synchroniser dynamiquement ce choix avec le formulaire ; seul le champ
-`LABELS` explicite du fichier permet de s'écarter du défaut `notif_pc`.
+**Format du corps pour copier-coller depuis Claude Chat :**
 
-Le fichier est reparsé avec les mêmes regex que `static/js/app.js` (détection
-de champ d'en-tête à la frappe côté formulaire web), pour ne jamais diverger
-du format déjà produit par Claude Chat.
+La première ligne du corps peut contenir `#Titre:` — new_issue.py détecte
+ce tag et remplit automatiquement le champ Titre. Un seul copier-coller suffit :
 
-### 20.4 Validation avant création
+```
+#Titre: Titre court et actionnable
 
-Un fichier est rejeté (déplacé vers `rejected/`, jamais créé sur GitHub) si :
-`PROJET` absent/vide, `configs/<PROJET>.conf` introuvable ou invalide,
-`#Titre:` absent/vide, `MODELE` fourni mais non reconnu, ou `TIMEOUT` fourni
-mais non numérique. Un échec de `gh issue create` (réseau, dépôt inaccessible,
-timeout de 30s...) provoque le même sort, avec le message d'erreur de `gh`
-en détail.
+## Contexte
+Pourquoi cette tâche existe.
 
-Anti-doublon (issue #491) : juste après cette validation et avant l'appel à
-`gh issue create`, le watcher réutilise **telle quelle**
-`_issue_ouverte_meme_titre(cfg, titre)` de `app/issues.py` (garde du formulaire
-web, issue #189) pour vérifier qu'aucune issue **OUVERTE** du même dépôt ne
-porte déjà exactement ce titre (comparaison stricte après `strip()`). Si oui →
-rejet (motif : `doublon : une issue #<n> portant ce titre est déjà ouverte`),
-même sort que les autres validations ci-dessus. Comme pour le formulaire,
-c'est du best-effort : un échec de l'appel `gh issue list` sous-jacent
-(réseau, timeout) fait retourner `None` à la fonction, et la création se
-poursuit normalement plutôt que d'être bloquée par une panne de vérification.
-Aucune logique dupliquée entre les deux flux (formulaire web et
-`issues_inbox/`) : une seule fonction, importée par les deux.
+## Tâche demandée
+Description précise. Indiquer explicitement si LECTURE SEULE.
 
-### 20.5 Journalisation (rotation par nombre de lignes)
+## Résultat attendu
+Ce que CCL doit produire ou confirmer.
+```
 
-Chaque traitement (réussi ou rejeté) ajoute une ligne à
-**`logs/issues_inbox.log`** :
-`<horodatage> | <projet> | OK|REJECTED | <titre> [— <détail si rejet>]`.
-Rotation propre à ce watcher, **distincte** de la rotation par taille des
-autres watchers (§13) : dès que le fichier dépasse **`MAX_LOG_LINES`**
-(défaut 50), les lignes les plus anciennes sont supprimées — pas de fichier
-`.1`/`.2`, un seul fichier plat borné en permanence à 50 lignes.
+**Champs d'en-tête optionnels reconnus (`PROJET`, `TIMEOUT`, `MODELE`, `MODE`,
+`LABELS`) :**
 
-### 20.6 Concurrence
+`| MODE | … |` (issue #326) est détecté par `new_issue.py`
+(`detecterModeDansCorps`) exactement comme `TIMEOUT`/`PROJET`/`MODELE` :
+la valeur reconnue pré-sélectionne le radio Mode du formulaire, puis la
+ligne est retirée du corps collé (le tableau d'en-tête final est reconstruit
+depuis le formulaire, pas depuis ce que Claude Chat a tapé). Seules deux
+valeurs sont fonctionnelles à ce jour : `| MODE | lecture |` et
+`| MODE | écriture |` (voir §5 pour le détail des modes). La reconnaissance
+est **tolérante** — insensible à la casse et aux accents, plusieurs libellés
+acceptés par valeur (ex. « écriture »/« ecriture »/« write » ;
+« lecture »/« lecture seule »/« read ») — et le **défaut est LECTURE** si le
+champ `MODE` est absent du corps ou si sa valeur n'est reconnue par aucun
+synonyme : une issue doit toujours déclarer explicitement l'écriture pour
+l'obtenir, jamais par omission.
 
-Avant de traiter un fichier `.txt`, le watcher vérifie que sa date de
-dernière modification remonte à **au moins 1 seconde** — sinon il le laisse
-pour le cycle de polling suivant, pour ne jamais lire un fichier encore en
-cours d'écriture (dépôt via un outil qui écrit progressivement).
+Au même titre que `PROJET`/`TIMEOUT`/`MODELE`, `new_issue.py` reconnaît aussi
+un champ `| LABELS | … |` dans l'en-tête du corps collé. Sa valeur est une liste de
+labels séparés par des virgules (les espaces superflus autour de chacun sont
+ignorés) qui **s'ajoutent** aux labels standards posés automatiquement (`bridge`,
+`for-linux`, `mode_write` selon le MODE, notifications) — ils ne les remplacent
+pas. Cas d'usage concret : `| LABELS | for-windows |` pour créer, depuis le flux
+web habituel, une issue destinée à l'agent Windows CCW (label `for-windows`, cf.
+§16) sans repasser par `gh issue create` en ligne de commande. Voir §14 pour
+le critère de choix entre cette issue `for-windows` directe et le pattern
+chef → ouvrier. Plusieurs labels
+sont possibles : `| LABELS | for-windows,urgent |`. Aucun contrôle d'existence du
+label n'est fait ici : si le label n'existe pas sur le dépôt, `gh issue create`
+échoue avec un message clair. En mode lot, chaque bloc `#Titre:` peut porter ses
+propres `LABELS`.
 
-### 20.7 Config (optionnelle)
+> ⚠️ `for-windows` **retire** `for-linux` (issue #164) : `for-linux` et
+> `for-windows` sont mutuellement exclusifs — une tâche cible CCL *ou* CCW,
+> rarement les deux. Une issue `| LABELS | for-windows |` créée par ce flux ne
+> portera donc *pas* `for-linux` et ne sera vue que par le watcher CCW. Les
+> autres labels standards (`bridge`, `mode_write`, notifications) restent posés
+> normalement, et tout autre label listé dans `LABELS` est ajouté tel quel. Pour
+> forcer les deux watchers sur une même issue (cas rare), ajouter `for-linux`
+> manuellement sur GitHub après création.
 
-`configs/watcher_issues_inbox.conf` — clés `NOM`, `REP_TRAVAIL`,
-`POLLING_INTERVAL` (défaut 5s), `MAX_LOG_LINES` (défaut 50), `INBOX_DIR`,
-`REJECTED_DIR`, `GH_TOKEN`. Toutes optionnelles : le watcher tourne avec des
-défauts sensés (dossiers sous `~/Bridge_Agent`) même sans ce fichier.
-**Ce `.conf` n'est pas créé automatiquement par CCL** — garde-fou §11 (CCL ne
-modifie/crée jamais `configs/*.conf`) : c'est à Alain de le créer à la main
-s'il veut surcharger les défauts.
+**Envoi en lot (plusieurs issues d'un seul copier-coller) — issue #135 :**
+coller *plusieurs* blocs `#Titre:` à la suite dans le même corps déclenche
+automatiquement le **mode lot** : le bouton d'envoi devient
+« Envoyer le lot (N issues) ». Chaque bloc va de son `#Titre:` jusqu'au
+`#Titre:` suivant et est traité comme une issue indépendante, avec ses propres
+champs d'en-tête optionnels (`PROJET`, `TIMEOUT`, `MODELE`, `LABELS`) — à défaut,
+les valeurs du formulaire (projet sélectionné, timeout, modèle) s'appliquent en
+repli (le champ `LABELS`, lui, est propre à chaque bloc : sans fallback). Le
+`MODE` (lecture/écriture) et les notifications sont communs à tout le lot :
+contrairement au mono-issue (ci-dessus), où `MODE` est auto-détecté par bloc
+depuis l'en-tête, en mode lot un éventuel `| MODE | … |` dans un bloc est
+ignoré — seul le radio du formulaire, choisi une fois pour tout le lot,
+décide. Les issues partent **en séquence** (une à la fois, jamais en parallèle),
+**sans validation intermédiaire** (aucune modale « issues en attente » ni
+d'incohérence projet) : un bloc dont le `PROJET` diffère du projet sélectionné
+part quand même sur *son* `PROJET` et c'est simplement signalé ; un bloc en
+échec n'interrompt pas le lot. À la fin, un **résumé** liste, pour chaque bloc,
+le titre + le lien de l'issue créée ou le message d'erreur, puis le corps est
+vidé. Un seul bloc `#Titre:` conserve le comportement mono-issue habituel
+(bouton « Envoyer sur <projet> », détection automatique du titre).
 
-Lancement : `python3 scripts/watcher_issues_inbox.py` (boucle continue),
-`--config <chemin>` pour un `.conf` alternatif, `--once` pour un seul cycle
-(tests). Peut être supervisé en systemd/NSSM comme les autres watchers (§13),
-en dehors du cycle de vie de `watcher.py` (générique, par projet) puisqu'il
-ne traite pas des issues GitHub existantes mais alimente leur création.
+**Convention de présentation côté Claude Chat (issue #153, étendue par
+#443) :** quand Claude Chat prépare plusieurs issues à la fois pour ce mode
+lot, il les présente toutes à la suite dans **un seul bloc de code** (pas un
+bloc séparé par issue), afin qu'Alain puisse copier l'ensemble en un clic et
+le coller directement dans le champ Corps. Cette règle vaut **aussi pour une
+issue unique** (mode mono-issue) : le corps est lui aussi enveloppé dans un
+bloc de code, afin qu'Alain puisse utiliser le bouton copier du bloc plutôt
+qu'une sélection manuelle.
 
-### 20.8 Onglet « Résultats inbox » de `new_issue.py`
+> ⚠️ **Claude Chat doit toujours inclure** `| PROJET | <nom> |` dans l'en-tête
+> des issues qu'il génère (nom exact du projet cible : `bridge_agent`,
+> `alchess`, `ff_galerie`). Détaillé au §6 « Champs spéciaux ».
 
-Nouvel onglet dans l'interface web, alimenté par la route
-**`GET /issues-inbox/etat`** (`app/issues_inbox.py`, pure lecture disque —
-aucun appel `gh`, aucune dépendance à un watcher en cours d'exécution) :
+> ⚠️ **Exception pour les issues `for-windows` (modèle CCW unifié, §16.3) :**
+> `PROJET` reste toujours `bridge_agent`, même si le build cible un autre projet
+> (ex. `actualise`) — c'est la config du watcher CCW unique, pas le projet
+> réellement construit. Le nom du projet cible s'exprime en texte dans le corps
+> de l'issue (chemins, commandes `git clone`/`git pull`), voir le template du
+> §16.3.
 
-- **Alarme** pilotée **uniquement** par l'état du dossier
-  `issues_inbox/rejected/` — non vide → badge 🚨 clignotant sur l'onglet
-  lui-même (visible même hors de cette vue) + bandeau rouge dans le panneau ;
-  vide → aucun indicateur. Volontairement **pas** de parsing de log pour cette
-  décision (§ Tâche demandée de l'issue #483) : l'état du dossier est la
-  seule source de vérité, plus simple et plus fiable qu'un état dérivé du log.
-- **Zone détail** : tableau des fichiers présents dans `rejected/` (nom +
-  date de dépôt), et un historique **purement informatif** des dernières
-  lignes de `logs/issues_inbox.log` — celui-ci n'influence jamais l'alarme.
-- **Rafraîchissement** : `rafraichirInbox()` (`static/js/app.js`) tourne en
-  polling continu (7s) indépendamment de l'onglet actif, pour que le badge
-  reste à jour même quand un autre onglet est ouvert ; bouton « Rafraîchir »
-  pour un rafraîchissement immédiat.
-
-### 20.9 Workflow utilisateur final
-
-1. Claude Chat (ou Alain) dépose un fichier `.txt` dans `issues_inbox/`.
-2. Le watcher le détecte au cycle de polling suivant, crée l'issue GitHub
-   (mêmes labels/en-tête que le formulaire web), supprime le fichier, journalise.
-3. Alain voit le statut dans l'onglet « Résultats inbox » de `new_issue.py`.
-4. Un fichier rejeté reste visible dans `issues_inbox/rejected/` — alarme
-   allumée tant qu'il n'est pas corrigé/supprimé à la main.
-
-### 20.10 Pilotage du watcher depuis le panneau Infrastructure (issue #485)
-
-Jusqu'ici, le watcher devait être lancé manuellement en CLI, sans suivi
-depuis l'interface. Il est maintenant pilotable comme les watchers de
-projet (§ « Cycle de vie des watchers », `app/watchers.py`), mais avec sa
-propre logique dans `app/issues_inbox.py` puisqu'il n'y a **qu'un seul**
-watcher spool (pas de paramètre projet).
-
-**Fichier PID** : `logs/watcher-issues_inbox.pid`, même convention que les
-watchers de projet (`logs/watcher-<nom>.pid`). Écrit par le lanceur
-(`demarrer_watcher_inbox()`) au démarrage — le script
-`scripts/watcher_issues_inbox.py` ne l'écrit jamais lui-même, seulement à sa
-propre auto-extinction où il le supprime (avec le fichier d'échéance) pour
-ne jamais laisser un PID orphelin visible dans l'interface.
-
-**Durée configurable au démarrage.** Contrairement aux watchers de projet
-(`DELAI_INACTIVITE_MIN` dans le `.conf`, § « Cycle de vie des watchers »),
-le watcher spool tourne par défaut **indéfiniment** — il n'y a pas de notion
-d'« inactivité » pertinente pour un dossier de dépôt. Au clic sur
-« ▶ Démarrer », un modal (`#modal-duree-watcher-inbox`) propose trois choix
-par case à cocher : Indéfiniment (défaut), 30 min, ou un nombre de minutes
-libre. Le choix est transmis à `POST /issues-inbox/demarrer-watcher`
-(`{duree_min: N}`, 0/absent = indéfini), qui lance le script avec l'argument
-CLI `--duree-min <N>`. L'**auto-extinction est interne au script** (fonction
-`boucle()`), sur le même principe que l'extinction pour inactivité de
-`watcher.py` (horloge **monotone**, insensible à un changement d'heure
-système) : à l'écoulement du délai, arrêt propre (`sys.exit(0)`) après
-suppression de son propre fichier PID et de son fichier d'échéance.
-
-Un fichier d'échéance séparé, **`logs/watcher-issues_inbox.echeance`**
-(epoch, écrit par `demarrer_watcher_inbox()` si une durée a été choisie),
-permet à l'interface d'afficher le temps restant sans dépendre de l'horloge
-interne du process watcher, qui tourne dans un process séparé de Flask.
-
-**Si le watcher tourne déjà** et qu'on clique « ↺ Relancer » avec une
-nouvelle durée : `demarrer_watcher_inbox()` arrête TOUJOURS l'ancien process
-(`SIGTERM`) avant de relancer — pas de refus silencieux, la nouvelle durée
-remplace systématiquement l'ancienne, quel que soit l'état courant.
-
-Depuis l'issue #496 (§20.12), ces boutons manuels ne pilotent plus le cas
-normal — devenu automatique — mais servent d'**override ponctuel** pendant
-que `new_issue.py` tourne (ex. couper temporairement le spool sans fermer
-toute l'interface, ou le relancer avec une durée bornée).
-
-### 20.11 Démarrage auto du watcher CCL du projet après création d'issue (issue #486)
-
-Pour un vrai fonctionnement « pool d'impression » (dépose et oublie), le
-watcher spool ne se contente pas de créer l'issue : dans `traiter_fichier()`,
-juste après suppression du fichier traité et avant la ligne de log `OK`, il
-vérifie si le watcher CCL du projet concerné (`watcher.py --config
-configs/<projet>.conf`) est déjà actif, et le démarre sinon — faute de quoi
-l'issue resterait en attente indéfiniment tant qu'Alain ne lance pas ce
-watcher à la main depuis le panneau Infrastructure.
-
-Réutilise directement `demarrer_watcher(cfg_projet, forcer=False)` de
-`app/watchers.py` (import direct, même principe que l'import déjà fait de
-`watcher.py::charger_config/lire_conf/est_titre_chef`) — pas de logique
-dupliquée :
-
-- **Watcher déjà actif** : `demarrer_watcher(forcer=False)` ne fait rien
-  (pas de `SIGTERM`, pas de redémarrage) — contrairement au comportement du
-  watcher spool lui-même sur relance (§20.10), il ne faut surtout pas
-  interrompre un traitement d'issue potentiellement en cours sur ce projet.
-- **Watcher inactif** : démarré avec les mêmes modalités que le bouton
-  « ▶ Lancer » du panneau Infrastructure (`subprocess.Popen` +
-  `logs/watcher-<projet>.pid`).
-
-Traçabilité : si le watcher a dû être démarré, la ligne `OK` de
-`logs/issues_inbox.log` (§20.5) est complétée par le suffixe
-`— watcher CCL démarré (pid <pid>)` ; sinon la ligne reste inchangée (watcher
-déjà actif). Un échec de démarrage (exception de `demarrer_watcher`) est
-seulement journalisé en `WARNING` du logger du watcher — n'empêche jamais la
-création de l'issue elle-même, déjà actée à ce stade.
-
-**Arrêt manuel.** `POST /issues-inbox/arreter-watcher` envoie un `SIGTERM`
-et nettoie PID + échéance. Contrairement aux watchers CCL de projet (pas de
-bouton « Arrêter » dans `#pl-zone-monitoring`, seulement Lancer/Relancer),
-le watcher spool expose un bouton « ⏹ Arrêter » explicite dans le panneau :
-son comportement par défaut étant « Indéfiniment », il doit pouvoir être
-coupé manuellement à tout moment.
-
-**Interface — zone `#pl-zone-extras`.** Cette zone du panneau flottant
-« Infrastructure » (onglet Résultats), réservée aux futurs boutons depuis
-l'issue #380 et restée vide jusqu'ici, est occupée par
-`rendrePanneauLateralExtras()` (`static/js/app.js`) : une ligne d'état
-🟢/⚫ « Watcher spool (issues_inbox) », alimentée par le même
-`GET /issues-inbox/etat` que l'onglet « Résultats inbox » (étendu avec
-`watcher_actif`/`watcher_pid`/`watcher_restant_s`). Watcher actif : temps
-restant avant extinction (ou « indéfini »), boutons « ↺ Relancer » et
-« ⏹ Arrêter ». Watcher inactif : bouton « ▶ Démarrer ». Les deux boutons de
-démarrage ouvrent le modal de choix de durée. Rafraîchie sur le même cycle
-que le reste du panneau (30 s, `rafraichirPanneauLateralResultats`).
-
-### 20.12 Cycle de vie lié à `new_issue.py` (issue #496)
-
-**Problème structurel.** Un vrai démarrage automatique « à la dépose d'un
-fichier » est impossible : l'événement déclencheur serait le dépôt dans
-`issues_inbox/`, mais si le watcher spool est éteint, rien ne surveille ce
-dossier pour détecter ce dépôt. Une sentinelle séparée a été envisagée puis
-jugée disproportionnée : dans l'usage réel d'Alain, `new_issue.py` est
-systématiquement ouvert pendant les périodes de travail (c'est là qu'il
-consulte les résultats) et fermé le reste du temps — un fichier déposé
-pendant que `new_issue.py` est fermé n'a de toute façon pas d'intérêt
-pratique à être traité immédiatement, puisque le résultat ne serait vu
-qu'au prochain démarrage de l'interface.
-
-**Décision retenue.** Le cycle de vie du watcher spool est lié directement à
-celui du **processus `new_issue.py`** lui-même, plutôt qu'à une durée choisie
-manuellement (§20.10) ou à une horloge d'inactivité indépendante :
-
-- **Démarrage** — juste après l'enregistrement des gestionnaires de signal
-  dans `main()` (avant le démarrage du tunnel `--externe` et des threads de
-  surveillance), `new_issue.py` teste `watcher_inbox_actif()` et, s'il est
-  inactif, appelle `demarrer_watcher_inbox()` sans `duree_min` (indéfini).
-  S'il tourne déjà (relance après un plantage, ou manip manuelle antérieure),
-  rien n'est fait : `demarrer_watcher_inbox()` **redémarre toujours** le
-  process existant (§20.10), ce qui couperait inutilement un watcher déjà en
-  cours de traitement.
-- **Arrêt** — le gestionnaire `gestionnaire_arret` (`SIGINT`/`SIGTERM`)
-  appelle `arreter_watcher_inbox()` de façon **inconditionnelle**, avant
-  `arreter_tunnel()` et la fin du process (`os._exit(0)` différé de 1,5 s) :
-  même mécanisme que le bouton « ⏹ Arrêter » (`SIGTERM` + nettoyage PID et
-  fichier d'échéance). Le watcher spool est donc coupé même s'il tournait
-  suite à un override manuel (relance avec une durée choisie) fait pendant la
-  session.
-- **Tous modes** (local/`--lan`/`--externe`) et les deux points d'entrée
-  (`python3 new_issue.py` et `./lancer_new_issue.sh`) sont concernés : le
-  wrapper `lancer_new_issue.sh` (§10, issue #150) ne fait qu'exécuter
-  `new_issue.py` comme process enfant du même groupe — un `Ctrl-C` (donc
-  `SIGINT`) atteint directement `new_issue.py`, qui gère l'arrêt lui-même ;
-  aucune modification du wrapper n'était nécessaire.
-- **Override manuel conservé.** Les boutons « ▶ Démarrer » / « ↺ Relancer » /
-  « ⏹ Arrêter » du panneau Infrastructure (§20.10), avec choix de durée,
-  restent pleinement fonctionnels pendant que `new_issue.py` tourne — ils ne
-  pilotent plus le cas normal (devenu automatique) mais un override ponctuel
-  (ex. couper temporairement sans fermer toute l'interface).
-
-**Valeur par défaut du modal de durée inchangée (« Indéfiniment »).**
-L'auto-démarrage ne fixe jamais de durée : le cas normal ne passe donc plus
-jamais par ce modal. Un clic sur « ▶ Démarrer »/« ↺ Relancer » pendant que
-`new_issue.py` tourne est désormais toujours un override délibéré ; garder
-« Indéfiniment » comme choix par défaut reste l'hypothèse la plus sûre (ne
-pas couper le watcher tout seul par surprise), une durée bornée restant un
-choix explicite quand Alain veut couper temporairement sans fermer toute
-l'interface.
-
-**Fichier déposé pendant que `new_issue.py` est fermé.** Il attend
-simplement dans `issues_inbox/` jusqu'au prochain démarrage de l'interface,
-qui relance alors le watcher spool et le traite au premier cycle de
-polling — comportement assumé (voir « Problème structurel » ci-dessus), pas
-un bug.
+> 🔗 **Issue de suivi** : si l'issue fait suite à une discussion sur une issue
+> existante #N, préfixer le titre par `Suite #N : ` et inclure
+> `| SUITE_DE | #N |` dans l'en-tête. Sans ce préfixe/champ, l'issue est
+> considérée comme inédite. (Convention cohérente avec `Chef :`/`Ouvrier N :`
+> du §14 ; voir aussi le champ `SUITE_DE` au §6.)
 
 ---
 
-*Dernière mise à jour : 27 août 2026 — §20.12 « Cycle de vie lié à
+*Dernière mise à jour : 27 août 2026 — §3/§20 « Watcher `issues_inbox` devient
+la méthode principale, formulaire web devient la méthode de backup » (issue
+#497, refaisant sur `master` actuel la restructuration tentée par #495 dans un
+worktree séparé, abandonnée faute de fusion propre avec #496) : le contenu du
+watcher `issues_inbox` (ex-§20, sous-sections 20.1–20.12, incluant le cycle de
+vie lié à `new_issue.py` de l'issue #496) devient le nouveau §3 « Créer une
+issue — la méthode normale », sous-sections renumérotées 3.1–3.12 ; le contenu
+du formulaire web `new_issue.py` (ex-§3) devient le nouveau §20 « Formulaire
+web — méthode de backup », précédé d'un paragraphe précisant son statut de
+backup (aperçu de la commande avant envoi, création manuelle par Alain, repli
+si le watcher spool est indisponible). Tous les renvois internes du document
+(§1, §6, §10, §11, §12, §14 et autres mentions croisées) mis à jour vers la
+nouvelle numérotation. Aucune perte de contenu : les deux méthodes restent
+intégralement documentées, seule leur présentation relative change. Cette
+entrée couvre à la fois le travail de #495 (restructuration initiale, tentée
+puis abandonnée) et de #496 (cycle de vie du watcher spool lié à
+`new_issue.py`, déjà sur `master` sous l'ancienne numérotation §20.10/§20.12)
+— tous deux ayant contribué à ce contenu final.
+
+Précédemment — 27 août 2026 — §3.12 « Cycle de vie lié à
 `new_issue.py` » (issue #496) : le watcher spool `issues_inbox` démarre
 automatiquement à l'ouverture de `new_issue.py` (s'il n'est pas déjà actif)
 et s'arrête proprement à sa fermeture (`SIGINT`/`SIGTERM`) — plus besoin de
 clic manuel dans le cas normal. Les boutons « ▶ Démarrer »/« ↺ Relancer »/
-« ⏹ Arrêter » du panneau Infrastructure (§20.10) restent utilisables comme
+« ⏹ Arrêter » du panneau Infrastructure (§3.10) restent utilisables comme
 override pendant que `new_issue.py` tourne. Un fichier déposé pendant que
 `new_issue.py` est fermé attend simplement le prochain démarrage de
 l'interface.
-Précédemment — 26 août 2026 — §20.4 « Anti-doublon » (issue #491) :
+Précédemment — 26 août 2026 — §3.4 « Anti-doublon » (issue #491) :
 `scripts/watcher_issues_inbox.py::traiter_fichier` réutilise telle quelle
 `_issue_ouverte_meme_titre()` de `app/issues.py` (garde du formulaire web,
 issue #189) pour rejeter un fichier `issues_inbox/` dont le titre correspond
 exactement à une issue déjà ouverte du même dépôt — comble le trou révélé par
 les issues jumelles #486/#487 (25 août 2026), créées et traitées en parallèle
-faute de cette garde côté flux `issues_inbox/`.
-Précédemment — 25 août 2026 — §20.10 « Pilotage du watcher depuis
-le panneau Infrastructure » (issue #485) : le watcher spool `issues_inbox`
-devient pilotable (démarrer avec durée, relancer, arrêter) depuis
-`#pl-zone-extras` (zone réservée depuis l'issue #380), au lieu d'un
-lancement CLI manuel non suivi. `app/issues_inbox.py` gère le fichier PID
-`logs/watcher-issues_inbox.pid` (même convention que `app/watchers.py`),
-`demarrer_watcher_inbox`/`arreter_watcher_inbox` (routes
-`/issues-inbox/demarrer-watcher` et `/issues-inbox/arreter-watcher`) ;
-`scripts/watcher_issues_inbox.py` reçoit `--duree-min` et s'auto-éteint en
-interne à l'échéance (horloge monotone, nettoyage de son propre PID).
-Précédemment — 25 août 2026 — §10/§20 « Watcher `issues_inbox`
-centralisé » (issue #483) : nouveau flux de création d'issues sans passage
-par le formulaire web — `scripts/watcher_issues_inbox.py` scrute
-`issues_inbox/`, valide et crée via `gh issue create`, journalise dans
-`logs/issues_inbox.log` (rotation à 50 lignes) ; fichiers rejetés déplacés
-vers `issues_inbox/rejected/`. Nouvel onglet « Résultats inbox » dans
-`new_issue.py` (`app/issues_inbox.py`, route `/issues-inbox/etat`), alarme
-visuelle pilotée uniquement par l'état (vide/non-vide) de `rejected/`.
-Précédemment — 18 août 2026 — §16 « Agent Windows CCW » (issue
-#446) : mise à jour pour le passage de CCW d'une VM VirtualBox à un **PC
-fixe physique dédié** (Pentium G2020). Introduction reformulée en
-conséquence. Paramètres corrigés partout dans le §16 : `REP_TRAVAIL =
-C:\CCW_Share` (chemin local, remplace `\\VBOXSVR\CCW_Share`) ; service NSSM
-`CCW-Watcher` tournant sous le compte **`AlainW`** (non-admin), et non plus
-`LocalSystem` — la justification historique de `LocalSystem` (chemin UNC
-inaccessible aux lecteurs montés en session) ne s'applique plus avec un
-chemin local. Scripts `creer_vm_ccw.py`, `lancer_provisioning.py`,
-`demarrer_ccw.sh` (+ `autounattend.xml`, `eval-expiration.json`,
-`verifier_expiration_ccw.py`) marqués **obsolètes** dans le tableau de
-provisioning (conservés à titre historique). §16.1 (maintenance/recréation
-VM à 90 jours) et la contrainte `safe.directory` (§16.3) marquées
-obsolètes dans leur ensemble — plus de VM ni de chemin UNC à gérer.
-L'onglet CCW (§16.2) et le bouton « Interrompre » (§16.4) signalés
-**partiellement obsolètes** : leurs fonctions reposant sur `VBoxManage
-guestcontrol` sont inopérantes sur un PC physique, en attendant une refonte
-adaptée (pas de VM à piloter).
-Précédemment — §3 « Convention de présentation côté Claude Chat » (issue
-#443) : la règle du bloc de code unique (issue #153), jusqu'ici formulée
-pour le mode lot seulement, est étendue explicitement au cas mono-issue —
-une issue unique est elle aussi présentée dans un bloc de code, afin
-qu'Alain puisse utiliser le bouton copier du bloc. §11 « Conventions de
-code » : le bullet « Issues » précise désormais que le corps est toujours
-présenté dans un bloc de code, qu'il s'agisse d'une issue seule ou d'un
-lot.*
+faute de cette garde côté flux `issues_inbox/`.*
 
 Historique complet : voir [`CHANGELOG.md`](CHANGELOG.md).
