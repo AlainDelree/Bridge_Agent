@@ -32,6 +32,8 @@ from app import create_app, etat
 from app.tunnel import demarrer_tunnel, arreter_tunnel
 from app.cycle_vie import surveiller_heartbeat
 from app.notifications_poller import surveiller_transitions
+from app.issues_inbox import (watcher_inbox_actif, demarrer_watcher_inbox,
+                              arreter_watcher_inbox)
 
 DOSSIER_SCRIPT = Path(__file__).resolve().parent
 
