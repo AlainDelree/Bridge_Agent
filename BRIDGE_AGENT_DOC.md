@@ -2330,6 +2330,15 @@ créée via `issues_inbox/` ne déclenchait aucun bip à sa clôture
 (`notifications.bip()`, cf. `watcher.py`), contrairement à celles créées via
 le formulaire.
 
+Ce défaut (issue #492) reproduit le comportement du tout premier usage du
+formulaire web, pas un état courant : côté formulaire, le label de
+notification coché reflète en réalité `localStorage` (clé
+`bridge_notif_pc`, issue #93), mémorisé côté navigateur d'Alain — un état
+que le watcher spool ne peut pas lire (pas de serveur web ni de session
+navigateur impliqués). `construire_labels()` ne cherche donc jamais à
+synchroniser dynamiquement ce choix avec le formulaire ; seul le champ
+`LABELS` explicite du fichier permet de s'écarter du défaut `notif_pc`.
+
 Le fichier est reparsé avec les mêmes regex que `static/js/app.js` (détection
 de champ d'en-tête à la frappe côté formulaire web), pour ne jamais diverger
 du format déjà produit par Claude Chat.
