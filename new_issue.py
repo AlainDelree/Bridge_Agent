@@ -138,10 +138,29 @@ def main():
     def gestionnaire_arret(signum, frame):
         app.config["ARRET_DEMANDE"] = True
         arreter_tunnel()
+        # Cycle de vie du watcher spool issues_inbox lié à celui de new_issue.py
+        # (issue #496) : à l'arrêt, on coupe systématiquement le watcher spool,
+        # que son démarrage courant soit l'auto-démarrage ci-dessous ou une
+        # relance manuelle (override) faite entre-temps depuis le panneau
+        # Infrastructure — même mécanisme que le bouton ⏹ Arrêter existant.
+        arreter_watcher_inbox()
         Timer(1.5, lambda: os._exit(0)).start()
 
     signal.signal(signal.SIGINT, gestionnaire_arret)
     signal.signal(signal.SIGTERM, gestionnaire_arret)
+
+    # Démarrage automatique du watcher spool issues_inbox (issue #496) : son
+    # cycle de vie suit désormais celui de new_issue.py lui-même (tous modes
+    # confondus — local/LAN/externe), plutôt qu'une durée choisie
+    # manuellement. S'il tourne déjà (ex. laissé actif par une session
+    # précédente qui a planté, ou une manip manuelle avant ce démarrage), on
+    # ne touche à rien : demarrer_watcher_inbox() redémarre TOUJOURS le
+    # processus existant (issue #485), ce qui couperait inutilement un
+    # watcher déjà en cours. Les boutons manuels ▶ Démarrer / ↺ Relancer /
+    # ⏹ Arrêter du panneau Infrastructure restent utilisables ensuite comme
+    # override pendant que new_issue.py tourne.
+    if not watcher_inbox_actif()[0]:
+        demarrer_watcher_inbox()
 
     # Mode --externe : démarrage automatique du tunnel cloudflared avant
     # d'exposer le serveur. Vérifie les prérequis (cloudflared + config) et

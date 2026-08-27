@@ -2466,6 +2466,11 @@ nouvelle durée : `demarrer_watcher_inbox()` arrête TOUJOURS l'ancien process
 (`SIGTERM`) avant de relancer — pas de refus silencieux, la nouvelle durée
 remplace systématiquement l'ancienne, quel que soit l'état courant.
 
+Depuis l'issue #496 (§20.12), ces boutons manuels ne pilotent plus le cas
+normal — devenu automatique — mais servent d'**override ponctuel** pendant
+que `new_issue.py` tourne (ex. couper temporairement le spool sans fermer
+toute l'interface, ou le relancer avec une durée bornée).
+
 ### 20.11 Démarrage auto du watcher CCL du projet après création d'issue (issue #486)
 
 Pour un vrai fonctionnement « pool d'impression » (dépose et oublie), le
@@ -2515,9 +2520,77 @@ restant avant extinction (ou « indéfini »), boutons « ↺ Relancer » et
 démarrage ouvrent le modal de choix de durée. Rafraîchie sur le même cycle
 que le reste du panneau (30 s, `rafraichirPanneauLateralResultats`).
 
+### 20.12 Cycle de vie lié à `new_issue.py` (issue #496)
+
+**Problème structurel.** Un vrai démarrage automatique « à la dépose d'un
+fichier » est impossible : l'événement déclencheur serait le dépôt dans
+`issues_inbox/`, mais si le watcher spool est éteint, rien ne surveille ce
+dossier pour détecter ce dépôt. Une sentinelle séparée a été envisagée puis
+jugée disproportionnée : dans l'usage réel d'Alain, `new_issue.py` est
+systématiquement ouvert pendant les périodes de travail (c'est là qu'il
+consulte les résultats) et fermé le reste du temps — un fichier déposé
+pendant que `new_issue.py` est fermé n'a de toute façon pas d'intérêt
+pratique à être traité immédiatement, puisque le résultat ne serait vu
+qu'au prochain démarrage de l'interface.
+
+**Décision retenue.** Le cycle de vie du watcher spool est lié directement à
+celui du **processus `new_issue.py`** lui-même, plutôt qu'à une durée choisie
+manuellement (§20.10) ou à une horloge d'inactivité indépendante :
+
+- **Démarrage** — juste après l'enregistrement des gestionnaires de signal
+  dans `main()` (avant le démarrage du tunnel `--externe` et des threads de
+  surveillance), `new_issue.py` teste `watcher_inbox_actif()` et, s'il est
+  inactif, appelle `demarrer_watcher_inbox()` sans `duree_min` (indéfini).
+  S'il tourne déjà (relance après un plantage, ou manip manuelle antérieure),
+  rien n'est fait : `demarrer_watcher_inbox()` **redémarre toujours** le
+  process existant (§20.10), ce qui couperait inutilement un watcher déjà en
+  cours de traitement.
+- **Arrêt** — le gestionnaire `gestionnaire_arret` (`SIGINT`/`SIGTERM`)
+  appelle `arreter_watcher_inbox()` de façon **inconditionnelle**, avant
+  `arreter_tunnel()` et la fin du process (`os._exit(0)` différé de 1,5 s) :
+  même mécanisme que le bouton « ⏹ Arrêter » (`SIGTERM` + nettoyage PID et
+  fichier d'échéance). Le watcher spool est donc coupé même s'il tournait
+  suite à un override manuel (relance avec une durée choisie) fait pendant la
+  session.
+- **Tous modes** (local/`--lan`/`--externe`) et les deux points d'entrée
+  (`python3 new_issue.py` et `./lancer_new_issue.sh`) sont concernés : le
+  wrapper `lancer_new_issue.sh` (§10, issue #150) ne fait qu'exécuter
+  `new_issue.py` comme process enfant du même groupe — un `Ctrl-C` (donc
+  `SIGINT`) atteint directement `new_issue.py`, qui gère l'arrêt lui-même ;
+  aucune modification du wrapper n'était nécessaire.
+- **Override manuel conservé.** Les boutons « ▶ Démarrer » / « ↺ Relancer » /
+  « ⏹ Arrêter » du panneau Infrastructure (§20.10), avec choix de durée,
+  restent pleinement fonctionnels pendant que `new_issue.py` tourne — ils ne
+  pilotent plus le cas normal (devenu automatique) mais un override ponctuel
+  (ex. couper temporairement sans fermer toute l'interface).
+
+**Valeur par défaut du modal de durée inchangée (« Indéfiniment »).**
+L'auto-démarrage ne fixe jamais de durée : le cas normal ne passe donc plus
+jamais par ce modal. Un clic sur « ▶ Démarrer »/« ↺ Relancer » pendant que
+`new_issue.py` tourne est désormais toujours un override délibéré ; garder
+« Indéfiniment » comme choix par défaut reste l'hypothèse la plus sûre (ne
+pas couper le watcher tout seul par surprise), une durée bornée restant un
+choix explicite quand Alain veut couper temporairement sans fermer toute
+l'interface.
+
+**Fichier déposé pendant que `new_issue.py` est fermé.** Il attend
+simplement dans `issues_inbox/` jusqu'au prochain démarrage de l'interface,
+qui relance alors le watcher spool et le traite au premier cycle de
+polling — comportement assumé (voir « Problème structurel » ci-dessus), pas
+un bug.
+
 ---
 
-*Dernière mise à jour : 26 août 2026 — §20.4 « Anti-doublon » (issue #491) :
+*Dernière mise à jour : 27 août 2026 — §20.12 « Cycle de vie lié à
+`new_issue.py` » (issue #496) : le watcher spool `issues_inbox` démarre
+automatiquement à l'ouverture de `new_issue.py` (s'il n'est pas déjà actif)
+et s'arrête proprement à sa fermeture (`SIGINT`/`SIGTERM`) — plus besoin de
+clic manuel dans le cas normal. Les boutons « ▶ Démarrer »/« ↺ Relancer »/
+« ⏹ Arrêter » du panneau Infrastructure (§20.10) restent utilisables comme
+override pendant que `new_issue.py` tourne. Un fichier déposé pendant que
+`new_issue.py` est fermé attend simplement le prochain démarrage de
+l'interface.
+Précédemment — 26 août 2026 — §20.4 « Anti-doublon » (issue #491) :
 `scripts/watcher_issues_inbox.py::traiter_fichier` réutilise telle quelle
 `_issue_ouverte_meme_titre()` de `app/issues.py` (garde du formulaire web,
 issue #189) pour rejeter un fichier `issues_inbox/` dont le titre correspond
