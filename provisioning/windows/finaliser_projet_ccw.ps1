@@ -151,7 +151,7 @@ Info '  • Permissions : Issues = Read and write, Metadata = Read-only'
 Info '  • Expiration : LA MÊME DATE que le token Bridge_Agent (≈ 2026-10-17,'
 Info "    aligné sur l'éval Windows) — ne pas laisser dériver (cf. §16)."
 Write-Host ''
-Read-Host 'Appuie sur Entrée une fois le token créé et copié' | Out-Null
+Read-Host 'Ne colle RIEN ici : une fois le token créé et copié, appuie juste sur Entrée pour continuer (le collage se fera à l''étape suivante)' | Out-Null
 Write-Host ''
 
 # ---------------------------------------------------------------------------
