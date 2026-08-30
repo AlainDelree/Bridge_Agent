@@ -1113,6 +1113,37 @@ moins une étape non critique en échec) ou `echec_critique` (l'arbre de
 process n'a pas pu être confirmé mort — le verrou est alors volontairement
 laissé en place, intervention manuelle requise).
 
+### Relancer une issue bloquée en `needs-human` (issue #460, cf. #509)
+
+**Symptôme visé.** Après 3 tentatives infructueuses, le watcher pose le
+label `needs-human` sur l'issue et cesse de la reprendre — jusqu'ici, la
+seule façon de débloquer le circuit était de retirer ce label à la main sur
+GitHub, un aller-retour répété en pratique à chaque échec.
+
+**Ce que fait le bouton.** Dans le panneau flottant Infrastructure, la zone
+d'actions contextuelles `#pl-zone-actions` (`rendrePanneauLateralActions()`,
+issue #375) affiche un bouton « 🔄 Relancer » dès que l'issue actuellement
+sélectionnée (`projetCourant`/`numeroCourant`) porte le label `needs-human`
+et est encore ouverte — sans fetch réseau, à partir des données déjà en
+mémoire (`listeIssuesResultats`). Un clic (après confirmation) appelle
+`relancerIssue()` → `POST /relancer-issue` (`app/interruption.py::
+route_relancer`), qui :
+
+- retire le label `needs-human` côté GitHub (`gh issue edit --remove-label`,
+  même mécanisme que `--add-label`/`--remove-label` utilisé par
+  `app/issues.py::modifier_label_notif`) ;
+- poste un commentaire de trace `🔄 Relancée via new_issue.py (retrait de
+  needs-human).` ;
+- **ne ferme pas l'issue** — il n'existe pas de label « pending » dans ce
+  projet : une issue ouverte sans `needs-human` ni `done` est déjà éligible
+  au prochain cycle de polling du watcher (`watcher.py`), à condition que
+  celui-ci tourne (aucune relance automatique du watcher lui-même).
+
+**Rafraîchissement.** Après succès, `relancerIssue()` recharge la liste
+(`chargerListeIssues()`) puis, si la ligne de l'issue reste visible sous les
+filtres courants, son détail (`afficherIssue()`) — le badge ⚠️ disparaît
+donc de la ligne concernée sans rechargement manuel complet de la page.
+
 ### Nettoyage de l'arbre de process après une tâche (issue #247)
 
 **Problème constaté.** Après un build Scrabble réussi côté CCW, un `cmd.exe`
