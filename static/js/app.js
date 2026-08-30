@@ -4680,8 +4680,12 @@ function reconnaitreModeTexte(brut) {
 // déclenche une resynchronisation.
 let dernierModeAutoDetecte = null;
 function detecterModeDansCorps() {
-  // Mode LOT : le MODE reste COMMUN à tout le lot, choisi via le radio du
-  // formulaire — pas détecté par bloc (DOC §3, hors périmètre de #326).
+  // Mode LOT : cette pré-sélection LIVE du radio pendant la frappe reste
+  // désactivée — un lot peut mélanger plusieurs modes (issue #505), il n'y a
+  // donc plus une seule valeur « détectée » à refléter sur le radio unique du
+  // formulaire pendant la saisie. Le radio du formulaire garde son rôle de
+  // repli (mode par défaut des blocs sans MODE propre) ; le mode RÉEL de
+  // chaque bloc, lui, est lu par bloc à l'envoi (modeEffectifBloc, envoyerLot).
   if (enModeLot()) { dernierModeAutoDetecte = null; return; }
   const corpsEl = document.getElementById('corps');
   const brut = lireChampEntete(corpsEl.value, 'MODE');
@@ -4804,27 +4808,49 @@ function projetEffectifBloc(bloc, projetForm) {
   return lireChampEntete(bloc.corps, 'PROJET') || projetForm;
 }
 
+// Mode effectivement appliqué à un bloc de lot : son champ « MODE » d'en-tête
+// s'il est présent (reconnu de façon tolérante, cf. reconnaitreModeTexte —
+// les trois modes lecture/lecture active/écriture), sinon le mode du radio du
+// formulaire en repli. Même principe de repli que projetEffectifBloc, source
+// unique partagée par mettreAJourBoutonLot et envoyerLot (issue #505) : jusqu'ici
+// le MODE restait commun à tout le lot (radio du formulaire uniquement) — un lot
+// peut désormais mélanger les trois modes, un par bloc.
+function modeEffectifBloc(bloc, modeForm) {
+  const brut = lireChampEntete(bloc.corps, 'MODE');
+  return brut ? reconnaitreModeTexte(brut) : modeForm;
+}
+
 // Bascule le bouton d'envoi entre mode mono-issue et mode lot selon le contenu
 // du corps. En lot : « Envoyer le lot (N issues) sur <projet(s)> » → envoyerLot ;
 // sinon on restaure le bouton normal « Envoyer sur <projet> » → envoyerIssue.
-// Les projets ciblés sont calculés bloc par bloc (même repli que envoyerLot) pour
-// donner à Alain la même confirmation visuelle qu'en mono-issue (issue #142).
+// Les projets ET les modes ciblés sont calculés bloc par bloc (même repli que
+// envoyerLot) pour donner à Alain la même confirmation visuelle qu'en mono-issue
+// (issue #142, étendu au mode mixte par #505).
 function mettreAJourBoutonLot() {
   const blocs = decouperCorpsEnBlocs(document.getElementById('corps').value);
   const btn   = document.getElementById('btn-envoyer');
   if (blocs.length >= 2) {
     const projetForm = document.getElementById('projet').value;
-    // Ensemble ordonné des projets distincts effectivement ciblés par le lot.
+    const modeForm    = document.querySelector('input[name=mode]:checked').value;
+    // Ensembles ordonnés des projets/modes distincts effectivement ciblés par le lot.
     const projets = [];
+    const modes   = [];
     for (const bloc of blocs) {
       const p = projetEffectifBloc(bloc, projetForm);
       if (p && !projets.includes(p)) projets.push(p);
+      const m = modeEffectifBloc(bloc, modeForm);
+      if (m && !modes.includes(m)) modes.push(m);
     }
     let suffixe = '';
     if (projets.length === 1) {
       suffixe = ' sur ' + projets[0];
     } else if (projets.length > 1) {
       suffixe = ' sur plusieurs projets (' + projets.join(', ') + ')';
+    }
+    // Signale les modes mixtes (issue #505) : le lot n'utilise plus un mode
+    // unique commun, chaque bloc peut porter le sien.
+    if (modes.length > 1) {
+      suffixe += ' — modes mixtes';
     }
     btn.textContent = 'Envoyer le lot (' + blocs.length + ' issues)' + suffixe;
     btn.onclick = envoyerLot;
@@ -4863,7 +4889,8 @@ function afficherResumeLot(resultats, projetForm) {
 
 // Envoi séquentiel du lot. Chaque bloc devient un objet data sur le modèle de
 // collecterFormulaire : titre/corps propres au bloc, PROJET/PRIORITE/TIMEOUT/
-// MODELE lus dans le bloc (repli sur le formulaire), MODE/notifs communs. Envoi
+// MODELE/MODE lus dans le bloc (repli sur le formulaire — MODE mixte par bloc
+// depuis l'issue #505, seuls les notifs restent communs à tout le lot). Envoi
 // UN PAR UN (await entre chaque, jamais en parallèle → pas de conflit gh). AUCUNE
 // modale (issues en attente / incohérence projet) : le but du lot est d'enchaîner
 // sans validation. Un bloc en échec n'interrompt pas le lot ; tout est reporté
@@ -4920,8 +4947,12 @@ async function envoyerLot() {
       const timeoutBloc  = lireChampEntete(bloc.corps, 'TIMEOUT');
       const modeleBloc   = lireChampEntete(bloc.corps, 'MODELE');
       const prioriteBloc = lireChampEntete(bloc.corps, 'PRIORITE');
+      const modeBloc     = lireChampEntete(bloc.corps, 'MODE');
 
       const projet = projetEffectifBloc(bloc, projetForm);
+      // Mode mixte (issue #505) : chaque bloc peut porter son propre MODE,
+      // repli sur le radio du formulaire — mêmes trois valeurs qu'en mono-issue.
+      const mode   = modeEffectifBloc(bloc, base.mode);
 
       // Timeout : la cellule peut porter un suffixe « s » (ex. 1200s) ; on ne
       // conserve que les chiffres, comme detecterTimeoutDansCorps. Repli formulaire.
@@ -4935,13 +4966,14 @@ async function envoyerLot() {
       if (projetBloc)  corpsBloc = retirerLigneEntete(corpsBloc, 'PROJET');
       if (timeoutBloc) corpsBloc = retirerLigneEntete(corpsBloc, 'TIMEOUT');
       if (modeleBloc)  corpsBloc = retirerLigneEntete(corpsBloc, 'MODELE');
+      if (modeBloc)    corpsBloc = retirerLigneEntete(corpsBloc, 'MODE');
 
       const data = {
         projet:          projet,
         titre:           bloc.titre,
         priorite:        prioriteBloc || base.priorite,
         timeout:         timeout,
-        mode:            base.mode,
+        mode:            mode,
         notifs:          base.notifs,
         corps:           corpsBloc.trim(),
         modele_ponctuel: modeleBloc || base.modele_ponctuel,
