@@ -1721,8 +1721,8 @@ Fine-grained tokens) :
 
 | Repère | Valeur | Source |
 |--------|--------|--------|
-| Date d'installation Windows | **2026-07-19** | `provisioning/windows/eval-expiration.json` (`date_installation`) |
-| Expiration éval Windows (90 j) | **2026-10-17** | idem (`date_expiration`, recalculée : install + 90 j) |
+| Date d'installation Windows | **2026-08-17** | `provisioning/windows/eval-expiration.json` (`date_installation`) |
+| Expiration éval Windows (90 j) | **2026-11-15** | idem (`date_expiration`, recalculée : install + 90 j) |
 | Expiration token GitHub | **≈ 2026-10-17** (aligné volontairement, non stocké) | *pas de métadonnée dédiée — voir note ci-dessous* |
 
 > Le token GitHub fine-grained a été créé avec une durée alignée sur l'éval
