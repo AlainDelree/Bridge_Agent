@@ -106,9 +106,10 @@ nettoie — sans repasser par le formulaire web.
 ### 3.3 Format attendu du fichier
 
 Même format qu'une issue produite par Claude Chat pour le formulaire web
-(§20) : un en-tête `| CHAMP | Valeur |` optionnel suivi d'une ligne
-`#Titre: ...` puis le corps. Champs d'en-tête reconnus, tous optionnels sauf
-`PROJET` :
+(§20) : un en-tête `| CHAMP | Valeur |` optionnel et une ligne `#Titre: ...`,
+dans **l'un ou l'autre ordre** (issue #512) — en-tête avant `#Titre:` ou
+`#Titre:` avant l'en-tête, les deux sont équivalents et interchangeables —
+puis le corps. Champs d'en-tête reconnus, tous optionnels sauf `PROJET` :
 
 | Champ     | Rôle                                                                |
 |-----------|----------------------------------------------------------------------|
@@ -140,16 +141,27 @@ Le fichier est reparsé avec les mêmes regex que `static/js/app.js` (détection
 de champ d'en-tête à la frappe côté formulaire web), pour ne jamais diverger
 du format déjà produit par Claude Chat.
 
+Recherche des champs bornée au début du fichier (issue #512) :
+`lire_champ_entete`/`retirer_ligne_entete` (et leurs miroirs JS
+`lireChampEntete`/`retirerLigneEntete`) ne cherchent chaque champ que dans les
+`ZONE_ENTETE_LIGNES` (25) premières lignes du fichier/corps — jamais dans
+l'intégralité du texte. Sans cette limite, une mention illustrative d'un champ
+(ex. un exemple `| PROJET | mon_projet |` cité dans le corps explicatif d'une
+issue, à titre pédagogique) pouvait être interprétée à tort comme le
+véritable en-tête. Le véritable en-tête tenant toujours largement dans cette
+marge, la limite n'affecte jamais un fichier bien formé.
+
 **Lot multi-issues (issue #508) :** un fichier peut contenir plusieurs blocs
 `#Titre:` à la suite — voir §3.13 pour le détail. Dans ce cas (≥ 2 occurrences
 de `#Titre:`), chaque bloc porte ses propres champs d'en-tête, y compris son
 propre `MODE` (mode mixte, les trois valeurs) : rien ne force artificiellement
 un mode unique pour tout le fichier, `MODE` étant lu par bloc exactement comme
-`PROJET`/`TIMEOUT`/`MODELE`/`LABELS`. Le format « en-tête avant `#Titre:` »
-décrit ci-dessus ne s'applique qu'au fichier à **un seul** bloc (0 ou 1
-occurrence de `#Titre:`) : un contenu placé avant le premier `#Titre:` d'un
-fichier à 2 blocs ou plus n'appartient à aucun bloc et est ignoré (même
-convention que `decouperCorpsEnBlocs` côté formulaire web, §20).
+`PROJET`/`TIMEOUT`/`MODELE`/`LABELS`. Le format « en-tête et `#Titre:`, dans
+l'un ou l'autre ordre » décrit ci-dessus ne s'applique qu'au fichier à **un
+seul** bloc (0 ou 1 occurrence de `#Titre:`) : un contenu placé avant le
+premier `#Titre:` d'un fichier à 2 blocs ou plus n'appartient à aucun bloc et
+est ignoré (même convention que `decouperCorpsEnBlocs` côté formulaire web,
+§20).
 
 ### 3.4 Validation avant création
 
@@ -2709,7 +2721,35 @@ qu'une sélection manuelle.
 
 ---
 
-*Dernière mise à jour : 30 août 2026 — §3.13 (nouveau) « Lots multi-issues par
+*Dernière mise à jour : 30 août 2026 — §3.3 « Format attendu du fichier »
+(issue #512) : l'en-tête `| CHAMP | Valeur |` et la ligne `#Titre:` sont
+désormais supportés dans l'un ou l'autre ordre, alors que seul « en-tête
+avant `#Titre:` » fonctionnait correctement jusqu'ici. Cause racine :
+`_regex_champ()` (`scripts/watcher_issues_inbox.py`) utilisait `\s*` juste
+après l'ancre `^` — `\s*` incluant le saut de ligne, `^` pouvait matcher le
+début d'une ligne VIDE précédant la ligne du champ (cas typique quand
+`#Titre:` précède l'en-tête, une ligne vide séparant souvent les deux) et
+`\s*` avaler ce saut de ligne pour atteindre le premier `|` de la ligne
+suivante : `retirer_ligne_entete()` calculait alors une fin de ligne
+identique au début (`corps.find("\n", debut) == debut`), ne retirant que ce
+caractère isolé — la ligne du champ (typiquement `PROJET`) restait intacte
+dans `champs["corps"]`, et `construire_body()` empilait son propre `PROJET`
+recalculé en plus, produisant un en-tête GitHub avec `PROJET` en double.
+Reproduit concrètement sur les issues Scrabble #423/#424/#425 (une déposée
+via le watcher spool, une via le formulaire web — même bug des deux côtés).
+Corrigé en restreignant `_regex_champ()` (et son miroir JS `lireChampEntete`/
+`retirerLigneEntete` de `static/js/app.js`) aux espaces/tabulations
+horizontaux (`[ \t]*`, jamais le saut de ligne). Par ailleurs (faiblesse
+révélée en tentant d'envoyer l'issue #512 elle-même : un nom de projet
+fictif cité en exemple illustratif plus bas dans le texte a été retenu à la
+place du vrai `PROJET` de l'en-tête réel), `lire_champ_entete`/
+`retirer_ligne_entete` et leurs miroirs JS bornent désormais la recherche de
+chaque champ aux `ZONE_ENTETE_LIGNES` (25) premières lignes du fichier/corps,
+plutôt que l'intégralité du texte. Tests de non-régression :
+`tests/test_ordre_titre_entete_512.py` (les deux ordres, avec et sans ligne
+vide, et la mention illustrative hors zone).
+
+Précédemment — 30 août 2026 — §3.13 (nouveau) « Lots multi-issues par
 fichier — mode mixte » (issue #508, faisant suite à la découverte de #500 et
 au timeout de #505 sur la même tâche) : `scripts/watcher_issues_inbox.py`
 sait désormais découper un fichier `.txt` en plusieurs blocs `#Titre:`

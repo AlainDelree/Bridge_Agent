@@ -118,12 +118,38 @@ def charger_config_inbox(chemin: Path) -> ConfigInbox:
 # static/js/app.js — même regex, pour ne jamais diverger du format produit par
 # Claude Chat / reconnu par le formulaire web) ──────────────────────────────
 
+# Nombre de lignes depuis le tout début du fichier où chercher les champs
+# d'en-tête (issue #512). Le bloc en-tête + #Titre: tient toujours largement
+# dans cette marge (§3.3 du DOC : au plus une dizaine de champs + les lignes
+# de décoration Markdown) ; au-delà, une mention d'un champ dans le corps
+# explicatif (ex. exemple illustratif) n'est plus interprétée comme le
+# véritable en-tête — seule la PREMIÈRE occurrence, proche du début, compte.
+ZONE_ENTETE_LIGNES = 25
+
+
+def _zone_entete(corps: str) -> str:
+    """Préfixe de `corps` limité aux ZONE_ENTETE_LIGNES premières lignes — les
+    indices retournés par une recherche dans ce préfixe restent valides tels
+    quels dans `corps` (c'est un préfixe exact, pas une copie transformée)."""
+    return "".join((corps or "").splitlines(keepends=True)[:ZONE_ENTETE_LIGNES])
+
+
 def _regex_champ(champ: str) -> re.Pattern:
-    return re.compile(rf"^\s*\|\s*{champ}\s*\|([^|]*)\|", re.IGNORECASE | re.MULTILINE)
+    # [ \t]* (espaces/tabulations) plutôt que \s* : \s* inclut le saut de ligne,
+    # ce qui permet à `^` (ancre de DÉBUT DE LIGNE en mode MULTILINE) de matcher
+    # au début d'une ligne VIDE précédant la ligne du champ, puis à \s* d'avaler
+    # ce saut de ligne pour atteindre le « | » de la ligne suivante — le match
+    # démarre alors une ligne trop tôt (issue #512 : ce cas survient typiquement
+    # quand #Titre: précède l'en-tête tabulaire, une ligne vide séparant les
+    # deux). retirer_ligne_entete calcule ensuite la fin de ligne avec
+    # corps.find("\n", debut) : comme `debut` pointe sur la ligne vide (un seul
+    # caractère "\n"), fin == debut et seul CE caractère est retiré — la ligne
+    # du champ, elle, reste intacte dans le corps restant.
+    return re.compile(rf"^[ \t]*\|[ \t]*{champ}[ \t]*\|([^|]*)\|", re.IGNORECASE | re.MULTILINE)
 
 
 def lire_champ_entete(corps: str, champ: str) -> str | None:
-    m = _regex_champ(champ).search(corps or "")
+    m = _regex_champ(champ).search(_zone_entete(corps))
     if not m:
         return None
     valeur = m.group(1).strip()
@@ -131,7 +157,7 @@ def lire_champ_entete(corps: str, champ: str) -> str | None:
 
 
 def retirer_ligne_entete(corps: str, champ: str) -> str:
-    m = _regex_champ(champ).search(corps or "")
+    m = _regex_champ(champ).search(_zone_entete(corps))
     if not m:
         return corps
     debut = m.start()

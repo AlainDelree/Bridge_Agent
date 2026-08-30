@@ -4156,16 +4156,39 @@ function afficherModalConfirmation(issues) {
   });
 }
 
+// Nombre de lignes depuis le tout début du corps où chercher les champs
+// d'en-tête (issue #512). Le bloc en-tête + #Titre: tient toujours largement
+// dans cette marge ; au-delà, une mention d'un champ dans le texte explicatif
+// (ex. exemple illustratif) n'est plus interprétée comme le véritable en-tête
+// — seule la PREMIÈRE occurrence, proche du début, compte. Même constante et
+// même logique que ZONE_ENTETE_LIGNES/_zone_entete de
+// scripts/watcher_issues_inbox.py, pour ne jamais diverger.
+const ZONE_ENTETE_LIGNES = 25;
+function zoneEntete(corps) {
+  const texte = corps || '';
+  let fin = 0;
+  for (let i = 0; i < ZONE_ENTETE_LIGNES; i++) {
+    const idx = texte.indexOf('\n', fin);
+    if (idx === -1) return texte;
+    fin = idx + 1;
+  }
+  return texte.slice(0, fin);
+}
+
 // Lecture d'un champ d'en-tête « | CHAMP | valeur | » dans le corps collé.
 // Source unique de vérité pour tout le parsing d'en-tête côté formulaire :
 // détection PROJET (#44/#109), TIMEOUT (#111) et résumé d'en-tête (#117)
 // s'appuient tous dessus, pour éviter des regex divergentes.
-//   • mot-clé insensible à la casse, espaces tolérés autour des séparateurs ;
+//   • mot-clé insensible à la casse, espaces/tabulations tolérés autour des
+//     séparateurs (PAS de saut de ligne — voir issue #512 ci-dessous) ;
 //   • la valeur est la cellule entre le 2e et le 3e « | », nettoyée ;
-//   • retourne la valeur (chaîne non vide) ou null (champ absent ou vide).
+//   • retourne la valeur (chaîne non vide) ou null (champ absent ou vide) ;
+//   • la recherche est bornée à zoneEntete(corps) (issue #512) : une mention
+//     du champ plus bas dans le texte explicatif (exemple illustratif) n'est
+//     alors plus interprétée à tort comme le véritable en-tête.
 function lireChampEntete(corps, champ) {
-  const re = new RegExp('^\\s*\\|\\s*' + champ + '\\s*\\|([^|]*)\\|', 'im');
-  const m = (corps || '').match(re);
+  const re = new RegExp('^[ \\t]*\\|[ \\t]*' + champ + '[ \\t]*\\|([^|]*)\\|', 'im');
+  const m = zoneEntete(corps).match(re);
   if (!m) return null;
   const valeur = m[1].trim();
   return valeur || null;
@@ -4182,9 +4205,19 @@ function lireChampEntete(corps, champ) {
 // première occurrence est retirée. Les doublons restants restent visibles dans
 // le corps — c'est volontaire : ça signale à Alain qu'il y a un doublon à
 // nettoyer, plutôt que de les faire disparaître silencieusement tous les deux.
+//
+// Issue #512 : la recherche du match (m.index) se fait dans zoneEntete(corps),
+// un PRÉFIXE exact de corps — l'indice reste donc valide tel quel dans corps.
+// L'ancienne regex (\s* au lieu de [ \t]*) laissait « ^ » matcher le début
+// d'une ligne VIDE précédant la ligne du champ (\s* incluant le saut de
+// ligne), typiquement quand #Titre: précède l'en-tête tabulaire avec une
+// ligne vide entre les deux : le calcul de fin de ligne ci-dessous
+// (corps.indexOf('\n', debut)) tombait alors immédiatement sur le saut de
+// ligne de CETTE ligne vide (fin === debut), et seul ce caractère était
+// retiré — la ligne du champ, elle, restait intacte dans le corps.
 function retirerLigneEntete(corps, champ) {
-  const re = new RegExp('^\\s*\\|\\s*' + champ + '\\s*\\|[^|]*\\|', 'im');
-  const m = (corps || '').match(re);
+  const re = new RegExp('^[ \\t]*\\|[ \\t]*' + champ + '[ \\t]*\\|[^|]*\\|', 'im');
+  const m = zoneEntete(corps).match(re);
   if (!m) return corps;
   const debut = m.index;                       // ^ ancre le début de la ligne
   let fin = corps.indexOf('\n', debut);        // fin de la ligne physique
