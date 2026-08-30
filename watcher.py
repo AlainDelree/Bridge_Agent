@@ -2244,7 +2244,7 @@ Instructions :
 Réponds avec ce format exact, sans rien ajouter avant ni après :
 
 ✅ Tâche terminée — [résumé en une ligne de ce qui a été fait]
-Commits : [hash backup] (backup) + [hash fix] (fix) — ou "aucun" si lecture seule
+Commits (dans {cwd_effectif}) : [hash backup] (backup) + [hash fix] (fix) — ou "aucun" si lecture seule
 py_compile : OK / N/A — push : aucun
 
 <details>

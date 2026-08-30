@@ -523,6 +523,20 @@ Garde-fous automatiques :
 - Aucune commande destructrice sans demande explicite
 - Périmètre strict : CCL ne travaille que dans le dossier configuré
 
+> **Rapport de fin de tâche (issue #513)** : le format de réponse imposé par
+> le prompt (`lancer_claude`, `watcher.py`) précise désormais le chemin
+> absolu du dossier de travail effectivement utilisé pour cette exécution
+> (`Commits (dans <chemin>) : xxx (backup) + yyy (fix)`) — ce chemin est
+> `cwd_effectif`, c'est-à-dire `REP_TRAVAIL` du `.conf`, ou le worktree
+> git isolé de la tâche (parallélisation `mode_write`, voir plus bas), ou le
+> `REPO_CIBLE` d'un périmètre dynamique (§7), selon le cas. Même mécanisme
+> côté CCL et CCW (`watcher.py` est un script unique partagé par les deux
+> plateformes) : le chemin affiché est toujours celui du clone réel où les
+> commits ont été effectués, ce qui évite de chercher au mauvais endroit
+> quand plusieurs worktrees/clones du même dépôt coexistent (incident vécu
+> sur le projet Scrabble, commits faits dans le clone CCW `C:\CCW\scrabble`
+> alors qu'ils étaient cherchés dans le worktree CCL habituel).
+
 > `configs/*.conf` reste interdit à l'écriture **quel que soit le mode**
 > (lecture active comme écriture) — garde-fou technique #318, voir §11.
 
