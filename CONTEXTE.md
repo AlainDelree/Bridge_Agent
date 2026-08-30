@@ -24,7 +24,7 @@ Bridge_Agent se développe lui-même par ses propres issues (dogfooding).
   dans `app.config`, routes via `add_url_rule`. Modules : `auth`, `projets`
   (config `.conf`), `watchers` (start/stop/état), `issues` (création/suivi,
   pièces jointes image), `journal`, `cycle_vie` (heartbeat/SSE), `ccw`
-  (onglet pilotage VM Windows), `notifications_poller` (thread démon
+  (onglet pilotage PC Windows physique), `notifications_poller` (thread démon
   détectant les transitions d'issues pour bip/notify-send/ntfy), `tunnel`,
   `etat`, `vues`.
 - **`templates/`** (`index.html`, Jinja2), **`static/`** (css/js/img).
@@ -65,7 +65,7 @@ Bridge_Agent se développe lui-même par ses propres issues (dogfooding).
   formats/limite dans l'UI.
 - §17 (#187) : notifications centralisées — `new_issue.py` détecte lui-même les
   transitions d'issues (tous projets, y compris CCW) et notifie localement.
-- §16 (#174…) : onglet « CCW » — pilotage complet de la VM Windows depuis Linux.
+- §16 (#174…) : onglet « CCW » — pilotage complet du PC Windows physique depuis Linux.
 - #186/#185 : `git pull --ff-only` automatique en début de cycle du watcher.
 
 ## Maintenance de ce fichier
