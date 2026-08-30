@@ -2285,7 +2285,7 @@ function rendrePanneauLateralActions() {
   // réutilisée à l'identique, aucune nouvelle route.
   if (!ferme && nomsLabels.includes('needs-human')) {
     html += '<button onclick="relancerIssue(\'' + escapeHtml(nom) + '\', '
-          + Number(numero) + ')">🔄 Relancer</button>';
+          + Number(numero) + ')">🔄 Retirer needs-human</button>';
     html += '<button class="danger-plein" onclick="fermerIssue(\'' + escapeHtml(nom) + '\', '
           + Number(numero) + ')">✖ Fermer l\'issue</button>';
   }
@@ -3756,8 +3756,8 @@ async function relancerIssue(nom, numero) {
     alert('Dépôt GitHub introuvable pour le projet « ' + nom + ' » — impossible de relancer.');
     return;
   }
-  if (!confirm("Relancer l'issue #" + numero + " ?\n\n"
-             + "Le label needs-human sera retiré : l'issue sera reprise par le watcher "
+  if (!confirm("Retirer le label needs-human de l'issue #" + numero + " ?\n\n"
+             + "L'issue sera reprise par le watcher "
              + "à son prochain cycle (s'il tourne).")) return;
 
   let resultat;
