@@ -179,6 +179,30 @@ def extraire_champs(contenu: str) -> dict:
     }
 
 
+# ─── Découpage multi-blocs — lot (miroir Python de decouperCorpsEnBlocs de
+# static/js/app.js, issue #508) : un fichier peut contenir plusieurs blocs
+# `#Titre:` à la suite, chacun traité comme une issue indépendante. Même
+# principe que le formulaire web : chaque bloc va de son `#Titre:` jusqu'au
+# `#Titre:` suivant (exclu) ou la fin du fichier ; le contenu éventuel AVANT
+# le premier `#Titre:` n'appartient à aucun bloc et est ignoré — cohérent
+# avec decouperCorpsEnBlocs (le mode lot n'existe que pour ≥ 2 occurrences).
+# Un fichier ne portant qu'un seul `#Titre:` (ou aucun) reste traité comme
+# aujourd'hui, sur le contenu ENTIER (pas sur ce découpage) : c'est le seul
+# moyen de conserver la convention mono-issue existante (en-tête `| CHAMP |
+# Valeur |` placé AVANT `#Titre:`, §3.3 du DOC) que ce découpage briserait
+# s'il était appliqué à un fichier à un seul bloc.
+def decouper_corps_en_blocs(contenu: str) -> list[str]:
+    debuts = [m.start() for m in TITRE_RE.finditer(contenu or "")]
+    if not debuts:
+        return []
+    texte = contenu
+    blocs = []
+    for i, debut in enumerate(debuts):
+        fin = debuts[i + 1] if i + 1 < len(debuts) else len(texte)
+        blocs.append(texte[debut:fin])
+    return blocs
+
+
 # ─── Mode (miroir de app.js::reconnaitreModeTexte / app/issues.py::MODES) ──
 # Reconnaissance tolérante — jamais un motif de rejet en soi (§6 du DOC :
 # défaut LECTURE si absent/non reconnu), seulement §3 du DOC demande de la
@@ -331,7 +355,12 @@ def _slug(texte: str, longueur_max: int = 40) -> str:
     return slug[:longueur_max] or "erreur"
 
 
-def _rejeter(cfg: ConfigInbox, chemin: Path, titre: str, projet: str, detail: str) -> None:
+def _deplacer_vers_rejected(cfg: ConfigInbox, chemin: Path, detail: str) -> Path | None:
+    """Déplace seul, sans journaliser (issue #508) : un lot dont TOUS les blocs
+    ont échoué a déjà journalisé chaque motif individuellement (une ligne par
+    bloc, cf. _traiter_lot) — une ligne de log supplémentaire ici ferait
+    doublon. `_rejeter` ci-dessous journalise en plus, pour le cas mono-issue
+    où aucune autre ligne n'a été écrite."""
     cfg.rejected_dir.mkdir(parents=True, exist_ok=True)
     nom_cible = f"{chemin.stem}__REJETE-{_slug(detail)}{chemin.suffix}"
     cible = cfg.rejected_dir / nom_cible
@@ -343,11 +372,17 @@ def _rejeter(cfg: ConfigInbox, chemin: Path, titre: str, projet: str, detail: st
         chemin.rename(cible)
     except OSError as e:
         log.error(f"Impossible de déplacer {chemin.name} vers rejected/ : {e}")
-        return
+        return None
+    log.warning(f"Rejeté : {chemin.name} → {cible.name} ({detail})")
+    return cible
 
+
+def _rejeter(cfg: ConfigInbox, chemin: Path, titre: str, projet: str, detail: str) -> None:
+    cible = _deplacer_vers_rejected(cfg, chemin, detail)
+    if cible is None:
+        return
     texte = f"{titre} — {detail}" if titre else detail
     _ecrire_ligne_log(cfg, projet or "(unknown)", "REJECTED", texte)
-    log.warning(f"Rejeté : {chemin.name} → {cible.name} ({detail})")
 
 
 # ─── Création de l'issue via gh (miroir de app/issues.py::envoyer) ─────────
@@ -393,6 +428,98 @@ def _fichier_pret(chemin: Path) -> bool:
         return False
 
 
+def _traiter_bloc(cfg: ConfigInbox, contenu_bloc: str):
+    """Traite UN bloc — fichier mono-issue entier, ou un des blocs d'un lot
+    multi-issues (issue #508) : validation, anti-doublon, création via `gh`,
+    démarrage auto du watcher CCL du projet concerné. Exactement le même
+    traitement qu'avant l'ajout du multi-blocs, mais sans toucher au fichier
+    source ni au log — laissé à l'appelant (mono-issue ou lot), qui décide
+    différemment de la disposition finale du fichier selon le cas.
+
+    Retourne (succes, titre, projet, texte, resultat_gh) :
+    - échec → `texte` est le détail d'erreur (nom du fichier rejeté + ligne
+      de log) ;
+    - succès → `texte` est le suffixe optionnel (« — watcher CCL démarré
+      (pid N) »), à ajouter au titre dans la ligne de log ; `resultat_gh` est
+      la sortie de `gh issue create` (URL), pour le seul log console.
+    """
+    champs = extraire_champs(contenu_bloc)
+    ok, detail, cfg_projet = valider(champs)
+    if not ok:
+        return False, champs["titre"], champs["projet"], detail, ""
+
+    # Anti-doublon (issue #491) : réutilise telle quelle la garde du formulaire
+    # web (_issue_ouverte_meme_titre, app/issues.py — issue #189) pour refuser
+    # une issue dont le titre correspond exactement à une issue déjà OUVERTE du
+    # même dépôt. Best-effort par construction (cf. docstring de la fonction) :
+    # si `gh issue list` échoue, elle retourne None et la création se poursuit.
+    doublon = _issue_ouverte_meme_titre(cfg_projet, champs["titre"])
+    if doublon is not None:
+        return (False, champs["titre"], champs["projet"],
+                f"doublon : une issue #{doublon} portant ce titre est déjà ouverte", "")
+
+    labels = construire_labels(champs)
+    body = construire_body(champs, cfg_projet)
+    succes, resultat = _creer_issue(cfg, cfg_projet, champs["titre"], labels, body)
+    if not succes:
+        return (False, champs["titre"], champs["projet"],
+                f"gh issue create a échoué : {resultat}", "")
+
+    # Démarrage auto du watcher CCL du projet concerné (issue #486) — sans quoi
+    # l'issue fraîchement créée resterait en attente indéfiniment si Alain
+    # n'a pas déjà lancé ce watcher depuis le panneau Infrastructure. Réutilise
+    # demarrer_watcher(forcer=False) de app/watchers.py (mêmes modalités que le
+    # bouton « Lancer ») : ne fait rien si le watcher tourne déjà (pas question
+    # d'interrompre un traitement d'issue potentiellement en cours sur ce
+    # projet), le démarre sinon.
+    suffixe = ""
+    try:
+        demarre, pid = demarrer_watcher(cfg_projet, forcer=False)
+        if demarre:
+            suffixe = f" — watcher CCL démarré (pid {pid})"
+            log.info(f"Watcher CCL démarré pour le projet « {champs['projet']} » (pid {pid}).")
+    except Exception as e:
+        log.warning(f"Démarrage auto du watcher CCL « {champs['projet']} » échoué : {e}")
+
+    return True, champs["titre"], champs["projet"], suffixe, resultat
+
+
+def _traiter_lot(cfg: ConfigInbox, chemin: Path, blocs: list) -> None:
+    """Traite un fichier multi-blocs (issue #508) : chaque bloc est traité
+    séquentiellement par `_traiter_bloc` — JAMAIS en parallèle, cohérent avec
+    `envoyerLot` côté formulaire web (pas de conflit `gh`). Chaque résultat
+    (succès ou échec) est journalisé individuellement, une ligne par bloc. Le
+    fichier n'est supprimé qu'une fois tous les blocs traités : normalement si
+    au moins un bloc a réussi (un échec partiel ne doit pas re-proposer
+    indéfiniment les blocs déjà réussis au prochain cycle) ; déplacé vers
+    `rejected/` seulement si TOUS ont échoué."""
+    nb_total = len(blocs)
+    nb_ok = 0
+    for i, bloc in enumerate(blocs, start=1):
+        succes, titre, projet, texte, resultat_gh = _traiter_bloc(cfg, bloc)
+        if succes:
+            nb_ok += 1
+            _ecrire_ligne_log(cfg, projet, "OK", titre + texte)
+            log.info(f"Lot {chemin.name} [{i}/{nb_total}] créée : {titre} → {resultat_gh}")
+        else:
+            _ecrire_ligne_log(cfg, projet or "(unknown)", "REJECTED",
+                               f"{titre} — {texte}" if titre else texte)
+            log.warning(f"Lot {chemin.name} [{i}/{nb_total}] rejeté : "
+                        f"{titre or '(sans titre)'} — {texte}")
+
+    if nb_ok == 0:
+        _deplacer_vers_rejected(cfg, chemin, f"lot : {nb_total} bloc(s) échoué(s)")
+        return
+
+    try:
+        chemin.unlink()
+    except OSError as e:
+        log.warning(f"Lot traité ({nb_ok}/{nb_total} OK) mais suppression de "
+                    f"{chemin.name} échouée : {e}")
+
+    log.info(f"Lot {chemin.name} terminé : {nb_ok}/{nb_total} issue(s) créée(s).")
+
+
 def traiter_fichier(cfg: ConfigInbox, chemin: Path) -> None:
     if chemin.suffix.lower() != ".txt":
         _rejeter(cfg, chemin, "", "", "extension invalide : attendu .txt")
@@ -404,54 +531,28 @@ def traiter_fichier(cfg: ConfigInbox, chemin: Path) -> None:
         _rejeter(cfg, chemin, "", "", f"lecture impossible : {e}")
         return
 
-    champs = extraire_champs(contenu)
-    ok, detail, cfg_projet = valider(champs)
-    if not ok:
-        _rejeter(cfg, chemin, champs["titre"], champs["projet"], detail)
+    # Lot multi-issues (issue #508) : ≥ 2 blocs « #Titre: » dans le fichier —
+    # même seuil que enModeLot() côté formulaire web. En-dessous (0 ou 1), le
+    # fichier reste traité comme avant sur son contenu ENTIER (pas sur un
+    # bloc découpé), pour ne pas casser la convention mono-issue existante
+    # (en-tête possiblement placé AVANT #Titre:, cf. decouper_corps_en_blocs).
+    blocs = decouper_corps_en_blocs(contenu)
+    if len(blocs) >= 2:
+        _traiter_lot(cfg, chemin, blocs)
         return
 
-    # Anti-doublon (issue #491) : réutilise telle quelle la garde du formulaire
-    # web (_issue_ouverte_meme_titre, app/issues.py — issue #189) pour refuser
-    # une issue dont le titre correspond exactement à une issue déjà OUVERTE du
-    # même dépôt. Best-effort par construction (cf. docstring de la fonction) :
-    # si `gh issue list` échoue, elle retourne None et la création se poursuit.
-    doublon = _issue_ouverte_meme_titre(cfg_projet, champs["titre"])
-    if doublon is not None:
-        _rejeter(cfg, chemin, champs["titre"], champs["projet"],
-                  f"doublon : une issue #{doublon} portant ce titre est déjà ouverte")
-        return
-
-    labels = construire_labels(champs)
-    body = construire_body(champs, cfg_projet)
-    succes, resultat = _creer_issue(cfg, cfg_projet, champs["titre"], labels, body)
+    succes, titre, projet, texte, resultat_gh = _traiter_bloc(cfg, contenu)
     if not succes:
-        _rejeter(cfg, chemin, champs["titre"], champs["projet"],
-                  f"gh issue create a échoué : {resultat}")
+        _rejeter(cfg, chemin, titre, projet, texte)
         return
 
     try:
         chemin.unlink()
     except OSError as e:
-        log.warning(f"Issue créée ({resultat}) mais suppression de {chemin.name} échouée : {e}")
+        log.warning(f"Issue créée ({resultat_gh}) mais suppression de {chemin.name} échouée : {e}")
 
-    # Démarrage auto du watcher CCL du projet concerné (issue #486) — sans quoi
-    # l'issue fraîchement créée resterait en attente indéfiniment si Alain
-    # n'a pas déjà lancé ce watcher depuis le panneau Infrastructure. Réutilise
-    # demarrer_watcher(forcer=False) de app/watchers.py (mêmes modalités que le
-    # bouton « Lancer ») : ne fait rien si le watcher tourne déjà (pas question
-    # d'interrompre un traitement d'issue potentiellement en cours sur ce
-    # projet), le démarre sinon.
-    texte_log = champs["titre"]
-    try:
-        demarre, pid = demarrer_watcher(cfg_projet, forcer=False)
-        if demarre:
-            texte_log += f" — watcher CCL démarré (pid {pid})"
-            log.info(f"Watcher CCL démarré pour le projet « {champs['projet']} » (pid {pid}).")
-    except Exception as e:
-        log.warning(f"Démarrage auto du watcher CCL « {champs['projet']} » échoué : {e}")
-
-    _ecrire_ligne_log(cfg, champs["projet"], "OK", texte_log)
-    log.info(f"Créée : {chemin.name} → {resultat}")
+    _ecrire_ligne_log(cfg, projet, "OK", titre + texte)
+    log.info(f"Créée : {chemin.name} → {resultat_gh}")
 
 
 def traiter_dossier(cfg: ConfigInbox) -> None:

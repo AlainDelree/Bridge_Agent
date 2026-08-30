@@ -140,6 +140,17 @@ Le fichier est reparsé avec les mêmes regex que `static/js/app.js` (détection
 de champ d'en-tête à la frappe côté formulaire web), pour ne jamais diverger
 du format déjà produit par Claude Chat.
 
+**Lot multi-issues (issue #508) :** un fichier peut contenir plusieurs blocs
+`#Titre:` à la suite — voir §3.13 pour le détail. Dans ce cas (≥ 2 occurrences
+de `#Titre:`), chaque bloc porte ses propres champs d'en-tête, y compris son
+propre `MODE` (mode mixte, les trois valeurs) : rien ne force artificiellement
+un mode unique pour tout le fichier, `MODE` étant lu par bloc exactement comme
+`PROJET`/`TIMEOUT`/`MODELE`/`LABELS`. Le format « en-tête avant `#Titre:` »
+décrit ci-dessus ne s'applique qu'au fichier à **un seul** bloc (0 ou 1
+occurrence de `#Titre:`) : un contenu placé avant le premier `#Titre:` d'un
+fichier à 2 blocs ou plus n'appartient à aucun bloc et est ignoré (même
+convention que `decouperCorpsEnBlocs` côté formulaire web, §20).
+
 ### 3.4 Validation avant création
 
 Un fichier est rejeté (déplacé vers `rejected/`, jamais créé sur GitHub) si :
@@ -167,7 +178,8 @@ Aucune logique dupliquée entre les deux flux (formulaire web et
 Chaque traitement (réussi ou rejeté) ajoute une ligne à
 **`logs/issues_inbox.log`** :
 `<horodatage> | <projet> | OK|REJECTED | <titre> [— <détail si rejet>]`.
-Rotation propre à ce watcher, **distincte** de la rotation par taille des
+Pour un fichier multi-blocs (§3.13), **une ligne par bloc**, jamais une ligne
+groupée pour tout le fichier. Rotation propre à ce watcher, **distincte** de la rotation par taille des
 autres watchers (§13) : dès que le fichier dépasse **`MAX_LOG_LINES`**
 (défaut 50), les lignes les plus anciennes sont supprimées — pas de fichier
 `.1`/`.2`, un seul fichier plat borné en permanence à 50 lignes.
@@ -375,6 +387,60 @@ simplement dans `issues_inbox/` jusqu'au prochain démarrage de l'interface,
 qui relance alors le watcher spool et le traite au premier cycle de
 polling — comportement assumé (voir « Problème structurel » ci-dessus), pas
 un bug.
+
+### 3.13 Lots multi-issues par fichier — mode mixte (issue #508)
+
+**Contexte.** Découvert lors de l'issue #500 (lot de 5 issues déposé en un
+seul fichier `.txt`) : jusqu'ici le watcher spool ne traitait qu'**une seule
+issue par fichier**, alors que le formulaire web savait déjà découper un
+corps collé en plusieurs blocs (§20, `decouperCorpsEnBlocs`,
+`envoyerLot`). Seule la première issue du lot avait été créée ; les suivantes
+avaient dû être redéposées manuellement en fichiers séparés.
+
+**Découpage (`decouper_corps_en_blocs`, `scripts/watcher_issues_inbox.py`) :**
+miroir Python de `decouperCorpsEnBlocs` de `static/js/app.js` — mêmes règles,
+pour ne jamais diverger du comportement du formulaire web. Le contenu du
+fichier est découpé sur chaque occurrence de `#Titre:` en début de ligne :
+chaque bloc va de son `#Titre:` jusqu'au `#Titre:` suivant (exclu) ou la fin
+du fichier. Un contenu placé avant le premier `#Titre:` d'un fichier à
+plusieurs blocs n'appartient à aucun bloc et est ignoré. **Seuil de bascule
+en mode lot : ≥ 2 occurrences de `#Titre:`** (même seuil que `enModeLot()`
+côté formulaire) — un fichier à 0 ou 1 occurrence reste traité sur son
+contenu **entier**, pas sur ce découpage, pour préserver la convention
+mono-issue existante (en-tête `| CHAMP | Valeur |` pouvant être placé AVANT
+`#Titre:`, §3.3, que ce découpage briserait s'il lui était appliqué).
+
+**Traitement de chaque bloc (`_traiter_bloc`) :** exactement le même
+traitement qu'un fichier mono-issue — validation (§3.4), anti-doublon
+(`_issue_ouverte_meme_titre`), création via `gh issue create`, démarrage
+auto du watcher CCL du projet concerné (§3.11) — appliqué **séquentiellement,
+jamais en parallèle** (`_traiter_lot`), cohérent avec l'envoi un par un
+d'`envoyerLot` côté formulaire web (aucun conflit `gh` possible).
+
+**Mode mixte, les trois modes (issue #505 côté formulaire, étendu ici au
+watcher spool) :** chaque bloc porte son propre champ `MODE` d'en-tête,
+reconnu par `extraire_champs`/`reconnaitre_mode` exactement comme pour un
+fichier mono-issue (les trois valeurs : `lecture`, `lecture active` /
+`mode_scratch`, `écriture` / `mode_write` — absent/non reconnu → `lecture`
+par défaut). Rien dans le découpage ni dans `_traiter_bloc` ne force un mode
+unique pour tout le fichier : un même lot peut donc librement mélanger les
+trois modes, un par bloc. Côté formulaire web, `modeEffectifBloc()` (repli
+sur le radio du formulaire si le bloc ne porte pas de `MODE` propre) assure
+la même règle, cf. §20 « Envoi en lot ».
+
+**Disposition du fichier selon les résultats.** Chaque bloc est journalisé
+individuellement dans `logs/issues_inbox.log` (§3.5), succès ou échec. Le
+fichier n'est supprimé qu'une fois **tous** les blocs traités :
+- **au moins un bloc réussi** (même si d'autres ont échoué) → le fichier est
+  supprimé normalement, comme un lot entièrement réussi. Un échec partiel ne
+  doit pas re-proposer indéfiniment au prochain cycle les blocs déjà réussis
+  (qui recréeraient des doublons, bloqués ensuite par l'anti-doublon avec un
+  message trompeur) ;
+- **tous les blocs ont échoué** → le fichier est déplacé vers `rejected/`
+  (même mécanisme que le rejet mono-issue, §3.2), avec un motif de nom
+  résumant le nombre de blocs en échec. Aucune ligne de log supplémentaire à
+  ce déplacement : chaque motif d'échec a déjà été journalisé individuellement
+  ci-dessus.
 
 ---
 
@@ -2514,15 +2580,19 @@ Ce que CCL doit produire ou confirmer.
 (`detecterModeDansCorps`) exactement comme `TIMEOUT`/`PROJET`/`MODELE` :
 la valeur reconnue pré-sélectionne le radio Mode du formulaire, puis la
 ligne est retirée du corps collé (le tableau d'en-tête final est reconstruit
-depuis le formulaire, pas depuis ce que Claude Chat a tapé). Seules deux
-valeurs sont fonctionnelles à ce jour : `| MODE | lecture |` et
-`| MODE | écriture |` (voir §5 pour le détail des modes). La reconnaissance
+depuis le formulaire, pas depuis ce que Claude Chat a tapé). Les **trois**
+valeurs du mode (voir §5) sont reconnues : `| MODE | lecture |`,
+`| MODE | lecture active |` et `| MODE | écriture |`. La reconnaissance
 est **tolérante** — insensible à la casse et aux accents, plusieurs libellés
 acceptés par valeur (ex. « écriture »/« ecriture »/« write » ;
+« lecture active »/« scratch »/« mode_scratch » ;
 « lecture »/« lecture seule »/« read ») — et le **défaut est LECTURE** si le
 champ `MODE` est absent du corps ou si sa valeur n'est reconnue par aucun
-synonyme : une issue doit toujours déclarer explicitement l'écriture pour
-l'obtenir, jamais par omission.
+synonyme : une issue doit toujours déclarer explicitement l'écriture (ou la
+lecture active) pour l'obtenir, jamais par omission. En mode mono-issue,
+cette détection ne pilote que le radio du formulaire (choix unique) ; en
+mode lot, chaque bloc peut porter son propre `MODE` — voir « Envoi en lot »
+ci-dessous.
 
 Au même titre que `PROJET`/`TIMEOUT`/`MODELE`, `new_issue.py` reconnaît aussi
 un champ `| LABELS | … |` dans l'en-tête du corps collé. Sa valeur est une liste de
@@ -2553,14 +2623,25 @@ coller *plusieurs* blocs `#Titre:` à la suite dans le même corps déclenche
 automatiquement le **mode lot** : le bouton d'envoi devient
 « Envoyer le lot (N issues) ». Chaque bloc va de son `#Titre:` jusqu'au
 `#Titre:` suivant et est traité comme une issue indépendante, avec ses propres
-champs d'en-tête optionnels (`PROJET`, `TIMEOUT`, `MODELE`, `LABELS`) — à défaut,
-les valeurs du formulaire (projet sélectionné, timeout, modèle) s'appliquent en
-repli (le champ `LABELS`, lui, est propre à chaque bloc : sans fallback). Le
-`MODE` (lecture/écriture) et les notifications sont communs à tout le lot :
-contrairement au mono-issue (ci-dessus), où `MODE` est auto-détecté par bloc
-depuis l'en-tête, en mode lot un éventuel `| MODE | … |` dans un bloc est
-ignoré — seul le radio du formulaire, choisi une fois pour tout le lot,
-décide. Les issues partent **en séquence** (une à la fois, jamais en parallèle),
+champs d'en-tête optionnels (`PROJET`, `TIMEOUT`, `MODELE`, `MODE`, `LABELS`) —
+à défaut, les valeurs du formulaire (projet sélectionné, timeout, modèle, mode
+du radio) s'appliquent en repli (le champ `LABELS`, lui, est propre à chaque
+bloc : sans fallback). Seules les **notifications** restent communes à tout le
+lot.
+
+**Mode mixte, les trois modes (issue #505) :** contrairement à un
+fonctionnement antérieur où `MODE` restait commun à tout le lot (seul le radio
+du formulaire décidait, un `| MODE | … |` par bloc étant ignoré), chaque bloc
+porte désormais son propre `MODE` — `modeEffectifBloc()`, source unique
+partagée par `mettreAJourBoutonLot()` (libellé du bouton, qui signale
+« — modes mixtes » si plusieurs modes distincts sont détectés dans le lot) et
+`envoyerLot()` (envoi réel) : le `MODE` du bloc s'il est présent (reconnu de
+façon tolérante, les trois valeurs, §5), sinon le radio du formulaire en
+repli. Un même lot peut donc librement mélanger des blocs en lecture, lecture
+active et écriture. Ce contournement (envoyer des lots séparés par mode) reste
+possible mais n'est plus nécessaire.
+
+Les issues partent **en séquence** (une à la fois, jamais en parallèle),
 **sans validation intermédiaire** (aucune modale « issues en attente » ni
 d'incohérence projet) : un bloc dont le `PROJET` diffère du projet sélectionné
 part quand même sur *son* `PROJET` et c'est simplement signalé ; un bloc en
@@ -2597,7 +2678,27 @@ qu'une sélection manuelle.
 
 ---
 
-*Dernière mise à jour : 27 août 2026 — §3/§20 « Watcher `issues_inbox` devient
+*Dernière mise à jour : 30 août 2026 — §3.13 (nouveau) « Lots multi-issues par
+fichier — mode mixte » (issue #508, faisant suite à la découverte de #500 et
+au timeout de #505 sur la même tâche) : `scripts/watcher_issues_inbox.py`
+sait désormais découper un fichier `.txt` en plusieurs blocs `#Titre:`
+(`decouper_corps_en_blocs`, miroir Python de `decouperCorpsEnBlocs` de
+`static/js/app.js`) et les traiter séquentiellement comme autant d'issues
+indépendantes (`_traiter_bloc`/`_traiter_lot`) ; le fichier n'est supprimé
+qu'une fois tous les blocs traités, déplacé vers `rejected/` seulement si
+TOUS ont échoué. §3.3/§3.4/§3.5 mis à jour en conséquence. Par ailleurs, le
+mode mixte du formulaire web (issue #505, déjà sur `master` avant #508 —
+`modeEffectifBloc()` dans `static/js/app.js`, permettant à chaque bloc d'un
+lot de porter son propre `MODE` parmi les trois valeurs plutôt qu'un mode
+unique commun à tout le lot) est désormais documenté dans §20 « Envoi en
+lot » et §20 « Champs d'en-tête optionnels reconnus » (correction d'une
+mention obsolète indiquant seulement deux valeurs `MODE` fonctionnelles).
+Côté watcher spool, aucune logique supplémentaire n'était nécessaire pour le
+mode mixte : chaque bloc ayant déjà nativement son propre `MODE` via
+`extraire_champs`/`reconnaitre_mode` (§3.13) une fois le découpage
+multi-blocs en place.
+
+Précédemment — 27 août 2026 — §3/§20 « Watcher `issues_inbox` devient
 la méthode principale, formulaire web devient la méthode de backup » (issue
 #497, refaisant sur `master` actuel la restructuration tentée par #495 dans un
 worktree séparé, abandonnée faute de fusion propre avec #496) : le contenu du
