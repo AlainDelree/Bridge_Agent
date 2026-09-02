@@ -16,6 +16,11 @@ avant création, réutilise app/issues.py::_issue_ouverte_meme_titre() (garde
 du formulaire web, issue #189) pour rejeter un titre déjà porté par une
 issue ouverte du même dépôt.
 
+Champ RELANCE (issue #516) : `| RELANCE | #N |` dans l'en-tête détourne tout
+le bloc vers la correction/relance de l'issue #N déjà ouverte (needs-human
+typiquement) plutôt qu'une création — aucune issue créée, anti-doublon
+court-circuité (il n'a de sens que pour une création). Voir _traiter_relance.
+
 Après création réussie de l'issue, le watcher CCL du projet concerné
 (`watcher.py --config configs/<projet>.conf`) est démarré automatiquement
 s'il n'est pas déjà actif (issue #486, mode « dépose et oublie ») — via
@@ -36,6 +41,7 @@ Alain de le créer à la main s'il veut surcharger les défauts.
 """
 
 import argparse
+import json
 import logging
 import os
 import re
@@ -55,6 +61,7 @@ from watcher import (charger_config, lire_conf, est_titre_chef,  # noqa: E402
                      LABEL_NOTIF_PC, LABEL_NOTIF_GSM, LABEL_NOTIF_TOUS)
 from app.watchers import demarrer_watcher  # noqa: E402 (issue #486)
 from app.issues import _issue_ouverte_meme_titre  # noqa: E402 (issue #491)
+from app.interruption import relancer_issue  # noqa: E402 (issue #516)
 
 log = logging.getLogger("watcher_issues_inbox")
 
@@ -172,7 +179,10 @@ def retirer_ligne_entete(corps: str, champ: str) -> str:
 
 TITRE_RE = re.compile(r"^#Titre:\s*(.*)$", re.IGNORECASE | re.MULTILINE)
 
-CHAMPS_ENTETE = ("PROJET", "TIMEOUT", "MODELE", "MODE", "LABELS")
+# RELANCE (issue #516) : champ optionnel en cohérence avec SUITE_DE (§6 du
+# DOC) — présent, il détourne tout le bloc du chemin de création habituel
+# vers le chemin de relance d'une issue EXISTANTE (voir _traiter_relance).
+CHAMPS_ENTETE = ("PROJET", "TIMEOUT", "MODELE", "MODE", "LABELS", "RELANCE")
 
 
 def extraire_champs(contenu: str) -> dict:
@@ -200,6 +210,7 @@ def extraire_champs(contenu: str) -> dict:
         "modele":       (valeurs["MODELE"] or "").strip(),
         "mode_brut":    valeurs["MODE"],
         "labels_brut":  valeurs["LABELS"],
+        "relance_brut": valeurs["RELANCE"],
         "titre":        titre,
         "corps":        reste.strip("\n"),
     }
@@ -293,6 +304,194 @@ def valider(champs: dict):
             return False, f"TIMEOUT invalide : « {champs['timeout_brut']} » (doit être un nombre).", None
 
     return True, "", cfg_projet
+
+
+# ─── RELANCE — corriger/relancer une issue needs-human existante sans repasser
+# par GitHub (issue #516) : le champ `| RELANCE | #N |` détourne un bloc du
+# chemin de création habituel (§3.4, anti-doublon compris — il n'a de sens
+# que pour une CRÉATION) vers un chemin qui cible l'issue #N déjà ouverte,
+# met à jour son corps avec les champs d'en-tête corrigés, retire le label
+# needs-human et poste un commentaire de trace — en réutilisant
+# app.interruption.relancer_issue() (cœur du bouton « 🔄 Relancer », issue
+# #460) plutôt que de dupliquer le retrait de label + la pose du commentaire.
+#
+# Champs corrigibles volontairement limités à TIMEOUT et MODELE : purement
+# textuels dans le corps, sans effet de bord. MODE est exclu (le mode réel
+# est arme par le label GitHub `mode_write`, pas par le texte du corps — le
+# changer sans re-synchroniser ce label serait trompeur, et synchroniser un
+# label qui ARME l'écriture pour CCL depuis ce chemin est jugé hors-scope
+# pour cette première itération) ; LABELS est exclu aussi (il n'apparaît
+# jamais dans le corps — voir construire_body — donc « corriger le corps »
+# n'a pas de sens pour ce champ). RELANCE ne fait que CORRIGER un champ déjà
+# présent dans le corps existant : un champ absent du corps cible reste
+# absent (pas d'insertion de ligne d'en-tête).
+
+RELANCE_RE = re.compile(r"^#?\s*(\d+)\s*$")
+
+COMMENTAIRE_RELANCE_INBOX = "🔄 Relancée via issues_inbox/ (champ RELANCE, issue #516)."
+
+
+def _numero_relance(brut: str | None) -> int | None:
+    if not brut:
+        return None
+    m = RELANCE_RE.match(brut.strip())
+    return int(m.group(1)) if m else None
+
+
+def valider_relance(champs: dict):
+    """Retourne (True, "", cfg_projet, numero) si le bloc RELANCE est
+    exploitable, sinon (False, détail_erreur, None, None). Ne vérifie PAS
+    l'existence/l'ouverture/le dépôt de l'issue ciblée — cf. _recuperer_issue,
+    qui s'en charge via `gh issue view --repo` (échoue déjà si l'issue #N
+    n'appartient pas à ce dépôt)."""
+    if not champs["projet"]:
+        return False, "en-tête malformé : champ PROJET manquant ou vide.", None, None
+
+    chemin_conf = DOSSIER_SCRIPT / "configs" / f"{champs['projet']}.conf"
+    if not chemin_conf.exists():
+        return False, f"projet inconnu : « {champs['projet']} » (configs/{champs['projet']}.conf introuvable).", None, None
+    try:
+        cfg_projet = charger_config(chemin_conf)
+    except SystemExit as e:
+        return False, f"config du projet « {champs['projet']} » invalide : {e}", None, None
+
+    numero = _numero_relance(champs["relance_brut"])
+    if numero is None:
+        return False, f"RELANCE invalide : « {champs['relance_brut']} » (attendu #<numéro>).", None, None
+
+    if champs["modele"] and champs["modele"] not in MODELES_VALIDES:
+        return False, (f"MODELE inconnu : « {champs['modele']} » "
+                        f"(valeurs acceptées : {', '.join(sorted(MODELES_VALIDES))})."), None, None
+
+    if champs["timeout_brut"]:
+        valeur = champs["timeout_brut"].strip().lower().rstrip("s")
+        if not valeur.isdigit():
+            return False, f"TIMEOUT invalide : « {champs['timeout_brut']} » (doit être un nombre).", None, None
+
+    return True, "", cfg_projet, numero
+
+
+def _recuperer_issue(depot: str, numero: int):
+    """(True, "", issue_dict) ou (False, détail_erreur, None). `gh issue view
+    --repo <depot>` échoue déjà si l'issue n'existe pas dans CE dépôt — c'est
+    ce qui couvre la vérification « appartient au bon dépôt/projet » exigée
+    avant toute modification."""
+    try:
+        res = subprocess.run(
+            ["gh", "issue", "view", str(numero), "--repo", depot,
+             "--json", "number,state,body,title"],
+            capture_output=True, text=True, timeout=30,
+        )
+        if res.returncode != 0:
+            detail = (res.stderr or res.stdout or "").strip()
+            return False, detail or f"issue #{numero} introuvable dans {depot}.", None
+        return True, "", json.loads(res.stdout)
+    except subprocess.TimeoutExpired:
+        return False, "timeout (gh n'a pas répondu en 30s).", None
+    except FileNotFoundError:
+        return False, "gh introuvable dans le PATH.", None
+    except (json.JSONDecodeError, OSError) as e:
+        return False, str(e), None
+
+
+def _maj_ligne_entete(corps: str, champ: str, valeur: str) -> str:
+    """Remplace la valeur de `champ` si sa ligne existe déjà dans l'en-tête de
+    `corps` (le corps GitHub EXISTANT de l'issue ciblée, pas le fichier
+    déposé) ; sinon `corps` inchangé — RELANCE corrige un champ déjà présent,
+    jamais n'en insère un nouveau."""
+    m = _regex_champ(champ).search(_zone_entete(corps))
+    if not m:
+        return corps
+    debut_valeur, fin_valeur = m.start(1), m.end(1)
+    return corps[:debut_valeur] + f" {valeur} " + corps[fin_valeur:]
+
+
+def _fusionner_entete(corps_existant: str, champs: dict) -> tuple[str, list]:
+    """Applique au corps existant de l'issue ciblée les champs TIMEOUT/MODELE
+    fournis par le fichier RELANCE. Retourne (nouveau_corps, champs_modifies)
+    — la liste sert à la fois au commentaire de trace et au log."""
+    nouveau = corps_existant
+    modifies = []
+
+    if champs["timeout_brut"]:
+        valeur = f"{int(champs['timeout_brut'].strip().lower().rstrip('s'))}s"
+        avant = nouveau
+        nouveau = _maj_ligne_entete(nouveau, "TIMEOUT", valeur)
+        if nouveau != avant:
+            modifies.append(f"TIMEOUT → {valeur}")
+
+    if champs["modele"]:
+        avant = nouveau
+        nouveau = _maj_ligne_entete(nouveau, "MODELE", champs["modele"])
+        if nouveau != avant:
+            modifies.append(f"MODELE → {champs['modele']}")
+
+    return nouveau, modifies
+
+
+def _modifier_corps_gh(depot: str, numero: int, corps: str) -> tuple[bool, str]:
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".md", delete=False, encoding="utf-8") as f:
+        f.write(corps)
+        chemin_body = f.name
+    try:
+        res = subprocess.run(
+            ["gh", "issue", "edit", str(numero), "--repo", depot, "--body-file", chemin_body],
+            capture_output=True, text=True, timeout=30,
+        )
+        if res.returncode == 0:
+            return True, ""
+        return False, (res.stderr or res.stdout or "erreur gh inconnue").strip()
+    except subprocess.TimeoutExpired:
+        return False, "timeout (gh n'a pas répondu en 30s)."
+    except FileNotFoundError:
+        return False, "gh introuvable dans le PATH."
+    except Exception as e:
+        return False, str(e)
+    finally:
+        Path(chemin_body).unlink(missing_ok=True)
+
+
+def _traiter_relance(cfg: ConfigInbox, champs: dict):
+    """Bloc RELANCE (issue #516) : cible l'issue GitHub #N déjà ouverte au
+    lieu d'en créer une nouvelle. Retourne le même tuple que _traiter_bloc
+    pour une création (succes, titre, projet, texte, resultat_gh) —
+    `resultat_gh` toujours vide ici, RELANCE ne créant jamais d'issue."""
+    ok, detail, cfg_projet, numero = valider_relance(champs)
+    if not ok:
+        return False, champs["titre"] or f"RELANCE {champs['relance_brut']}", champs["projet"], detail, ""
+
+    depot = cfg_projet.depot
+    ok_view, detail_view, issue = _recuperer_issue(depot, numero)
+    if not ok_view:
+        return False, f"#{numero}", champs["projet"], f"issue #{numero} introuvable dans {depot} : {detail_view}", ""
+
+    if (issue.get("state") or "").upper() != "OPEN":
+        return (False, issue.get("title") or f"#{numero}", champs["projet"],
+                f"issue #{numero} n'est pas ouverte (état : {issue.get('state')}).", "")
+
+    corps_existant = issue.get("body") or ""
+    nouveau_corps, modifies = _fusionner_entete(corps_existant, champs)
+
+    if nouveau_corps != corps_existant:
+        ok_edit, detail_edit = _modifier_corps_gh(depot, numero, nouveau_corps)
+        if not ok_edit:
+            return (False, issue.get("title") or f"#{numero}", champs["projet"],
+                    f"mise à jour du corps de #{numero} échouée : {detail_edit}", "")
+
+    commentaire = COMMENTAIRE_RELANCE_INBOX
+    if modifies:
+        commentaire += "\n\nChamps corrigés : " + ", ".join(modifies) + "."
+    if champs["corps"]:
+        commentaire += "\n\n" + champs["corps"]
+
+    statut_global, etapes = relancer_issue(depot, numero, commentaire=commentaire)
+    if statut_global != "ok":
+        detail_erreurs = "; ".join(e["message"] for e in etapes if e["statut"] == "echec")
+        return (False, issue.get("title") or f"#{numero}", champs["projet"],
+                f"relance de #{numero} incomplète : {detail_erreurs}", "")
+
+    suffixe = f" — relance de #{numero}" + (f" ({', '.join(modifies)})" if modifies else "")
+    return True, issue.get("title") or f"#{numero}", champs["projet"], suffixe, ""
 
 
 # ─── Construction body/labels (miroir de app/issues.py::construire_body /
@@ -470,6 +669,13 @@ def _traiter_bloc(cfg: ConfigInbox, contenu_bloc: str):
       la sortie de `gh issue create` (URL), pour le seul log console.
     """
     champs = extraire_champs(contenu_bloc)
+
+    # RELANCE (issue #516) : détourne ce bloc vers une issue EXISTANTE avant
+    # toute validation/anti-doublon de création — les deux chemins n'ont rien
+    # en commun (cf. _traiter_relance).
+    if champs["relance_brut"]:
+        return _traiter_relance(cfg, champs)
+
     ok, detail, cfg_projet = valider(champs)
     if not ok:
         return False, champs["titre"], champs["projet"], detail, ""

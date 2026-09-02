@@ -442,17 +442,34 @@ def route_interrompre():
     return jsonify(**reponse)
 
 
-def route_relancer():
-    """POST /relancer-issue — remet en file d'attente une issue bloquée en
-    needs-human (issue #460), sans recréer une nouvelle issue.
+def relancer_issue(depot: str, numero: int, commentaire: str = COMMENTAIRE_RELANCE) -> tuple[str, list]:
+    """Cœur de la relance (issue #460) : retrait du label needs-human + trace
+    en commentaire GitHub — remet une issue en file d'attente sans recréer de
+    nouvelle issue. Factorisée hors de route_relancer() pour être réutilisable
+    hors contexte HTTP (champ RELANCE d'issues_inbox/, issue #516), qui poste
+    un commentaire de trace différent (mentionnant les champs corrigés).
 
     Il n'existe PAS de label « pending » dans ce projet : le watcher
     (watcher.py) traite déjà toute issue OUVERTE for-linux/for-windows tant
     qu'elle ne porte ni `done` ni `needs-human` (voir LABEL_ECHEC/LABEL_FAIT
     dans watcher.py) — retirer needs-human suffit donc à la rendre de nouveau
     éligible au prochain cycle. Ne relance PAS le watcher lui-même (même
-    esprit que route_interrompre ci-dessus : action manuelle séparée si le
-    watcher est éteint)."""
+    esprit que interrompre_linux/interrompre_windows ci-dessus : action
+    manuelle séparée si le watcher est éteint)."""
+    statut_label, msg_label = _retirer_label_gh(depot, numero, LABEL_NEEDS_HUMAN)
+    etapes = [{"etape": "retrait_label_needs_human", "statut": statut_label, "message": msg_label}]
+
+    statut_comment, msg_comment = _commenter_gh(depot, numero, commentaire)
+    etapes.append({"etape": "commentaire", "statut": statut_comment, "message": msg_comment})
+
+    statut_global = "echec" if any(e["statut"] == "echec" for e in etapes) else "ok"
+    return statut_global, etapes
+
+
+def route_relancer():
+    """POST /relancer-issue — remet en file d'attente une issue bloquée en
+    needs-human (issue #460), sans recréer une nouvelle issue. Mince wrapper
+    Flask autour de relancer_issue() ci-dessus, qui porte la logique réelle."""
     data   = request.json or {}
     depot  = (data.get("depot") or "").strip()
     numero = data.get("numero")
@@ -463,11 +480,5 @@ def route_relancer():
         return jsonify(succes=False, erreur="Numéro d'issue invalide."), 400
     numero = int(numero)
 
-    statut_label, msg_label = _retirer_label_gh(depot, numero, LABEL_NEEDS_HUMAN)
-    etapes = [{"etape": "retrait_label_needs_human", "statut": statut_label, "message": msg_label}]
-
-    statut_comment, msg_comment = _commenter_gh(depot, numero, COMMENTAIRE_RELANCE)
-    etapes.append({"etape": "commentaire", "statut": statut_comment, "message": msg_comment})
-
-    statut_global = "echec" if any(e["statut"] == "echec" for e in etapes) else "ok"
+    statut_global, etapes = relancer_issue(depot, numero)
     return jsonify(succes=True, statut_global=statut_global, etapes=etapes)

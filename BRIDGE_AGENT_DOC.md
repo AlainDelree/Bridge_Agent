@@ -454,6 +454,78 @@ fichier n'est supprimé qu'une fois **tous** les blocs traités :
   ce déplacement : chaque motif d'échec a déjà été journalisé individuellement
   ci-dessus.
 
+### 3.14 Champ `RELANCE` : corriger/relancer une issue `needs-human` existante (issue #516)
+
+**Problème résolu.** Corriger une issue en échec (`needs-human`) —
+typiquement pour ajuster un `TIMEOUT` trop court après un échec par
+dépassement — obligeait jusqu'ici à sortir du flux `issues_inbox` : éditer le
+corps à la main sur GitHub, puis retirer `needs-human` (bouton
+« 🔄 Relancer », §13 « Relancer une issue bloquée en needs-human », issue
+#460). Redéposer un `.txt` avec le même
+titre échouait systématiquement : l'anti-doublon (§3.4) rejette tout titre
+déjà porté par une issue OUVERTE — ce qui inclut justement `needs-human`,
+puisqu'elle reste ouverte. Ce comportement de l'anti-doublon reste correct et
+inchangé ; `RELANCE` ajoute un chemin **volontaire** et **distinct** pour
+cibler une issue déjà ouverte, en cohérence avec le champ `SUITE_DE`
+existant (§6) qui référence lui aussi une issue par `#N`.
+
+**Format.** `| RELANCE | #N |` dans l'en-tête (même zone bornée que les
+autres champs, §3.3) — la présence de ce champ détourne **tout le bloc** vers
+le chemin de relance, avant toute validation/anti-doublon de création :
+`#Titre:` n'est plus requis (ignoré s'il est présent) et aucune issue n'est
+jamais créée pour ce bloc.
+
+```markdown
+| PROJET  | bridge_agent |
+| RELANCE | #612 |
+| TIMEOUT | 1800s |
+
+Le TIMEOUT de 900s était trop court : la tâche a échoué par dépassement.
+```
+
+**Validation avant modification (`valider_relance`, `_recuperer_issue`,
+`scripts/watcher_issues_inbox.py`) :**
+- `PROJET` doit désigner un `configs/<PROJET>.conf` valide (résout le dépôt
+  GitHub cible, `cfg_projet.depot`) ;
+- `RELANCE` doit être un numéro exploitable (`#N` ou `N`) ;
+- `gh issue view <N> --repo <depot>` doit réussir — échoue déjà si l'issue
+  n'existe pas ou n'appartient pas à ce dépôt, ce qui couvre la vérification
+  « bon dépôt/projet » sans logique supplémentaire ;
+- l'issue doit être **OUVERTE** (`state == "OPEN"`).
+Tout échec → rejet vers `rejected/` avec motif clair, même mécanique que
+§3.4 (`_rejeter`).
+
+**Champs corrigibles dans le corps : `TIMEOUT` et `MODELE` uniquement**
+(`_fusionner_entete`/`_maj_ligne_entete`). Ces deux champs sont purement
+textuels dans le corps GitHub existant de l'issue ciblée, sans effet de bord
+— la fonction **corrige une ligne déjà présente**, elle n'en insère jamais
+une nouvelle. `MODE` est volontairement exclu : le mode réellement appliqué
+est armé par le label GitHub `mode_write`/`mode_scratch` (§5), pas par le
+texte du corps ; le changer sans resynchroniser ce label serait trompeur, et
+resynchroniser un label qui arme l'écriture pour CCL depuis ce chemin est
+jugé hors-scope pour cette première itération. `LABELS` est exclu aussi : ce
+champ n'apparaît jamais dans le corps (`construire_body` ne l'y écrit pas,
+§3.3) — « corriger le corps » n'a pas de sens pour lui ici.
+
+**Retrait de `needs-human` + commentaire de trace : réutilisation de
+`app.interruption.relancer_issue()`**, extraite du cœur de `route_relancer()`
+(bouton « 🔄 Relancer », issue #460) précisément pour ce réemploi — aucune
+logique de retrait de label / pose de commentaire dupliquée entre les deux
+flux. Le commentaire posté diffère de celui du bouton (mention explicite
+d'issues_inbox/RELANCE) et résume les champs effectivement corrigés, plus le
+texte libre éventuel du fichier (au-delà de l'en-tête et de `#Titre:`) —
+utile pour tracer *pourquoi* la correction a été faite.
+
+**Non traité par ce chemin** (hors-scope, cf. ci-dessus) : changement de
+`MODE`/labels via `RELANCE`, insertion d'un champ absent du corps cible,
+renommage du titre GitHub. Une correction plus large reste possible à la
+main sur GitHub, comme avant #516.
+
+**Formulaire web.** Pas de reprise dans `new_issue.py`/`static/js/app.js` :
+le formulaire sert à **créer** des issues, et dispose déjà d'un chemin dédié
+pour cibler une issue existante (bouton « 🔄 Relancer », §13) — dupliquer
+`RELANCE` là n'apporterait rien.
+
 ---
 
 ## 4. Labels disponibles
@@ -556,6 +628,7 @@ Le watcher lit ces champs dans le tableau markdown de l'en-tête :
 | `TYPE` | `chef` ou `ouvrier` | Identifie le rôle de l'issue dans le pattern multi-agent. `chef` = orchestre les ouvriers. `ouvrier` = sous-tâche créée par le chef, masquée par défaut dans l'onglet Résultats. Absent = issue normale. |
 | `FICHIER_CONTEXTE` | ex. chemin relatif | Fichier additionnel fourni en contexte à CCL pour cette issue (modifiable via l'onglet Configuration, voir §12) |
 | `SUITE_DE` | ex. `#5` | Indique que cette issue fait suite à l'issue #N (discussion ou tâche complémentaire). Absent = issue inédite. |
+| `RELANCE` | ex. `#612` | **Spécifique à `issues_inbox/`** (issue #516, voir §3.14) — présent, détourne le fichier déposé vers la correction/relance de l'issue #N déjà ouverte (`TIMEOUT`/`MODELE` du fichier fusionnés dans son corps, `needs-human` retiré) plutôt que de créer une nouvelle issue. N'a aucun effet une fois l'issue créée — lu uniquement au dépôt du fichier, jamais par `watcher.py`. |
 | `COMPLEXITE` | `rapide` / `court` / `normal` / `lourd` | 4e dimension de la clé EWMA de calibration TIMEOUT (issue #434, voir §19), estimée par Claude Chat au moment de rédiger l'issue. Absent ou valeur non reconnue = `normal` (défaut, ~300s). CCL/CCW doit l'inclure dans les issues chef/ouvrier qu'il crée (voir `consignes/globales.md`) ; pour les issues de Claude Chat, c'est géré côté doc/prompt. |
 | `RESEAU` | `oui` ou `non` | Tag réseau pour la calibration TIMEOUT (issue #220/#435, voir §19) : `oui` = issue impliquant de lourdes opérations réseau (téléchargements, builds avec fetch, etc.), `non` = issue purement locale. Lu par `_detecter_tag_reseau(body)`. Absent ou valeur non reconnue = `None` (F ignoré, facteur d'ambiance neutre). Optionnel (voir `consignes/globales.md`). |
 
