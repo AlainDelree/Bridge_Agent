@@ -77,7 +77,7 @@ def _enregistrer_routes(app: Flask) -> None:
                          ccw_arreter_projet, ccw_nettoyer_verrous)
     from app.interruption import route_interrompre, route_relancer
     from app.cycle_vie import heartbeat, events, quitter
-    from app.fin_issue import notifier_fin_issue, stream_fin_issue
+    from app.fin_issue import notifier_fin_issue, notifier_debut_issue, stream_fin_issue
     from app.issues_inbox import (etat_inbox, demarrer_watcher_inbox_route,
                                   arreter_watcher_inbox_route)
     from app.diag_heartbeat import visibilite as diag_visibilite   # DIAGNOSTIC TEMPORAIRE — issue #157, à retirer
@@ -126,11 +126,13 @@ def _enregistrer_routes(app: Flask) -> None:
     app.add_url_rule("/heartbeat", "heartbeat", heartbeat, methods=["POST"])
     app.add_url_rule("/events", "events", login_requis(events))
     app.add_url_rule("/quitter", "quitter", login_requis(quitter), methods=["POST"])
-    # ─── SSE de fin d'issue (issue #350) : rafraîchissement instantané de l'onglet
-    # Résultats, déclenché par scripts/traitement_fin.py. /notifier-fin-issue est
-    # appelé par ce script local (pas par un navigateur) : pas de login_requis,
-    # comme /heartbeat.
+    # ─── SSE de début/fin d'issue (issues #350, #515) : rafraîchissement quasi
+    # instantané de l'onglet Résultats, déclenché par scripts/traitement_fin.py
+    # (fin) et watcher.py::notifier_debut_sse (début, ACK). Ces deux routes
+    # sont appelées par un script/process local (pas par un navigateur) : pas
+    # de login_requis, comme /heartbeat.
     app.add_url_rule("/notifier-fin-issue", "notifier_fin_issue", notifier_fin_issue, methods=["POST"])
+    app.add_url_rule("/notifier-debut-issue", "notifier_debut_issue", notifier_debut_issue, methods=["POST"])
     app.add_url_rule("/stream", "stream_fin_issue", login_requis(stream_fin_issue))
     # ─── Onglet « Résultats inbox » (issue #483) : état du watcher_issues_inbox ─
     app.add_url_rule("/issues-inbox/etat", "etat_inbox", login_requis(etat_inbox))

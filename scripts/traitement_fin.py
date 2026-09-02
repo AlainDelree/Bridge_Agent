@@ -9,7 +9,11 @@ de config qui le référence reste `SCRIPT_BIP` pour l'instant (voir CHANGELOG).
 pour que l'onglet Résultats se rafraîchisse quasi instantanément (SSE) au lieu
 d'attendre un ↻ manuel ou le fetch post-TIMEOUT de #334. Le POST est silencieux
 en cas d'échec (new_issue.py non lancé, port fermé, etc.) : le bip reste
-fonctionnel indépendamment de ce canal.
+fonctionnel indépendamment de ce canal. `notifier_debut_issue` (issue #515,
+POST /notifier-debut-issue) est le pendant côté DÉBUT de traitement — appelé
+directement par watcher.py::notifier_debut_sse (pas via ce script, pas de bip
+associé à un démarrage), il partage seulement l'infrastructure `_notifier` de
+ce module.
 
 Choix du son (issue #498) : `main()` lit `scripts/son_actif.txt` (une seule
 ligne, `plat` ou `cloche`) pour décider quelle implémentation appeler —
@@ -40,6 +44,7 @@ SR    = 44100   # sample rate
 DECAY = 5       # facteur de décroissance de l'enveloppe exponentielle
 
 URL_NOTIFIER_FIN_ISSUE     = "http://localhost:5100/notifier-fin-issue"
+URL_NOTIFIER_DEBUT_ISSUE   = "http://localhost:5100/notifier-debut-issue"
 TIMEOUT_NOTIFIER_FIN_ISSUE = 1   # s — new_issue.py non lancé ne doit jamais retarder le bip
 
 FICHIER_SON_ACTIF = os.path.join(os.path.dirname(os.path.abspath(__file__)), "son_actif.txt")
@@ -97,20 +102,34 @@ def son_actif() -> str:
     return "plat"
 
 
-def notifier_fin_issue(projet: str, numero: str):
-    """POST best-effort vers new_issue.py (issue #350) : pousse un événement SSE
-    `fin_issue` à l'onglet Résultats déjà ouvert. Timeout court et échec
-    silencieux — new_issue.py n'est pas toujours lancé, et ce canal ne doit
-    jamais faire planter l'appelant (le bip a déjà été émis avant cet appel)."""
+def _notifier(url: str, projet: str, numero: str):
+    """POST JSON {"projet", "numero"} best-effort vers new_issue.py, timeout
+    court et échec silencieux — new_issue.py n'est pas toujours lancé, et ce
+    canal ne doit jamais faire planter l'appelant. Partagé par
+    notifier_fin_issue et notifier_debut_issue (issue #515)."""
     try:
         corps = json.dumps({"projet": projet, "numero": int(numero)}).encode("utf-8")
         requete = urllib.request.Request(
-            URL_NOTIFIER_FIN_ISSUE, data=corps,
+            url, data=corps,
             headers={"Content-Type": "application/json"}, method="POST",
         )
         urllib.request.urlopen(requete, timeout=TIMEOUT_NOTIFIER_FIN_ISSUE).close()
     except Exception:
         pass
+
+
+def notifier_fin_issue(projet: str, numero: str):
+    """POST best-effort vers new_issue.py (issue #350) : pousse un événement SSE
+    `fin_issue` à l'onglet Résultats déjà ouvert."""
+    _notifier(URL_NOTIFIER_FIN_ISSUE, projet, numero)
+
+
+def notifier_debut_issue(projet: str, numero: str):
+    """POST best-effort vers new_issue.py (issue #515), appelé par
+    watcher.py::notifier_debut_sse juste après l'ACK d'une issue : pousse un
+    événement SSE `debut_issue`, pour signaler une issue potentiellement
+    encore inconnue du navigateur (créée pendant une absence)."""
+    _notifier(URL_NOTIFIER_DEBUT_ISSUE, projet, numero)
 
 
 def main():

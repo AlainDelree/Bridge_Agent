@@ -49,10 +49,11 @@ import notifications
 DOSSIER_SCRIPT = Path(__file__).resolve().parent
 DOSSIER_LOGS   = DOSSIER_SCRIPT / "logs"
 
-# scripts/traitement_fin.py (issue #352) : notifier_fin_issue() y est importée
-# directement (pas via subprocess comme le bip) pour pouvoir la déclencher à
-# chaque fin d'issue indépendamment des labels notif_* — voir notifier_fin_sse
-# ci-dessous. scripts/ n'est pas un package : on l'ajoute au sys.path.
+# scripts/traitement_fin.py (issue #352) : notifier_fin_issue()/notifier_debut_
+# issue() (#515) y sont importées directement (pas via subprocess comme le bip)
+# pour pouvoir les déclencher à chaque fin/début d'issue indépendamment des
+# labels notif_* — voir notifier_fin_sse/notifier_debut_sse ci-dessous.
+# scripts/ n'est pas un package : on l'ajoute au sys.path.
 sys.path.insert(0, str(DOSSIER_SCRIPT / "scripts"))
 import traitement_fin
 
@@ -457,6 +458,17 @@ def notifier_fin_sse(numero):
     Best-effort, timeout court, échec silencieux — voir
     traitement_fin.notifier_fin_issue."""
     traitement_fin.notifier_fin_issue(CFG.nom, numero)
+
+def notifier_debut_sse(numero):
+    """POST direct vers /notifier-debut-issue (issue #515), appelé une seule
+    fois par traitement, juste après l'ACK — pendant côté DÉBUT de
+    notifier_fin_sse : sans cet événement, une issue créée (ex. via
+    issues_inbox) pendant qu'aucun onglet Résultats n'est ouvert ne
+    déclencherait de rafraîchissement qu'à sa CLÔTURE, or `fin_issue` ne fait
+    que mettre à jour une ligne déjà connue du navigateur — jamais en ajouter
+    une nouvelle. Best-effort, timeout court, échec silencieux — voir
+    traitement_fin.notifier_debut_issue."""
+    traitement_fin.notifier_debut_issue(CFG.nom, numero)
 
 def notifier_bureau(titre: str, message: str, urgence: str = "normal"):
     """Bulle de notification bureau via notify-send (voir notifications.py)."""
@@ -3117,6 +3129,11 @@ def _traiter_issue_synchrone(issue: dict, dry_run: bool, chemin_worktree: Path |
             f"✅ ACK — Issue #{numero} reçue par watcher.py ({CFG.libelle_agent_effectif}, projet {CFG.nom}). "
             f"Mode : **{mode_txt}**. Traitement en cours..."
         )
+        # Rafraîchissement SSE de l'onglet Résultats dès le DÉBUT réel du
+        # traitement (issue #515), pas seulement à sa fin — couvre le cas d'une
+        # issue encore inconnue du navigateur (ex. créée via issues_inbox
+        # pendant une absence).
+        notifier_debut_sse(numero)
         # Départ du chrono de durée réelle (ACK → fermeture), pour l'historique des
         # durées (issue #108). monotonic() pour la mesure d'écoulement (insensible aux
         # changements d'heure système).

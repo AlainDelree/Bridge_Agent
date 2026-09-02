@@ -14,8 +14,9 @@ let intervalWatchers = null;
 let ccwProjetsConnus = [];
 let intervalPanneauLateral = null;
 
-// Connexion SSE dédiée au rafraîchissement instantané des résultats (issue
-// #350) — ouverte à l'entrée dans l'onglet Résultats, fermée en le quittant.
+// Connexion SSE dédiée au rafraîchissement instantané des résultats (issues
+// #350, #515) — ouverte UNE FOIS au chargement de la page, tourne en
+// permanence indépendamment de l'onglet actif (voir demarrerStreamFinIssue).
 let sourceFinIssue = null;
 
 // SOURCE UNIQUE DE VÉRITÉ pour la couleur de chaque projet (issue #120).
@@ -76,10 +77,14 @@ function basculerOnglet(nom) {
     document.getElementById('panneau-' + n).classList.toggle('actif', n === nom));
   if (nom === 'journal')  demarrerJournal();
   if (nom === 'resultats') {
-    chargerListeIssues(); demarrerTempsRestant(); demarrerStreamFinIssue();
+    // Le canal SSE de début/fin d'issue (demarrerStreamFinIssue) n'est PLUS
+    // ouvert/fermé ici depuis l'issue #515 : il tourne en permanence dès le
+    // chargement de la page (voir son démarrage tout en bas de ce fichier),
+    // sur le même principe que le polling du badge « Résultats inbox » (§3.8).
+    chargerListeIssues(); demarrerTempsRestant();
     demarrerPanneauLateral();
   } else {
-    arreterTempsRestant(); arreterStreamFinIssue(); arreterPanneauLateral();
+    arreterTempsRestant(); arreterPanneauLateral();
   }
   if (nom === 'watchers') {
     chargerWatchers();
@@ -1843,36 +1848,50 @@ function arreterTempsRestant() {
   if (intervalTempsRestant) { clearInterval(intervalTempsRestant); intervalTempsRestant = null; }
 }
 
-// Ouvre le canal SSE de fin d'issue (issue #350), à l'ouverture de l'onglet
-// Résultats. Sur réception d'un événement fin_issue pour une issue affichée
-// dans listeIssuesResultats, réutilise EXACTEMENT le traitement du fetch de
+// Traite un événement `fin_issue` ou `debut_issue` reçu du canal SSE
+// (voir demarrerStreamFinIssue juste en dessous). Issue déjà affichée dans
+// listeIssuesResultats : réutilise EXACTEMENT le traitement du fetch de
 // vérification de #334 (verifierIssueApresDepassement) — même fetch, même
-// remplacement de ligne — plutôt que de dupliquer cette logique. La
-// reconnexion en cas de coupure est gérée nativement par EventSource, aucun
-// code supplémentaire n'est nécessaire ici.
+// remplacement de ligne — plutôt que de dupliquer cette logique. Issue
+// INCONNUE du navigateur (typiquement créée via issues_inbox pendant une
+// absence, puis démarrée/terminée — issue #515) : `fin_issue`/`debut_issue`
+// ne portent qu'un projet+numéro, pas la ligne complète, donc un
+// rechargement complet (chargerListeIssues) est nécessaire pour la faire
+// apparaître — déclenché ici indépendamment de l'onglet actuellement actif,
+// puisque le canal est désormais permanent (voir plus bas).
+function gererEvenementIssue(projet, numero) {
+  const dansLaListe = listeIssuesResultats.some(
+    it => it.projet === projet && String(it.number) === String(numero));
+  if (dansLaListe) {
+    verifierIssueApresDepassement(projet, numero);
+  } else {
+    chargerListeIssues();
+  }
+  // Panneau latéral (issue #375) : une transition change potentiellement
+  // l'état « ouvert/fermé » de l'issue sélectionnée (bouton Interrompre) et
+  // peut coïncider avec un arrêt de watcher — rafraîchi à chaque événement,
+  // sans coût supplémentaire (le fetch /watchers est local, pas d'appel
+  // GitHub, cf. issue #375).
+  rafraichirPanneauLateralResultats();
+}
+
+// Ouvre le canal SSE de début/fin d'issue (issues #350, #515) — appelé UNE
+// SEULE FOIS au chargement de la page (voir tout en bas de ce fichier), et
+// non plus à l'entrée/sortie de l'onglet Résultats : la liste doit rester à
+// jour même quand Alain regarde un autre onglet, sur le même principe que le
+// polling permanent du badge « Résultats inbox » (§3.8). La reconnexion en
+// cas de coupure est gérée nativement par EventSource, aucun code
+// supplémentaire n'est nécessaire ici.
 function demarrerStreamFinIssue() {
   if (sourceFinIssue) return;   // déjà ouverte
   sourceFinIssue = new EventSource('/stream');
-  sourceFinIssue.addEventListener('fin_issue', function(e) {
+  const gerer = function(e) {
     let donnees;
     try { donnees = JSON.parse(e.data); } catch (err) { return; }
-    const { projet, numero } = donnees;
-    const dansLaListe = listeIssuesResultats.some(
-      it => it.projet === projet && String(it.number) === String(numero));
-    if (dansLaListe) verifierIssueApresDepassement(projet, numero);
-    // Panneau latéral (issue #375) : une fin d'issue change potentiellement
-    // l'état « ouvert/fermé » de l'issue sélectionnée (bouton Interrompre) et
-    // peut coïncider avec un arrêt de watcher — rafraîchi à chaque événement,
-    // sans coût supplémentaire (le fetch /watchers est local, pas d'appel
-    // GitHub, cf. issue #375).
-    rafraichirPanneauLateralResultats();
-  });
-}
-
-// Ferme le canal SSE de fin d'issue (en quittant l'onglet Résultats) : pas de
-// connexion inutile maintenue quand l'onglet n'est pas affiché.
-function arreterStreamFinIssue() {
-  if (sourceFinIssue) { sourceFinIssue.close(); sourceFinIssue = null; }
+    gererEvenementIssue(donnees.projet, donnees.numero);
+  };
+  sourceFinIssue.addEventListener('fin_issue', gerer);
+  sourceFinIssue.addEventListener('debut_issue', gerer);
 }
 
 // ─── Panneau latéral droit de l'onglet Résultats (issue #375, #377, #380) ──
@@ -5157,6 +5176,16 @@ async function rafraichirInbox() {
 }
 rafraichirInbox();
 setInterval(rafraichirInbox, 7000);
+
+// ─── Canal SSE de début/fin d'issue (issues #350, #515) ───────────────────
+// Ouvert une seule fois ici, au chargement de la page — indépendamment de
+// l'onglet actif — sur le même principe que le polling permanent du badge
+// « Résultats inbox » ci-dessus : la liste de l'onglet Résultats
+// (listeIssuesResultats, tenue à jour en mémoire même hors de cet onglet)
+// doit refléter les issues démarrées/terminées pendant qu'Alain regardait
+// autre chose, sans clic sur Rafraîchir au retour. Voir demarrerStreamFinIssue
+// et gererEvenementIssue plus haut dans ce fichier.
+demarrerStreamFinIssue();
 
 // ─── Cycle de vie : onglet ↔ serveur ──────────────────────────────────────
 // Deux liens : (1) heartbeat navigateur → serveur, qui laisse le serveur se
