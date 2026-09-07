@@ -210,6 +210,18 @@ def _lancer_deux_issues_paralleles(tmp_path: Path, rep_travail: Path,
                                     numero1: int, numero2: int, projet: str):
     ancien_dossier_verrous = watcher.DOSSIER_VERROUS
     watcher.DOSSIER_VERROUS = tmp_path / "verrous"
+    # Isolation (issue #520) : sans repli, enregistrer_duree()/
+    # maj_calibration_timeout() écriraient réellement dans logs/historique_
+    # durees.json et logs/etat_timeout.json du dépôt (mêmes constantes que
+    # DOSSIER_VERROUS ci-dessus, résolues dynamiquement à l'appel).
+    ancien_dossier_logs = watcher.DOSSIER_LOGS
+    ancien_fichier_historique = watcher.FICHIER_HISTORIQUE
+    ancien_fichier_etat_timeout = watcher.FICHIER_ETAT_TIMEOUT
+    ancien_fichier_etat_ambiance = watcher.FICHIER_ETAT_AMBIANCE
+    watcher.DOSSIER_LOGS = tmp_path / "logs"
+    watcher.FICHIER_HISTORIQUE = watcher.DOSSIER_LOGS / "historique_durees.json"
+    watcher.FICHIER_ETAT_TIMEOUT = watcher.DOSSIER_LOGS / "etat_timeout.json"
+    watcher.FICHIER_ETAT_AMBIANCE = watcher.DOSSIER_LOGS / "etat_ambiance.json"
     ancien_threads = list(watcher._threads_ecriture)
     watcher._threads_ecriture.clear()
     watcher.CFG = watcher.Config(
@@ -248,6 +260,10 @@ def _lancer_deux_issues_paralleles(tmp_path: Path, rep_travail: Path,
         return entree_2["worktree"]
     finally:
         watcher.DOSSIER_VERROUS = ancien_dossier_verrous
+        watcher.DOSSIER_LOGS = ancien_dossier_logs
+        watcher.FICHIER_HISTORIQUE = ancien_fichier_historique
+        watcher.FICHIER_ETAT_TIMEOUT = ancien_fichier_etat_timeout
+        watcher.FICHIER_ETAT_AMBIANCE = ancien_fichier_etat_ambiance
         watcher._threads_ecriture.clear()
         watcher._threads_ecriture.extend(ancien_threads)
 
@@ -338,6 +354,14 @@ def scenario_non_regression_max_1():
 
         ancien_dossier_verrous = watcher.DOSSIER_VERROUS
         watcher.DOSSIER_VERROUS = tmp_path / "verrous"
+        ancien_dossier_logs = watcher.DOSSIER_LOGS
+        ancien_fichier_historique = watcher.FICHIER_HISTORIQUE
+        ancien_fichier_etat_timeout = watcher.FICHIER_ETAT_TIMEOUT
+        ancien_fichier_etat_ambiance = watcher.FICHIER_ETAT_AMBIANCE
+        watcher.DOSSIER_LOGS = tmp_path / "logs"
+        watcher.FICHIER_HISTORIQUE = watcher.DOSSIER_LOGS / "historique_durees.json"
+        watcher.FICHIER_ETAT_TIMEOUT = watcher.DOSSIER_LOGS / "etat_timeout.json"
+        watcher.FICHIER_ETAT_AMBIANCE = watcher.DOSSIER_LOGS / "etat_ambiance.json"
         ancien_threads = list(watcher._threads_ecriture)
         watcher._threads_ecriture.clear()
 
@@ -362,6 +386,10 @@ def scenario_non_regression_max_1():
                 os.environ.pop("PATH", None)
             os.environ.pop("TEST_337_DIR", None)
             watcher.DOSSIER_VERROUS = ancien_dossier_verrous
+            watcher.DOSSIER_LOGS = ancien_dossier_logs
+            watcher.FICHIER_HISTORIQUE = ancien_fichier_historique
+            watcher.FICHIER_ETAT_TIMEOUT = ancien_fichier_etat_timeout
+            watcher.FICHIER_ETAT_AMBIANCE = ancien_fichier_etat_ambiance
             watcher._threads_ecriture.clear()
             watcher._threads_ecriture.extend(ancien_threads)
 

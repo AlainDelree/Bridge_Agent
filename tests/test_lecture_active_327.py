@@ -165,6 +165,18 @@ exit 0
 
         ancien_dossier_verrous = watcher.DOSSIER_VERROUS
         watcher.DOSSIER_VERROUS = tmp_path / "verrous"
+        # Isolation (issue #520) : sans repli, enregistrer_duree()/
+        # maj_calibration_timeout() écriraient réellement dans logs/historique_
+        # durees.json et logs/etat_timeout.json du dépôt (mêmes constantes que
+        # DOSSIER_VERROUS ci-dessus, résolues dynamiquement à l'appel).
+        ancien_dossier_logs = watcher.DOSSIER_LOGS
+        ancien_fichier_historique = watcher.FICHIER_HISTORIQUE
+        ancien_fichier_etat_timeout = watcher.FICHIER_ETAT_TIMEOUT
+        ancien_fichier_etat_ambiance = watcher.FICHIER_ETAT_AMBIANCE
+        watcher.DOSSIER_LOGS = tmp_path / "logs"
+        watcher.FICHIER_HISTORIQUE = watcher.DOSSIER_LOGS / "historique_durees.json"
+        watcher.FICHIER_ETAT_TIMEOUT = watcher.DOSSIER_LOGS / "etat_timeout.json"
+        watcher.FICHIER_ETAT_AMBIANCE = watcher.DOSSIER_LOGS / "etat_ambiance.json"
         watcher.CFG = watcher.Config(
             nom="test327c", depot="AlainDelree/depot-inexistant-test327",
             rep_travail=rep_travail, topic_ntfy="test327c",
@@ -182,6 +194,10 @@ exit 0
                 os.environ.pop("PATH", None)
             os.environ.pop("TEST_327_MARQUEUR", None)
             watcher.DOSSIER_VERROUS = ancien_dossier_verrous
+            watcher.DOSSIER_LOGS = ancien_dossier_logs
+            watcher.FICHIER_HISTORIQUE = ancien_fichier_historique
+            watcher.FICHIER_ETAT_TIMEOUT = ancien_fichier_etat_timeout
+            watcher.FICHIER_ETAT_AMBIANCE = ancien_fichier_etat_ambiance
 
         assert not chemin_scratch_attendu.exists(), (
             f"le dossier scratch {chemin_scratch_attendu} aurait dû être nettoyé en fin de traitement")
@@ -227,6 +243,15 @@ exit 0
 
         ancien_dossier_verrous = watcher.DOSSIER_VERROUS
         watcher.DOSSIER_VERROUS = tmp_path / "verrous"
+        # Isolation (issue #520) : même raison que dans le scénario précédent.
+        ancien_dossier_logs = watcher.DOSSIER_LOGS
+        ancien_fichier_historique = watcher.FICHIER_HISTORIQUE
+        ancien_fichier_etat_timeout = watcher.FICHIER_ETAT_TIMEOUT
+        ancien_fichier_etat_ambiance = watcher.FICHIER_ETAT_AMBIANCE
+        watcher.DOSSIER_LOGS = tmp_path / "logs"
+        watcher.FICHIER_HISTORIQUE = watcher.DOSSIER_LOGS / "historique_durees.json"
+        watcher.FICHIER_ETAT_TIMEOUT = watcher.DOSSIER_LOGS / "etat_timeout.json"
+        watcher.FICHIER_ETAT_AMBIANCE = watcher.DOSSIER_LOGS / "etat_ambiance.json"
 
         labels_ajoutes = []
         vrai_ajouter_label = watcher.ajouter_label
@@ -254,6 +279,10 @@ exit 0
                 os.environ.pop("PATH", None)
             os.environ.pop("TEST_327_MARQUEUR", None)
             watcher.DOSSIER_VERROUS = ancien_dossier_verrous
+            watcher.DOSSIER_LOGS = ancien_dossier_logs
+            watcher.FICHIER_HISTORIQUE = ancien_fichier_historique
+            watcher.FICHIER_ETAT_TIMEOUT = ancien_fichier_etat_timeout
+            watcher.FICHIER_ETAT_AMBIANCE = ancien_fichier_etat_ambiance
 
         assert watcher.LABEL_ECHEC in labels_ajoutes, (
             f"le label '{watcher.LABEL_ECHEC}' aurait dû être posé — labels posés : {labels_ajoutes}")
