@@ -9,6 +9,39 @@ milliers de caractères sur une seule ligne logique, coûteux à relire et
 
 Convention d'ajout : voir §10 de `BRIDGE_AGENT_DOC.md`.
 
+## 7 septembre 2026 — issue #518
+
+DOC — retrait de toute mention du copier-coller comme méthode de création
+d'issue à partir de contenu produit par Claude Chat, dans
+`BRIDGE_AGENT_DOC.md`. Depuis #483, Claude Chat ne doit produire que des
+fichiers `.txt` déposés dans `issues_inbox/` (§3) ; la doc présentait
+encore, notamment au §20, le copier-coller dans le formulaire web comme un
+usage normal pour du contenu de Claude Chat.
+- §20 : le bloc « Format du corps pour copier-coller depuis Claude Chat »
+  et son exemple sont reformulés en « Format du corps reconnu par le
+  formulaire » — présenté comme un format de saisie manuelle (Alain) plutôt
+  que comme une cible de copier-coller. « Envoi en lot (plusieurs issues
+  d'un seul copier-coller) » renommé « Envoi en lot (plusieurs issues dans
+  un même corps) ». Le bloc « Convention de présentation côté Claude Chat »
+  (issues #153/#443) devient « Regroupement des blocs pour le mode lot » et
+  précise explicitement que Claude Chat ne doit plus jamais produire de
+  texte destiné à être copié-collé dans ce formulaire. Mentions résiduelles
+  de « corps collé » reformulées en « corps du formulaire »/« corps saisi
+  dans le champ ».
+- §11 (conventions de code) : la règle « Alain colle le tout dans le champ
+  Corps de new_issue.py — un seul copier-coller » remplacée par un renvoi
+  au flux `issues_inbox/` (§3).
+- §3.3 : « Même format qu'une issue produite par Claude Chat pour le
+  formulaire web (§20) » reformulé en « Même format que celui reconnu par
+  le formulaire web (§20) », pour ne plus laisser entendre que Claude Chat
+  produit du contenu pour ce formulaire.
+- Usages légitimes du formulaire web laissés inchangés : aperçu de la
+  commande `gh issue create` avant envoi, création manuelle par Alain
+  directement depuis l'interface, repli si le watcher `issues_inbox` est
+  indisponible.
+- Pied de page de `BRIDGE_AGENT_DOC.md` mis à jour (glissement des trois
+  dernières entrées d'un cran, la plus ancienne sort du pied de page).
+
 ## 25 août 2026 — issue #483
 
 Watcher `issues_inbox` centralisé + onglet « Résultats inbox » : nouveau

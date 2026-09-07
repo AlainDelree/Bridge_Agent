@@ -106,8 +106,8 @@ nettoie — sans repasser par le formulaire web.
 
 ### 3.3 Format attendu du fichier
 
-Même format qu'une issue produite par Claude Chat pour le formulaire web
-(§20) : un en-tête `| CHAMP | Valeur |` optionnel et une ligne `#Titre: ...`,
+Même format que celui reconnu par le formulaire web (§20) : un en-tête
+`| CHAMP | Valeur |` optionnel et une ligne `#Titre: ...`,
 dans **l'un ou l'autre ordre** (issue #512) — en-tête avant `#Titre:` ou
 `#Titre:` avant l'en-tête, les deux sont équivalents et interchangeables —
 puis le corps. Champs d'en-tête reconnus, tous optionnels sauf `PROJET` :
@@ -823,10 +823,10 @@ la même opération, en plus du point ci-dessus :
   (identifiants Python, commentaires, clés de config). Anglais conservé pour
   les contrats existants (noms de labels GitHub, drapeaux CLI, mots-clés Python).
 - **Issues** : produire titre + corps avec `#Titre:` en première ligne du corps.
-  Alain colle le tout dans le champ Corps de new_issue.py — un seul copier-coller.
-  Le corps est toujours présenté dans **un seul bloc de code**, qu'il s'agisse
-  d'une issue unique ou d'un lot de plusieurs issues (issue #153, étendue par
-  #443), afin qu'Alain puisse utiliser le bouton copier du bloc.
+  Claude Chat dépose ce contenu dans un fichier `.txt` sous `issues_inbox/`
+  (§3) — jamais en le présentant pour copier-coller manuel dans le formulaire
+  web `new_issue.py` (voir §20 pour les usages restants, légitimes mais
+  distincts, de ce formulaire).
 - **Mode par défaut** : lecture seule. N'armer `mode_write` que si la tâche
   demande explicitement une modification de fichier.
 - **Scripts PowerShell (`.ps1`) : BOM UTF-8 obligatoire dès la création.**
@@ -2687,10 +2687,15 @@ telle quelle, en texte brut, dans la zone `zone-apercu` sous le formulaire
 aucune issue n'est créée, aucune commande n'est réellement exécutée — rien
 n'est modifié tant que le bouton d'envoi n'est pas cliqué séparément.
 
-**Format du corps pour copier-coller depuis Claude Chat :**
+**Format du corps reconnu par le formulaire :**
 
 La première ligne du corps peut contenir `#Titre:` — new_issue.py détecte
-ce tag et remplit automatiquement le champ Titre. Un seul copier-coller suffit :
+ce tag et remplit automatiquement le champ Titre, quelle que soit la façon
+dont le corps a été saisi dans le formulaire (frappe manuelle par Alain,
+par exemple). C'est le même format que celui attendu par le watcher
+`issues_inbox` (§3.3) pour les fichiers `.txt` que Claude Chat y dépose —
+Claude Chat ne doit en revanche jamais produire ce texte pour qu'Alain le
+copie-colle ici :
 
 ```
 #Titre: Titre court et actionnable
@@ -2711,8 +2716,9 @@ Ce que CCL doit produire ou confirmer.
 `| MODE | … |` (issue #326) est détecté par `new_issue.py`
 (`detecterModeDansCorps`) exactement comme `TIMEOUT`/`PROJET`/`MODELE` :
 la valeur reconnue pré-sélectionne le radio Mode du formulaire, puis la
-ligne est retirée du corps collé (le tableau d'en-tête final est reconstruit
-depuis le formulaire, pas depuis ce que Claude Chat a tapé). Les **trois**
+ligne est retirée du corps saisi dans le champ (le tableau d'en-tête final
+est reconstruit depuis le formulaire, pas depuis le texte brut du champ
+Corps). Les **trois**
 valeurs du mode (voir §5) sont reconnues : `| MODE | lecture |`,
 `| MODE | lecture active |` et `| MODE | écriture |`. La reconnaissance
 est **tolérante** — insensible à la casse et aux accents, plusieurs libellés
@@ -2727,7 +2733,7 @@ mode lot, chaque bloc peut porter son propre `MODE` — voir « Envoi en lot »
 ci-dessous.
 
 Au même titre que `PROJET`/`TIMEOUT`/`MODELE`, `new_issue.py` reconnaît aussi
-un champ `| LABELS | … |` dans l'en-tête du corps collé. Sa valeur est une liste de
+un champ `| LABELS | … |` dans l'en-tête du corps du formulaire. Sa valeur est une liste de
 labels séparés par des virgules (les espaces superflus autour de chacun sont
 ignorés) qui **s'ajoutent** aux labels standards posés automatiquement (`bridge`,
 `for-linux`, `mode_write` selon le MODE, notifications) — ils ne les remplacent
@@ -2750,8 +2756,8 @@ propres `LABELS`.
 > forcer les deux watchers sur une même issue (cas rare), ajouter `for-linux`
 > manuellement sur GitHub après création.
 
-**Envoi en lot (plusieurs issues d'un seul copier-coller) — issue #135 :**
-coller *plusieurs* blocs `#Titre:` à la suite dans le même corps déclenche
+**Envoi en lot (plusieurs issues dans un même corps) — issue #135 :**
+placer *plusieurs* blocs `#Titre:` à la suite dans le même corps déclenche
 automatiquement le **mode lot** : le bouton d'envoi devient
 « Envoyer le lot (N issues) ». Chaque bloc va de son `#Titre:` jusqu'au
 `#Titre:` suivant et est traité comme une issue indépendante, avec ses propres
@@ -2782,14 +2788,14 @@ le titre + le lien de l'issue créée ou le message d'erreur, puis le corps est
 vidé. Un seul bloc `#Titre:` conserve le comportement mono-issue habituel
 (bouton « Envoyer sur <projet> », détection automatique du titre).
 
-**Convention de présentation côté Claude Chat (issue #153, étendue par
-#443) :** quand Claude Chat prépare plusieurs issues à la fois pour ce mode
-lot, il les présente toutes à la suite dans **un seul bloc de code** (pas un
-bloc séparé par issue), afin qu'Alain puisse copier l'ensemble en un clic et
-le coller directement dans le champ Corps. Cette règle vaut **aussi pour une
-issue unique** (mode mono-issue) : le corps est lui aussi enveloppé dans un
-bloc de code, afin qu'Alain puisse utiliser le bouton copier du bloc plutôt
-qu'une sélection manuelle.
+**Regroupement des blocs pour le mode lot (issue #153, étendue par #443) :**
+pour que le formulaire détecte le mode lot, les blocs `#Titre:` de plusieurs
+issues doivent se trouver à la suite dans **un seul et même corps** (pas un
+bloc séparé par issue) — même règle de découpage côté fichier `.txt` déposé
+dans `issues_inbox/` (§3.13). Cette convention ne concerne plus Claude Chat :
+il ne doit plus jamais présenter de texte destiné à être copié-collé dans ce
+formulaire, quel que soit le nombre d'issues — voir §3 pour son flux normal
+de création d'issue, seul valable pour du contenu qu'il produit.
 
 > ⚠️ **Claude Chat doit toujours inclure** `| PROJET | <nom> |` dans l'en-tête
 > des issues qu'il génère (nom exact du projet cible : `bridge_agent`,
@@ -2810,7 +2816,28 @@ qu'une sélection manuelle.
 
 ---
 
-*Dernière mise à jour : 7 septembre 2026 — §3.3 « Format attendu du fichier »
+*Dernière mise à jour : 7 septembre 2026 — §3/§11/§20 « Retrait des
+mentions du copier-coller pour la création d'issues » (issue #518) : le
+copier-coller dans le formulaire web `new_issue.py` n'est plus présenté
+comme une méthode normale de création d'issue à partir de contenu produit
+par Claude Chat — depuis #483, Claude Chat ne doit produire que des
+fichiers `.txt` déposés dans `issues_inbox/` (§3). §20 : le bloc « Format
+du corps pour copier-coller depuis Claude Chat » et son exemple deviennent
+« Format du corps reconnu par le formulaire » (saisie manuelle par Alain,
+plus copier-coller) ; « Envoi en lot (plusieurs issues d'un seul
+copier-coller) » devient « Envoi en lot (plusieurs issues dans un même
+corps) » ; le bloc « Convention de présentation côté Claude Chat »
+(issues #153/#443) devient « Regroupement des blocs pour le mode lot »,
+avec rappel explicite que Claude Chat ne doit plus produire de texte
+destiné à être copié-collé dans ce formulaire. §11 : la règle « Alain
+colle le tout — un seul copier-coller » remplacée par un renvoi au flux
+`issues_inbox/` (§3). §3.3 : reformulation d'un renvoi à §20 qui laissait
+entendre que Claude Chat produisait du contenu pour le formulaire web.
+Usages légitimes du formulaire (aperçu `gh issue create`, création
+manuelle par Alain, repli si le watcher `issues_inbox` est indisponible)
+inchangés.
+
+Précédemment — 7 septembre 2026 — §3.3 « Format attendu du fichier »
 (issue #512) : l'en-tête `| CHAMP | Valeur |` et la ligne `#Titre:` sont
 désormais supportés dans l'un ou l'autre ordre, alors que seul « en-tête
 avant `#Titre:` » fonctionnait correctement jusqu'ici. Cause racine :
@@ -2856,42 +2883,6 @@ mention obsolète indiquant seulement deux valeurs `MODE` fonctionnelles).
 Côté watcher spool, aucune logique supplémentaire n'était nécessaire pour le
 mode mixte : chaque bloc ayant déjà nativement son propre `MODE` via
 `extraire_champs`/`reconnaitre_mode` (§3.13) une fois le découpage
-multi-blocs en place.
-
-Précédemment — 27 août 2026 — §3/§20 « Watcher `issues_inbox` devient
-la méthode principale, formulaire web devient la méthode de backup » (issue
-#497, refaisant sur `master` actuel la restructuration tentée par #495 dans un
-worktree séparé, abandonnée faute de fusion propre avec #496) : le contenu du
-watcher `issues_inbox` (ex-§20, sous-sections 20.1–20.12, incluant le cycle de
-vie lié à `new_issue.py` de l'issue #496) devient le nouveau §3 « Créer une
-issue — la méthode normale », sous-sections renumérotées 3.1–3.12 ; le contenu
-du formulaire web `new_issue.py` (ex-§3) devient le nouveau §20 « Formulaire
-web — méthode de backup », précédé d'un paragraphe précisant son statut de
-backup (aperçu de la commande avant envoi, création manuelle par Alain, repli
-si le watcher spool est indisponible). Tous les renvois internes du document
-(§1, §6, §10, §11, §12, §14 et autres mentions croisées) mis à jour vers la
-nouvelle numérotation. Aucune perte de contenu : les deux méthodes restent
-intégralement documentées, seule leur présentation relative change. Cette
-entrée couvre à la fois le travail de #495 (restructuration initiale, tentée
-puis abandonnée) et de #496 (cycle de vie du watcher spool lié à
-`new_issue.py`, déjà sur `master` sous l'ancienne numérotation §20.10/§20.12)
-— tous deux ayant contribué à ce contenu final.
-
-Précédemment — 27 août 2026 — §3.12 « Cycle de vie lié à
-`new_issue.py` » (issue #496) : le watcher spool `issues_inbox` démarre
-automatiquement à l'ouverture de `new_issue.py` (s'il n'est pas déjà actif)
-et s'arrête proprement à sa fermeture (`SIGINT`/`SIGTERM`) — plus besoin de
-clic manuel dans le cas normal. Les boutons « ▶ Démarrer »/« ↺ Relancer »/
-« ⏹ Arrêter » du panneau Infrastructure (§3.10) restent utilisables comme
-override pendant que `new_issue.py` tourne. Un fichier déposé pendant que
-`new_issue.py` est fermé attend simplement le prochain démarrage de
-l'interface.
-Précédemment — 26 août 2026 — §3.4 « Anti-doublon » (issue #491) :
-`scripts/watcher_issues_inbox.py::traiter_fichier` réutilise telle quelle
-`_issue_ouverte_meme_titre()` de `app/issues.py` (garde du formulaire web,
-issue #189) pour rejeter un fichier `issues_inbox/` dont le titre correspond
-exactement à une issue déjà ouverte du même dépôt — comble le trou révélé par
-les issues jumelles #486/#487 (25 août 2026), créées et traitées en parallèle
-faute de cette garde côté flux `issues_inbox/`.*
+multi-blocs en place.*
 
 Historique complet : voir [`CHANGELOG.md`](CHANGELOG.md).
