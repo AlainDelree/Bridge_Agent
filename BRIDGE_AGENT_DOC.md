@@ -75,6 +75,7 @@ Claude Chat → crée une issue → GitHub → watcher.py détecte → CCL exéc
 | `bloc_score` | AlainDelree/Bloc_score | ~/Bloc_score | (conf local) |
 | `rummikub` | AlainDelree/Rummikub | ~/Rummikub | (conf local) |
 | `ApiSelect` | AlainDelree/ApiSelect | ~/ApiSelect | (conf local) |
+| `chesscoach` | AlainDelree/Chesscoach | ~/ChessCoach | (conf local) |
 
 Chaque projet a son propre watcher (`watcher.py --config configs/<nom>.conf`)
 et son propre journal de log (`logs/watcher-<nom>.log`).
@@ -667,6 +668,7 @@ hors périmètre même si l'issue le demande explicitement :
 | `bloc_score` | /home/alain/Bloc_score |
 | `rummikub` | /home/alain/Rummikub |
 | `ApiSelect` | /home/alain/ApiSelect |
+| `chesscoach` | /home/alain/ChessCoach |
 
 ---
 
@@ -2808,7 +2810,7 @@ qu'une sélection manuelle.
 
 ---
 
-*Dernière mise à jour : 30 août 2026 — §3.3 « Format attendu du fichier »
+*Dernière mise à jour : 7 septembre 2026 — §3.3 « Format attendu du fichier »
 (issue #512) : l'en-tête `| CHAMP | Valeur |` et la ligne `#Titre:` sont
 désormais supportés dans l'un ou l'autre ordre, alors que seul « en-tête
 avant `#Titre:` » fonctionnait correctement jusqu'ici. Cause racine :
