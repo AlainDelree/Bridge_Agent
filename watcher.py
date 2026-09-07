@@ -79,6 +79,21 @@ DOSSIER_CONSIGNES = DOSSIER_SCRIPT / "consignes"
 # cours (médiane du même projet+type+mode).
 FICHIER_HISTORIQUE = DOSSIER_LOGS / "historique_durees.json"
 
+# Traçabilité des écritures sur historique_durees.json / etat_timeout.json
+# (issue #521) : une coupure nette de historique_durees.json (perte de données,
+# 2026-09-07) n'avait laissé AUCUNE trace exploitable — fichier gitignoré comme
+# tout logs/, donc ni diff ni commit ni horodatage pour dater ou expliquer
+# l'événement après coup. Plutôt qu'une exception ciblée au .gitignore (le
+# fichier grossit à chaque issue close, cf. scripts/archiver_historique.py —
+# le suivre en git alourdirait chaque commit de sauvegarde CCL sans rapport
+# avec la tâche en cours), un journal séparé append-only (JSON Lines), déjà
+# couvert par le .gitignore existant de logs/ : une ligne par écriture
+# significative, avec le nombre d'entrées/taille en octets AVANT et APRÈS.
+# Une chute anormale (nb_avant très inférieur au nb_apres de la ligne
+# précédente) devient visible et datable au moment où elle se produit, plutôt
+# que constatée sans preuve après coup. Cf. _journaliser_ecriture.
+FICHIER_JOURNAL_ECRITURES = DOSSIER_LOGS / "journal_ecritures_historique.jsonl"
+
 # ─── Calibration automatique du TIMEOUT (issue #221) ───────────────────────────
 # Deux fichiers d'état JSON, tous deux sous DOSSIER_LOGS (donc déjà gitignorés,
 # et déjà PARTAGÉS entre tous les process watcher — DOSSIER_LOGS est fixe,
@@ -910,6 +925,41 @@ def _detecter_tag_reseau(body: str) -> bool | None:
     return None
 
 
+def _journaliser_ecriture(fichier: str, date_iso: str, *, operation: str,
+                          nb_avant: int | None, nb_apres: int | None,
+                          taille_avant_octets: int | None,
+                          taille_apres_octets: int | None,
+                          reinitialise_corruption: bool = False):
+    """Ajoute une ligne au journal JSONL des écritures significatives sur
+    historique_durees.json / etat_timeout.json (issue #521). Append-only, une
+    ligne par écriture : nombre d'entrées et taille en octets AVANT/APRÈS,
+    plus reinitialise_corruption=True si cette écriture est repartie d'un
+    fichier illisible (le nombre d'entrées AVANT retombe alors à 0/None — la
+    signature exacte d'une perte de données comme celle du 2026-09-07). Une
+    chute de nb_avant par rapport au nb_apres de la ligne précédente, pour le
+    même fichier, permet de dater l'incident — `operation` distingue une
+    chute LÉGITIME (ex. "archivage_manuel", scripts/archiver_historique.py,
+    qui réduit délibérément le fichier) d'une chute inexpliquée. Best-effort
+    strict : ne doit jamais faire échouer l'écriture qu'elle journalise."""
+    try:
+        DOSSIER_LOGS.mkdir(parents=True, exist_ok=True)
+        ligne = {
+            "date": date_iso,
+            "fichier": fichier,
+            "operation": operation,
+            "nb_avant": nb_avant,
+            "nb_apres": nb_apres,
+            "taille_avant_octets": taille_avant_octets,
+            "taille_apres_octets": taille_apres_octets,
+            "reinitialise_corruption": reinitialise_corruption,
+            "pid": os.getpid(),
+        }
+        with open(FICHIER_JOURNAL_ECRITURES, "a", encoding="utf-8") as f:
+            f.write(json.dumps(ligne, ensure_ascii=False) + "\n")
+    except Exception as e:
+        log.error(f"Erreur journalisation écriture ({fichier}) : {e}")
+
+
 def enregistrer_duree(projet: str, type_issue: str, mode: str,
                       duree_s: float | None, date_iso: str, *,
                       body: str = "", nb_projets_actifs: int = 0,
@@ -924,15 +974,20 @@ def enregistrer_duree(projet: str, type_issue: str, mode: str,
     convention fiable pour lister les fichiers cibles dans un corps libre,
     mieux vaut None qu'une extraction fragile par regex), nb_projets_actifs_au_
     lancement, expiree, et tag_reseau (omis tant qu'aucun marqueur explicite
-    n'existe, cf. _detecter_tag_reseau)."""
+    n'existe, cf. _detecter_tag_reseau). Journalise aussi chaque écriture dans
+    FICHIER_JOURNAL_ECRITURES (issue #521, cf. _journaliser_ecriture)."""
     try:
         DOSSIER_LOGS.mkdir(parents=True, exist_ok=True)
         historique = []
+        taille_avant = FICHIER_HISTORIQUE.stat().st_size if FICHIER_HISTORIQUE.exists() else None
+        fichier_corrompu = False
         if FICHIER_HISTORIQUE.exists():
             try:
                 historique = json.loads(FICHIER_HISTORIQUE.read_text(encoding="utf-8")) or []
             except (json.JSONDecodeError, OSError):
                 historique = []   # fichier corrompu : on repart d'une liste vide
+                fichier_corrompu = True
+        nb_avant = len(historique)
         entree = {
             "projet": projet,
             "type":   type_issue,
@@ -952,6 +1007,13 @@ def enregistrer_duree(projet: str, type_issue: str, mode: str,
         historique.append(entree)
         FICHIER_HISTORIQUE.write_text(
             json.dumps(historique, ensure_ascii=False, indent=2), encoding="utf-8")
+        _journaliser_ecriture(
+            FICHIER_HISTORIQUE.name, date_iso, operation="cloture_issue",
+            nb_avant=nb_avant, nb_apres=len(historique),
+            taille_avant_octets=taille_avant,
+            taille_apres_octets=FICHIER_HISTORIQUE.stat().st_size,
+            reinitialise_corruption=fichier_corrompu,
+        )
     except Exception as e:
         log.error(f"Erreur enregistrement historique durée : {e}")
 
@@ -1029,19 +1091,43 @@ def _ecrire_json_atomique(chemin: Path, donnees: dict):
     os.replace(tmp, chemin)   # atomique sur un même système de fichiers (POSIX et Windows)
 
 
-def _maj_etat_json(chemin: Path, fonction_maj):
+def _maj_etat_json(chemin: Path, fonction_maj, *, date_iso: str | None = None):
     """Lecture-modification-écriture protégée d'un fichier d'état JSON partagé.
     `fonction_maj(donnees)` reçoit le dict courant (vide si absent/corrompu) et
     le modifie en place ; sa valeur de retour, si non None, remplace `donnees`
     avant l'écriture atomique. Verrou non obtenu ou exception : la mise à jour
-    est abandonnée pour ce cycle (journalisée), jamais propagée à l'appelant."""
+    est abandonnée pour ce cycle (journalisée), jamais propagée à l'appelant.
+    Si `date_iso` est fourni, journalise aussi cette écriture (issue #521, cf.
+    _journaliser_ecriture) : nombre d'entrées de premier niveau (ou de
+    `donnees["combinaisons"]` s'il existe, cas d'etat_timeout.json) et taille
+    en octets, avant/après — même logique de traçabilité que pour
+    historique_durees.json, pour repérer une chute anormale au moment où elle
+    se produit."""
     if not _acquerir_verrou_etat(chemin):
         log.warning(f"Verrou d'état {chemin.name} non obtenu — mise à jour ignorée pour ce cycle.")
         return
     try:
+        taille_avant = chemin.stat().st_size if chemin.exists() else None
+        corrompu = False
+        if chemin.exists():
+            try:
+                json.loads(chemin.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError):
+                corrompu = True
         donnees = _lire_json_best_effort(chemin)
+        nb_avant = len(donnees.get("combinaisons", donnees))
         resultat = fonction_maj(donnees)
-        _ecrire_json_atomique(chemin, resultat if resultat is not None else donnees)
+        donnees_finales = resultat if resultat is not None else donnees
+        _ecrire_json_atomique(chemin, donnees_finales)
+        if date_iso is not None:
+            nb_apres = len(donnees_finales.get("combinaisons", donnees_finales))
+            _journaliser_ecriture(
+                chemin.name, date_iso, operation="calibration_timeout",
+                nb_avant=nb_avant, nb_apres=nb_apres,
+                taille_avant_octets=taille_avant,
+                taille_apres_octets=chemin.stat().st_size,
+                reinitialise_corruption=corrompu,
+            )
     except Exception as e:
         log.error(f"Erreur mise à jour état {chemin.name} : {e}")
     finally:
@@ -1169,7 +1255,7 @@ def maj_calibration_timeout(*, projet: str, type_issue: str, mode: str,
         capture["etat"] = dict(etat)
         return donnees
 
-    _maj_etat_json(FICHIER_ETAT_TIMEOUT, _maj_timeout)
+    _maj_etat_json(FICHIER_ETAT_TIMEOUT, _maj_timeout, date_iso=date_iso)
 
     etat = capture.get("etat")
     if etat is None:

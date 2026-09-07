@@ -28,6 +28,13 @@ conservées par prudence (jamais archivées).
 Ce script n'est JAMAIS appelé automatiquement par watcher.py — lancement
 manuel uniquement, à la discrétion d'Alain.
 
+Traçabilité (issue #521) : chaque exécution réelle (hors --dry-run) ajoute une
+ligne à logs/journal_ecritures_historique.jsonl (même journal, déjà gitignoré
+avec le reste de logs/, qu'utilise watcher.py pour enregistrer_duree et
+maj_calibration_timeout), avec operation="archivage_manuel" — pour qu'une
+future lecture du journal distingue cette réduction VOLONTAIRE et attendue du
+fichier d'une chute inexpliquée (perte de données).
+
 Usage :
     python3 scripts/archiver_historique.py                    # exécution réelle, défauts
     python3 scripts/archiver_historique.py --dry-run           # simulation, aucune écriture
@@ -44,6 +51,33 @@ from pathlib import Path
 DOSSIER_SCRIPT = Path(__file__).resolve().parent
 DOSSIER_LOGS = DOSSIER_SCRIPT.parent / "logs"
 FICHIER_HISTORIQUE_DEFAUT = DOSSIER_LOGS / "historique_durees.json"
+FICHIER_JOURNAL_ECRITURES = DOSSIER_LOGS / "journal_ecritures_historique.jsonl"
+
+
+def _journaliser_archivage(fichier: Path, *, nb_avant: int, nb_apres: int,
+                            taille_avant_octets: int, taille_apres_octets: int):
+    """Trace best-effort de l'archivage dans le même journal que watcher.py
+    (issue #521, cf. _journaliser_ecriture dans watcher.py) — operation
+    distincte ("archivage_manuel") pour ne pas confondre cette réduction
+    volontaire du fichier avec une perte de données. Ne doit jamais faire
+    échouer l'archivage lui-même."""
+    try:
+        DOSSIER_LOGS.mkdir(parents=True, exist_ok=True)
+        ligne = {
+            "date": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "fichier": fichier.name,
+            "operation": "archivage_manuel",
+            "nb_avant": nb_avant,
+            "nb_apres": nb_apres,
+            "taille_avant_octets": taille_avant_octets,
+            "taille_apres_octets": taille_apres_octets,
+            "reinitialise_corruption": False,
+            "pid": os.getpid(),
+        }
+        with open(FICHIER_JOURNAL_ECRITURES, "a", encoding="utf-8") as f:
+            f.write(json.dumps(ligne, ensure_ascii=False) + "\n")
+    except OSError as e:
+        print(f"AVERTISSEMENT : journalisation de l'archivage échouée : {e}", file=sys.stderr)
 
 # Cohérent avec app/issues.py : SEUIL_ESTIM_SUR = 15 (au-dessus : badge "sûr",
 # vert). N_MIN_DEFAUT > SEUIL_ESTIM_SUR pour qu'une catégorie déjà "sûre"
@@ -95,6 +129,7 @@ def archiver(fichier_historique: Path, seuil_mois: int, n_min: int, dry_run: boo
     if not fichier_historique.exists():
         return {"erreur": f"fichier introuvable : {fichier_historique}"}
 
+    taille_avant = fichier_historique.stat().st_size
     try:
         historique = json.loads(fichier_historique.read_text(encoding="utf-8")) or []
     except json.JSONDecodeError as e:
@@ -154,6 +189,12 @@ def archiver(fichier_historique: Path, seuil_mois: int, n_min: int, dry_run: boo
             _ecrire_json_atomique(fichier_archive, existant + entrees_annee)
 
         _ecrire_json_atomique(fichier_historique, historique_conserve)
+        _journaliser_archivage(
+            fichier_historique,
+            nb_avant=len(historique), nb_apres=len(historique_conserve),
+            taille_avant_octets=taille_avant,
+            taille_apres_octets=fichier_historique.stat().st_size,
+        )
 
     return {
         "erreur": None,

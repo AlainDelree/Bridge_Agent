@@ -2552,6 +2552,22 @@ Toute la mécanique est **best-effort** : verrou non obtenu ou erreur → mise �
 jour abandonnée pour ce cycle (journalisée), jamais propagée au traitement de
 l'issue en cours.
 
+**Traçabilité des écritures (issue #521)** : `historique_durees.json` et
+`etat_timeout.json` étant tous deux gitignorés (comme le reste de `logs/`),
+une perte de données sur l'un d'eux ne laisse par défaut aucune trace
+exploitable après coup (pas de diff, pas de commit, pas d'horodatage). Chaque
+écriture significative (`enregistrer_duree`, et `_maj_etat_json` pour
+`etat_timeout.json` uniquement) ajoute désormais une ligne à
+`logs/journal_ecritures_historique.jsonl` (JSON Lines, append-only, lui-même
+déjà couvert par le `.gitignore` de `logs/`) : nombre d'entrées et taille en
+octets AVANT/APRÈS l'écriture, plus `reinitialise_corruption=true` si
+l'écriture est repartie d'un fichier illisible (JSON corrompu) — la
+signature d'une perte de données silencieuse. Une chute de `nb_avant` par
+rapport au `nb_apres` de la ligne précédente pour le même fichier permet de
+dater un futur incident similaire, sans avoir besoin de suivre ces fichiers
+dans git (ce qui alourdirait chaque commit de sauvegarde CCL, ces fichiers
+grossissant à chaque issue close). Cf. `_journaliser_ecriture`.
+
 ### 19.4 Constantes actuelles et leur statut
 
 | Constante | Valeur | Rôle |
@@ -2637,6 +2653,10 @@ issues de la même combinaison s'il le juge utile.
   `F_local` sont désormais réellement alimentés. `lire_timeout_suggere`
   reçoit en plus un paramètre `body` pour choisir le bon `F` sur le chemin
   échec définitif, au lieu de toujours retomber sur `F_local`.
+- **#521** — traçabilité des écritures (`logs/journal_ecritures_historique.jsonl`,
+  cf. ci-dessus) suite à une coupure nette de `historique_durees.json`
+  restée inexpliquée faute de preuve (fichier gitignoré, aucun historique
+  git natif).
 
 ---
 
