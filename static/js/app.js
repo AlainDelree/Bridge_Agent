@@ -1816,7 +1816,12 @@ async function verifierIssueApresDepassement(projet, numero) {
     return;   // échec réseau : pas de nouvelle tentative auto (cohérent avec #270)
   }
   if (!it || it.erreur) return;
-  if ((it.state || '').toUpperCase() === 'CLOSED') {
+  // needs-human est un état terminal côté décompte au même titre que la
+  // fermeture GitHub (state === 'CLOSED') : le label ne ferme jamais l'issue
+  // (relance possible sans recréer, cf. #460), mais plus aucun retraitement
+  // auto n'aura lieu — le badge doit donc s'arrêter immédiatement (issue #523).
+  const nomsLabels = (it.labels || []).map(l => ((l && l.name) || l || '').toLowerCase());
+  if ((it.state || '').toUpperCase() === 'CLOSED' || nomsLabels.includes('needs-human')) {
     const itListe = {
       number: it.number, title: it.title, state: it.state,
       labels: it.labels, createdAt: it.createdAt, projet: projet,

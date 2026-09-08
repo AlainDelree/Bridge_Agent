@@ -26,7 +26,7 @@ from app.auth import login_requis  # noqa: F401 (exporté pour l'enregistrement 
 from watcher import (est_titre_chef, deduire_type_issue, PAUSE_ENTRE_TENTATIVES,
                      _est_depot_git, LABEL_ECRITURE, LABEL_SCRATCH,
                      LABEL_NOTIF_PC, LABEL_NOTIF_GSM, LABEL_NOTIF_TOUS,
-                     extraire_complexite)
+                     LABEL_ECHEC, extraire_complexite)
 
 # Racine du projet (dossier parent du package app/).
 DOSSIER_SCRIPT = Path(__file__).resolve().parent.parent
@@ -1054,6 +1054,15 @@ def issues_en_attente(nom_projet):
                 # Dédoublonnage par numéro : une issue portant les deux labels
                 # (cas rare, non nominal) ne doit apparaître qu'une fois.
                 if it.get("number") in vus:
+                    continue
+                # needs-human est un état terminal côté décompte (issue #523) :
+                # le label ne ferme jamais l'issue (relance possible sans
+                # recréer), donc `--state open` la retourne encore ici — sans
+                # cette exclusion, chargerTimingIssues() réinjecterait une
+                # entrée stale à chaque rafraîchissement, avec le même `debut`
+                # figé, ce qui relance indéfiniment le décompte côté front.
+                noms_labels = [(l.get("name") or "").lower() for l in it.get("labels", [])]
+                if LABEL_ECHEC in noms_labels:
                     continue
                 vus.add(it.get("number"))
                 issues.append(it)
