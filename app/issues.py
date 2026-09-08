@@ -874,11 +874,21 @@ def _debut_traitement(commentaires: list) -> str | None:
     cas de reprise après interruption du watcher (crash, reset, Éteindre/
     Relancer), plusieurs ACK coexistent et seule la plus récente reflète le
     vrai début de la tentative en cours — sinon le badge inclurait à tort le
-    temps mort de l'interruption."""
+    temps mort de l'interruption.
+
+    Issue #525 : une issue relancée après un échec définitif (label
+    needs-human retiré) conserve dans son historique les ACK du cycle
+    précédent. watcher.py poste, juste avant de poser needs-human, un
+    commentaire d'échec définitif ("Échec après N tentatives" —
+    watcher.py:3442) : on borne donc la recherche d'ACK aux commentaires
+    postés APRÈS ce marqueur. Si aucun ACK ne suit ce marqueur, le
+    traitement actuel n'a pas encore repris (issue "en file") → None."""
     debut = None
     for c in commentaires:
         corps = c.get("body") or ""
-        if "ACK —" in corps and "watcher.py" in corps:
+        if "Échec après" in corps and "tentatives" in corps:
+            debut = None
+        elif "ACK —" in corps and "watcher.py" in corps:
             debut = c.get("createdAt")
     return debut
 
