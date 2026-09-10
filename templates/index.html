@@ -391,6 +391,17 @@
     </div>
 
     <div class="champ" style="margin-bottom:14px">
+      <label title="Décalage de la hauteur du bip pour ce projet, en demi-tons. 0 = tonalité normale.">Tonalité du bip (demi-tons, 0 = normale)</label>
+      <div style="display:flex;align-items:center;gap:10px">
+        <input type="range" id="conf-TONALITE_BIP" min="-12" max="12" step="1" value="0"
+               oninput="document.getElementById('tonalite-bip-valeur').textContent = this.value"
+               style="flex:1">
+        <span id="tonalite-bip-valeur" style="min-width:2.5em;text-align:right">0</span>
+        <button type="button" onclick="testerBip()">Tester le son</button>
+      </div>
+    </div>
+
+    <div class="champ" style="margin-bottom:14px">
       <label>Fichier de contexte projet (relatif au rep. de travail)</label>
       <input type="text" id="conf-FICHIER_CONTEXTE"
              placeholder="ex: CONTEXTE.md ou BRIDGE_AGENT_DOC.md">

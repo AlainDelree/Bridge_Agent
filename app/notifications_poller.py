@@ -220,7 +220,7 @@ def _notifier_transition(cfg, tr: dict):
             titre=f"✅ {cfg.nom} #{numero} — traitée",
             message=f"'{titre}' traitée avec succès.",
             urgence_bureau="normal", priorite_ntfy="default",
-            numero=numero,
+            numero=numero, tonalite=cfg.tonalite_bip,
         )
     else:  # needs-human
         notifications.notifier(
@@ -228,7 +228,7 @@ def _notifier_transition(cfg, tr: dict):
             titre=f"❌ {cfg.nom} #{numero} — échec définitif",
             message=f"'{titre}' — intervention humaine requise.",
             urgence_bureau="critical", priorite_ntfy="high",
-            numero=numero,
+            numero=numero, tonalite=cfg.tonalite_bip,
         )
 
 

@@ -45,19 +45,24 @@ def a_un_label_notif(labels: list[str]) -> bool:
             or LABEL_NOTIF_TOUS in labels)
 
 
-def bip(script_bip: Path, fois: int = 1, projet: str | None = None, numero=None):
+def bip(script_bip: Path, fois: int = 1, projet: str | None = None, numero=None,
+        tonalite: int = 0):
     """Bip sonore via le script partagé (Bridge_Agent/scripts/traitement_fin.py,
     anciennement bip.py). `script_bip` : chemin du script. Silencieux si absent.
     `projet`/`numero`, si tous deux fournis, sont transmis en CLI au script pour
     qu'il notifie new_issue.py en plus du bip (SSE de rafraîchissement de
     l'onglet Résultats, issue #350) — best-effort côté script, sans incidence
-    ici en cas d'échec."""
+    ici en cas d'échec. `tonalite` (issue #526) : décalage de tonalité en
+    demi-tons, propre au projet (lu depuis son .conf par l'appelant) — transmis
+    en CLI si non nul, ignoré par les scripts qui ne le supportent pas."""
     script_bip = Path(script_bip)
     if not script_bip.exists():
         return
     argv_supplementaires = []
     if projet and numero is not None:
-        argv_supplementaires = ["--projet", str(projet), "--numero", str(numero)]
+        argv_supplementaires += ["--projet", str(projet), "--numero", str(numero)]
+    if tonalite:
+        argv_supplementaires += ["--tonalite", str(tonalite)]
     for _ in range(fois):
         try:
             subprocess.run(["python3", str(script_bip), *argv_supplementaires],
@@ -106,15 +111,18 @@ def notifier_ntfy(url_ntfy: str, titre: str, message: str,
 def notifier(labels: list[str], nom_projet: str, url_ntfy: str, script_bip: Path,
              titre: str, message: str,
              urgence_bureau: str = "normal", priorite_ntfy: str = "default",
-             fois_bip: int = 1, numero=None, log: logging.Logger = _log_defaut):
+             fois_bip: int = 1, numero=None, tonalite: int = 0,
+             log: logging.Logger = _log_defaut):
     """Dispatch de notification selon les labels de l'issue.
     Le bip et les canaux additionnels (notify-send, ntfy) sont opt-in via les
     labels notif_pc / notif_gsm / notif_tous : sans aucun de ces labels, aucun
     signal n'est émis. fois_bip renforce le signal (ex. 3 pour une alerte
     critique). `numero`, si fourni, permet au bip de notifier new_issue.py de
-    la fin de CETTE issue précise (SSE, issue #350)."""
+    la fin de CETTE issue précise (SSE, issue #350). `tonalite` (issue #526) :
+    décalage de tonalité en demi-tons propre au projet, transmis tel quel à
+    bip()."""
     if a_un_label_notif(labels):
-        bip(script_bip, fois_bip, projet=nom_projet, numero=numero)
+        bip(script_bip, fois_bip, projet=nom_projet, numero=numero, tonalite=tonalite)
     if LABEL_NOTIF_PC in labels or LABEL_NOTIF_TOUS in labels:
         notifier_bureau(nom_projet, titre, message, urgence_bureau, log=log)
     if LABEL_NOTIF_GSM in labels or LABEL_NOTIF_TOUS in labels:

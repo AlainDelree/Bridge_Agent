@@ -18,13 +18,14 @@ DOSSIER_SCRIPT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(DOSSIER_SCRIPT))
 
 from watcher import Config, charger_config  # noqa: E402
+import notifications  # noqa: E402
 
 
 # Clés modifiables via l'interface (les autres : NOM, DEPOT, REP_TRAVAIL,
 # PERIMETRE, CMD_BACKUP se changent à la main dans le .conf).
 CLES_EDITABLES = {
     "TOPIC_NTFY", "LABEL", "INTERVALLE", "MAX_ESSAIS",
-    "TIMEOUT_CLAUDE", "SCRIPT_BIP", "LOG_TAILLE_MAX_MO", "LOG_ARCHIVES",
+    "TIMEOUT_CLAUDE", "SCRIPT_BIP", "TONALITE_BIP", "LOG_TAILLE_MAX_MO", "LOG_ARCHIVES",
     "MODELE_CCL", "MOT_DE_PASSE", "FICHIER_CONTEXTE", "COULEUR",
     "DELAI_INACTIVITE_MIN",
 }
@@ -137,6 +138,7 @@ def get_config(nom_projet):
         max_essais     = cfg.max_essais,
         timeout_claude = cfg.timeout_claude,
         script_bip     = str(cfg.script_bip),
+        tonalite_bip   = cfg.tonalite_bip,
         fichier_contexte = cfg.fichier_contexte,
         log_taille_max_mo = cfg.log_taille_max_mo,
         log_archives   = cfg.log_archives,
@@ -151,3 +153,22 @@ def post_config(nom_projet):
     data = request.json or {}
     ok, msg = sauvegarder_conf(nom_projet, data)
     return jsonify(succes=ok, message=msg)
+
+
+def tester_bip(nom_projet):
+    """POST /tester-bip/<nom_projet> — joue le bip avec la tonalité fournie
+    dans le corps JSON ({"tonalite": <demi-tons>}), SANS toucher au .conf
+    (issue #526) : permet à Alain d'ajuster à l'oreille avant d'enregistrer.
+    Utilise le SCRIPT_BIP actuellement configuré pour ce projet ; best-effort,
+    comme le reste de la chaîne de notification (aucune erreur ne remonte au
+    navigateur si le bip échoue)."""
+    cfg = projet_par_nom(nom_projet)
+    if cfg is None:
+        return jsonify(erreur="Projet introuvable."), 404
+    data = request.json or {}
+    try:
+        tonalite = int(data.get("tonalite", 0))
+    except (TypeError, ValueError):
+        tonalite = 0
+    notifications.bip(cfg.script_bip, 1, tonalite=tonalite)
+    return jsonify(succes=True)

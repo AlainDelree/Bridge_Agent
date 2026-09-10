@@ -2180,6 +2180,36 @@ new_issue.py (ThinkPad) → polling gh → détecte la transition → bip/bulle/
   reconnue → défaut inchangé (`plat`), pour ne rien casser silencieusement.
   Ce fichier n'est **pas** un `configs/*.conf` : le garde-fou §11 ne s'y
   applique pas.
+- **Tonalité du bip par projet (issue #526), clé `.conf` `TONALITE_BIP`.**
+  `son_actif.txt` (ci-dessus) choisit le son pour **tous** les projets à la
+  fois ; `TONALITE_BIP` (optionnelle, entier en **demi-tons**, défaut `0` =
+  tonalité normale) permet en plus de distinguer **à l'oreille** quel projet
+  vient de terminer une issue, sans gérer de bibliothèque de fichiers son.
+  `notifications.py::bip()`/`notifier()` acceptent désormais un paramètre
+  `tonalite`, transmis en CLI (`--tonalite <demi-tons>`) au script bip
+  configuré — `watcher.py` (enveloppes `bip()`/`notifier()`) et
+  `app/notifications_poller.py` le lisent depuis `CFG.tonalite_bip` /
+  `cfg.tonalite_bip` (`Config.tonalite_bip`, `charger_config`). Deux
+  implémentations :
+  - **`scripts/traitement_fin.py`** (script partagé par défaut, voir plus
+    haut) : le son est synthétisé en Python, donc la tonalité se traduit
+    simplement en décalant la fréquence de synthèse
+    (`f_effective = f_base × 2^(demi-tons/12)`), sans dépendance externe —
+    orthogonal au choix `plat`/`cloche` de `son_actif.txt`.
+  - **`scripts/bip_Cloche.py`** (legacy, conservé pour compatibilité —
+    ex. `chesscoach.conf` y pointe encore explicitement) : le son est un
+    fichier système fixe (`SONS_CANDIDATS`), donc la tonalité est appliquée
+    en pitch-shiftant ce fichier via l'effet `pitch` de **`sox`** (en
+    centièmes de demi-ton). `sox` absent, `TONALITE_BIP = 0`, ou tout échec
+    de la transformation → repli silencieux sur le son d'origine, inchangé
+    (même philosophie que le reste du script : un bip qui échoue ne casse
+    jamais l'appelant).
+  - **Onglet Configuration de `new_issue.py`** : curseur `-12`…`+12`
+    demi-tons (`conf-TONALITE_BIP`) à côté du champ « Script bip », avec un
+    bouton **« Tester le son »** qui POSTe sur `/tester-bip/<projet>`
+    (`app/projets.py::tester_bip`) — joue le bip avec la tonalité
+    actuellement réglée dans le curseur, **sans** l'enregistrer dans le
+    `.conf`, pour ajuster à l'oreille avant de cliquer sur Enregistrer.
 
 **Éviter le spam de vieilles issues au démarrage.** Deux garde-fous combinés :
 - **filtre de récence** : seules les transitions horodatées dans les
@@ -2836,7 +2866,23 @@ de création d'issue, seul valable pour du contenu qu'il produit.
 
 ---
 
-*Dernière mise à jour : 7 septembre 2026 — §3/§11/§20 « Retrait des
+*Dernière mise à jour : 10 septembre 2026 — §17 « Tonalité du bip par
+projet » (issue #526) : nouvelle clé `.conf` optionnelle `TONALITE_BIP`
+(entier en demi-tons, défaut 0), pour distinguer à l'oreille quel projet
+vient de terminer une issue sans gérer de bibliothèque de sons.
+`notifications.py::bip()`/`notifier()` acceptent un paramètre `tonalite`,
+transmis en CLI (`--tonalite <demi-tons>`) au script bip configuré.
+`scripts/traitement_fin.py` (script partagé par défaut) décale directement
+sa fréquence de synthèse (`f_effective = f_base × 2^(demi-tons/12)`), sans
+dépendance externe ; `scripts/bip_Cloche.py` (legacy, encore utilisé par
+`chesscoach.conf`) pitch-shifte le fichier son via l'effet `pitch` de
+`sox`, avec repli silencieux sur le son d'origine si `sox` est absent ou
+échoue. Nouveau curseur `-12`…`+12` demi-tons dans l'onglet Configuration
+de `new_issue.py`, avec un bouton « Tester le son » (`POST
+/tester-bip/<projet>`, `app/projets.py::tester_bip`) qui joue le bip avec
+la tonalité du curseur avant tout enregistrement.
+
+Précédemment — 7 septembre 2026 — §3/§11/§20 « Retrait des
 mentions du copier-coller pour la création d'issues » (issue #518) : le
 copier-coller dans le formulaire web `new_issue.py` n'est plus présenté
 comme une méthode normale de création d'issue à partir de contenu produit

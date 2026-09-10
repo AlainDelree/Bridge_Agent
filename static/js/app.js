@@ -173,6 +173,9 @@ async function chargerConfig() {
     document.getElementById('conf-MAX_ESSAIS').value        = cfg.max_essais        || 3;
     document.getElementById('conf-TIMEOUT_CLAUDE').value    = cfg.timeout_claude    || 300;
     document.getElementById('conf-SCRIPT_BIP').value        = cfg.script_bip        || '';
+    // ?? et non || : 0 est une valeur valide (tonalité normale).
+    document.getElementById('conf-TONALITE_BIP').value      = cfg.tonalite_bip      ?? 0;
+    document.getElementById('tonalite-bip-valeur').textContent = cfg.tonalite_bip   ?? 0;
     document.getElementById('conf-FICHIER_CONTEXTE').value  = cfg.fichier_contexte  || '';
     document.getElementById('conf-MODELE_CCL').value        = cfg.modele_ccl        || '';
     document.getElementById('conf-LOG_TAILLE_MAX_MO').value = cfg.log_taille_max_mo || 1;
@@ -196,6 +199,7 @@ async function sauvegarderConfig(relancer) {
     MAX_ESSAIS:        document.getElementById('conf-MAX_ESSAIS').value,
     TIMEOUT_CLAUDE:    document.getElementById('conf-TIMEOUT_CLAUDE').value,
     SCRIPT_BIP:        document.getElementById('conf-SCRIPT_BIP').value,
+    TONALITE_BIP:      document.getElementById('conf-TONALITE_BIP').value,
     FICHIER_CONTEXTE:  document.getElementById('conf-FICHIER_CONTEXTE').value,
     MODELE_CCL:        document.getElementById('conf-MODELE_CCL').value,
     LOG_TAILLE_MAX_MO: document.getElementById('conf-LOG_TAILLE_MAX_MO').value,
@@ -219,6 +223,25 @@ async function sauvegarderConfig(relancer) {
       body: JSON.stringify({projet: nom, relancer: true})
     });
     msg.textContent += ' Watcher relancé.';
+  }
+}
+
+// Tonalité du bip (issue #526) : joue le bip avec la tonalité actuellement
+// réglée dans le curseur, SANS l'enregistrer — permet d'ajuster à l'oreille
+// avant de cliquer sur « Enregistrer ».
+async function testerBip() {
+  const nom = document.getElementById('projet').value;
+  const tonalite = document.getElementById('conf-TONALITE_BIP').value;
+  const msg = document.getElementById('msg-config');
+  try {
+    await fetch('/tester-bip/' + encodeURIComponent(nom), {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({tonalite: tonalite})
+    });
+  } catch(e) {
+    msg.textContent = 'Erreur test du bip : ' + e.message;
+    msg.className = 'message erreur'; msg.style.display = 'block';
   }
 }
 

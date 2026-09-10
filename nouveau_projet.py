@@ -910,6 +910,9 @@ INTERVALLE        = 10
 MAX_ESSAIS        = 3
 TIMEOUT_CLAUDE    = 300
 SCRIPT_BIP        = {script_bip}
+# Décalage de tonalité du bip en demi-tons, propre à ce projet (issue #526).
+# 0 = tonalité normale ; réglable aussi depuis l'onglet Configuration.
+# TONALITE_BIP    = 0
 
 # ─── Journaux (rotation par taille, archives datées) ──────────────────────────
 LOG_TAILLE_MAX_MO = 1

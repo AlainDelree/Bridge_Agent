@@ -24,9 +24,20 @@ pilote le son pour TOUS les projets utilisant ce script partagé (via
 absent, illisible, ou contenant une valeur non reconnue → défaut inchangé
 (`plat`), pour ne rien casser silencieusement.
 
+Tonalité par projet (issue #526) : `--tonalite <demi-tons>` décale la
+fréquence de synthèse (`f_effective = f_base × 2^(demi-tons/12)`), appliqué
+aux DEUX sons (`bip_plat()` et `bip()`) quel que soit le choix ci-dessus —
+la tonalité (par projet, via `TONALITE_BIP` dans le `.conf`) et le son actif
+(global, `son_actif.txt`) sont deux réglages orthogonaux. Comme le son est
+synthétisé en Python (pas de fichier à transformer), aucun outil externe
+supplémentaire n'est requis ici — contrairement à `scripts/bip_Cloche.py`
+qui, lui, pitch-shifte un fichier son existant via `sox`. `--tonalite`
+absent ou `0` → fréquence de base inchangée (comportement historique).
+
 Usage :
     python3 traitement_fin.py                                   # un bip seul
     python3 traitement_fin.py --projet bridge_agent --numero 350 # bip + POST
+    python3 traitement_fin.py --tonalite -4                      # bip décalé de -4 demi-tons
 """
 
 import argparse
@@ -50,10 +61,18 @@ TIMEOUT_NOTIFIER_FIN_ISSUE = 1   # s — new_issue.py non lancé ne doit jamais 
 FICHIER_SON_ACTIF = os.path.join(os.path.dirname(os.path.abspath(__file__)), "son_actif.txt")
 
 
-def bip_plat():
+def _frequence_decalee(f_base: float, demitons: int) -> float:
+    """Fréquence décalée de `demitons` demi-tons (issue #526). Échelle
+    logarithmique standard (12 demi-tons = une octave = ×2), 0 → f_base
+    inchangée."""
+    return f_base * (2 ** (demitons / 12)) if demitons else f_base
+
+
+def bip_plat(demitons: int = 0):
     """Bip sonore court (440 Hz, 0.4 s), sinusoïde plate — son par défaut
-    (voir issue #437 et #498, `son_actif()` ci-dessous pour le choix du son)."""
-    f_plat, dur_plat = 440, 0.4
+    (voir issue #437 et #498, `son_actif()` ci-dessous pour le choix du son).
+    `demitons` (issue #526) : décalage de tonalité par projet."""
+    f_plat, dur_plat = _frequence_decalee(440, demitons), 0.4
     samples = [int(32767 * math.sin(2 * math.pi * f_plat * t / SR)) for t in range(int(SR * dur_plat))]
     data = struct.pack('<' + 'h' * len(samples), *samples)
 
@@ -69,10 +88,12 @@ def bip_plat():
     os.remove(tmp)
 
 
-def bip():
-    """Son de cloche douce (880 Hz, enveloppe exponentielle décroissante) via aplay."""
+def bip(demitons: int = 0):
+    """Son de cloche douce (880 Hz, enveloppe exponentielle décroissante) via
+    aplay. `demitons` (issue #526) : décalage de tonalité par projet."""
+    f = _frequence_decalee(F, demitons)
     samples = [
-        int(32767 * math.sin(2 * math.pi * F * t / SR) * math.exp(-t * DECAY / SR))
+        int(32767 * math.sin(2 * math.pi * f * t / SR) * math.exp(-t * DECAY / SR))
         for t in range(int(SR * DUR))
     ]
     data = struct.pack('<' + 'h' * len(samples), *samples)
@@ -138,12 +159,14 @@ def main():
                         help="Nom du projet (déclenche le POST /notifier-fin-issue avec --numero)")
     parser.add_argument("--numero", default=None,
                         help="Numéro de l'issue (déclenche le POST /notifier-fin-issue avec --projet)")
+    parser.add_argument("--tonalite", type=int, default=0,
+                        help="Décalage de tonalité en demi-tons (issue #526), 0 = neutre")
     args = parser.parse_args()
 
     if son_actif() == "cloche":
-        bip()
+        bip(args.tonalite)
     else:
-        bip_plat()
+        bip_plat(args.tonalite)
 
     if args.projet and args.numero:
         notifier_fin_issue(args.projet, args.numero)

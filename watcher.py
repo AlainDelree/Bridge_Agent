@@ -250,6 +250,7 @@ class Config:
     timeout_chef: int     = 1200   # défaut plus généreux pour les issues « Chef : » sans TIMEOUT explicite (issue #106)
     timeout_diagnostic: int = 90   # timeout court et fixe de la passe diagnostique avant abandon non-critique (issue #124)
     script_bip: Path      = field(default_factory=lambda: DOSSIER_SCRIPT / "scripts" / "traitement_fin.py")
+    tonalite_bip: int      = 0     # décalage de tonalité du bip en demi-tons, propre au projet (issue #526) ; 0 = tonalité normale
     log_taille_max_mo: int = 1     # rotation quand le journal dépasse cette taille (Mo)
     log_archives: int      = 5     # nombre d'archives datées conservées
     cmd_backup: str        = ""    # commande de sauvegarde avant modif (mode écriture)
@@ -344,6 +345,7 @@ def charger_config(chemin: Path) -> Config:
         timeout_diagnostic = entier("TIMEOUT_DIAGNOSTIC", 90),
         script_bip  = Path(brut["SCRIPT_BIP"]).expanduser() if brut.get("SCRIPT_BIP")
                       else DOSSIER_SCRIPT / "scripts" / "traitement_fin.py",
+        tonalite_bip = entier("TONALITE_BIP", 0),
         log_taille_max_mo = entier("LOG_TAILLE_MAX_MO", 1),
         log_archives      = entier("LOG_ARCHIVES", 5),
         cmd_backup        = brut.get("CMD_BACKUP", ""),
@@ -462,8 +464,10 @@ def configurer_logs(cfg: Config):
 
 def bip(fois=1, numero=None):
     """Bip sonore via le script partagé (Bridge_Agent/scripts/traitement_fin.py,
-    anciennement bip.py)."""
-    notifications.bip(CFG.script_bip, fois, projet=CFG.nom, numero=numero)
+    anciennement bip.py). Tonalité du projet (issue #526) transmise depuis
+    CFG.tonalite_bip."""
+    notifications.bip(CFG.script_bip, fois, projet=CFG.nom, numero=numero,
+                       tonalite=CFG.tonalite_bip)
 
 def notifier_fin_sse(numero):
     """POST direct vers /notifier-fin-issue (issue #352), appelé à CHAQUE fin
@@ -513,7 +517,7 @@ def notifier(labels: list[str], titre: str, message: str,
         labels, CFG.nom, CFG.url_ntfy, CFG.script_bip,
         titre, message,
         urgence_bureau=urgence_bureau, priorite_ntfy=priorite_ntfy,
-        fois_bip=fois_bip, numero=numero, log=log,
+        fois_bip=fois_bip, numero=numero, tonalite=CFG.tonalite_bip, log=log,
     )
 
 def alerte_critique(numero, titre, tentative, labels: list[str]):

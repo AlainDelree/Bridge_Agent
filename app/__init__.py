@@ -60,7 +60,7 @@ def _enregistrer_routes(app: Flask) -> None:
     ce qui ne fonctionne qu'une fois le package app initialisé.
     """
     from app.auth import login_requis, login, login_post, logout
-    from app.projets import get_config, post_config
+    from app.projets import get_config, post_config, tester_bip
     from app.nouveau_projet import verifier_nouveau_projet, creer_nouveau_projet
     from app.watchers import (watchers, lancer_watcher,
                               arreter_watcher_route, statut)
@@ -105,6 +105,8 @@ def _enregistrer_routes(app: Flask) -> None:
     app.add_url_rule("/modifier-label-notif", "modifier_label_notif", login_requis(modifier_label_notif), methods=["POST"])
     app.add_url_rule("/config/<nom_projet>", "get_config", login_requis(get_config), methods=["GET"])
     app.add_url_rule("/config/<nom_projet>", "post_config", login_requis(post_config), methods=["POST"])
+    # Tonalité du bip par projet (issue #526) : test immédiat, avant enregistrement.
+    app.add_url_rule("/tester-bip/<nom_projet>", "tester_bip", login_requis(tester_bip), methods=["POST"])
     app.add_url_rule("/nouveau-projet/verifier", "verifier_nouveau_projet", login_requis(verifier_nouveau_projet), methods=["GET"])
     app.add_url_rule("/nouveau-projet", "creer_nouveau_projet", login_requis(creer_nouveau_projet), methods=["POST"])
     app.add_url_rule("/watchers", "watchers", login_requis(watchers))
