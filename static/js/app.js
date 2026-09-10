@@ -1924,7 +1924,7 @@ function demarrerStreamFinIssue() {
 
 // ─── Panneau latéral droit de l'onglet Résultats (issue #375, #377, #380) ──
 // Panneau FLOTTANT (position:fixed, voir .panneau-lateral dans style.css),
-// basculé par #pl-toggle, trois zones EMPILÉES, non exclusives, pilotées par
+// basculé par #pl-toggle, zones EMPILÉES, non exclusives, pilotées par
 // projetCourant/numeroCourant (mêmes variables que la sélection de ligne,
 // voir selectionnerLigne) :
 //  - zone haute (#pl-zone-monitoring) : monitoring passif des watchers CCL+CCW
@@ -1932,6 +1932,11 @@ function demarrerStreamFinIssue() {
 //    rendue, sélection ou non — pour garder l'infra sous les yeux en
 //    travaillant sur une issue (issue #377), une ligne par watcher, noir et
 //    blanc, bouton individuel Lancer/Relancer (issue #380) ;
+//  - #pl-zone-son (issue #527) : interrupteur global plat/cloche du bip, voir
+//    initZoneSon()/choisirSonActif()/testerSonActif() ci-dessous — seule zone
+//    de ce panneau NON reconstruite à chaque cycle de
+//    rafraichirPanneauLateralResultats (initialisée une fois, se met à jour
+//    elle-même au clic) ;
 //  - zone médiane (#pl-zone-extras) : réservée aux futurs boutons (issue
 //    #380), occupée depuis l'issue #485 par le contrôle du watcher spool
 //    (issues_inbox) — rendrePanneauLateralExtras(), fetch /issues-inbox/etat ;
@@ -1972,6 +1977,7 @@ function mettreAJourToggleLateral() {
 function demarrerPanneauLateral() {
   ouvrirPanneauLateralParDefaut();
   rafraichirPanneauLateralResultats();
+  initZoneSon();
   arreterPanneauLateral();
   intervalPanneauLateral = setInterval(rafraichirPanneauLateralResultats, 30000);
 }
@@ -2143,6 +2149,59 @@ async function rendrePanneauLateralMonitoring() {
         + new Date().toLocaleTimeString('fr-FR', {hour: '2-digit', minute: '2-digit', second: '2-digit'})
         + '</div>';
   zone.innerHTML = html;
+}
+
+// ─── Interrupteur global plat/cloche du bip (#pl-zone-son, issue #527) ─────
+// GLOBAL (pas par projet — voir scripts/son_actif.txt, lu par TOUS les
+// projets via le script partagé), distinct de la tonalité par projet
+// (TONALITE_BIP, onglet Configuration, issue #526) : la tonalité décale la
+// fréquence des DEUX timbres plat/cloche, elle ne choisit pas entre eux.
+// Initialisé une seule fois par demarrerPanneauLateral() (pas à chaque cycle
+// de rafraichirPanneauLateralResultats) — cette zone est la seule source
+// d'écriture de son_actif.txt depuis l'interface, rien ne peut la faire
+// diverger de l'état serveur entre deux chargements de page.
+async function initZoneSon() {
+  const seg = document.getElementById('pl-son-segmente');
+  if (!seg) return;
+  let son = 'plat';
+  try {
+    const rep = await fetch('/son-actif');
+    const donnees = await rep.json();
+    if (donnees && (donnees.son === 'plat' || donnees.son === 'cloche')) son = donnees.son;
+  } catch(e) { /* défaut 'plat' conservé */ }
+  refleterSonActif(son);
+}
+
+function refleterSonActif(son) {
+  const optPlat   = document.getElementById('pl-son-opt-plat');
+  const optCloche = document.getElementById('pl-son-opt-cloche');
+  if (optPlat)   optPlat.classList.toggle('actif', son === 'plat');
+  if (optCloche) optCloche.classList.toggle('actif', son === 'cloche');
+}
+
+// Écrit le choix dans son_actif.txt au clic — effectif au bip suivant, sans
+// rechargement de page (traitement_fin.py relit le fichier à chaque bip).
+async function choisirSonActif(son) {
+  refleterSonActif(son);   // optimiste : réactivité immédiate au clic
+  try {
+    await fetch('/son-actif', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({son: son})
+    });
+  } catch(e) {
+    alert('Erreur réseau : ' + e.message);
+  }
+}
+
+// Joue le bip avec le timbre actuellement enregistré dans son_actif.txt
+// (même principe que testerBip() pour la tonalité par projet, issue #526).
+async function testerSonActif() {
+  try {
+    await fetch('/tester-son', {method: 'POST'});
+  } catch(e) {
+    alert('Erreur réseau : ' + e.message);
+  }
 }
 
 // Zone réservée #pl-zone-extras (issue #380), occupée depuis l'issue #485 par

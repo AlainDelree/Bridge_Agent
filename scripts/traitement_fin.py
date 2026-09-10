@@ -22,7 +22,11 @@ exponentielle décroissante ; voir #437 et sa révocation). Ce seul fichier
 pilote le son pour TOUS les projets utilisant ce script partagé (via
 `SCRIPT_BIP`), sans avoir à toucher aux `configs/*.conf` individuels. Fichier
 absent, illisible, ou contenant une valeur non reconnue → défaut inchangé
-(`plat`), pour ne rien casser silencieusement.
+(`plat`), pour ne rien casser silencieusement. Depuis l'issue #527, ce fichier
+n'a plus besoin d'être édité à la main : un interrupteur GLOBAL dans le
+panneau flottant Infrastructure de `new_issue.py` (`#pl-zone-son`, routes
+GET/POST `/son-actif` dans `app/son.py`) l'écrit directement, effectif au bip
+suivant sans redémarrage d'aucun processus.
 
 Tonalité par projet (issue #526) : `--tonalite <demi-tons>` décale la
 fréquence de synthèse (`f_effective = f_base × 2^(demi-tons/12)`), appliqué

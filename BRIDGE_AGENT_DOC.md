@@ -2180,6 +2180,22 @@ new_issue.py (ThinkPad) → polling gh → détecte la transition → bip/bulle/
   reconnue → défaut inchangé (`plat`), pour ne rien casser silencieusement.
   Ce fichier n'est **pas** un `configs/*.conf` : le garde-fou §11 ne s'y
   applique pas.
+- **Interrupteur plat/cloche accessible depuis l'interface (issue #527).**
+  Avant cette issue, changer de son imposait d'éditer `son_actif.txt` à la
+  main. `new_issue.py` expose désormais ce choix dans le panneau flottant
+  Infrastructure de l'onglet Résultats (`#pl-zone-son`, `templates/index.html`
+  + `static/js/app.js::initZoneSon`/`choisirSonActif`/`testerSonActif`) : un
+  sélecteur à deux positions « Plat »/« Cloche », toujours visible, et un
+  bouton **« Tester le son »**. Deux routes dédiées (`app/son.py`,
+  **GLOBALES, sans `<nom_projet>`** — contrairement à `/tester-bip/<projet>`
+  ci-dessous) :
+  - `GET`/`POST /son-actif` : lit/écrit `son_actif.txt` — le clic sur une
+    position écrit directement le fichier (pas de bouton « Enregistrer »
+    séparé), effectif au bip suivant sans redémarrage d'aucun processus
+    (`traitement_fin.py::son_actif()` relit le fichier à chaque bip) ;
+  - `POST /tester-son` : joue le bip avec le timbre actuellement enregistré
+    dans `son_actif.txt` (tonalité neutre, `0` — ce réglage n'est pas
+    rattaché à un projet).
 - **Tonalité du bip par projet (issue #526), clé `.conf` `TONALITE_BIP`.**
   `son_actif.txt` (ci-dessus) choisit le son pour **tous** les projets à la
   fois ; `TONALITE_BIP` (optionnelle, entier en **demi-tons**, défaut `0` =
