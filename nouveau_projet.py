@@ -637,6 +637,11 @@ def etape_depot(nom: str) -> tuple[str, bool]:
         sys.exit(1)
 
     public = demander_oui_non("Dépôt public (non = privé)", defaut=True)
+    if not public:
+        print("   ⚠️  Dépôt privé : vérifier que GH_TOKEN dispose des "
+              "permissions nécessaires sur ce dépôt, sinon la création "
+              "ci-dessous — ou un appel gh/git ultérieur (issues, push) — "
+              "échouera avec une erreur d'authentification.")
 
     print(f"   Création de {depot} ({'public' if public else 'privé'})…")
     ok, err = creer_depot(depot, nom, public=public)

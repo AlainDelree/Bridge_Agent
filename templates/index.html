@@ -610,10 +610,16 @@
     </label>
 
     <label id="np-public-ligne"
-           style="display:none;font-size:13px;color:#333;margin-bottom:12px">
-      <input type="checkbox" id="np-public" checked>
+           style="display:none;font-size:13px;color:#333;margin-bottom:4px">
+      <input type="checkbox" id="np-public" checked onchange="npMajAvertissementPrive()">
       Dépôt public (décocher pour un dépôt privé)
     </label>
+    <div id="np-avertissement-prive"
+         style="display:none;font-size:12px;color:#8a6d00;margin:0 0 12px 24px">
+      ⚠ Dépôt privé : GH_TOKEN doit avoir les permissions nécessaires sur ce
+      dépôt, sinon la création ci-dessous — ou un appel ultérieur (issues,
+      push) — échouera.
+    </div>
 
     <div class="champ" style="margin-bottom:12px">
       <label>Répertoire de travail CCL</label>

@@ -5460,6 +5460,7 @@ function ouvrirNouveauProjet() {
   document.getElementById('np-creer-depot-ligne').style.display = 'none';
   document.getElementById('np-public').checked = true;
   document.getElementById('np-public-ligne').style.display = 'none';
+  document.getElementById('np-avertissement-prive').style.display = 'none';
   document.getElementById('np-nom-msg').textContent = '';
   document.getElementById('np-depot-msg').textContent = '';
   document.getElementById('np-compte-rendu').style.display = 'none';
@@ -5592,6 +5593,7 @@ function npAfficherEtatDepot(r) {
     depotMsg.textContent = '';
     ligneCreer.style.display = 'none';
     lignePublic.style.display = 'none';
+    document.getElementById('np-avertissement-prive').style.display = 'none';
     return;
   }
   if (r.depot_existe) {
@@ -5599,12 +5601,21 @@ function npAfficherEtatDepot(r) {
     depotMsg.style.color = '#2e7d32';
     ligneCreer.style.display = 'none';
     lignePublic.style.display = 'none';
+    document.getElementById('np-avertissement-prive').style.display = 'none';
   } else {
     depotMsg.textContent = 'ℹ ' + r.depot + " n'existe pas encore.";
     depotMsg.style.color = '#8a6d00';
     ligneCreer.style.display = 'block';
     lignePublic.style.display = 'block';
+    npMajAvertissementPrive();
   }
+}
+
+// Affiche le rappel GH_TOKEN sous la case publique/privée : visible
+// uniquement quand un dépôt privé est choisi (case décochée) — issue #529.
+function npMajAvertissementPrive() {
+  document.getElementById('np-avertissement-prive').style.display =
+    document.getElementById('np-public').checked ? 'none' : 'block';
 }
 
 function npMsg(texte, type) {
