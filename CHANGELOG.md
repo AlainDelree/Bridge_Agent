@@ -9,6 +9,25 @@ milliers de caractères sur une seule ligne logique, coûteux à relire et
 
 Convention d'ajout : voir §10 de `BRIDGE_AGENT_DOC.md`.
 
+## 11 septembre 2026 — issue #528
+
+`creer_depot()` (`nouveau_projet.py`) n'était plus systématiquement `--public`
+codé en dur : nouveau paramètre `public: bool = True` déterminant le flag
+`gh repo create` (`--public`/`--private`), défaut cohérent avec le
+comportement historique. Exposé dans les deux points d'entrée existants :
+CLI (`etape_depot()`, question « Dépôt public (non = privé) » juste après la
+confirmation de création) et formulaire web (case à cocher « Dépôt public »
+dans `templates/index.html`, visible seulement quand le dépôt cible n'existe
+pas encore, comme la case « Créer le dépôt » dont elle dépend) → transmis à
+`app/nouveau_projet.py`/`creer_projet()` puis à `creer_depot()`. Aucune étape
+ultérieure (`initialiser_git()`, clonage, remote, push) ne suppose un accès
+public : tout passe par `gh`/`git` en HTTPS authentifié via `GH_TOKEN`
+(`_url_https()`, §9), donc un dépôt privé fonctionne à l'identique côté
+interface — seule condition, que ce token ait les permissions nécessaires
+sur ce dépôt. Commentaires/messages qui présupposaient un dépôt public
+(docstrings, messages CLI, encarts web) mis à jour en conséquence. §13 de la
+doc complété.
+
 ## 7 septembre 2026 — issue #521
 
 Traçabilité minimale sur `logs/historique_durees.json` et

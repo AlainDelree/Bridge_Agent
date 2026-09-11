@@ -5458,6 +5458,8 @@ function ouvrirNouveauProjet() {
   document.getElementById('np-specs').checked = false;
   document.getElementById('np-creer-depot').checked = true;
   document.getElementById('np-creer-depot-ligne').style.display = 'none';
+  document.getElementById('np-public').checked = true;
+  document.getElementById('np-public-ligne').style.display = 'none';
   document.getElementById('np-nom-msg').textContent = '';
   document.getElementById('np-depot-msg').textContent = '';
   document.getElementById('np-compte-rendu').style.display = 'none';
@@ -5585,19 +5587,23 @@ async function npVerifier() {
 function npAfficherEtatDepot(r) {
   const depotMsg   = document.getElementById('np-depot-msg');
   const ligneCreer = document.getElementById('np-creer-depot-ligne');
+  const lignePublic = document.getElementById('np-public-ligne');
   if (!r.nom_valide || !r.depot) {
     depotMsg.textContent = '';
     ligneCreer.style.display = 'none';
+    lignePublic.style.display = 'none';
     return;
   }
   if (r.depot_existe) {
     depotMsg.textContent = '✓ ' + r.depot + ' existe déjà → installation dessus (pas de recréation).';
     depotMsg.style.color = '#2e7d32';
     ligneCreer.style.display = 'none';
+    lignePublic.style.display = 'none';
   } else {
     depotMsg.textContent = 'ℹ ' + r.depot + " n'existe pas encore.";
     depotMsg.style.color = '#8a6d00';
     ligneCreer.style.display = 'block';
+    lignePublic.style.display = 'block';
   }
 }
 
@@ -5630,6 +5636,7 @@ async function soumettreNouveauProjet() {
     couleur:   npCouleurChoisie,
     avec_specs: document.getElementById('np-specs').checked,
     creer_depot_si_absent: document.getElementById('np-creer-depot').checked,
+    public: document.getElementById('np-public').checked,
   };
 
   let res;
@@ -5712,11 +5719,10 @@ function afficherRappelGit(nom) {
 //  2. Si l'initialisation git du répertoire de travail n'a pas pu se
 //     terminer (push initial échoué), OU si le push a été VOLONTAIREMENT
 //     retenu parce que le répertoire contenait déjà du contenu non relu
-//     (issue #258 — le dépôt est public), les commandes manuelles
-//     nécessaires. Les deux cas partagent commande_manuelle mais doivent
-//     rester des messages distincts : le premier est un échec, le second une
-//     retenue délibérée — les confondre laisserait croire à une erreur là où
-//     rien n'a raté.
+//     (issue #258), les commandes manuelles nécessaires. Les deux cas
+//     partagent commande_manuelle mais doivent rester des messages distincts :
+//     le premier est un échec, le second une retenue délibérée — les
+//     confondre laisserait croire à une erreur là où rien n'a raté.
 // Encart visuellement distinct (bordure bleue) de celui de afficherRappelGit
 // (bordure orange) : c'est précisément la confusion entre « dépôt
 // Bridge_Agent » et « dépôt du projet créé » qui a fait passer inaperçu le
@@ -5735,8 +5741,8 @@ function afficherRappelProjet(res) {
   } else if (res.git_contenu_preexistant && res.git_contenu_preexistant.length) {
     const noms = res.git_contenu_preexistant.slice(0, 10);
     const reste = res.git_contenu_preexistant.length - noms.length;
-    html += '<div>⚠ Push <b>volontairement non déclenché</b> : le dépôt est '
-          + '<b>public</b> et le répertoire contenait déjà '
+    html += '<div>⚠ Push <b>volontairement non déclenché</b> : le répertoire '
+          + 'contenait déjà '
           + res.git_contenu_preexistant.length + ' fichier(s) non relu(s) — '
           + "ce n'est pas un échec, rien n'a été publié :</div>"
           + '<pre>' + escapeHtml(noms.join('\n'))

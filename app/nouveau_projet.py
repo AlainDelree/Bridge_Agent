@@ -80,5 +80,9 @@ def creer_nouveau_projet():
         # revalide contre les couleurs encore libres (issue #121) : une valeur
         # vide ou déjà prise retombe sur la première disponible.
         couleur               = data.get("couleur", ""),
+        # Visibilité du dépôt s'il doit être créé (issue #528) ; défaut public,
+        # cohérent avec le comportement historique. Sans effet si le dépôt
+        # existe déjà.
+        public                = bool(data.get("public", True)),
     )
     return jsonify(resultat), (200 if resultat.get("succes") else 400)

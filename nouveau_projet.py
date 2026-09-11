@@ -221,9 +221,11 @@ def depot_existe(depot: str) -> bool:
     return gh("repo", "view", depot).returncode == 0
 
 
-def creer_depot(depot: str, nom: str) -> tuple[bool, str]:
-    """Crée le dépôt public. Renvoie (succès, message d'erreur éventuel)."""
-    res = gh("repo", "create", depot, "--public",
+def creer_depot(depot: str, nom: str, public: bool = True) -> tuple[bool, str]:
+    """Crée le dépôt, public ou privé selon `public` (issue #528 ; défaut
+    public, cohérent avec le comportement historique). Renvoie (succès,
+    message d'erreur éventuel)."""
+    res = gh("repo", "create", depot, "--public" if public else "--private",
              "--description", f"Projet {nom} — piloté via Bridge_Agent")
     return res.returncode == 0, res.stderr.strip()
 
@@ -334,7 +336,8 @@ def _fichiers_suivis_preexistants(rep_path: Path, git_runner) -> list[str]:
     `*.pyc`, `*.log`, `.env`) n'a jamais atteint l'index et n'apparaît donc
     plus ici — c'est ce que git commit/push emporterait réellement. Une
     liste non vide signale un répertoire qui contenait déjà du contenu
-    SUIVI avant l'initialisation git : le dépôt étant créé **public**, ce
+    SUIVI avant l'initialisation git : le dépôt étant nouvellement créé
+    (public ou privé selon le choix fait à sa création — issue #528), ce
     contenu ne doit pas être publié sans relecture. `git_runner` est le
     point d'entrée `_git()` de l'appelant, déjà borné par TIMEOUT_GIT_LOCAL
     et tolérant au dépassement — réutilisé tel quel, pas de second timeout à
@@ -429,8 +432,8 @@ def initialiser_git(rep: str, depot: str) -> dict:
         detail += (f" — ⚠ push automatique retenu : {len(preexistants)} "
                    "fichier(s) préexistant(s) détecté(s) dans le répertoire "
                    f"({', '.join(preexistants[:10])}"
-                   f"{', …' if len(preexistants) > 10 else ''}) ; le dépôt "
-                   "est public et ce contenu n'a pas été relu.")
+                   f"{', …' if len(preexistants) > 10 else ''}) ; ce contenu "
+                   "n'a pas été relu.")
         return {"ok": True, "deja_git": False, "push_ok": None,
                 "contenu_preexistant": preexistants, "detail": detail,
                 "commande_manuelle": _commandes_git_manuelles(rep_path, depot,
@@ -486,11 +489,14 @@ def mettre_a_jour_doc(nom: str, depot: str, rep: str, perimetre: str) -> dict:
 
 def creer_projet(nom: str, depot: str = "", rep: str = "", perimetre: str = "",
                  topic: str = "", script_bip: str = "", avec_specs: bool = False,
-                 creer_depot_si_absent: bool = True, couleur: str = "") -> dict:
+                 creer_depot_si_absent: bool = True, couleur: str = "",
+                 public: bool = True) -> dict:
     """Orchestrateur non interactif appelé par la route Flask. Enchaîne les
     mêmes étapes que le script CLI (dépôt, .conf, labels, contexte, doc) et
     renvoie un compte-rendu structuré : {succes, nom, depot, rep, perimetre,
-    depot_existait, etapes:[{etape, ok, detail}], erreur}."""
+    depot_existait, etapes:[{etape, ok, detail}], erreur}. `public` (issue
+    #528) détermine la visibilité du dépôt s'il doit être créé ; sans effet
+    si le dépôt existe déjà (sa visibilité n'est alors pas modifiée)."""
     nom = (nom or "").strip().lower()
     if not nom:
         return {"succes": False, "erreur": "Un nom de projet est requis.", "etapes": []}
@@ -526,7 +532,7 @@ def creer_projet(nom: str, depot: str = "", rep: str = "", perimetre: str = "",
             return {"succes": False, "etapes": etapes, "depot": depot,
                     "erreur": f"Le dépôt {depot} n'existe pas. Cochez la création "
                               "du dépôt pour continuer."}
-        ok, err = creer_depot(depot, nom)
+        ok, err = creer_depot(depot, nom, public=public)
         depot_existait = False
         if not ok:
             etapes.append({"etape": "Dépôt GitHub", "ok": False,
@@ -534,7 +540,7 @@ def creer_projet(nom: str, depot: str = "", rep: str = "", perimetre: str = "",
             return {"succes": False, "etapes": etapes, "depot": depot,
                     "erreur": f"Impossible de créer {depot} : {err}"}
         etapes.append({"etape": "Dépôt GitHub", "ok": True,
-                       "detail": f"{depot} créé (public)."})
+                       "detail": f"{depot} créé ({'public' if public else 'privé'})."})
 
     # 2. Fichier configs/<nom>.conf.
     ecrire_conf(nom, depot, rep, perimetre, topic, script_bip, couleur)
@@ -614,7 +620,8 @@ def etape_nom() -> str:
 
 def etape_depot(nom: str) -> tuple[str, bool]:
     """Renvoie (depot, existait_deja). Crée le dépôt s'il n'existe pas et que
-    l'utilisateur confirme."""
+    l'utilisateur confirme — public ou privé selon son choix (issue #528),
+    défaut public pour rester cohérent avec le comportement historique."""
     titre("2. Dépôt GitHub cible")
     # Proposition par défaut : owner du dépôt courant + nom capitalisé.
     depot = demander("Dépôt GitHub (owner/nom)", depot_defaut(nom))
@@ -625,12 +632,14 @@ def etape_depot(nom: str) -> tuple[str, bool]:
         return depot, True
 
     print(f"   Le dépôt {depot} n'existe pas encore.")
-    if not demander_oui_non(f"Créer {depot} (public)", defaut=True):
+    if not demander_oui_non(f"Créer {depot}", defaut=True):
         print("   Abandon : impossible de continuer sans dépôt cible.")
         sys.exit(1)
 
-    print(f"   Création de {depot}…")
-    ok, err = creer_depot(depot, nom)
+    public = demander_oui_non("Dépôt public (non = privé)", defaut=True)
+
+    print(f"   Création de {depot} ({'public' if public else 'privé'})…")
+    ok, err = creer_depot(depot, nom, public=public)
     if not ok:
         print(f"   ❌ Échec de la création : {err}")
         sys.exit(1)
@@ -785,9 +794,8 @@ def etape_git(depot: str, rep: str) -> dict:
               "sur origin/master.")
     elif resultat["contenu_preexistant"]:
         print("   ✓ dépôt initialisé, commit local créé.")
-        print("   ⚠️  push NON déclenché : le dépôt est public et le "
-              "répertoire contenait déjà du contenu non relu. Fichiers "
-              "préexistants détectés :")
+        print("   ⚠️  push NON déclenché : le répertoire contenait déjà du "
+              "contenu non relu. Fichiers préexistants détectés :")
         for f in resultat["contenu_preexistant"][:10]:
             print(f"      - {f}")
         if len(resultat["contenu_preexistant"]) > 10:
@@ -978,7 +986,7 @@ def main() -> None:
     elif git_res["contenu_preexistant"]:
         print(f"   Dépôt git local : initialisé, commit local — push NON "
               f"automatique ({len(git_res['contenu_preexistant'])} fichier(s) "
-              "préexistant(s), dépôt public non relu)")
+              "préexistant(s) non relu(s))")
     elif git_res["ok"]:
         print("   Dépôt git local : initialisé, commit local — push manuel requis")
     else:
@@ -992,8 +1000,8 @@ def main() -> None:
           "prompt CCL (plafonné à 4000 caractères).")
     if git_res.get("commande_manuelle"):
         if git_res.get("contenu_preexistant"):
-            print("   • Push initial volontairement NON déclenché — dépôt "
-                  "public, contenu suivant non relu :")
+            print("   • Push initial volontairement NON déclenché — contenu "
+                  "préexistant non relu :")
             for f in git_res["contenu_preexistant"][:10]:
                 print(f"       - {f}")
             if len(git_res["contenu_preexistant"]) > 10:

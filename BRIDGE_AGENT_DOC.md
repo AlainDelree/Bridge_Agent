@@ -1055,8 +1055,21 @@ reproductible :
 deux, mêmes étapes, mêmes messages, comportement idempotent identique :
 
 1. **Dépôt GitHub** : `gh repo view` ; s'il n'existe pas encore, `gh repo create
-   <owner>/<Nom> --public` (sauf décoché côté web). S'il existe déjà →
-   installation dessus, rien recréé.
+   <owner>/<Nom> --public` ou `--private` selon le choix fait à la création
+   (issue #528 ; défaut **public**, cohérent avec le comportement historique —
+   CLI : question « Dépôt public (non = privé) » juste après la confirmation
+   de création ; web : case à cocher « Dépôt public », visible seulement
+   quand le dépôt n'existe pas encore). Sans effet si le dépôt existe déjà —
+   sa visibilité n'est pas modifiée. Un dépôt privé fonctionne à l'identique
+   côté Bridge_Agent : l'interface (affichage des résultats, création
+   d'issues, `app/issues.py`) passe systématiquement par `gh` authentifié via
+   `GH_TOKEN`, jamais par un accès public anonyme — seule condition, que ce
+   token ait les permissions nécessaires sur ce dépôt (sinon `gh repo create
+   --private` échoue immédiatement à l'étape 1, ou tout appel `gh`/`git`
+   ultérieur échoue avec une erreur d'authentification explicite). Si
+   décoché côté web (`creer_depot_si_absent`), la création est sautée
+   entièrement — auquel cas le choix public/privé est sans objet. S'il
+   existe déjà → installation dessus, rien recréé.
 2. **`configs/<nom>.conf`** généré depuis le gabarit interne (dépôt, répertoire
    de travail, périmètre, topic ntfy, couleur d'accent §121, etc.).
 3. **Labels GitHub** requis (§4) créés sur le dépôt cible, idempotent (les
