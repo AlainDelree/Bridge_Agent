@@ -283,7 +283,13 @@
            PAS reconstruit à chaque cycle de rafraichirPanneauLateralResultats
            (contrairement aux autres zones ci-dessous) : rien ne le ferait
            diverger de l'état réel puisque cette zone est la seule à écrire
-           dans son_actif.txt depuis l'interface.
+           dans son_actif.txt depuis l'interface. Le bouton #pl-btn-tester-son
+           joue la tonalité du projet actif (projetCourant, issue #532) : il
+           est disabled par défaut (attribut posé dans ce HTML) et
+           réactivé/regrisé par majBoutonTesterSonActif() (static/js/app.js)
+           à chaque changement de sélection, tant qu'aucune ligne n'est
+           sélectionnée (issue #533) — un son neutre ne correspondrait à
+           aucune notification réelle.
          - #pl-zone-extras : zone réservée aux futurs boutons (issue #380),
            occupée depuis l'issue #485 par le contrôle du watcher spool
            (issues_inbox) — rendrePanneauLateralExtras() (static/js/app.js).
@@ -299,7 +305,7 @@
             <button type="button" class="pl-son-opt" id="pl-son-opt-plat" onclick="choisirSonActif('plat')">Plat</button>
             <button type="button" class="pl-son-opt" id="pl-son-opt-cloche" onclick="choisirSonActif('cloche')">Cloche</button>
           </span>
-          <button type="button" class="pl-btn-mini" onclick="testerSonActif()">Tester le son</button>
+          <button type="button" class="pl-btn-mini" id="pl-btn-tester-son" onclick="testerSonActif()" disabled title="Aucune ligne sélectionnée">Tester le son</button>
         </div>
       </div>
       <!-- Zone réservée aux futurs boutons (issue #380) : vide intentionnellement. -->

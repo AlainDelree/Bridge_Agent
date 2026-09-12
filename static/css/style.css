@@ -326,6 +326,8 @@ button.danger:hover{background:#f8d7da}
 .pl-btn-mini{flex-shrink:0;padding:3px 9px;font-size:12px;border:1px solid #ccc;
   border-radius:6px;background:#f8f8f5;color:#1a1a18;cursor:pointer}
 .pl-btn-mini:hover{background:#eee}
+.pl-btn-mini:disabled{background:#f0f0ed;color:#999;cursor:not-allowed}
+.pl-btn-mini:disabled:hover{background:#f0f0ed}
 .pl-btn-vm{margin:6px 0 2px}
 /* Résumé « en cours/en file » sous chaque watcher CCL (issue #381). */
 .pl-sous-projet{font-size:11px;color:#999;margin:-2px 0 6px;padding-left:1px}

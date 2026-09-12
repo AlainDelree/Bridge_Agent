@@ -2179,6 +2179,18 @@ function refleterSonActif(son) {
   if (optCloche) optCloche.classList.toggle('actif', son === 'cloche');
 }
 
+// Grise le bouton « Tester le son » tant qu'aucune ligne n'est sélectionnée
+// (projetCourant null) : sinon testerSonActif() jouerait une tonalité neutre
+// qui ne correspond à aucune notification réelle (issue #533, suite à #532).
+// Appelée à l'initialisation (disabled déjà posé dans le HTML) et à chaque
+// changement de sélection (selectionnerLigne/selectionnerPremiereVisible).
+function majBoutonTesterSonActif() {
+  const btn = document.getElementById('pl-btn-tester-son');
+  if (!btn) return;
+  btn.disabled = !projetCourant;
+  btn.title = projetCourant ? '' : 'Aucune ligne sélectionnée';
+}
+
 // Écrit le choix dans son_actif.txt au clic — effectif au bip suivant, sans
 // rechargement de page (traitement_fin.py relit le fichier à chaque bip).
 async function choisirSonActif(son) {
@@ -2198,10 +2210,11 @@ async function choisirSonActif(son) {
 // tonalité du projet actif (projetCourant, celui de la ligne sélectionnée
 // dans la liste des issues — voir sa déclaration plus haut), pour que ce test
 // reflète fidèlement le son entendu à la clôture d'une issue de ce projet
-// (issue #532). Neutre si aucune ligne n'est sélectionnée (projetCourant
-// null) : le backend applique alors le même repli (même principe que
-// testerBip() pour la tonalité par projet, issue #526).
+// (issue #532). Le bouton est disabled tant que projetCourant est null
+// (majBoutonTesterSonActif, issue #533) ; ce garde-fou est une redondance
+// défensive au cas où l'appel serait déclenché autrement qu'au clic.
 async function testerSonActif() {
+  if (!projetCourant) return;
   try {
     await fetch('/tester-son', {
       method: 'POST',
@@ -2584,6 +2597,7 @@ function selectionnerPremiereVisible() {
     numeroCourant = null;
     document.getElementById('zone-issue').innerHTML =
       '<div class="issue-vide">Aucune issue à afficher</div>';
+    majBoutonTesterSonActif();
   }
 }
 
@@ -2823,12 +2837,14 @@ function selectionnerLigne(nom, numero) {
     projetCourant = null;
     numeroCourant = null;
     zone.innerHTML = '<div class="issue-vide">Aucune issue à afficher</div>';
+    majBoutonTesterSonActif();
     rafraichirPanneauLateralResultats();
     return;
   }
   projetCourant = nom;
   numeroCourant = numero;
   zone.innerHTML = '<div class="issue-vide">Double-cliquez une issue pour afficher son détail.</div>';
+  majBoutonTesterSonActif();
   rafraichirPanneauLateralResultats();
 }
 
