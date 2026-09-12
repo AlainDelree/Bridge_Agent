@@ -23,6 +23,7 @@ DOSSIER_SCRIPT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(DOSSIER_SCRIPT))
 
 import notifications  # noqa: E402
+from app.projets import projet_par_nom  # noqa: E402
 
 CHEMIN_SON_ACTIF   = DOSSIER_SCRIPT / "scripts" / "son_actif.txt"
 SCRIPT_BIP_PARTAGE = DOSSIER_SCRIPT / "scripts" / "traitement_fin.py"
@@ -63,6 +64,14 @@ def tester_son():
     """POST /tester-son — joue le bip avec le timbre ACTUELLEMENT enregistré
     dans son_actif.txt (le front écrit d'abord via POST /son-actif au clic sur
     l'interrupteur, donc ce test entend toujours le dernier choix). Tonalité
-    neutre (0) : ce réglage est global, pas rattaché à un projet."""
-    notifications.bip(SCRIPT_BIP_PARTAGE, 1)
+    (issue #532) : celle du projet actif transmis par le front ({"projet":
+    <nom>}), lue dans son .conf comme le fait /tester-bip/<nom_projet> — pour
+    que ce bouton reproduise fidèlement ce qu'on entend réellement à la
+    clôture d'une issue de ce projet. Neutre (0) si aucun projet n'est
+    transmis ou introuvable (comportement inchangé)."""
+    data   = request.json or {}
+    projet = str(data.get("projet", "")).strip()
+    cfg    = projet_par_nom(projet) if projet else None
+    tonalite = cfg.tonalite_bip if cfg is not None else 0
+    notifications.bip(SCRIPT_BIP_PARTAGE, 1, tonalite=tonalite)
     return jsonify(succes=True)

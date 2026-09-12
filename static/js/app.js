@@ -2194,11 +2194,20 @@ async function choisirSonActif(son) {
   }
 }
 
-// Joue le bip avec le timbre actuellement enregistré dans son_actif.txt
-// (même principe que testerBip() pour la tonalité par projet, issue #526).
+// Joue le bip avec le timbre actuellement enregistré dans son_actif.txt, à la
+// tonalité du projet actif (projetCourant, celui de la ligne sélectionnée
+// dans la liste des issues — voir sa déclaration plus haut), pour que ce test
+// reflète fidèlement le son entendu à la clôture d'une issue de ce projet
+// (issue #532). Neutre si aucune ligne n'est sélectionnée (projetCourant
+// null) : le backend applique alors le même repli (même principe que
+// testerBip() pour la tonalité par projet, issue #526).
 async function testerSonActif() {
   try {
-    await fetch('/tester-son', {method: 'POST'});
+    await fetch('/tester-son', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({projet: projetCourant})
+    });
   } catch(e) {
     alert('Erreur réseau : ' + e.message);
   }
