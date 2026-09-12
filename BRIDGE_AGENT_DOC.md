@@ -76,6 +76,7 @@ Claude Chat → crée une issue → GitHub → watcher.py détecte → CCL exéc
 | `rummikub` | AlainDelree/Rummikub | ~/Rummikub | (conf local) |
 | `ApiSelect` | AlainDelree/ApiSelect | ~/ApiSelect | (conf local) |
 | `chesscoach` | AlainDelree/Chesscoach | ~/ChessCoach | (conf local) |
+| `gestionmail` | AlainDelree/GestionMail | ~/GestionMail | (conf local) |
 
 Chaque projet a son propre watcher (`watcher.py --config configs/<nom>.conf`)
 et son propre journal de log (`logs/watcher-<nom>.log`).
@@ -669,6 +670,7 @@ hors périmètre même si l'issue le demande explicitement :
 | `rummikub` | /home/alain/Rummikub |
 | `ApiSelect` | /home/alain/ApiSelect |
 | `chesscoach` | /home/alain/ChessCoach |
+| `gestionmail` | /home/alain/GestionMail |
 
 ---
 
@@ -2895,7 +2897,7 @@ de création d'issue, seul valable pour du contenu qu'il produit.
 
 ---
 
-*Dernière mise à jour : 10 septembre 2026 — §17 « Tonalité du bip par
+*Dernière mise à jour : 12 septembre 2026 — §17 « Tonalité du bip par
 projet » (issue #526) : nouvelle clé `.conf` optionnelle `TONALITE_BIP`
 (entier en demi-tons, défaut 0), pour distinguer à l'oreille quel projet
 vient de terminer une issue sans gérer de bibliothèque de sons.
