@@ -19,6 +19,8 @@ projet, jamais un agent. Le reste (configs/, doc Bridge_Agent) n'est
 toujours jamais poussé automatiquement.
 """
 
+import colorsys
+import math
 import re
 import subprocess
 import sys
@@ -47,53 +49,203 @@ LABELS = [
     ("notif_tous",  "fbca04", "notify-send + ntfy"),
 ]
 
-# Palette fixe de couleurs d'accent proposées à la création d'un projet (issue
-# #121, élargie issue #534). Teintes réparties sur le cercle chromatique (et
-# pas seulement par variations d'une même famille), en jouant aussi sur la
-# saturation/luminosité pour rester distinguables au premier coup d'œil dans
-# l'onglet Résultats (cohérence visuelle avec l'existant : voir
-# COULEURS_PROJET dans app.js — les couleurs des projets sans champ COULEUR
-# persisté doivent rester en synchro avec COULEURS_LEGACY_SANS_CONF
-# ci-dessous). Une couleur est attribuée dès la création et écrite dans le
-# .conf (champ COULEUR) ; celles déjà prises par un projet existant sont
-# exclues de la proposition. Hex #RRGGBB, écrits en MAJUSCULES mais comparés
-# sans tenir compte de la casse.
-PALETTE_COULEURS = [
-    "#185FA5",  # bleu           (bridge_agent)
-    "#3B6D11",  # vert           (alchess)
-    "#BA7517",  # orange         (actualise)
-    "#0E8A82",  # turquoise      (scrabble)
-    "#6B3FA0",  # violet         (apiselect)
-    "#B0323A",  # rouge brique   (diagnostique_programme)
-    "#A2348A",  # magenta        (bloc_score)
-    "#3B45A0",  # indigo
-    "#7A4E2D",  # brun           (chesscoach)
-    "#556070",  # gris ardoise   (rummikub)
-    "#1F7A3D",  # vert émeraude  (ff_galerie — nouvelle couleur issue #534,
-                #                 remplace #BA7517 devenu ambigu avec actualise)
-    "#656812",  # olive/moutarde (ecole — nouvelle couleur issue #534,
-                #                 remplace #6B3FA0 devenu ambigu avec apiselect)
-    "#883894",  # orchidée
-    "#9E2E5F",  # rose foncé / framboise
-    "#76614C",  # taupe (brun grisé, neutre)
-    "#516840",  # sauge (vert grisé, neutre)
-]
+# ─── Système de couleur des projets (issue #535) ──────────────────────────────
+# Remplace l'ancienne palette figée à la main (PALETTE_COULEURS/
+# COULEURS_LEGACY_SANS_CONF de l'issue #534, corrigée collision par collision)
+# par une GÉNÉRATION algorithmique : teinte + clarté en HSL, saturation fixée
+# à 100%, avec deux garanties vérifiées PAR LE CODE (plus par relecture
+# visuelle) — voir generer_palette() ci-dessous :
+#   1. Contraste texte NOIR / fond >= SEUIL_CONTRASTE_NOIR (WCAG AA texte
+#      normal). Le style visé partout où la couleur de projet sert d'accent
+#      est désormais « fond coloré + texte noir » (voir styleAccentProjet
+#      dans app.js) — c'est donc CE contraste-là qui doit tenir, plus celui
+#      d'un texte coloré sur fond clair comme avant #535.
+#   2. Distance perceptuelle (CIE76, espace Lab) >= SEUIL_DISTANCE_MIN entre
+#      CHAQUE paire de couleurs de la palette — la garantie qui manquait à
+#      l'ancien système (collision ecole/ff_galerie découverte après #534
+#      malgré des hex déjà différents : une vérification visuelle ne suffit
+#      pas à garantir une distance perceptuelle réelle).
+#
+# Sur le contraste (issue #535, point 1) : à saturation 100%, le contraste
+# obtenu avec du texte noir dépend FORTEMENT de la teinte (la luminance
+# relative WCAG pondère les canaux R/V/B différemment : 0.2126/0.7152/0.0722),
+# pas seulement de la clarté HSL affichée. Calcul exact (voir
+# _plancher_contraste_teinte) : le bleu pur (H≈240°) est la teinte la PLUS
+# exigeante, avec besoin d'une clarté d'au moins ~69% pour atteindre 4.5:1 —
+# contre ~24% pour un vert/jaune et ~40-46% pour un rouge/magenta.
+# L'hypothèse de départ de l'issue (rouge/magenta comme pires cas) ne se
+# vérifie donc PAS : ce sont bleu/violet les plus contraignants. Plutôt qu'un
+# plancher unique remonté au pire cas (qui écraserait la plage utile des
+# autres teintes), chaque teinte reçoit son PROPRE plancher de clarté calculé
+# par _plancher_effectif — jamais moins lisible que nécessaire, jamais plus
+# restreint qu'il ne faut.
+SATURATION_PALETTE    = 100  # %, fixe (issue #535)
+CLARTE_MIN_ESTHETIQUE = 40   # %, plancher de base avant correction contraste
+CLARTE_MAX            = 90   # %, plafond (au-delà, couleur trop délavée)
+SEUIL_CONTRASTE_NOIR  = 4.5  # ratio WCAG AA texte normal (texte noir / fond)
+SEUIL_DISTANCE_MIN    = 15   # deltaE76 (Lab) minimal entre deux couleurs de la
+                             # palette — generer_palette() atteint ~22 sur 40
+                             # couleurs avec les constantes ci-dessous, marge
+                             # confortable au-dessus de ce plancher de garde
+NB_COULEURS_PALETTE   = 40   # de quoi voir venir largement au-delà des ~11
+                             # projets existants (issue : « large marge »)
+_HUE_STEP = 4   # ° — résolution de la grille de candidats de generer_palette
+_L_STEP   = 2   # % — résolution de la grille de candidats de generer_palette
 
-# Couleurs des projets historiques n'ayant pas (encore) de champ COULEUR
-# persisté dans leur .conf : ils tirent leur couleur de la carte fixe
-# COULEURS_PROJET de app.js plutôt que d'une valeur écrite dans le .conf.
-# couleurs_utilisees() ci-dessous ne lit QUE les .conf : sans cette liste, ces
-# couleurs paraîtraient à tort "libres" et pourraient être réattribuées à un
-# nouveau projet — c'est exactement ce qui s'est produit avant l'issue #534
-# (apiselect avait hérité du violet d'ecole, actualise de l'orange de
-# ff_galerie, deux paires alors visuellement indiscernables). Tenue à jour
-# manuellement en synchro avec COULEURS_PROJET dans app.js.
-COULEURS_LEGACY_SANS_CONF = {
-    "#185FA5",  # bridge_agent
-    "#3B6D11",  # alchess
-    "#0E8A82",  # scrabble
-    "#1F7A3D",  # ff_galerie
-    "#656812",  # ecole
+
+def _hsl_vers_hex(h: float, s: float, l: float) -> str:
+    """HSL (h en degrés, s/l en %) → hex #RRGGBB majuscules."""
+    r, g, b = colorsys.hls_to_rgb((h % 360) / 360.0, l / 100.0, s / 100.0)
+    return "#{:02X}{:02X}{:02X}".format(round(r * 255), round(g * 255), round(b * 255))
+
+
+def _linearise_srgb(c: float) -> float:
+    return c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4
+
+
+def _luminance_relative(r: float, g: float, b: float) -> float:
+    """Luminance relative WCAG (r/g/b dans [0,1])."""
+    return (0.2126 * _linearise_srgb(r) + 0.7152 * _linearise_srgb(g)
+            + 0.0722 * _linearise_srgb(b))
+
+
+def _contraste_avec_noir(h: float, s: float, l: float) -> float:
+    """Ratio de contraste WCAG entre texte noir (#000) et fond HSL(h,s,l)."""
+    r, g, b = colorsys.hls_to_rgb((h % 360) / 360.0, l / 100.0, s / 100.0)
+    return (_luminance_relative(r, g, b) + 0.05) / 0.05
+
+
+def _plancher_contraste_teinte(h: float, s: float = SATURATION_PALETTE) -> float:
+    """Plus petite clarté (%, résolution 0.5) pour laquelle HSL(h,s,l) offre un
+    contraste >= SEUIL_CONTRASTE_NOIR avec du texte noir. Calculé, pas deviné
+    (issue #535, point 1)."""
+    l = 0.0
+    while l <= 100.0:
+        if _contraste_avec_noir(h, s, l) >= SEUIL_CONTRASTE_NOIR:
+            return l
+        l += 0.5
+    return 100.0
+
+
+def _plancher_effectif(h: float) -> float:
+    """Plancher de clarté réellement appliqué pour une teinte donnée : le plus
+    grand des deux (esthétique de départ de l'issue, ou correction de
+    contraste si la teinte l'exige — jamais l'inverse : la consigne de
+    l'issue est de ne pas sacrifier la lisibilité pour rester à 40%)."""
+    return max(CLARTE_MIN_ESTHETIQUE, _plancher_contraste_teinte(h))
+
+
+def _lab_depuis_hsl(h: float, s: float, l: float) -> tuple[float, float, float]:
+    """HSL → Lab (CIE 1976), pour le calcul de distance perceptuelle."""
+    r, g, b = colorsys.hls_to_rgb((h % 360) / 360.0, l / 100.0, s / 100.0)
+    r, g, b = _linearise_srgb(r), _linearise_srgb(g), _linearise_srgb(b)
+    x = r * 0.4124 + g * 0.3576 + b * 0.1805
+    y = r * 0.2126 + g * 0.7152 + b * 0.0722
+    z = r * 0.0193 + g * 0.1192 + b * 0.9505
+    xn, yn, zn = 0.9505, 1.0, 1.089
+
+    def f(t: float) -> float:
+        return t ** (1 / 3) if t > (6 / 29) ** 3 else t / (3 * (6 / 29) ** 2) + 4 / 29
+
+    fx, fy, fz = f(x / xn), f(y / yn), f(z / zn)
+    return 116 * fy - 16, 500 * (fx - fy), 200 * (fy - fz)
+
+
+def _distance_lab(c1: tuple[float, float, float], c2: tuple[float, float, float]) -> float:
+    """Distance perceptuelle CIE76 (euclidienne dans Lab) entre deux couleurs."""
+    return math.sqrt(sum((a - b) ** 2 for a, b in zip(c1, c2)))
+
+
+def generer_palette(n: int) -> list[str]:
+    """Génère n couleurs HSL (saturation 100%, clarté variable par teinte) en
+    hex, telles que CHAQUE paire respecte SEUIL_DISTANCE_MIN (Lab, CIE76) —
+    garanti par construction et vérifié explicitement en fin de fonction
+    (issue #535, point 2 : remplace la vérification visuelle manuelle par un
+    calcul qui échoue bruyamment — assert — si la garantie n'est pas tenue).
+
+    Algorithme glouton « farthest-point » sur une grille de candidats
+    (teinte × clarté, chaque teinte bornée par son propre plancher de
+    contraste — voir _plancher_effectif) : à chaque étape, on choisit le
+    candidat le plus éloigné (au sens Lab) de tous les candidats déjà retenus.
+
+    Déterministe (aucun aléatoire) : un appel avec le même n renvoie toujours
+    la même liste, ce qui permet de figer les couleurs des projets existants
+    en reprenant simplement les premiers éléments de la liste (voir
+    COULEURS_PROJETS_EXISTANTS ci-dessous, gelée pour ne pas se redéplacer au
+    gré d'un futur ajustement des constantes ci-dessus)."""
+    candidats = []
+    h = 0.0
+    while h < 360.0:
+        plancher = _plancher_effectif(h)
+        l = plancher
+        while l <= CLARTE_MAX:
+            candidats.append((h, l, _lab_depuis_hsl(h, SATURATION_PALETTE, l)))
+            l += _L_STEP
+        h += _HUE_STEP
+
+    choisis = [candidats[0]]
+    distances_min = [_distance_lab(c[2], candidats[0][2]) for c in candidats]
+    for _ in range(1, n):
+        meilleur_i, meilleure_dist = 0, -1.0
+        for i, d in enumerate(distances_min):
+            if d > meilleure_dist:
+                meilleur_i, meilleure_dist = i, d
+        choisi = candidats[meilleur_i]
+        choisis.append(choisi)
+        for i, c in enumerate(candidats):
+            d = _distance_lab(c[2], choisi[2])
+            if d < distances_min[i]:
+                distances_min[i] = d
+
+    for i in range(len(choisis)):
+        assert _contraste_avec_noir(choisis[i][0], SATURATION_PALETTE, choisis[i][1]) >= SEUIL_CONTRASTE_NOIR
+        for j in range(i + 1, len(choisis)):
+            assert _distance_lab(choisis[i][2], choisis[j][2]) >= SEUIL_DISTANCE_MIN, (
+                f"Palette générée invalide : couleurs {i} et {j} trop proches "
+                f"(distance Lab < {SEUIL_DISTANCE_MIN})."
+            )
+
+    return [_hsl_vers_hex(h, SATURATION_PALETTE, l) for h, l, _ in choisis]
+
+
+# Palette proposée à la création d'un projet (remplace l'ancienne liste figée
+# à la main). Calculée une fois à l'import — déterministe, cf. generer_palette.
+# Une couleur est attribuée dès la création et écrite dans le .conf (champ
+# COULEUR) ; celles déjà prises par un projet existant sont exclues de la
+# proposition (voir couleurs_disponibles ci-dessous). Hex #RRGGBB en
+# MAJUSCULES, comparés sans tenir compte de la casse.
+PALETTE_COULEURS = generer_palette(NB_COULEURS_PALETTE)
+
+# Couleurs des projets EXISTANTS, pilotées depuis le code plutôt que depuis
+# leur .conf (issue #535) : aucune couleur de l'ancien système (issue #534)
+# n'a une saturation de 100%, et la quasi-totalité échoue au contraste texte
+# noir (vérifié — seuls actualise et scrabble passaient de justesse, mais pas
+# à 100% de saturation). Plutôt que de corriger projet par projet comme pour
+# ecole/ff_galerie en #534, TOUS les projets existants basculent ici sur une
+# couleur générée par le nouveau système. Contrainte de l'issue #535
+# respectée : configs/*.conf n'est PAS modifié, un projet ayant déjà un champ
+# COULEUR (apiselect, actualise, bloc_score, chesscoach,
+# diagnostique_programme, rummikub) garde sa valeur en fichier, simplement
+# non affichée — voir la priorité dans couleurs_utilisees() ci-dessous et
+# dans COULEURS_PROJET de app.js (qui DOIT rester en synchro avec ce
+# dictionnaire).
+# Valeurs GELÉES EN DUR (littéraux, pas PALETTE_COULEURS[i]) : ce sont les 11
+# premières couleurs de generer_palette(11) au moment de l'écriture de cette
+# issue. Les figer ainsi les rend immunisées contre un futur ajustement des
+# constantes de génération (_HUE_STEP, CLARTE_MAX, etc.) — sans ce gel, changer
+# une constante recolorerait silencieusement tous les projets existants.
+COULEURS_PROJETS_EXISTANTS = {
+    "bridge_agent":           "#EB0000",
+    "alchess":                "#00FF00",
+    "actualise":              "#086BFF",
+    "scrabble":               "#7AFFFF",
+    "apiselect":              "#FFD429",
+    "diagnostique_programme": "#FC00A8",
+    "bloc_score":             "#FFB0AB",
+    "chesscoach":             "#BB00FF",
+    "rummikub":               "#ADFF8F",
+    "ff_galerie":             "#A6B8FF",
+    "ecole":                  "#DE85FF",
 }
 
 # Topic ntfy partagé par tous les projets existants (voir configs/*.conf).
@@ -194,12 +346,13 @@ def conf_existe(nom: str) -> bool:
 
 def couleurs_utilisees() -> set[str]:
     """Ensemble des couleurs (hex minuscules) déjà attribuées à un projet
-    existant : celles des projets legacy sans champ COULEUR (voir
-    COULEURS_LEGACY_SANS_CONF) plus celles lues depuis le champ COULEUR de
-    chaque configs/*.conf. Lecture minimale et tolérante (même esprit
-    zéro-dépendance que le reste du script) : un .conf illisible est
-    simplement ignoré."""
-    prises: set[str] = {c.lower() for c in COULEURS_LEGACY_SANS_CONF}
+    existant : celles pilotées depuis le code pour les projets existants (voir
+    COULEURS_PROJETS_EXISTANTS, issue #535) plus celles lues depuis le champ
+    COULEUR de chaque configs/*.conf (encore pertinent pour un futur projet
+    créé sous le nouveau système, dont la couleur reste celle du .conf).
+    Lecture minimale et tolérante (même esprit zéro-dépendance que le reste du
+    script) : un .conf illisible est simplement ignoré."""
+    prises: set[str] = {c.lower() for c in COULEURS_PROJETS_EXISTANTS.values()}
     for chemin in DOSSIER_CONFIGS.glob("*.conf"):
         try:
             for brut in chemin.read_text(encoding="utf-8").splitlines():

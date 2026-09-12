@@ -19,49 +19,100 @@ let intervalPanneauLateral = null;
 // permanence indépendamment de l'onglet actif (voir demarrerStreamFinIssue).
 let sourceFinIssue = null;
 
-// SOURCE UNIQUE DE VÉRITÉ pour la couleur de chaque projet (issue #120).
-// Utilisée à la fois pour l'accent du formulaire (couleurProjet) et pour les
-// pastilles/badges/boutons de l'onglet Résultats (couleurProjetResultats).
-// Sert uniquement aux projets legacy sans champ COULEUR persisté dans leur
-// .conf (les autres projets ont leur couleur écrite dans configs/*.conf, voir
-// couleurProjet ci-dessous). Couleurs volontairement distinctes visuellement
-// (issue #534 : ff_galerie et ecole ont été recolorées ici — leurs anciennes
-// teintes #BA7517/#6B3FA0 étaient devenues identiques à celles, persistées,
-// de actualise/apiselect ; cette carte doit rester en synchro avec
-// COULEURS_LEGACY_SANS_CONF dans nouveau_projet.py).
+// SOURCE UNIQUE DE VÉRITÉ pour la couleur de chaque projet (issue #120,
+// refondue #535). Utilisée à la fois pour l'accent du formulaire
+// (couleurProjet) et pour les pastilles/badges/boutons de l'onglet Résultats
+// (couleurProjetResultats). Couverture ÉTENDUE par #535 : avant, cette carte
+// ne portait que les projets sans champ COULEUR persisté ; désormais elle
+// couvre TOUS les projets déjà existants au moment de #535, car aucune
+// couleur de l'ancien système (issue #534) n'atteint la saturation 100% ni le
+// contraste texte noir requis par le nouveau style « fond coloré + texte
+// noir » (voir styleAccentProjet ci-dessous). Un projet créé APRÈS #535 n'a
+// pas d'entrée ici : sa couleur, générée dès la création avec les nouvelles
+// règles, est directement lisible dans son .conf (voir couleurProjet).
+// Valeurs et ordre DOIVENT rester en synchro avec COULEURS_PROJETS_EXISTANTS
+// dans nouveau_projet.py (même algorithme, mêmes 11 hex gelés).
 const COULEURS_PROJET = {
-  'bridge_agent': '#185FA5',  // bleu
-  'alchess':      '#3B6D11',  // vert
-  'ff_galerie':   '#1F7A3D',  // vert émeraude
-  'scrabble':     '#0E8A82',  // turquoise
-  'ecole':        '#656812',  // olive/moutarde
+  'bridge_agent':           '#EB0000',
+  'alchess':                '#00FF00',
+  'actualise':              '#086BFF',
+  'scrabble':               '#7AFFFF',
+  'apiselect':              '#FFD429',
+  'diagnostique_programme': '#FC00A8',
+  'bloc_score':             '#FFB0AB',
+  'chesscoach':             '#BB00FF',
+  'rummikub':               '#ADFF8F',
+  'ff_galerie':             '#A6B8FF',
+  'ecole':                  '#DE85FF',
 };
 
+// Clarté (HSL) de secours pour couleurHashProjet ci-dessous : 72% couvre,
+// avec marge, TOUTES les teintes à saturation 100% pour un contraste texte
+// noir >= 4.5:1 (le pire cas mesuré est le bleu pur ≈240°, qui a besoin
+// d'environ 69% — voir _plancher_contraste_teinte côté nouveau_projet.py pour
+// le calcul par teinte). Ce repli est transitoire (un nouveau projet créé via
+// le modal, avant qu'une couleur définitive ne soit écrite dans son .conf) :
+// une seule clarté fixe suffit, pas besoin du calcul par teinte du serveur.
+const CLARTE_HASH_PROJET = 72;
+
 // Couleur de secours STABLE dérivée du nom du projet (hash simple sur les
-// charCodes → teinte HSL). Même nom ⇒ même couleur à chaque session. Sert
-// uniquement aux projets pas encore présents dans COULEURS_PROJET (nouveau
-// projet créé via le modal avant qu'on lui attribue une couleur dédiée).
+// charCodes → teinte HSL, saturation 100%, clarté fixe sûre). Même nom ⇒
+// même couleur à chaque session. Sert uniquement aux projets pas encore
+// présents dans COULEURS_PROJET (nouveau projet créé via le modal avant
+// qu'on lui attribue une couleur dédiée).
 function couleurHashProjet(nom) {
   let h = 0;
   for (let i = 0; i < nom.length; i++) {
     h = (h * 31 + nom.charCodeAt(i)) % 360;
   }
-  return 'hsl(' + ((h + 360) % 360) + ', 60%, 34%)';
+  return 'hsl(' + ((h + 360) % 360) + ', 100%, ' + CLARTE_HASH_PROJET + '%)';
 }
 
-// Couleur du projet, par ordre de priorité (issue #121) :
-//   1. couleur persistée dans le .conf (champ COULEUR), exposée par
-//      lister_projets() et injectée dans window.COULEURS_PERSISTEES ;
-//   2. sinon la map fixe COULEURS_PROJET (projets historiques sans ce champ) ;
+// Couleur du projet, par ordre de priorité (issue #121, ordre inversé #535) :
+//   1. la map fixe COULEURS_PROJET (projets existants au moment de #535,
+//      dont la couleur est pilotée depuis le code — voir COULEURS_PROJET
+//      ci-dessus pour le pourquoi) ;
+//   2. sinon la couleur persistée dans le .conf (champ COULEUR), exposée par
+//      lister_projets() et injectée dans window.COULEURS_PERSISTEES —
+//      s'applique aux projets créés APRÈS #535, générés d'emblée conformes ;
 //   3. sinon le hash HSL de secours (nouveau projet pas encore configuré),
 //      plutôt qu'un gris uniforme, pour qu'il reste distinguable.
 function couleurProjet(nom) {
   const persistees = window.COULEURS_PERSISTEES || {};
-  return persistees[nom] || COULEURS_PROJET[nom] || couleurHashProjet(nom);
+  return COULEURS_PROJET[nom] || persistees[nom] || couleurHashProjet(nom);
 }
 
-// Applique l'accent visuel du projet : bordure gauche du select et du bandeau,
-// et libellé « Projet actif : … » en grand, tous de la même couleur.
+// ─── Style d'accent projet (issue #535) ───────────────────────────────────
+// Nouveau style partout où la couleur de projet sert d'accent visuel : fond
+// coloré (teinte + clarté du projet, saturation 100%) + texte NOIR, remplace
+// l'ancien « texte coloré sur fond clair ». Porte de sortie volontairement
+// simple (demandée par l'issue) : repasser STYLE_FOND_COLORE_PROJET à false
+// suffit à revenir à l'ancien style PARTOUT — aucun site d'appel à modifier,
+// car ils passent tous par styleAccentProjet()/appliquerStyleAccentProjet()
+// ci-dessous plutôt que d'assigner directement style.color/background.
+const STYLE_FOND_COLORE_PROJET = true;
+
+// Renvoie {background, color} à appliquer pour représenter la couleur d'un
+// projet, selon le style actif (voir STYLE_FOND_COLORE_PROJET ci-dessus).
+function styleAccentProjet(couleur) {
+  return STYLE_FOND_COLORE_PROJET
+    ? { background: couleur, color: '#000' }
+    : { background: '',      color: couleur };
+}
+
+// Applique styleAccentProjet() directement sur un élément DOM (background +
+// color inline) — évite de dupliquer le if/else de styleAccentProjet() à
+// chaque site d'appel.
+function appliquerStyleAccentProjet(el, couleur) {
+  const s = styleAccentProjet(couleur);
+  el.style.background = s.background;
+  el.style.color       = s.color;
+}
+
+// Applique l'accent visuel du projet : bordure gauche du select et du bandeau
+// (accent, pas du texte coloré — inchangé par #535), et libellé
+// « Projet actif : … » en fond coloré + texte noir (issue #535 : c'était
+// auparavant du texte coloré sur fond clair).
 function appliquerAccentProjet(nom) {
   const couleur = couleurProjet(nom);
   const select  = document.getElementById('projet');
@@ -71,7 +122,7 @@ function appliquerAccentProjet(nom) {
   if (bandeau) bandeau.style.borderLeftColor  = couleur;
   if (label) {
     label.textContent = 'Projet actif : ' + nom;
-    label.style.color = couleur;
+    appliquerStyleAccentProjet(label, couleur);
   }
 }
 
@@ -1139,11 +1190,17 @@ function majClassesBoutonsFiltre() {
     .forEach(btn => {
       const actif = projetsFiltresActifs.has(btn.dataset.projet);
       btn.classList.toggle('inactif', !actif);
-      // Actif : texte + bordure à la couleur du projet (bien visible).
-      // Inactif : on efface le style inline pour laisser la classe .inactif
-      // (grisé) reprendre la main.
-      btn.style.color       = actif ? btn.dataset.couleur : '';
-      btn.style.borderColor = actif ? btn.dataset.couleur : '';
+      // Actif : fond coloré + texte noir (issue #535 — auparavant texte +
+      // bordure colorés sur fond clair). Inactif : on efface le style inline
+      // pour laisser la classe .inactif (grisé) reprendre la main.
+      if (actif) {
+        appliquerStyleAccentProjet(btn, btn.dataset.couleur);
+        btn.style.borderColor = btn.dataset.couleur;
+      } else {
+        btn.style.background  = '';
+        btn.style.color       = '';
+        btn.style.borderColor = '';
+      }
     });
   // Bouton « Tous » (issue #262) : reflète l'action du PROCHAIN clic, pas
   // l'état courant — grisé (.inactif) tant qu'au moins un projet est masqué,
@@ -1268,9 +1325,14 @@ function construireLigneIssueDOM(it) {
   // TYPE de l'issue (pattern chef/ouvriers, issue #86) porté en dataset :
   // exploité par appliquerFiltresListe() pour masquer les ouvriers au besoin.
   ligne.dataset.type = typeIssue(it);
-  // Couleur du texte = couleur du projet ; fonds translucides propres au projet
-  // portés par des variables CSS, exploitées par .ligne-issue:hover/.selectionnee.
-  ligne.style.color = couleur;
+  // Texte de la ligne en noir par défaut (issue #535 — auparavant coloré à la
+  // couleur du projet) : peindre TOUTE une ligne de liste (date, titre,
+  // badges) au fond coloré + texte noir du nouveau système serait, sur une
+  // liste multi-projets, une mosaïque de fonds saturés bien plus lourde à
+  // scanner que la pastille ● ci-dessous (déjà fond coloré, inchangée) —
+  // c'est elle qui porte l'identité projet de la ligne, pas le texte. Fonds
+  // translucides propres au projet portés par des variables CSS, exploités
+  // par .ligne-issue:hover/.selectionnee (inchangé).
   ligne.style.setProperty('--bg-hover', avecOpacite(couleur, 0.10));
   ligne.style.setProperty('--bg-sel',   avecOpacite(couleur, 0.20));
   ligne.title = 'Double-cliquez pour afficher le détail de cette issue';
@@ -2665,9 +2727,14 @@ function construireHtmlIssue(it, nom) {
   html += '<div class="issue-titre">#' + escapeHtml(it.number) + ' — ' + escapeHtml(it.title) + '</div>';
 
   // Badge coloré du projet source (couleur cohérente avec les filtres).
-  html += '<div><span class="badge-projet" style="background:'
-        + couleurProjetResultats(nom) + '">'
-        + '<span class="pastille"></span>' + escapeHtml(nom) + '</span></div>';
+  // Fond coloré + texte noir (issue #535 — auparavant fond coloré + texte
+  // BLANC, imprécis sur la partie haute de la plage de clarté 40-90%).
+  {
+    const sBadge = styleAccentProjet(couleurProjetResultats(nom));
+    html += '<div><span class="badge-projet" style="background:' + sBadge.background
+          + ';color:' + sBadge.color + '">'
+          + '<span class="pastille"></span>' + escapeHtml(nom) + '</span></div>';
+  }
 
   html += '<div class="issue-badges">';
   html += '<span class="badge-etat ' + (ferme ? 'ferme' : 'ouvert') + '">'

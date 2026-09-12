@@ -21,7 +21,11 @@ body{font-family:system-ui,sans-serif;font-size:14px;background:#f0efe9;color:#1
   font-size:15px;font-weight:600;background:#fff;color:#1a1a18;min-width:240px;
   border-left:4px solid #1a1a18}
 .bandeau-projet select:focus{outline:none;border-color:#888}
-.projet-actif-label{font-size:14px;font-weight:700;color:#1a1a18;padding:0 2px}
+/* padding/border-radius pensés pour le fond coloré posé en inline par
+   appliquerAccentProjet (issue #535, styleAccentProjet) — restent discrets
+   quand background est vide (ancien style, porte de sortie). */
+.projet-actif-label{font-size:14px;font-weight:700;color:#1a1a18;padding:2px 8px;
+  border-radius:6px;display:inline-block}
 .onglets{display:flex;gap:4px;padding:8px 20px 0;background:#e7e6e0;border-bottom:1px solid #dad9d2;
   box-shadow:inset 0 6px 8px -8px rgba(0,0,0,.18)}
 .onglet{padding:9px 16px 10px;font-size:15px;font-weight:500;color:#777;cursor:pointer;
@@ -276,11 +280,19 @@ button.danger:hover{background:#f8d7da}
    indicative, ce n'est pas un blocage. */
 .ligne-issue .ligne-estimation.est-depasse{background:#5E5E58;color:#E8E8E4;
   font-weight:500;font-style:italic}
-/* Badge du projet source dans l'en-tête du panneau de détail. */
+/* Badge du projet source dans l'en-tête du panneau de détail. color:#000 par
+   défaut (issue #535 : texte noir sur fond coloré, en cohérence avec le reste
+   du système) — la couleur réelle du fond est posée en inline par
+   construireHtmlIssue (styleAccentProjet), color aussi pour suivre la porte
+   de sortie STYLE_FOND_COLORE_PROJET ; cette valeur par défaut ne sert que si
+   le style inline manquait. */
 .badge-projet{display:inline-flex;align-items:center;gap:6px;font-size:12px;
-  font-weight:600;padding:3px 11px;border-radius:12px;color:#fff;margin-bottom:12px}
+  font-weight:600;padding:3px 11px;border-radius:12px;color:#000;margin-bottom:12px}
+/* Pastille noire translucide (issue #535 : un blanc translucide, pensé pour
+   l'ancien fond saturé/sombre, devenait quasi invisible sur les fonds clairs
+   du nouveau système — jusqu'à 90% de clarté). */
 .badge-projet .pastille{width:8px;height:8px;border-radius:50%;
-  background:rgba(255,255,255,.85);flex-shrink:0}
+  background:rgba(0,0,0,.55);flex-shrink:0}
 .badge-etat{font-size:12px;font-weight:500;padding:3px 10px;border-radius:12px}
 .badge-etat.ouvert{background:#d4edda;color:#155724}
 .badge-etat.ferme{background:#e2e3e5;color:#555}
