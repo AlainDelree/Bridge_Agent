@@ -22,13 +22,19 @@ let sourceFinIssue = null;
 // SOURCE UNIQUE DE VÉRITÉ pour la couleur de chaque projet (issue #120).
 // Utilisée à la fois pour l'accent du formulaire (couleurProjet) et pour les
 // pastilles/badges/boutons de l'onglet Résultats (couleurProjetResultats).
-// Les 5 couleurs sont volontairement distinctes visuellement.
+// Sert uniquement aux projets legacy sans champ COULEUR persisté dans leur
+// .conf (les autres projets ont leur couleur écrite dans configs/*.conf, voir
+// couleurProjet ci-dessous). Couleurs volontairement distinctes visuellement
+// (issue #534 : ff_galerie et ecole ont été recolorées ici — leurs anciennes
+// teintes #BA7517/#6B3FA0 étaient devenues identiques à celles, persistées,
+// de actualise/apiselect ; cette carte doit rester en synchro avec
+// COULEURS_LEGACY_SANS_CONF dans nouveau_projet.py).
 const COULEURS_PROJET = {
   'bridge_agent': '#185FA5',  // bleu
   'alchess':      '#3B6D11',  // vert
-  'ff_galerie':   '#BA7517',  // orange
+  'ff_galerie':   '#1F7A3D',  // vert émeraude
   'scrabble':     '#0E8A82',  // turquoise
-  'ecole':        '#6B3FA0',  // violet
+  'ecole':        '#656812',  // olive/moutarde
 };
 
 // Couleur de secours STABLE dérivée du nom du projet (hash simple sur les

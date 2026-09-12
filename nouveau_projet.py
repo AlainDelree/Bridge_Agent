@@ -48,23 +48,53 @@ LABELS = [
 ]
 
 # Palette fixe de couleurs d'accent proposées à la création d'un projet (issue
-# #121). Une dizaine de teintes bien distinctes, incluant les 5 déjà en usage
-# (cohérence visuelle avec l'existant : voir COULEURS_PROJET dans app.js). Une
-# couleur est attribuée dès la création et écrite dans le .conf (champ COULEUR) ;
-# celles déjà prises par un projet existant sont exclues de la proposition. Hex
-# #RRGGBB, écrits en MAJUSCULES mais comparés sans tenir compte de la casse.
+# #121, élargie issue #534). Teintes réparties sur le cercle chromatique (et
+# pas seulement par variations d'une même famille), en jouant aussi sur la
+# saturation/luminosité pour rester distinguables au premier coup d'œil dans
+# l'onglet Résultats (cohérence visuelle avec l'existant : voir
+# COULEURS_PROJET dans app.js — les couleurs des projets sans champ COULEUR
+# persisté doivent rester en synchro avec COULEURS_LEGACY_SANS_CONF
+# ci-dessous). Une couleur est attribuée dès la création et écrite dans le
+# .conf (champ COULEUR) ; celles déjà prises par un projet existant sont
+# exclues de la proposition. Hex #RRGGBB, écrits en MAJUSCULES mais comparés
+# sans tenir compte de la casse.
 PALETTE_COULEURS = [
-    "#185FA5",  # bleu       (bridge_agent)
-    "#3B6D11",  # vert       (alchess)
-    "#BA7517",  # orange     (ff_galerie)
-    "#0E8A82",  # turquoise  (scrabble)
-    "#6B3FA0",  # violet     (ecole)
-    "#B0323A",  # rouge brique
-    "#A2348A",  # magenta
+    "#185FA5",  # bleu           (bridge_agent)
+    "#3B6D11",  # vert           (alchess)
+    "#BA7517",  # orange         (actualise)
+    "#0E8A82",  # turquoise      (scrabble)
+    "#6B3FA0",  # violet         (apiselect)
+    "#B0323A",  # rouge brique   (diagnostique_programme)
+    "#A2348A",  # magenta        (bloc_score)
     "#3B45A0",  # indigo
-    "#7A4E2D",  # brun
-    "#556070",  # gris ardoise
+    "#7A4E2D",  # brun           (chesscoach)
+    "#556070",  # gris ardoise   (rummikub)
+    "#1F7A3D",  # vert émeraude  (ff_galerie — nouvelle couleur issue #534,
+                #                 remplace #BA7517 devenu ambigu avec actualise)
+    "#656812",  # olive/moutarde (ecole — nouvelle couleur issue #534,
+                #                 remplace #6B3FA0 devenu ambigu avec apiselect)
+    "#883894",  # orchidée
+    "#9E2E5F",  # rose foncé / framboise
+    "#76614C",  # taupe (brun grisé, neutre)
+    "#516840",  # sauge (vert grisé, neutre)
 ]
+
+# Couleurs des projets historiques n'ayant pas (encore) de champ COULEUR
+# persisté dans leur .conf : ils tirent leur couleur de la carte fixe
+# COULEURS_PROJET de app.js plutôt que d'une valeur écrite dans le .conf.
+# couleurs_utilisees() ci-dessous ne lit QUE les .conf : sans cette liste, ces
+# couleurs paraîtraient à tort "libres" et pourraient être réattribuées à un
+# nouveau projet — c'est exactement ce qui s'est produit avant l'issue #534
+# (apiselect avait hérité du violet d'ecole, actualise de l'orange de
+# ff_galerie, deux paires alors visuellement indiscernables). Tenue à jour
+# manuellement en synchro avec COULEURS_PROJET dans app.js.
+COULEURS_LEGACY_SANS_CONF = {
+    "#185FA5",  # bridge_agent
+    "#3B6D11",  # alchess
+    "#0E8A82",  # scrabble
+    "#1F7A3D",  # ff_galerie
+    "#656812",  # ecole
+}
 
 # Topic ntfy partagé par tous les projets existants (voir configs/*.conf).
 # Proposé par défaut ; l'utilisateur peut le changer pour un topic dédié.
@@ -164,10 +194,12 @@ def conf_existe(nom: str) -> bool:
 
 def couleurs_utilisees() -> set[str]:
     """Ensemble des couleurs (hex minuscules) déjà attribuées à un projet
-    existant, lues depuis le champ COULEUR de chaque configs/*.conf. Lecture
-    minimale et tolérante (même esprit zéro-dépendance que le reste du script) :
-    un .conf illisible est simplement ignoré."""
-    prises: set[str] = set()
+    existant : celles des projets legacy sans champ COULEUR (voir
+    COULEURS_LEGACY_SANS_CONF) plus celles lues depuis le champ COULEUR de
+    chaque configs/*.conf. Lecture minimale et tolérante (même esprit
+    zéro-dépendance que le reste du script) : un .conf illisible est
+    simplement ignoré."""
+    prises: set[str] = {c.lower() for c in COULEURS_LEGACY_SANS_CONF}
     for chemin in DOSSIER_CONFIGS.glob("*.conf"):
         try:
             for brut in chemin.read_text(encoding="utf-8").splitlines():
