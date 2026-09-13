@@ -1073,7 +1073,8 @@ deux, mêmes étapes, mêmes messages, comportement idempotent identique :
    entièrement — auquel cas le choix public/privé est sans objet. S'il
    existe déjà → installation dessus, rien recréé.
 2. **`configs/<nom>.conf`** généré depuis le gabarit interne (dépôt, répertoire
-   de travail, périmètre, topic ntfy, couleur d'accent §121, etc.).
+   de travail, périmètre, topic ntfy, couleur d'accent — voir « Couleur
+   d'accent des projets » ci-dessous, issues #120/#121/#534/#535 —, etc.).
 3. **Labels GitHub** requis (§4) créés sur le dépôt cible, idempotent (les
    présents sont laissés intacts).
 4. **Fichier(s) de contexte** : `CONTEXTE.md` (+ les 3 fichiers Specs MVC §15 si
@@ -1133,6 +1134,44 @@ deux, mêmes étapes, mêmes messages, comportement idempotent identique :
 configs/<nom>.conf`), et committer/pousser les changements du dépôt
 Bridge_Agent lui-même (`configs/`, doc) — bien distinct du dépôt du projet
 créé, dont le push initial est géré par l'étape 5 ci-dessus.
+
+### Couleur d'accent des projets (issues #120, #121, #534, #535)
+
+Trois niveaux de priorité déterminent la couleur affichée d'un projet
+(pastilles, badges, fond d'accent — `couleurProjet()` dans `static/js/app.js`,
+en miroir de `nouveau_projet.py` côté génération) :
+
+1. **`COULEURS_PROJETS_EXISTANTS`** (Python, `nouveau_projet.py`) /
+   **`COULEURS_PROJET`** (JS, `static/js/app.js`) — deux dictionnaires
+   figés en dur (mêmes 11 couleurs, mêmes clés, doivent rester synchronisés)
+   qui gèlent la couleur des 11 projets déjà existants au moment de #535,
+   quel que soit le contenu de leur `.conf`.
+2. Sinon le champ `COULEUR` persisté dans `configs/<nom>.conf` (exposé par
+   `lister_projets()` et injecté côté web dans `window.COULEURS_PERSISTEES`)
+   — fonctionnement historique (issue #121), `.conf` source de vérité quand
+   le champ est présent.
+3. Sinon un hash HSL de secours dérivé du nom du projet (`couleurHashProjet`),
+   pour qu'un projet tout juste créé reste distinguable avant qu'une couleur
+   définitive lui soit attribuée.
+
+**Piège à connaître** : 6 des 11 projets gelés par #535 avaient déjà un
+champ `COULEUR` persisté dans leur `.conf` au moment de la bascule
+(`apiselect`, `actualise`, `bloc_score`, `chesscoach`,
+`diagnostique_programme`, `rummikub`) — hérité de l'ancien système (#534),
+qui ne garantissait pas la saturation 100% ni le contraste texte noir requis
+par le nouveau style « fond coloré + texte noir » de #535. Le niveau 1 étant
+prioritaire sur le niveau 2, la couleur affichée de ces 6 projets vient
+désormais du code, **pas** de leur `.conf` : modifier `COULEUR` dans un de
+ces 6 fichiers n'a **aucun effet visible** — c'est une valeur historique,
+plus lue par rien. Pour changer réellement la couleur affichée d'un de ces
+11 projets, il faut modifier les deux dictionnaires en dur (Python **et**
+JS, en gardant la synchro), pas le `.conf`.
+
+Un projet créé **après** #535 (via `nouveau_projet.py`/le bouton web) n'a
+pas d'entrée dans ces deux dictionnaires : sa couleur continue d'être
+générée à la création (palette étendue #534, en excluant les couleurs déjà
+prises) puis lue/écrite normalement depuis le champ `COULEUR` de son
+`.conf`, comme avant #535 — le niveau 2 s'applique à lui sans réserve.
 
 ### Cycle de vie des watchers (démarrage manuel, démarrage auto, extinction auto)
 
