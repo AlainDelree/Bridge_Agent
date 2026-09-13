@@ -1135,7 +1135,7 @@ configs/<nom>.conf`), et committer/pousser les changements du dépôt
 Bridge_Agent lui-même (`configs/`, doc) — bien distinct du dépôt du projet
 créé, dont le push initial est géré par l'étape 5 ci-dessus.
 
-### Couleur d'accent des projets (issues #120, #121, #534, #535)
+### Couleur d'accent des projets (issues #120, #121, #534, #535, #539, #540)
 
 Trois niveaux de priorité déterminent la couleur affichée d'un projet
 (pastilles, badges, fond d'accent — `couleurProjet()` dans `static/js/app.js`,
@@ -1172,6 +1172,40 @@ pas d'entrée dans ces deux dictionnaires : sa couleur continue d'être
 générée à la création (palette étendue #534, en excluant les couleurs déjà
 prises) puis lue/écrite normalement depuis le champ `COULEUR` de son
 `.conf`, comme avant #535 — le niveau 2 s'applique à lui sans réserve.
+
+**Recycler la couleur d'un projet mis à l'arrêt (issue #540)** : un projet
+qui n'est plus travaillé (`ecole`, `ff_galerie`) n'a pas besoin de garder sa
+teinte dédiée — la lui laisser immobilise une couleur pour rien dans une
+palette déjà contrainte (#539 : la combinaison distance CIE76 + écart de
+teinte Lab ne laisse qu'une poignée de couleurs libres). Procédure pour un
+futur projet mis à l'arrêt :
+
+1. Retirer sa clé de `COULEURS_PROJETS_EXISTANTS` (`nouveau_projet.py`) —
+   **pas** la remplacer par le gris dans ce dictionnaire précis. Ce
+   dictionnaire est passé en `couleurs_a_eviter` à `generer_palette()`, qui
+   raisonne en angle de teinte Lab (`_teinte_lab`) ; un gris (saturation 0)
+   a un a\*/b\* quasi nul, donc un angle `atan2(0,0)` dégénéré à 0°, qui
+   entre en collision avec l'exclusion de teinte prévue pour les rouges et
+   fait échouer l'assertion de fin de `generer_palette()` (vérifié
+   concrètement en clôture de #540, pas supposé). La retirer suffit : sa
+   couleur dédiée n'est alors plus dans `couleurs_utilisees()`, ce qui
+   libère un emplacement dans `PALETTE_COULEURS` pour un futur projet
+   (vérifié : `couleurs_disponibles()` passe de 5 à 6 entrées en retirant
+   `ecole`/`ff_galerie`).
+2. Remplacer sa valeur, dans `COULEURS_PROJET` (`static/js/app.js`)
+   uniquement, par la constante partagée `COULEUR_PROJET_INACTIF`
+   (`#767676`) — cette carte reste, elle, la seule source de vérité pour
+   l'affichage, y compris des projets à l'arrêt ; la clé y reste donc
+   présente (contrairement au dictionnaire Python), simplement avec cette
+   valeur grise au lieu de sa teinte dédiée.
+3. `COULEUR_PROJET_INACTIF` (même nom, même valeur `#767676`, définie dans
+   les deux fichiers — pas de mécanisme de partage de constantes entre
+   Python et JS dans ce projet) est un gris neutre choisi uniquement pour
+   son contraste texte noir : 4,62:1, au-dessus du seuil `SEUIL_CONTRASTE_NOIR`
+   (4,5:1) commun aux couleurs actives — pas de contrainte de saturation
+   100% ni de distance/teinte Lab (le but est justement de signaler
+   visuellement l'absence d'identité propre, pas de rivaliser avec les
+   couleurs actives).
 
 ### Cycle de vie des watchers (démarrage manuel, démarrage auto, extinction auto)
 
@@ -2936,7 +2970,24 @@ de création d'issue, seul valable pour du contenu qu'il produit.
 
 ---
 
-*Dernière mise à jour : 12 septembre 2026 — §17 « Tonalité du bip par
+*Dernière mise à jour : 13 septembre 2026 — Sous-section « Couleur d'accent
+des projets » (§12) complétée (issue #540) : procédure de recyclage de la
+couleur d'un projet mis à l'arrêt, appliquée à `ecole`/`ff_galerie`. Nouvelle
+constante partagée `COULEUR_PROJET_INACTIF` (`#767676`, contraste texte noir
+4,62:1, seuil 4,5:1 respecté) définie dans `nouveau_projet.py` **et**
+`static/js/app.js`. Traitement asymétrique entre les deux fichiers, vérifié
+concrètement plutôt que supposé : `ecole`/`ff_galerie` **retirées** de
+`COULEURS_PROJETS_EXISTANTS` (Python, pas remplacées par le gris à cet
+endroit) — ce dictionnaire est passé en `couleurs_a_eviter` à
+`generer_palette()`, qui raisonne en angle de teinte Lab, et un gris
+(a\*/b\*≈0) y produit un angle dégénéré qui fait échouer l'assertion de fin
+de fonction ; les retirer libère en revanche un emplacement de
+`PALETTE_COULEURS` (`couleurs_disponibles()` : 5 → 6). Côté JS, `ecole`/
+`ff_galerie` restent des clés de `COULEURS_PROJET` (seule source de vérité
+d'affichage), simplement avec la valeur `COULEUR_PROJET_INACTIF` à la place
+de leur ancienne teinte dédiée.
+
+Précédemment — 12 septembre 2026 — §17 « Tonalité du bip par
 projet » (issue #526) : nouvelle clé `.conf` optionnelle `TONALITE_BIP`
 (entier en demi-tons, défaut 0), pour distinguer à l'oreille quel projet
 vient de terminer une issue sans gérer de bibliothèque de sons.
@@ -2971,54 +3022,6 @@ colle le tout — un seul copier-coller » remplacée par un renvoi au flux
 entendre que Claude Chat produisait du contenu pour le formulaire web.
 Usages légitimes du formulaire (aperçu `gh issue create`, création
 manuelle par Alain, repli si le watcher `issues_inbox` est indisponible)
-inchangés.
-
-Précédemment — 7 septembre 2026 — §3.3 « Format attendu du fichier »
-(issue #512) : l'en-tête `| CHAMP | Valeur |` et la ligne `#Titre:` sont
-désormais supportés dans l'un ou l'autre ordre, alors que seul « en-tête
-avant `#Titre:` » fonctionnait correctement jusqu'ici. Cause racine :
-`_regex_champ()` (`scripts/watcher_issues_inbox.py`) utilisait `\s*` juste
-après l'ancre `^` — `\s*` incluant le saut de ligne, `^` pouvait matcher le
-début d'une ligne VIDE précédant la ligne du champ (cas typique quand
-`#Titre:` précède l'en-tête, une ligne vide séparant souvent les deux) et
-`\s*` avaler ce saut de ligne pour atteindre le premier `|` de la ligne
-suivante : `retirer_ligne_entete()` calculait alors une fin de ligne
-identique au début (`corps.find("\n", debut) == debut`), ne retirant que ce
-caractère isolé — la ligne du champ (typiquement `PROJET`) restait intacte
-dans `champs["corps"]`, et `construire_body()` empilait son propre `PROJET`
-recalculé en plus, produisant un en-tête GitHub avec `PROJET` en double.
-Reproduit concrètement sur les issues Scrabble #423/#424/#425 (une déposée
-via le watcher spool, une via le formulaire web — même bug des deux côtés).
-Corrigé en restreignant `_regex_champ()` (et son miroir JS `lireChampEntete`/
-`retirerLigneEntete` de `static/js/app.js`) aux espaces/tabulations
-horizontaux (`[ \t]*`, jamais le saut de ligne). Par ailleurs (faiblesse
-révélée en tentant d'envoyer l'issue #512 elle-même : un nom de projet
-fictif cité en exemple illustratif plus bas dans le texte a été retenu à la
-place du vrai `PROJET` de l'en-tête réel), `lire_champ_entete`/
-`retirer_ligne_entete` et leurs miroirs JS bornent désormais la recherche de
-chaque champ aux `ZONE_ENTETE_LIGNES` (25) premières lignes du fichier/corps,
-plutôt que l'intégralité du texte. Tests de non-régression :
-`tests/test_ordre_titre_entete_512.py` (les deux ordres, avec et sans ligne
-vide, et la mention illustrative hors zone).
-
-Précédemment — 30 août 2026 — §3.13 (nouveau) « Lots multi-issues par
-fichier — mode mixte » (issue #508, faisant suite à la découverte de #500 et
-au timeout de #505 sur la même tâche) : `scripts/watcher_issues_inbox.py`
-sait désormais découper un fichier `.txt` en plusieurs blocs `#Titre:`
-(`decouper_corps_en_blocs`, miroir Python de `decouperCorpsEnBlocs` de
-`static/js/app.js`) et les traiter séquentiellement comme autant d'issues
-indépendantes (`_traiter_bloc`/`_traiter_lot`) ; le fichier n'est supprimé
-qu'une fois tous les blocs traités, déplacé vers `rejected/` seulement si
-TOUS ont échoué. §3.3/§3.4/§3.5 mis à jour en conséquence. Par ailleurs, le
-mode mixte du formulaire web (issue #505, déjà sur `master` avant #508 —
-`modeEffectifBloc()` dans `static/js/app.js`, permettant à chaque bloc d'un
-lot de porter son propre `MODE` parmi les trois valeurs plutôt qu'un mode
-unique commun à tout le lot) est désormais documenté dans §20 « Envoi en
-lot » et §20 « Champs d'en-tête optionnels reconnus » (correction d'une
-mention obsolète indiquant seulement deux valeurs `MODE` fonctionnelles).
-Côté watcher spool, aucune logique supplémentaire n'était nécessaire pour le
-mode mixte : chaque bloc ayant déjà nativement son propre `MODE` via
-`extraire_champs`/`reconnaitre_mode` (§3.13) une fois le découpage
-multi-blocs en place.*
+inchangés.*
 
 Historique complet : voir [`CHANGELOG.md`](CHANGELOG.md).

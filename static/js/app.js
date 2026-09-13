@@ -30,12 +30,27 @@ let sourceFinIssue = null;
 // noir » (voir styleAccentProjet ci-dessous). Un projet créé APRÈS #535 n'a
 // pas d'entrée ici : sa couleur, générée dès la création avec les nouvelles
 // règles, est directement lisible dans son .conf (voir couleurProjet).
+// Gris neutre partagé par tous les projets à l'arrêt (issue #540) — signale
+// volontairement l'absence d'identité propre plutôt qu'une teinte vive. Pas
+// de contrainte de saturation 100% ici (justement le but), seul le contraste
+// texte noir >= 4,5:1 est conservé (4,62:1 mesuré, même règle que les
+// couleurs actives — voir _contraste_avec_noir côté nouveau_projet.py). DOIT
+// rester en synchro avec la constante de même nom côté Python. Déclarée
+// AVANT COULEURS_PROJET ci-dessous, qui la référence.
+const COULEUR_PROJET_INACTIF = '#767676';
+
 // Valeurs et ordre DOIVENT rester en synchro avec COULEURS_PROJETS_EXISTANTS
-// dans nouveau_projet.py (même algorithme, mêmes 11 hex gelés). 4 valeurs
-// corrigées en #539 (alchess, actualise, bloc_score, ecole) : 3 paires
-// restaient visuellement trop proches malgré une distance CIE76 au-dessus du
-// seuil de garde de #535 (même teinte Lab, clarté différente) — voir le
-// commentaire détaillé au-dessus de COULEURS_PROJETS_EXISTANTS côté Python.
+// dans nouveau_projet.py (même algorithme, mêmes hex gelés), À L'EXCEPTION
+// des projets à l'arrêt (issue #540, voir COULEUR_PROJET_INACTIF ci-dessus) :
+// ff_galerie et ecole restent des clés de CE dictionnaire, seule source de
+// vérité pour leur affichage, mais leur valeur pointe vers le gris partagé —
+// elles ont volontairement disparu de COULEURS_PROJETS_EXISTANTS côté Python
+// (dictionnaire qui, lui, sert de garde-fou anti-collision pour les couleurs
+// ACTIVES, incompatible avec un gris achromatique — voir le commentaire
+// détaillé à cet endroit côté Python). 4 valeurs corrigées en #539 (alchess,
+// actualise, bloc_score, ecole) : 3 paires restaient visuellement trop
+// proches malgré une distance CIE76 au-dessus du seuil de garde de #535
+// (même teinte Lab, clarté différente).
 const COULEURS_PROJET = {
   'bridge_agent':           '#EB0000',
   'alchess':                '#00D68F',
@@ -46,8 +61,8 @@ const COULEURS_PROJET = {
   'bloc_score':             '#FF8595',
   'chesscoach':             '#BB00FF',
   'rummikub':               '#ADFF8F',
-  'ff_galerie':             '#A6B8FF',
-  'ecole':                  '#CC7400',
+  'ff_galerie':             COULEUR_PROJET_INACTIF,
+  'ecole':                  COULEUR_PROJET_INACTIF,
 };
 
 // Clarté (HSL) de secours pour couleurHashProjet ci-dessous : 72% couvre,

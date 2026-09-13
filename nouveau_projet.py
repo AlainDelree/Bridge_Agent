@@ -347,6 +347,23 @@ def generer_palette(n: int, couleurs_a_eviter: dict[str, str] | None = None) -> 
 #     bloc_score réassignée (bridge_agent, le projet racine du bridge,
 #     n'est pas retouché) ; nouvelle teinte toujours dans la même famille
 #     rose/saumon pâle que l'originale.
+#
+# Issue #540 — ff_galerie et ecole, projets à l'arrêt, RETIRÉS de ce
+# dictionnaire (au lieu d'y être remplacés par COULEUR_PROJET_INACTIF) :
+# leurs anciennes couleurs dédiées (#A6B8FF, #CC7400) redeviennent ainsi
+# disponibles pour un futur projet (voir couleurs_utilisees() plus bas, et
+# le gain concret sur couleurs_disponibles() vérifié en clôture d'issue).
+# Les inclure ICI avec la valeur grise a été tenté puis abandonné : ce
+# dictionnaire est aussi passé en couleurs_a_eviter à generer_palette(), qui
+# raisonne en angle de teinte Lab (_teinte_lab) — un gris (saturation 0) a un
+# a*/b* quasi nul, donc un angle atan2(0,0) dégénéré à 0°, qui entre en
+# collision avec l'exclusion de teinte prévue pour les rouges et fait échouer
+# l'assertion de generer_palette (vérifié concrètement, pas supposé). Leur
+# couleur d'affichage grise vit donc UNIQUEMENT dans COULEURS_PROJET côté
+# app.js (source de vérité pour l'affichage), pas ici (source de vérité pour
+# la réservation de couleurs actives) — voir COULEUR_PROJET_INACTIF ci-dessous
+# et §"Couleur d'accent des projets" de BRIDGE_AGENT_DOC.md pour la procédure
+# de recyclage à réutiliser pour un futur projet mis à l'arrêt.
 COULEURS_PROJETS_EXISTANTS = {
     "bridge_agent":           "#EB0000",
     "alchess":                "#00D68F",
@@ -357,9 +374,17 @@ COULEURS_PROJETS_EXISTANTS = {
     "bloc_score":             "#FF8595",
     "chesscoach":             "#BB00FF",
     "rummikub":               "#ADFF8F",
-    "ff_galerie":             "#A6B8FF",
-    "ecole":                  "#CC7400",
 }
+
+# Gris neutre partagé par tous les projets à l'arrêt (issue #540) — signale
+# volontairement l'absence d'identité propre, donc pas de contrainte de
+# saturation 100% ni de distance/teinte Lab (ce n'est pas une couleur de
+# PALETTE_COULEURS, voir juste au-dessus). Seule contrainte conservée : le
+# contraste texte noir >= SEUIL_CONTRASTE_NOIR, vérifié (4,62:1, calculé avec
+# _contraste_avec_noir(0, 0, 46) — même fonction que pour les couleurs
+# actives). DOIT rester en synchro avec la constante de même nom côté
+# app.js (seul endroit où elle est réellement utilisée, voir plus haut).
+COULEUR_PROJET_INACTIF = "#767676"
 
 # Palette proposée à la création d'un NOUVEAU projet (remplace l'ancienne
 # liste figée à la main). Calculée une fois à l'import — déterministe, cf.

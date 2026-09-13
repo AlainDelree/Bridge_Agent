@@ -9,6 +9,44 @@ milliers de caractères sur une seule ligne logique, coûteux à relire et
 
 Convention d'ajout : voir §10 de `BRIDGE_AGENT_DOC.md`.
 
+## 13 septembre 2026 — issue #540
+
+Recyclage de la couleur des projets à l'arrêt (`ecole`, `ff_galerie`) vers
+un gris neutre partagé, pour libérer leur ancienne couleur dédiée dans une
+palette déjà contrainte (#539 : combinaison distance CIE76 + écart de
+teinte Lab, seulement 5 couleurs libres avant cette issue).
+
+Nouvelle constante `COULEUR_PROJET_INACTIF = "#767676"` définie à deux
+endroits (`nouveau_projet.py` et `static/js/app.js`, pas de mécanisme de
+partage de constantes entre les deux) : contraste texte noir 4,62:1
+(`_contraste_avec_noir(0, 0, 46)`), au-dessus du seuil `SEUIL_CONTRASTE_NOIR`
+(4,5:1) commun aux couleurs actives — sans contrainte de saturation 100% ni
+de distance/teinte Lab, le but étant justement de signaler visuellement
+l'absence d'identité propre.
+
+Traitement volontairement ASYMÉTRIQUE entre les deux fichiers, vérifié
+concrètement plutôt que supposé :
+- `nouveau_projet.py` : `ecole` et `ff_galerie` **retirées** de
+  `COULEURS_PROJETS_EXISTANTS` (pas remplacées par le gris). Ce dictionnaire
+  est passé en `couleurs_a_eviter` à `generer_palette()`, qui compare les
+  couleurs par angle de teinte Lab (`_teinte_lab`) ; un gris (saturation 0)
+  a un a\*/b\* quasi nul, donc un angle `atan2(0,0)` dégénéré à 0°, qui
+  entre en collision avec l'exclusion de teinte prévue pour les rouges et
+  fait échouer l'assertion de fin de `generer_palette()` — reproduit
+  concrètement en testant les deux variantes (retrait vs. remplacement par
+  le gris) avant de choisir. Les retirer suffit et n'a pas cet effet de
+  bord : `couleurs_disponibles()` passe de 5 à 6 couleurs proposées à un
+  futur projet, confirmant que l'ancienne couleur dédiée est bien recyclée.
+- `static/js/app.js` : `ecole` et `ff_galerie` restent des clés de
+  `COULEURS_PROJET` (seule source de vérité pour l'affichage, y compris des
+  projets à l'arrêt), simplement avec la valeur `COULEUR_PROJET_INACTIF` à
+  la place de leur ancienne teinte dédiée.
+
+Documentation : sous-section « Couleur d'accent des projets » de
+`BRIDGE_AGENT_DOC.md` complétée d'une procédure de recyclage réutilisable
+pour un futur projet mis à l'arrêt (retrait côté Python, remplacement de la
+valeur côté JS, pourquoi ce n'est pas symétrique).
+
 ## 11 septembre 2026 — issue #528
 
 `creer_depot()` (`nouveau_projet.py`) n'était plus systématiquement `--public`
