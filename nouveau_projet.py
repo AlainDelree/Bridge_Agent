@@ -49,11 +49,11 @@ LABELS = [
     ("notif_tous",  "fbca04", "notify-send + ntfy"),
 ]
 
-# ─── Système de couleur des projets (issue #535) ──────────────────────────────
+# ─── Système de couleur des projets (issues #535, #539) ───────────────────────
 # Remplace l'ancienne palette figée à la main (PALETTE_COULEURS/
 # COULEURS_LEGACY_SANS_CONF de l'issue #534, corrigée collision par collision)
 # par une GÉNÉRATION algorithmique : teinte + clarté en HSL, saturation fixée
-# à 100%, avec deux garanties vérifiées PAR LE CODE (plus par relecture
+# à 100%, avec TROIS garanties vérifiées PAR LE CODE (plus par relecture
 # visuelle) — voir generer_palette() ci-dessous :
 #   1. Contraste texte NOIR / fond >= SEUIL_CONTRASTE_NOIR (WCAG AA texte
 #      normal). Le style visé partout où la couleur de projet sert d'accent
@@ -65,6 +65,26 @@ LABELS = [
 #      l'ancien système (collision ecole/ff_galerie découverte après #534
 #      malgré des hex déjà différents : une vérification visuelle ne suffit
 #      pas à garantir une distance perceptuelle réelle).
+#   3. Écart de TEINTE (angle Lab a*b*, voir _teinte_lab) >= SEUIL_ECART_
+#      TEINTE_MIN entre chaque paire — ajouté en #539 : le seuil de garde de
+#      15 posé en #535 s'est révélé insuffisant dans 3 cas réels (alchess/
+#      rummikub, ecole/chesscoach, actualise/gestionmail) alors même que leur
+#      distance CIE76 dépassait LARGEMENT 15 (56 et 52 pour les deux premières
+#      paires, mesurées sur les couleurs réellement en usage — donc pas « de
+#      justesse » comme on le supposait). La cause : ces paires ont un écart
+#      de teinte Lab quasi nul (1,6° et 0,4°) — seules leur clarté et leur
+#      chroma diffèrent. CIE76 (distance euclidienne L/a*/b*) pondère cet
+#      écart de clarté/chroma exactement comme un écart de teinte, alors que
+#      l'œil, sur une petite pastille, identifie D'ABORD la teinte : deux
+#      couleurs de même teinte mais de clarté différente se lisent comme deux
+#      NUANCES d'une même couleur, pas comme deux couleurs distinctes — un
+#      axe que le seuil global de #535 ne couvrait pas. Remonter
+#      SEUIL_DISTANCE_MIN seul n'aurait rien changé (56 et 52 sont déjà très
+#      au-dessus de tout seuil raisonnable) : c'est SEUIL_ECART_TEINTE_MIN qui
+#      fait le travail. Conséquence pratique : chaque teinte ne peut plus
+#      accueillir qu'un nombre limité de couleurs (une par « tranche » d'angle
+#      Lab) — la palette générée est donc volontairement plus petite qu'avant
+#      (voir NB_COULEURS_PALETTE).
 #
 # Sur le contraste (issue #535, point 1) : à saturation 100%, le contraste
 # obtenu avec du texte noir dépend FORTEMENT de la teinte (la luminance
@@ -79,16 +99,27 @@ LABELS = [
 # autres teintes), chaque teinte reçoit son PROPRE plancher de clarté calculé
 # par _plancher_effectif — jamais moins lisible que nécessaire, jamais plus
 # restreint qu'il ne faut.
-SATURATION_PALETTE    = 100  # %, fixe (issue #535)
-CLARTE_MIN_ESTHETIQUE = 40   # %, plancher de base avant correction contraste
-CLARTE_MAX            = 90   # %, plafond (au-delà, couleur trop délavée)
-SEUIL_CONTRASTE_NOIR  = 4.5  # ratio WCAG AA texte normal (texte noir / fond)
-SEUIL_DISTANCE_MIN    = 15   # deltaE76 (Lab) minimal entre deux couleurs de la
-                             # palette — generer_palette() atteint ~22 sur 40
-                             # couleurs avec les constantes ci-dessous, marge
-                             # confortable au-dessus de ce plancher de garde
-NB_COULEURS_PALETTE   = 40   # de quoi voir venir largement au-delà des ~11
-                             # projets existants (issue : « large marge »)
+SATURATION_PALETTE     = 100  # %, fixe (issue #535)
+CLARTE_MIN_ESTHETIQUE  = 40   # %, plancher de base avant correction contraste
+CLARTE_MAX             = 90   # %, plafond (au-delà, couleur trop délavée)
+SEUIL_CONTRASTE_NOIR   = 4.5  # ratio WCAG AA texte normal (texte noir / fond)
+SEUIL_DISTANCE_MIN     = 20   # deltaE76 (Lab) minimal entre deux couleurs de
+                              # la palette — remonté de 15 à 20 (issue #539) ;
+                              # défense en profondeur, mais voir surtout
+                              # SEUIL_ECART_TEINTE_MIN ci-dessous, seuil qui a
+                              # réellement empêché les 3 collisions signalées
+SEUIL_ECART_TEINTE_MIN = 15   # °, écart minimal d'angle de teinte Lab (issue
+                              # #539) entre deux couleurs de la palette — voir
+                              # le point 3 ci-dessus ; 15° laisse une marge
+                              # large au-dessus des écarts observés sur les
+                              # paires trop proches signalées (0,4° à 6,5°)
+NB_COULEURS_PALETTE    = 30   # demandé à generer_palette() ; avec les deux
+                              # seuils ci-dessus la grille s'épuise bien avant
+                              # (~5 couleurs libres au-delà des 11 projets
+                              # historiques, voir COULEURS_PROJETS_EXISTANTS) —
+                              # une combinaison teinte+distance stricte laisse
+                              # nécessairement moins de couleurs vraiment
+                              # distinctes qu'un seuil de distance seul
 _HUE_STEP = 4   # ° — résolution de la grille de candidats de generer_palette
 _L_STEP   = 2   # % — résolution de la grille de candidats de generer_palette
 
@@ -156,65 +187,117 @@ def _distance_lab(c1: tuple[float, float, float], c2: tuple[float, float, float]
     return math.sqrt(sum((a - b) ** 2 for a, b in zip(c1, c2)))
 
 
-def generer_palette(n: int) -> list[str]:
-    """Génère n couleurs HSL (saturation 100%, clarté variable par teinte) en
-    hex, telles que CHAQUE paire respecte SEUIL_DISTANCE_MIN (Lab, CIE76) —
-    garanti par construction et vérifié explicitement en fin de fonction
-    (issue #535, point 2 : remplace la vérification visuelle manuelle par un
-    calcul qui échoue bruyamment — assert — si la garantie n'est pas tenue).
+def _teinte_lab(lab: tuple[float, float, float]) -> float:
+    """Angle de teinte (°, 0-360) dans le plan a*/b* du Lab (issue #539).
+    Deux couleurs peuvent avoir une distance CIE76 énorme (clarté et/ou
+    chroma très différents) tout en partageant quasiment le même angle —
+    l'œil les lit alors comme deux NUANCES de la même couleur plutôt que
+    comme deux couleurs distinctes. C'est cet angle, pas la distance globale,
+    qui a effectivement séparé les 3 paires signalées en #539."""
+    _, a, b = lab
+    return math.degrees(math.atan2(b, a)) % 360
+
+
+def _ecart_teinte(h1: float, h2: float) -> float:
+    """Écart angulaire minimal (°, 0-180) entre deux angles de teinte Lab."""
+    d = abs(h1 - h2) % 360
+    return min(d, 360 - d)
+
+
+def _lab_depuis_hex(hexv: str) -> tuple[float, float, float]:
+    """Hex #RRGGBB → Lab, en passant par HSL (même chemin que _lab_depuis_hsl,
+    pour rester cohérent avec le reste du module)."""
+    hexv = hexv.lstrip("#")
+    r, g, b = (int(hexv[i:i + 2], 16) / 255 for i in (0, 2, 4))
+    h, l, s = colorsys.rgb_to_hls(r, g, b)
+    return _lab_depuis_hsl(h * 360, s * 100, l * 100)
+
+
+def generer_palette(n: int, couleurs_a_eviter: dict[str, str] | None = None) -> list[str]:
+    """Génère jusqu'à n couleurs HSL (saturation 100%, clarté variable par
+    teinte) en hex, telles que CHAQUE paire — y compris avec couleurs_a_eviter
+    — respecte à la fois SEUIL_DISTANCE_MIN (Lab, CIE76) et
+    SEUIL_ECART_TEINTE_MIN (angle de teinte Lab) — garanti par construction et
+    revérifié explicitement en fin de fonction (assert qui échoue bruyamment
+    si la garantie n'est pas tenue, plutôt qu'une relecture visuelle).
+
+    couleurs_a_eviter (issue #539, point 4) : couleurs hex déjà attribuées
+    (typiquement COULEURS_PROJETS_EXISTANTS) que la palette générée doit EN
+    PLUS respecter, sans pour autant figurer dans le résultat retourné. Sans
+    ce paramètre, la garantie ne portait que sur les couleurs générées ENTRE
+    ELLES — pas sur les couleurs gelées en dur — et c'est précisément ce trou
+    qui a permis à gestionmail (créé après #535, couleur choisie dans cette
+    même palette générée) de se retrouver trop proche d'actualise malgré la
+    vérification : leur écart de teinte n'était simplement jamais contrôlé.
 
     Algorithme glouton « farthest-point » sur une grille de candidats
     (teinte × clarté, chaque teinte bornée par son propre plancher de
-    contraste — voir _plancher_effectif) : à chaque étape, on choisit le
-    candidat le plus éloigné (au sens Lab) de tous les candidats déjà retenus.
+    contraste — voir _plancher_effectif), en partant de couleurs_a_eviter
+    comme réservations initiales : à chaque étape, on choisit — parmi les
+    candidats qui respectent les deux seuils vis-à-vis de TOUT ce qui est déjà
+    retenu — celui le plus éloigné (au sens Lab) des couleurs déjà retenues.
+    S'il n'existe plus aucun candidat valide, la génération s'arrête et
+    renvoie moins de n couleurs (jamais plus ; jamais une couleur qui viole
+    l'une des deux garanties) — la combinaison des deux seuils limite
+    mécaniquement le nombre de couleurs vraiment distinctes disponibles.
 
-    Déterministe (aucun aléatoire) : un appel avec le même n renvoie toujours
-    la même liste, ce qui permet de figer les couleurs des projets existants
-    en reprenant simplement les premiers éléments de la liste (voir
-    COULEURS_PROJETS_EXISTANTS ci-dessous, gelée pour ne pas se redéplacer au
-    gré d'un futur ajustement des constantes ci-dessus)."""
+    Déterministe (aucun aléatoire) : un appel avec les mêmes arguments renvoie
+    toujours la même liste."""
     candidats = []
     h = 0.0
     while h < 360.0:
         plancher = _plancher_effectif(h)
         l = plancher
         while l <= CLARTE_MAX:
-            candidats.append((h, l, _lab_depuis_hsl(h, SATURATION_PALETTE, l)))
+            lab = _lab_depuis_hsl(h, SATURATION_PALETTE, l)
+            candidats.append((h, l, lab, _teinte_lab(lab)))
             l += _L_STEP
         h += _HUE_STEP
 
-    choisis = [candidats[0]]
-    distances_min = [_distance_lab(c[2], candidats[0][2]) for c in candidats]
-    for _ in range(1, n):
-        meilleur_i, meilleure_dist = 0, -1.0
-        for i, d in enumerate(distances_min):
-            if d > meilleure_dist:
-                meilleur_i, meilleure_dist = i, d
-        choisi = candidats[meilleur_i]
-        choisis.append(choisi)
-        for i, c in enumerate(candidats):
-            d = _distance_lab(c[2], choisi[2])
-            if d < distances_min[i]:
-                distances_min[i] = d
+    choisis = []
+    for hexv in (couleurs_a_eviter or {}).values():
+        lab = _lab_depuis_hex(hexv)
+        choisis.append((None, None, lab, _teinte_lab(lab)))
 
+    def valide(c: tuple) -> bool:
+        for ch in choisis:
+            if _distance_lab(c[2], ch[2]) < SEUIL_DISTANCE_MIN:
+                return False
+            if _ecart_teinte(c[3], ch[3]) < SEUIL_ECART_TEINTE_MIN:
+                return False
+        return True
+
+    nouveaux = []
+    restants = candidats
+    while len(nouveaux) < n:
+        meilleur_i, meilleure_marge = None, -1.0
+        for i, c in enumerate(restants):
+            if not valide(c):
+                continue
+            marge = min((_distance_lab(c[2], ch[2]) for ch in choisis), default=float("inf"))
+            if marge > meilleure_marge:
+                meilleur_i, meilleure_marge = i, marge
+        if meilleur_i is None:
+            break
+        choisi = restants.pop(meilleur_i)
+        choisis.append(choisi)
+        nouveaux.append(choisi)
+
+    for i in range(len(nouveaux)):
+        assert _contraste_avec_noir(nouveaux[i][0], SATURATION_PALETTE, nouveaux[i][1]) >= SEUIL_CONTRASTE_NOIR
     for i in range(len(choisis)):
-        assert _contraste_avec_noir(choisis[i][0], SATURATION_PALETTE, choisis[i][1]) >= SEUIL_CONTRASTE_NOIR
         for j in range(i + 1, len(choisis)):
             assert _distance_lab(choisis[i][2], choisis[j][2]) >= SEUIL_DISTANCE_MIN, (
                 f"Palette générée invalide : couleurs {i} et {j} trop proches "
                 f"(distance Lab < {SEUIL_DISTANCE_MIN})."
             )
+            assert _ecart_teinte(choisis[i][3], choisis[j][3]) >= SEUIL_ECART_TEINTE_MIN, (
+                f"Palette générée invalide : couleurs {i} et {j} de teinte trop "
+                f"proche (écart < {SEUIL_ECART_TEINTE_MIN}°)."
+            )
 
-    return [_hsl_vers_hex(h, SATURATION_PALETTE, l) for h, l, _ in choisis]
+    return [_hsl_vers_hex(h, SATURATION_PALETTE, l) for h, l, _, _ in nouveaux]
 
-
-# Palette proposée à la création d'un projet (remplace l'ancienne liste figée
-# à la main). Calculée une fois à l'import — déterministe, cf. generer_palette.
-# Une couleur est attribuée dès la création et écrite dans le .conf (champ
-# COULEUR) ; celles déjà prises par un projet existant sont exclues de la
-# proposition (voir couleurs_disponibles ci-dessous). Hex #RRGGBB en
-# MAJUSCULES, comparés sans tenir compte de la casse.
-PALETTE_COULEURS = generer_palette(NB_COULEURS_PALETTE)
 
 # Couleurs des projets EXISTANTS, pilotées depuis le code plutôt que depuis
 # leur .conf (issue #535) : aucune couleur de l'ancien système (issue #534)
@@ -229,24 +312,73 @@ PALETTE_COULEURS = generer_palette(NB_COULEURS_PALETTE)
 # non affichée — voir la priorité dans couleurs_utilisees() ci-dessous et
 # dans COULEURS_PROJET de app.js (qui DOIT rester en synchro avec ce
 # dictionnaire).
-# Valeurs GELÉES EN DUR (littéraux, pas PALETTE_COULEURS[i]) : ce sont les 11
-# premières couleurs de generer_palette(11) au moment de l'écriture de cette
-# issue. Les figer ainsi les rend immunisées contre un futur ajustement des
+# Valeurs GELÉES EN DUR (littéraux, pas PALETTE_COULEURS[i]) : les figer rend
+# les couleurs des projets existants immunisées contre un futur ajustement des
 # constantes de génération (_HUE_STEP, CLARTE_MAX, etc.) — sans ce gel, changer
 # une constante recolorerait silencieusement tous les projets existants.
+#
+# Issue #539 — 4 valeurs corrigées (les 7 autres, satisfaisantes, sont
+# inchangées ; correction ciblée, même esprit que #534) :
+#   - alchess  (était #00FF00) : collision avec rummikub (#ADFF8F) — distance
+#     CIE76 déjà de 56 (bien au-dessus de l'ancien seuil de 15) mais écart de
+#     teinte Lab de seulement 1,6° — même teinte, juste plus clair/moins
+#     saturé en apparence. alchess n'a pas de champ COULEUR persisté en .conf
+#     (contrairement à rummikub) : c'est donc elle qui est réassignée, même
+#     convention qu'en #534 (ecole/ff_galerie changées, actualise/apiselect,
+#     eux persistés, conservés).
+#   - ecole (était #DE85FF) : collision avec chesscoach (#BB00FF) — distance
+#     52, écart de teinte 0,4°. ecole n'a pas de champ COULEUR persisté →
+#     réassignée (chesscoach conservée). Nouvelle teinte ambre/moutarde, clin
+#     d'œil à la couleur « olive/moutarde » qu'ecole portait déjà entre #534
+#     et #535.
+#   - actualise (était #086BFF) : collision avec gestionmail — gestionmail
+#     est un projet créé APRÈS #535, sa couleur ne vit que dans son .conf
+#     (configs/gestionmail.conf, hors périmètre de cette correction et de
+#     toute façon jamais modifiable par CCL/CCW) : le seul levier disponible
+#     est donc actualise, pilotée par ce dictionnaire. Nouvelle teinte
+#     délibérément écartée de toute la zone bleu-violet (197°-320° d'angle
+#     Lab) où se concentraient déjà ff_galerie, l'ancienne actualise et
+#     chesscoach — marge par rapport à la couleur de gestionmail non vérifiée
+#     directement (voir rapport de clôture de l'issue) mais largement
+#     améliorée par construction.
+#   - bloc_score (était #FFB0AB) : collision DÉCOUVERTE en appliquant le
+#     nouveau seuil (non signalée dans l'issue) avec bridge_agent (#EB0000) —
+#     écart de teinte de seulement 13,2°, sous le nouveau plancher de 15°.
+#     bloc_score réassignée (bridge_agent, le projet racine du bridge,
+#     n'est pas retouché) ; nouvelle teinte toujours dans la même famille
+#     rose/saumon pâle que l'originale.
 COULEURS_PROJETS_EXISTANTS = {
     "bridge_agent":           "#EB0000",
-    "alchess":                "#00FF00",
-    "actualise":              "#086BFF",
+    "alchess":                "#00D68F",
+    "actualise":              "#009DD6",
     "scrabble":               "#7AFFFF",
     "apiselect":              "#FFD429",
     "diagnostique_programme": "#FC00A8",
-    "bloc_score":             "#FFB0AB",
+    "bloc_score":             "#FF8595",
     "chesscoach":             "#BB00FF",
     "rummikub":               "#ADFF8F",
     "ff_galerie":             "#A6B8FF",
-    "ecole":                  "#DE85FF",
+    "ecole":                  "#CC7400",
 }
+
+# Palette proposée à la création d'un NOUVEAU projet (remplace l'ancienne
+# liste figée à la main). Calculée une fois à l'import — déterministe, cf.
+# generer_palette. Une couleur est attribuée dès la création et écrite dans
+# le .conf (champ COULEUR) ; celles déjà prises par un projet existant sont
+# exclues de la proposition (voir couleurs_disponibles ci-dessous). Hex
+# #RRGGBB en MAJUSCULES, comparés sans tenir compte de la casse.
+#
+# Issue #539, point 4 : COULEURS_PROJETS_EXISTANTS est passé en
+# couleurs_a_eviter, pas seulement en post-filtrage comme couleurs_utilisees()
+# le fait déjà plus bas — sans ça, generer_palette() ne garantirait la
+# distance/teinte qu'ENTRE les couleurs qu'elle génère, pas vis-à-vis des 11
+# couleurs gelées en dur. C'est exactement ce trou qui avait laissé passer la
+# collision actualise/gestionmail : gestionmail a pris une couleur de cette
+# même palette, valide par rapport aux autres couleurs générées, mais jamais
+# vérifiée par rapport à actualise (gelée à part). Avec ce paramètre, toute
+# couleur encore proposée à un futur projet est garantie distincte de TOUS
+# les projets existants, pas seulement des autres couleurs de la palette.
+PALETTE_COULEURS = generer_palette(NB_COULEURS_PALETTE, COULEURS_PROJETS_EXISTANTS)
 
 # Topic ntfy partagé par tous les projets existants (voir configs/*.conf).
 # Proposé par défaut ; l'utilisateur peut le changer pour un topic dédié.

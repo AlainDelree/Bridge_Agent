@@ -31,19 +31,23 @@ let sourceFinIssue = null;
 // pas d'entrée ici : sa couleur, générée dès la création avec les nouvelles
 // règles, est directement lisible dans son .conf (voir couleurProjet).
 // Valeurs et ordre DOIVENT rester en synchro avec COULEURS_PROJETS_EXISTANTS
-// dans nouveau_projet.py (même algorithme, mêmes 11 hex gelés).
+// dans nouveau_projet.py (même algorithme, mêmes 11 hex gelés). 4 valeurs
+// corrigées en #539 (alchess, actualise, bloc_score, ecole) : 3 paires
+// restaient visuellement trop proches malgré une distance CIE76 au-dessus du
+// seuil de garde de #535 (même teinte Lab, clarté différente) — voir le
+// commentaire détaillé au-dessus de COULEURS_PROJETS_EXISTANTS côté Python.
 const COULEURS_PROJET = {
   'bridge_agent':           '#EB0000',
-  'alchess':                '#00FF00',
-  'actualise':              '#086BFF',
+  'alchess':                '#00D68F',
+  'actualise':              '#009DD6',
   'scrabble':               '#7AFFFF',
   'apiselect':              '#FFD429',
   'diagnostique_programme': '#FC00A8',
-  'bloc_score':             '#FFB0AB',
+  'bloc_score':             '#FF8595',
   'chesscoach':             '#BB00FF',
   'rummikub':               '#ADFF8F',
   'ff_galerie':             '#A6B8FF',
-  'ecole':                  '#DE85FF',
+  'ecole':                  '#CC7400',
 };
 
 // Clarté (HSL) de secours pour couleurHashProjet ci-dessous : 72% couvre,
