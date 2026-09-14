@@ -559,6 +559,24 @@ l'issue par ordre de priorité : `mode_write` (écriture) > `mode_scratch`
 **Lecture seule (défaut)** — CCL peut lire, analyser, grep, rapporter.
 Ne peut PAS écrire de fichier ni exécuter de commande modifiant le système.
 Idéal pour : diagnostics, audits, lectures de fichiers, comptages.
+- Ce mode n'a **jamais** `--dangerously-skip-permissions` (contrairement aux
+  deux autres modes ci-dessous) : toute commande hors allowlist Claude Code
+  reste bloquée derrière une demande d'approbation — inatteignable en session
+  non-interactive, donc un échec sûr (fail-safe), pas un blocage à débloquer
+  à l'aveugle.
+- **Allowlist ciblée (`--allowedTools`, issue #542)** : `git fetch` (ne touche
+  jamais l'arbre de travail), `git pull --ff-only` (échoue plutôt que de
+  merger — même opération que le `git pull --ff-only` automatique du watcher
+  en début de cycle sur `REP_TRAVAIL`, §1) et `Add-Type -AssemblyName` côté
+  CCW (charge un assembly .NET nommé depuis le GAC, sans exécuter de code
+  arbitraire — `Add-Type -TypeDefinition`, qui compile du C#, reste bloqué).
+  Ces trois commandes étaient auparavant bloquées par la demande d'approbation
+  interactive de Claude Code, jamais satisfiable en session non-interactive
+  (`claude --print`) — constaté sur CCW lors du diagnostic #541. `git
+  status`/`log`/`diff`/`show` n'ont pas besoin d'être dans cette liste : déjà
+  autorisés sans approbation par l'heuristique interne de Claude Code. Voir
+  `OUTILS_LECTURE_AUTORISES` dans `watcher.py` pour le détail et le
+  raisonnement de chaque entrée.
 
 **Lecture active (`mode_scratch`, issue #327)** — CCL peut écrire, mais
 **UNIQUEMENT** dans un dossier scratch dédié, jamais dans le projet. Utile

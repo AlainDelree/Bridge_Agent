@@ -175,6 +175,49 @@ MODE_LECTURE        = "lecture"         # défaut : diagnostic, aucune écriture
 MODE_LECTURE_ACTIVE = "lecture_active"  # écriture confinée au scratch (label mode_scratch)
 MODE_ECRITURE       = "ecriture"        # écriture libre dans REP_TRAVAIL (label mode_write)
 
+# ─── Allowlist fine pour MODE_LECTURE (issue #542) ─────────────────────────────
+# Confirmé par test direct du CLI `claude` (sans flag) : `git fetch`/`git pull`
+# (et, sur CCW, `Add-Type -AssemblyName ...` pour charger un assembly .NET) sont
+# bloqués par le système de permissions interactif de Claude Code, qui demande
+# une approbation — impossible à satisfaire en session non-interactive (`--print`,
+# lancée par watcher.py). MODE_LECTURE n'a jamais eu --dangerously-skip-permissions
+# (ce flag est réservé à MODE_ECRITURE/MODE_LECTURE_ACTIVE, cf. lancer_claude) : le
+# désarmer entièrement pour débloquer ces deux commandes désarmerait TOUTES les
+# protections en lecture seule, sans le filet de sécurité technique (empreinte
+# avant/après) dont bénéficie la lecture active — inacceptable.
+#
+# Solution retenue : --allowedTools, mécanisme de Claude Code qui autorise des
+# commandes précises SANS désarmer le reste (toute commande hors de cette liste
+# continue de demander une approbation, donc reste bloquée en session
+# non-interactive — comportement inchangé, fail-safe). Chaque entrée est un
+# préfixe exact de ligne de commande (pas un motif large type "git *") :
+#   - `git fetch`           : ne touche jamais l'arbre de travail (met seulement
+#                              à jour les refs distantes) — read-only par nature.
+#   - `git pull --ff-only`  : échoue si un fast-forward est impossible (jamais de
+#                              merge, jamais de perte de travail local) — même
+#                              opération que le `git pull --ff-only` que
+#                              watcher.py effectue déjà lui-même en début de
+#                              cycle sur REP_TRAVAIL (cf. CONTEXTE.md). `git pull`
+#                              SANS --ff-only reste bloqué (merge/rebase = écriture
+#                              non garantie sans risque).
+#   - `Add-Type -AssemblyName` : charge un assembly .NET nommé depuis le GAC
+#                              (PresentationFramework, System.Windows.Forms, ...) —
+#                              pas d'exécution de code arbitraire. Le préfixe exclut
+#                              volontairement `Add-Type -TypeDefinition`, qui
+#                              compile et exécute du C# arbitraire et doit rester
+#                              soumis à approbation. Spécifique à CCW (PowerShell) ;
+#                              inoffensif à garder aussi côté CCL (jamais invoqué
+#                              sous bash) — non vérifié en conditions réelles sur
+#                              Windows faute d'environnement CCW disponible ici.
+# git status/log/diff/show ne sont volontairement PAS dans cette liste : déjà
+# testés non bloqués par défaut (heuristique interne de Claude Code), donc rien
+# à y ajouter.
+OUTILS_LECTURE_AUTORISES = [
+    "Bash(git fetch:*)",
+    "Bash(git pull --ff-only:*)",
+    "Bash(Add-Type -AssemblyName:*)",
+]
+
 
 def _deduire_mode(labels: list[str]) -> str:
     """Déduit le MODE de traitement (issue #327) des labels GitHub d'une issue.
@@ -2378,6 +2421,12 @@ Si la tâche échoue, remplace ✅ par ❌ et explique la cause en une ligne.
     if mode != MODE_LECTURE:
         cmd.append("--dangerously-skip-permissions")
     cmd.append(prompt)
+    if mode == MODE_LECTURE:
+        # Issue #542 : allowlist fine plutôt que --dangerously-skip-permissions
+        # (voir commentaire sur OUTILS_LECTURE_AUTORISES) — débloque git
+        # fetch/pull --ff-only et le chargement d'assembly .NET sans désarmer le
+        # reste des protections de Claude Code en lecture seule.
+        cmd += ["--allowedTools"] + OUTILS_LECTURE_AUTORISES
 
     # Popen (plutôt que subprocess.run) pour garder la main sur le PID : le
     # nettoyage de l'arbre de process (issue #247, révisé #249) doit
