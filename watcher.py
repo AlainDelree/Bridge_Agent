@@ -31,6 +31,8 @@ import shutil
 import threading
 import ctypes
 import ctypes.wintypes
+import base64
+import binascii
 from logging.handlers import RotatingFileHandler
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -48,6 +50,26 @@ import notifications
 # doivent surtout pas atterrir dans le répertoire de travail du projet (il change).
 DOSSIER_SCRIPT = Path(__file__).resolve().parent
 DOSSIER_LOGS   = DOSSIER_SCRIPT / "logs"
+
+# Bootstrap automatique d'un service CCW dédié (issue #556, 2/3, champ
+# d'en-tête CREATION — voir plus bas et BRIDGE_AGENT_DOC.md §16). Scripts
+# PowerShell déjà en place (issue #170/#173/#174) : watcher.py les APPELLE,
+# il ne réimplémente rien. DOSSIER_SCRIPT pointe TOUJOURS vers le clone
+# Bridge_Agent (un seul watcher.py partagé par tous les services CCW, cf.
+# §16 du DOC) : ce chemin résout correctement quel que soit le projet piloté
+# par CETTE instance.
+DOSSIER_PROVISIONING_WINDOWS = DOSSIER_SCRIPT / "provisioning" / "windows"
+# Clé privée de bootstrap (issue #554) : dossier FRÈRE de Bridge_Agent
+# (généré par provisionner.ps1 dans <RepCCW>\cles_bootstrap, jamais dans un
+# clone git). DOSSIER_SCRIPT.parent == RepCCW, quel que soit son nom réel.
+CHEMIN_CLE_PRIVEE_BOOTSTRAP = DOSSIER_SCRIPT.parent / "cles_bootstrap" / "bootstrap_privee.pem"
+# Installation manuelle d'OpenSSL sur CCW (point d'attention #557, repris ici
+# faute d'avoir #558 déjà mergé) : PAS sur le PATH par défaut, distincte de
+# l'openssl embarqué par Git pour Windows utilisé par provisionner.ps1 pour
+# la GÉNÉRATION de la paire de clés (Resoudre-OpenSSL côté PowerShell).
+CHEMIN_OPENSSL_WIN64 = Path(r"C:\Program Files\OpenSSL-Win64\bin\openssl.exe")
+TIMEOUT_CREATION_CLONE    = 600  # ajouter_projet_ccw.ps1 : clone git, potentiellement long
+TIMEOUT_CREATION_FINALISE = 60   # finaliser_projet_ccw_auto.ps1 : pas de réseau (NSSM + tokens)
 
 # scripts/traitement_fin.py (issue #352) : notifier_fin_issue()/notifier_debut_
 # issue() (#515) y sont importées directement (pas via subprocess comme le bip)
@@ -1628,6 +1650,417 @@ def valider_sous_dossier(rep_travail: Path, sous_dossier: str) -> tuple[bool, st
     if not resolu.is_dir():
         return False, f"'{resolu}' n'existe pas ou n'est pas un dossier", Path()
     return True, "", resolu
+
+# ─── Bootstrap automatique d'un service CCW dédié (issue #556, 2/3) ────────────
+# Champ d'en-tête optionnel CREATION : déclenche, en Python déterministe et
+# SANS jamais invoquer `claude` (décision #554 §2.5), la création complète
+# d'un service CCW dédié pour un nouveau projet. Convention détaillée dans
+# BRIDGE_AGENT_DOC.md §16 (pour le formulaire web à venir, 3/3, #559+) :
+#   | CREATION | oui |                — déclencheur (toute autre valeur/absence ignore ce champ)
+#   | CREATION_NOM_PROJET | <nom> |   — passé tel quel à ajouter_projet_ccw.ps1 -NomProjet
+#   | CREATION_DEPOT | owner/repo |   — passé tel quel à ajouter_projet_ccw.ps1 -Depot
+#   | CREATION_TOPIC_NTFY | <topic> | — passé tel quel dans le fichier de valeurs (TOPIC_NTFY=)
+#   | CREATION_GH_TOKEN | <base64> |        — token GH_TOKEN chiffré (voir dechiffrer_token_bootstrap)
+#   | CREATION_OAUTH_TOKEN | <base64> |     — token CLAUDE_CODE_OAUTH_TOKEN chiffré (idem)
+CHAMPS_CREATION = (
+    "CREATION_NOM_PROJET",
+    "CREATION_DEPOT",
+    "CREATION_TOPIC_NTFY",
+    "CREATION_GH_TOKEN",
+    "CREATION_OAUTH_TOKEN",
+)
+
+def _extraire_champ_entete(body: str, nom_champ: str) -> str:
+    """Extrait la valeur d'un champ `| NOM_CHAMP | valeur |` de l'en-tête
+    bridge (issue #556). Comparaison EXACTE (pas une sous-chaîne comme
+    extraire_sous_dossier/extraire_repo_cible) sur le premier segment trimé
+    et mis en majuscules : nécessaire ici parce que CREATION est le préfixe
+    littéral de CREATION_NOM_PROJET/CREATION_DEPOT/…, une simple recherche
+    de sous-chaîne `"| CREATION" in ligne.upper()` matcherait ces AUTRES
+    champs par erreur (ex. sur la ligne CREATION_NOM_PROJET). Retourne "" si
+    le champ est absent ou vide."""
+    for ligne in body.splitlines():
+        parts = ligne.split("|")
+        if len(parts) >= 3 and parts[1].strip().upper() == nom_champ:
+            valeur = parts[2].strip()
+            if valeur and valeur.lower() not in ("", "-"):
+                return valeur
+    return ""
+
+def creation_demandee(body: str) -> bool:
+    """Indique si l'issue porte `| CREATION | oui |` (issue #556) — déclencheur
+    du bootstrap automatique d'un service CCW dédié, détecté tôt dans le
+    dispatch, AVANT tout lancement de claude. Valeurs actives reconnues :
+    oui/true/vrai (insensible à la casse). Absent ou toute autre valeur :
+    dispatch normal inchangé (lancement de claude comme avant #556)."""
+    return _extraire_champ_entete(body, "CREATION").strip().lower() in ("oui", "true", "vrai")
+
+def extraire_champs_creation(body: str) -> dict[str, str]:
+    """Extrait les 5 champs CREATION_* du corps de l'issue (issue #556).
+    Chaque valeur manquante reste "" — la validation (champs requis tous
+    présents) est faite par l'appelant, pas ici."""
+    return {champ: _extraire_champ_entete(body, champ) for champ in CHAMPS_CREATION}
+
+def _corps_avec_tokens_retires(body: str) -> str:
+    """Retourne `body` avec les valeurs de CREATION_GH_TOKEN/CREATION_OAUTH_TOKEN
+    remplacées par un placeholder (issue #556, §2.4 de #554) — limite le temps
+    d'exposition résiduel des tokens chiffrés sur GitHub. Sans effet sur le
+    reste du corps. Appelée dès que les valeurs sont extraites en mémoire :
+    la suite du traitement ne relit plus jamais le corps de l'issue."""
+    placeholder = "<retiré après application>"
+    lignes = body.splitlines(keepends=True)
+    for i, ligne in enumerate(lignes):
+        parts = ligne.split("|")
+        if len(parts) >= 3 and parts[1].strip().upper() in ("CREATION_GH_TOKEN", "CREATION_OAUTH_TOKEN"):
+            parts[2] = f" {placeholder} "
+            lignes[i] = "|".join(parts)
+    return "".join(lignes)
+
+def _editer_corps_issue(numero: int, nouveau_corps: str) -> bool:
+    """Remplace le corps d'une issue (`gh issue edit --body-file`, même
+    protection --body-file que commenter_issue contre la limite argv Windows,
+    issue #237). Réservé au retrait des tokens chiffrés (issue #556, §2.4)."""
+    fichier_tmp = None
+    try:
+        with tempfile.NamedTemporaryFile(
+                mode="w", suffix=".md", delete=False,
+                encoding="utf-8") as f:
+            f.write(nouveau_corps)
+            fichier_tmp = f.name
+        res = subprocess.run(
+            ["gh", "issue", "edit", str(numero),
+             "--repo", CFG.depot,
+             "--body-file", fichier_tmp],
+            capture_output=True, text=True,
+            encoding="utf-8", errors="replace", timeout=30
+        )
+        if res.returncode != 0:
+            log.error(f"Erreur édition du corps de l'issue #{numero} (code {res.returncode}) : {res.stderr.strip()}")
+            return False
+        return True
+    except Exception as e:
+        log.error(f"Erreur édition du corps de l'issue #{numero} : {e}")
+        return False
+    finally:
+        if fichier_tmp:
+            try:
+                Path(fichier_tmp).unlink(missing_ok=True)
+            except OSError:
+                pass
+
+def _resoudre_openssl() -> str:
+    """Résout le chemin de l'exécutable openssl (issue #556), robuste au
+    point d'attention découvert en #557 : sur CCW, openssl n'est disponible
+    qu'après une installation manuelle séparée
+    (C:\\Program Files\\OpenSSL-Win64\\bin\\openssl.exe — CHEMIN_OPENSSL_WIN64),
+    PAS sur le PATH par défaut. Distinct de l'openssl embarqué par Git pour
+    Windows (usr\\bin) qu'utilise provisionner.ps1 pour la GÉNÉRATION de la
+    paire de clés (Resoudre-OpenSSL côté PowerShell, issue #554) — dupliqué
+    ici plutôt que réutilisé : pas de dot-sourcing PowerShell depuis Python,
+    et cette fonction n'a besoin que d'un CHEMIN, pas d'exécuter du PowerShell.
+
+    Ordre de résolution :
+      1. `openssl` sur le PATH (shutil.which — couvre Linux/CCL, où openssl
+         est quasi toujours présent, et un CCW où l'installeur l'aurait
+         ajouté au PATH) ;
+      2. l'installation manuelle documentée (#557) ;
+      3. le sous-dossier usr\\bin de Git pour Windows, en repli ultime (même
+         binaire que celui utilisé à la génération des clés).
+
+    Lève RuntimeError si aucune des trois ne mène à un fichier présent —
+    erreur de configuration machine, traitée par l'appelant comme définitive
+    (needs-human, aucun retry), jamais comme un échec transitoire."""
+    depuis_path = shutil.which("openssl")
+    if depuis_path:
+        return depuis_path
+
+    candidats = [CHEMIN_OPENSSL_WIN64]
+    git_exe = shutil.which("git")
+    if git_exe:
+        # <GitRoot>\{bin,cmd}\git.exe → deux parents → <GitRoot> → usr\bin
+        # (sibling de mingw64/bin/cmd dans une installation Git pour Windows
+        # standard), PAS un sous-dossier de mingw64.
+        racine_git = Path(git_exe).resolve().parent.parent
+        candidats.append(racine_git / "usr" / "bin" / "openssl.exe")
+
+    for candidat in candidats:
+        if candidat.is_file():
+            return str(candidat)
+
+    raise RuntimeError(
+        "openssl introuvable (ni sur le PATH, ni dans l'installation manuelle "
+        f"{CHEMIN_OPENSSL_WIN64}, ni dans le usr\\bin de Git) — impossible de "
+        "déchiffrer les tokens de bootstrap (issue #556)."
+    )
+
+def dechiffrer_token_bootstrap(valeur_base64: str, chemin_cle_privee: Path) -> str:
+    """Déchiffre un token de bootstrap encodé en base64 (issue #556).
+
+    Convention (documentée en détail dans BRIDGE_AGENT_DOC.md §16, à
+    l'intention du formulaire à venir en 3/3) : le token en clair (UTF-8) est
+    chiffré côté formulaire avec la clé PUBLIQUE de bootstrap via
+    `openssl pkeyutl -encrypt -pubin -inkey bootstrap_publique.pem
+     -pkeyopt rsa_padding_mode:oaep -pkeyopt rsa_oaep_md:sha256`, puis le
+    résultat binaire est encodé en base64 SANS retour à la ligne (`base64
+    -w0` ou équivalent) pour tenir dans une cellule de tableau markdown.
+    Cette fonction inverse exactement cette chaîne : décodage base64 →
+    `openssl pkeyutl -decrypt` avec le MÊME padding OAEP/SHA-256 (impératif —
+    un mauvais padding fait ÉCHOUER le déchiffrement plutôt que de réussir
+    silencieusement avec un résultat corrompu, propriété du padding OAEP) et
+    la clé PRIVÉE locale.
+
+    Lève ValueError (base64 invalide) ou RuntimeError (openssl absent ou en
+    échec) — toutes deux traitées par l'appelant comme une erreur de
+    configuration/issue définitive (needs-human, aucun retry)."""
+    try:
+        chiffre = base64.b64decode(valeur_base64, validate=True)
+    except (binascii.Error, ValueError) as e:
+        raise ValueError(f"base64 invalide : {e}") from e
+
+    openssl = _resoudre_openssl()
+    fichier_tmp = None
+    try:
+        with tempfile.NamedTemporaryFile(
+                mode="wb", suffix=".bin", delete=False) as f:
+            f.write(chiffre)
+            fichier_tmp = f.name
+        res = subprocess.run(
+            [openssl, "pkeyutl", "-decrypt",
+             "-inkey", str(chemin_cle_privee),
+             "-pkeyopt", "rsa_padding_mode:oaep",
+             "-pkeyopt", "rsa_oaep_md:sha256",
+             "-in", fichier_tmp],
+            capture_output=True, timeout=30
+        )
+        if res.returncode != 0:
+            raise RuntimeError(
+                f"openssl pkeyutl -decrypt a échoué (code {res.returncode}) : "
+                f"{res.stderr.decode('utf-8', errors='replace').strip()}"
+            )
+        return res.stdout.decode("utf-8").strip()
+    finally:
+        if fichier_tmp:
+            try:
+                Path(fichier_tmp).unlink(missing_ok=True)
+            except OSError:
+                pass
+
+def _ecrire_fichier_valeurs_creation(topic: str, gh_token: str, oauth_token: str) -> Path:
+    """Écrit le fichier temporaire « clé=valeur » consommé par
+    `finaliser_projet_ccw_auto.ps1 -FichierValeurs` (issue #556) — MÊME
+    format, vérifié par lecture du script avant d'écrire ce code, que celui
+    déjà produit par `app/ccw.py` (`ccw_finaliser_projet`) : trois lignes
+    `TOPIC_NTFY=`/`GH_TOKEN=`/`CLAUDE_CODE_OAUTH_TOKEN=`, UTF-8, AUCUN espace
+    autour du `=` (`Lire-ValeurFichier` côté PowerShell ne rogne que la CLÉ,
+    pas la valeur — un espace après `=` finirait dans le token). Permissions
+    restreintes en best-effort (0600 ; sans effet réel sous NTFS/Windows,
+    seulement sous POSIX — CCW reste protégé par les ACL du dossier temp
+    utilisateur). Suppression laissée à l'appelant (finally, comme ccw.py)."""
+    fd, chemin = tempfile.mkstemp(prefix="ccw-creation-vals-", suffix=".txt")
+    try:
+        os.chmod(chemin, 0o600)
+    except OSError:
+        pass
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write(f"TOPIC_NTFY={topic}\n")
+        f.write(f"GH_TOKEN={gh_token}\n")
+        f.write(f"CLAUDE_CODE_OAUTH_TOKEN={oauth_token}\n")
+    return Path(chemin)
+
+def _traiter_creation_projet_ccw(numero: int, body: str, labels: list[str], dry_run: bool) -> None:
+    """Bootstrap automatique d'un service CCW dédié (issue #556, 2/3),
+    déclenché par `| CREATION | oui |`. ENTIÈREMENT déterministe — n'invoque
+    JAMAIS `claude` (décision #554 §2.5) : appelle directement les 2 scripts
+    PowerShell déjà testés, EXACTEMENT comme le fait déjà l'onglet CCW de
+    l'interface web (`app/ccw.py`, `ccw_ajouter_projet`/`ccw_finaliser_projet`)
+    — à la différence près que watcher.py tourne DÉJÀ sur la machine CCW
+    cible (appel PowerShell local, pas de couche SSH).
+
+    Prend en charge la TOTALITÉ du cycle de vie de cette issue — pas d'ACK
+    séparé (traitement synchrone, une seule tentative, contrairement au
+    pipeline lancer_claude) : extraction, retrait immédiat des tokens
+    chiffrés du corps GitHub (§2.4 de #554, avant même la tentative de
+    déchiffrement), déchiffrement, écriture du fichier de valeurs, appel
+    séquentiel des 2 scripts PowerShell, compte-rendu, puis fermeture ou
+    `needs-human` selon le résultat. Retire `numero` de `issues_en_cours`
+    dans tous les cas avant de retourner (appelée avec l'entrée déjà ajoutée
+    par l'appelant)."""
+    log.info(f"→ Issue #{numero} : champ CREATION détecté — bootstrap automatique d'un service CCW dédié (#556).")
+
+    def _echec(message: str) -> None:
+        log.error(f"  ✗ Issue #{numero} (CREATION) : {message}")
+        commenter_issue(
+            numero,
+            f"❌ Bootstrap automatique du service CCW échoué : {message}\n\n"
+            f"Label `{LABEL_ECHEC}` posé — corrigez puis retirez-le pour relancer."
+        )
+        ajouter_label(numero, LABEL_ECHEC)
+        notifier(
+            labels,
+            titre=f"❌ {CFG.nom} #{numero} — bootstrap CCW échoué",
+            message=message,
+            urgence_bureau="critical",
+            priorite_ntfy="high",
+            numero=numero,
+        )
+        notifier_fin_sse(numero)
+        _issues_en_cours_retirer(numero)
+
+    champs = extraire_champs_creation(body)
+    nom_projet    = champs["CREATION_NOM_PROJET"]
+    depot         = champs["CREATION_DEPOT"]
+    topic_ntfy    = champs["CREATION_TOPIC_NTFY"]
+    gh_chiffre    = champs["CREATION_GH_TOKEN"]
+    oauth_chiffre = champs["CREATION_OAUTH_TOKEN"]
+
+    manquants = [nom for nom, valeur in champs.items() if not valeur]
+    if manquants:
+        _echec(f"champ(s) manquant(s) dans le corps de l'issue : {', '.join(manquants)}.")
+        return
+
+    if dry_run:
+        log.info(f"[DRY-RUN] Issue #{numero} : bootstrap CCW simulé pour le projet '{nom_projet}' (dépôt {depot}) — aucun script exécuté, aucun token déchiffré.")
+        commenter_resultat_avec_retry(
+            numero,
+            f"{MARQUEUR_RESULTAT}\n## Résultat\n\n"
+            f"[DRY-RUN] Bootstrap CCW simulé pour le projet **{nom_projet}** — aucune "
+            f"action réelle (ni décryptage, ni script PowerShell exécuté)."
+        )
+        fermer_issue(numero)
+        _issues_en_cours_retirer(numero)
+        return
+
+    # §2.4 (#554) : retrait immédiat des tokens du corps GitHub — les valeurs
+    # nécessaires sont déjà en mémoire ci-dessus, la suite ne relit plus
+    # jamais le corps de l'issue. Best-effort : un échec ici est journalisé
+    # mais NE bloque PAS le bootstrap (l'exposition résiduelle est fâcheuse,
+    # pas bloquante en soi).
+    if not _editer_corps_issue(numero, _corps_avec_tokens_retires(body)):
+        log.warning(f"  Issue #{numero} : retrait des tokens du corps GitHub échoué (best-effort, traitement poursuivi).")
+
+    if platform.system() != "Windows":
+        _echec("cette opération nécessite les scripts PowerShell CCW — non exécutable sur cette plateforme (agent Linux, hors périmètre CCW).")
+        return
+
+    try:
+        _resoudre_openssl()
+    except RuntimeError as e:
+        _echec(str(e))
+        return
+
+    if not CHEMIN_CLE_PRIVEE_BOOTSTRAP.is_file():
+        _echec(f"clé privée de bootstrap introuvable ({CHEMIN_CLE_PRIVEE_BOOTSTRAP}) — provisionner.ps1 a-t-il été rejoué depuis la dernière réinstallation (issue #554) ?")
+        return
+
+    try:
+        gh_token    = dechiffrer_token_bootstrap(gh_chiffre, CHEMIN_CLE_PRIVEE_BOOTSTRAP)
+        oauth_token = dechiffrer_token_bootstrap(oauth_chiffre, CHEMIN_CLE_PRIVEE_BOOTSTRAP)
+    except (ValueError, RuntimeError) as e:
+        _echec(f"déchiffrement des tokens impossible ({e}).")
+        return
+    if not gh_token or not oauth_token:
+        _echec("un des deux tokens déchiffrés est vide — chiffrement source probablement invalide.")
+        return
+
+    script_ajouter   = DOSSIER_PROVISIONING_WINDOWS / "ajouter_projet_ccw.ps1"
+    script_finaliser = DOSSIER_PROVISIONING_WINDOWS / "finaliser_projet_ccw_auto.ps1"
+    script_tokens    = DOSSIER_PROVISIONING_WINDOWS / "mettre_a_jour_tokens_ccw.ps1"
+    for s in (script_ajouter, script_finaliser, script_tokens):
+        if not s.is_file():
+            _echec(f"script attendu introuvable : {s} — clone Bridge_Agent incomplet ou en retard ?")
+            return
+
+    log.info(f"  Issue #{numero} : ajouter_projet_ccw.ps1 -NomProjet {nom_projet} -Depot {depot}…")
+    try:
+        res_ajouter = subprocess.run(
+            ["powershell", "-ExecutionPolicy", "Bypass", "-File", str(script_ajouter),
+             "-NomProjet", nom_projet, "-Depot", depot],
+            capture_output=True, text=True,
+            encoding="utf-8", errors="replace", timeout=TIMEOUT_CREATION_CLONE,
+        )
+    except subprocess.TimeoutExpired:
+        _echec(f"ajouter_projet_ccw.ps1 a dépassé le délai ({TIMEOUT_CREATION_CLONE}s — clone trop long ?).")
+        return
+    except Exception as e:
+        _echec(f"erreur d'exécution de ajouter_projet_ccw.ps1 : {e}")
+        return
+    sortie_ajouter = (res_ajouter.stdout or "") + (res_ajouter.stderr or "")
+    if res_ajouter.returncode != 0:
+        _echec(
+            f"ajouter_projet_ccw.ps1 a échoué (code {res_ajouter.returncode}).\n\n"
+            f"<details><summary>Log complet</summary>\n\n```\n{sortie_ajouter}\n```\n</details>"
+        )
+        return
+
+    log.info(f"  Issue #{numero} : finaliser_projet_ccw_auto.ps1 -NomProjet {nom_projet}…")
+    chemin_valeurs = _ecrire_fichier_valeurs_creation(topic_ntfy, gh_token, oauth_token)
+    try:
+        res_finaliser = subprocess.run(
+            ["powershell", "-ExecutionPolicy", "Bypass", "-File", str(script_finaliser),
+             "-NomProjet", nom_projet, "-FichierValeurs", str(chemin_valeurs)],
+            capture_output=True, text=True,
+            encoding="utf-8", errors="replace", timeout=TIMEOUT_CREATION_FINALISE,
+        )
+    except subprocess.TimeoutExpired:
+        _echec(f"finaliser_projet_ccw_auto.ps1 a dépassé le délai ({TIMEOUT_CREATION_FINALISE}s).")
+        return
+    except Exception as e:
+        _echec(f"erreur d'exécution de finaliser_projet_ccw_auto.ps1 : {e}")
+        return
+    finally:
+        # finaliser_projet_ccw_auto.ps1 supprime déjà ce fichier dans son
+        # propre finally PowerShell — nettoyage Python en DEUXIÈME ligne de
+        # défense (même pattern que app/ccw.py, issue #174) : couvre le cas
+        # où le script n'a jamais démarré ou a planté avant son propre finally.
+        if chemin_valeurs.exists():
+            try:
+                chemin_valeurs.unlink()
+            except OSError:
+                pass
+
+    sortie_finaliser = (res_finaliser.stdout or "") + (res_finaliser.stderr or "")
+    # Codes de mettre_a_jour_tokens_ccw.ps1, relayés par finaliser_projet_ccw_auto.ps1 :
+    # 0 = OK, 2 = à vérifier (avertissement, pas un échec), 1/autre = échec.
+    if res_finaliser.returncode not in (0, 2):
+        _echec(
+            f"finaliser_projet_ccw_auto.ps1 a échoué (code {res_finaliser.returncode}).\n\n"
+            f"<details><summary>Log complet</summary>\n\n```\n{sortie_ajouter}\n\n{sortie_finaliser}\n```\n</details>"
+        )
+        return
+
+    avertissement = ("" if res_finaliser.returncode == 0 else
+                      "\n\n⚠️ Tokens appliqués mais vérification finale non concluante (code 2) — relisez le log ci-dessous.")
+    message_resultat = (
+        f"{MARQUEUR_RESULTAT}\n## Résultat\n\n"
+        f"✅ Service CCW dédié « CCW-Watcher-{nom_projet} » créé et finalisé pour le projet "
+        f"**{nom_projet}** (dépôt `{depot}`).{avertissement}\n\n"
+        f"<details><summary>Log complet</summary>\n\n```\n{sortie_ajouter}\n\n{sortie_finaliser}\n```\n</details>"
+    )
+    if not commenter_resultat_avec_retry(numero, message_resultat):
+        log.error(f"  ✗ Commentaire de résultat #{numero} (CREATION) impossible après retries — issue laissée OUVERTE pour reprise.")
+        notifier(
+            labels,
+            titre=f"⚠️ {CFG.nom} #{numero} — bootstrap CCW résultat non posté",
+            message=f"Service CCW « {nom_projet} » créé, mais le commentaire de résultat a échoué (réseau).",
+            urgence_bureau="critical",
+            priorite_ntfy="high",
+            numero=numero,
+        )
+        _issues_en_cours_retirer(numero)
+        return
+    if not fermer_issue(numero):
+        log.warning(f"  Fermeture de l'issue #{numero} (CREATION) incomplète — sera retentée au prochain cycle (garde d'idempotence).")
+    log.info(f"  ✓ Issue #{numero} (CREATION) : service CCW « {nom_projet} » bootstrappé avec succès.")
+    notifier(
+        labels,
+        titre=f"✅ {CFG.nom} #{numero} — service CCW « {nom_projet} » créé",
+        message=f"Bootstrap automatique terminé pour le projet {nom_projet}.",
+        urgence_bureau="normal",
+        priorite_ntfy="default",
+        numero=numero,
+    )
+    notifier_fin_sse(numero)
+    _issues_en_cours_retirer(numero)
 
 # ─── Détection de conflit avec un watcher actif (issue #125) ───────────────────
 # Variantes LOCALES de app.projets.lister_projets() et app.watchers.watcher_actif() :
@@ -3224,6 +3657,15 @@ def _traiter_issue_synchrone(issue: dict, dry_run: bool, chemin_worktree: Path |
         return
 
     _issues_en_cours_ajouter(numero)
+
+    # Bootstrap automatique CCW (issue #556, 2/3) : entièrement déterministe,
+    # détecté et traité AVANT tout lancement de claude — sans rapport avec le
+    # pipeline habituel (mode, périmètre, verrou, lancer_claude). Sans objet
+    # si le champ CREATION est absent/désactivé : dispatch normal inchangé.
+    if creation_demandee(body):
+        _traiter_creation_projet_ccw(numero, body, labels, dry_run)
+        return
+
     priorite = extraire_priorite(body)
     critique = priorite in PRIORITES_CRITIQUES
     timeout  = extraire_timeout(body, titre)
