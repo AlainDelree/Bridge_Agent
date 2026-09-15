@@ -654,10 +654,14 @@
       Pattern Specs MVC (§15) — crée aussi CONTEXTE_VUE / METIER / PERSISTANCE
     </label>
 
-    <!-- ─── Case « Projet CCW » (issue #559, 3/3) ────────────────────────────
-         Cochée → bootstrap automatique (après la création CCL classique) d'un
-         service CCW dédié : chiffrement des 2 tokens + génération des 2
-         issues croisées (CCL réinstallation + CCW création de service). -->
+    <!-- ─── Case « Projet CCW » (issue #559, 3/3 ; ordre corrigé par #560) ────
+         Cochée → au clic sur « Créer le projet », le projet CCL est créé
+         NORMALEMENT (dépôt GitHub inclus), SANS demander de token à ce stade
+         (impossible de scoper un token GitHub fine-grained sur un dépôt qui
+         n'existe pas encore, #560). Une fois le dépôt confirmé créé, le bloc
+         #np-ccw-post-bloc ci-dessous apparaît avec le nom RÉEL du dépôt et le
+         bouton dédié « Finaliser le bootstrap CCW » (qui, lui, appelle
+         /projet-ccw/bootstrap). -->
     <label style="display:block;font-size:13px;color:#333;margin-bottom:8px">
       <input type="checkbox" id="np-ccw" onchange="npCcwToggle()">
       Projet CCW — provisionner aussi un service CCW dédié (Windows)
@@ -665,11 +669,36 @@
     <div id="np-ccw-bloc" style="display:none;margin:0 0 16px 24px;padding:10px 12px;
          background:#f5f7fa;border:1px solid #d8dee6;border-radius:6px;font-size:12.5px;color:#333">
       <div id="np-ccw-cle-etat" style="margin-bottom:8px"></div>
+      <div>
+        Le dépôt GitHub n'existe pas encore : un token fine-grained ne peut
+        pas y être scopé pour l'instant. Une fois « Créer le projet » cliqué
+        et le dépôt effectivement créé ci-dessous, un bouton dédié
+        « Finaliser le bootstrap CCW » apparaîtra avec les instructions
+        (nom du dépôt réel inclus) et les 2 champs de tokens à saisir.
+      </div>
+      <button type="button" id="np-ccw-rafraichir-cle" onclick="npCcwRafraichirCle(this)"
+              style="margin-top:8px;font-size:12px">🔄 Rafraîchir la clé publique (CCW allumé requis)</button>
+      <div id="np-ccw-msg" style="font-size:12px;min-height:14px;margin-top:6px"></div>
+    </div>
+
+    <div id="np-compte-rendu" class="modal-liste" style="display:none"></div>
+    <div id="np-message" class="message" style="display:none;margin-bottom:14px"></div>
+    <div id="np-rappel-projet" class="np-rappel-projet" style="display:none"></div>
+    <div id="np-rappel-git" class="np-rappel-git" style="display:none"></div>
+
+    <!-- ─── Étape 2 du bootstrap CCW (issue #560) — révélée UNIQUEMENT après
+         succès de la création du projet (soumettreNouveauProjet), avec le nom
+         réel du dépôt injecté par npCcwAfficherPostBloc. Le token fine-grained
+         PEUT maintenant être scopé sur ce dépôt puisqu'il existe réellement. -->
+    <div id="np-ccw-post-bloc" style="display:none;margin:0 0 16px 0;padding:10px 12px;
+         background:#f5f7fa;border:1px solid #d8dee6;border-radius:6px;font-size:12.5px;color:#333">
       <div style="margin-bottom:8px">
-        Avant de cocher : crée un token GitHub <b>fine-grained</b> DÉDIÉ à ce
-        projet (GitHub → Settings → Developer settings → Fine-grained tokens) :
+        Dépôt <b id="np-ccw-post-depot"></b> créé. Pour finaliser le bootstrap
+        du service CCW dédié, créez maintenant un token GitHub
+        <b>fine-grained</b> DÉDIÉ à ce dépôt (GitHub → Settings → Developer
+        settings → Fine-grained tokens) :
         <ul style="margin:4px 0 4px 18px;padding:0">
-          <li>Repository access → ce nouveau dépôt UNIQUEMENT</li>
+          <li>Repository access → <span id="np-ccw-post-depot-2"></span> UNIQUEMENT</li>
           <li>Permissions : <code>Issues = Read and write</code>,
               <code>Metadata = Read-only</code></li>
           <li>Expiration : alignée sur les tokens CCW en cours (cf. §16.1 de
@@ -686,15 +715,10 @@
         <label>CLAUDE_CODE_OAUTH_TOKEN</label>
         <input type="password" id="np-ccw-oauth-token" autocomplete="off">
       </div>
-      <button type="button" id="np-ccw-rafraichir-cle" onclick="npCcwRafraichirCle(this)"
-              style="margin-top:4px;font-size:12px">🔄 Rafraîchir la clé publique (CCW allumé requis)</button>
-      <div id="np-ccw-msg" style="font-size:12px;min-height:14px;margin-top:6px"></div>
+      <button type="button" class="primaire" id="np-ccw-btn-finaliser"
+              onclick="npCcwFinaliser()">Finaliser le bootstrap CCW</button>
+      <div id="np-ccw-post-msg" style="font-size:12px;min-height:14px;margin-top:6px"></div>
     </div>
-
-    <div id="np-compte-rendu" class="modal-liste" style="display:none"></div>
-    <div id="np-message" class="message" style="display:none;margin-bottom:14px"></div>
-    <div id="np-rappel-projet" class="np-rappel-projet" style="display:none"></div>
-    <div id="np-rappel-git" class="np-rappel-git" style="display:none"></div>
     <div id="np-rappel-ccw" class="np-rappel-projet" style="display:none"></div>
 
     <div class="modal-boutons">

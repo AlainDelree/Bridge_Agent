@@ -314,16 +314,35 @@ def _commenter_issue_gh(depot: str, numero: int, message: str) -> bool:
 
 # ─── Route principale ───────────────────────────────────────────────────────
 
+def _depot_existe_deja(depot: str) -> bool:
+    """Vérifie que le dépôt cible existe déjà sur GitHub — garde-fou anti
+    chicken-and-egg (issue #560) : cette route est appelée séparément, via le
+    bouton dédié « Finaliser le bootstrap CCW » du formulaire, APRÈS que
+    l'utilisateur a créé un token GitHub fine-grained scopé dessus — ce qui
+    n'est possible que si le dépôt existe déjà. Revérifié ici côté serveur
+    (jamais confiance seule au JS, même logique que la validation des
+    tokens juste en dessous) : si le dépôt n'existe pas, on refuse avant
+    même de chiffrer quoi que ce soit ou de créer une issue. Import différé,
+    comme `_config_bridge_agent`, pour éviter tout cycle avec
+    `app/nouveau_projet.py`."""
+    from app.nouveau_projet import np_cli
+    return np_cli.depot_existe(depot)
+
+
 def bootstrap_projet_ccw():
     """POST /projet-ccw/bootstrap — chiffrement des 2 tokens + génération des
-    2 issues croisées. Appelée par le front-end JUSTE APRÈS le succès de la
-    création classique du projet CCL (`POST /nouveau-projet`), jamais avant
-    (§2 de la conception #553) : reçoit {nom, depot, topic, gh_token,
-    oauth_token} — les 3 premiers identiques à ceux déjà validés/soumis à
-    `/nouveau-projet`, pas resaisis.
+    2 issues croisées. Appelée par le front-end SÉPARÉMENT de la création du
+    projet CCL, uniquement au clic sur le bouton dédié « Finaliser le
+    bootstrap CCW » qui n'apparaît qu'une fois le dépôt confirmé créé (issue
+    #560, corrigeant l'ordre du flux #559 — un token GitHub fine-grained ne
+    peut être scopé que sur un dépôt qui existe déjà, ce qui exclut de le
+    demander dans le même écran/submit que `POST /nouveau-projet`) : reçoit
+    {nom, depot, topic, gh_token, oauth_token} — les 3 premiers identiques à
+    ceux déjà validés/soumis à `/nouveau-projet`, pas resaisis.
 
     Validation stricte (déjà faite côté client, revérifiée ici — jamais
-    confiance seule au JS) : les 2 tokens sont obligatoires. Échec partiel
+    confiance seule au JS) : les 2 tokens sont obligatoires, et le dépôt
+    doit réellement exister (`_depot_existe_deja`, #560). Échec partiel
     assumé (§4 de la conception #553, pas de mécanisme transactionnel) :
     si l'issue CCW échoue après que l'issue CCL a réussi, l'issue CCL reste
     (son numéro est renvoyé) — Alain peut réessayer manuellement le volet
@@ -345,6 +364,14 @@ def bootstrap_projet_ccw():
         return jsonify(succes=False,
             erreur="Clé publique de bootstrap absente du cache local — cliquez « Rafraîchir la "
                    "clé » (CCW doit être allumé et joignable en SSH) avant de soumettre « Projet CCW ».")
+
+    # Garde-fou #560 : sans ce contrôle, un appel prématuré (avant la
+    # création réelle du dépôt) laisserait chiffrer/poster des tokens pour un
+    # dépôt inexistant — silencieusement inutile côté CCW.
+    if not _depot_existe_deja(depot):
+        return jsonify(succes=False,
+            erreur=f"Le dépôt {depot} n'existe pas encore sur GitHub — créez d'abord le projet "
+                   "(bouton « Créer le projet ») avant de finaliser le bootstrap CCW.")
 
     try:
         gh_chiffre    = _chiffrer_token(gh_token, CHEMIN_CLE_PUBLIQUE_CACHE)

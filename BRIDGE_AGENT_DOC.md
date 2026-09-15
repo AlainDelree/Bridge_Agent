@@ -2504,7 +2504,7 @@ touché.
 **Formulaire web générant ces 6 champs automatiquement : voir §16.7
 (issue #559, 3/3 — chantier complet).**
 
-### 16.7 Case « Projet CCW » du formulaire de création de projet (issue #559, 3/3)
+### 16.7 Case « Projet CCW » du formulaire de création de projet (issue #559, 3/3 ; ordre du flux corrigé par #560)
 
 **But.** Dernière brique du chantier « Projet CCW » (#553 conception → #554
 clés → #555/#556/#557 traitement `CREATION` validé en conditions réelles) :
@@ -2514,8 +2514,35 @@ récupérer la clé publique, chiffrer les 2 tokens, construire le corps de
 l'issue `CREATION`, créer les 2 issues croisées. Module dédié
 `app/projet_ccw.py` (même séparation que `app/ccw.py`), **jamais** de
 modification de `app/nouveau_projet.py` : appelé par le front-end
-JUSTE APRÈS le succès de la création classique du projet CCL
-(`POST /nouveau-projet`, `np_cli.creer_projet`), jamais avant.
+SÉPARÉMENT de la création classique du projet CCL (`POST /nouveau-projet`,
+`np_cli.creer_projet`), jamais dans le même clic/submit.
+
+**Correction d'ordre (issue #560).** La version initiale (#559) affichait
+les instructions de token **dès que la case était cochée**, donc **avant**
+que l'utilisateur clique « Créer le projet » — alors que GitHub exige de
+choisir un dépôt **existant** au moment de créer un token fine-grained.
+Chicken-and-egg réel : impossible de scoper un token sur un dépôt qui n'est
+créé qu'à la soumission. Le flux est maintenant scindé en 2 étapes
+séquentielles :
+1. Cocher « Projet CCW » + cliquer « Créer le projet » crée le projet CCL
+   normalement (dépôt GitHub inclus) — la case cochée n'affiche à ce stade
+   qu'un bloc d'information (`#np-ccw-bloc`) SANS champ de token, plus le
+   bouton indépendant « Rafraîchir la clé publique » (n'a pas besoin du
+   dépôt).
+2. Une fois `POST /nouveau-projet` revenu en succès (`res.depot` connu, donc
+   le dépôt confirmé créé), le front-end (`static/js/app.js::
+   npCcwAfficherPostBloc`) masque le bloc d'information et révèle
+   `#np-ccw-post-bloc` : instructions de scoping **avec le nom réel du
+   dépôt** injecté, les 2 champs tokens, et le bouton dédié « Finaliser le
+   bootstrap CCW » (`npCcwFinaliser`) — c'est ce clic, et lui seul, qui
+   appelle `POST /projet-ccw/bootstrap`. Un échec y laisse le bloc de
+   saisie affiché (nouvelle tentative possible sans recréer le projet) ;
+   un succès le masque au profit de l'encart de confirmation habituel.
+
+Revérifié côté **serveur** (jamais confiance seule au JS) :
+`bootstrap_projet_ccw` refuse désormais explicitement si le dépôt cible
+n'existe pas encore (`_depot_existe_deja`, `gh repo view`) — garde-fou pour
+le cas où la route serait appelée hors du parcours normal du formulaire.
 
 **Décision — cache local de la clé publique de bootstrap (point le plus
 ouvert de la conception #553).** La clé publique
@@ -2540,21 +2567,25 @@ issue n'est créée.
 
 **Formulaire (`templates/index.html`, `static/js/app.js`).** Case
 « Projet CCW » à côté des options existantes du modal. Cochée → affichage
-immédiat (JS pur, aucun aller-retour serveur) d'un bloc d'instructions
-(repo dédié, permissions `Issues: Read and write` / `Metadata: Read-only`,
-`claude setup-token`) et de 2 champs `type="password"` (GH_TOKEN,
-CLAUDE_CODE_OAUTH_TOKEN). Validation stricte **côté client ET serveur** :
-case cochée → topic ntfy + 2 tokens obligatoires avant l'appel à
-`/projet-ccw/bootstrap` (le topic est **exigé explicitement** côté client,
+immédiat (JS pur, aucun aller-retour serveur) d'un bloc d'information
+(`#np-ccw-bloc`, **sans champ de token** — voir correction #560 ci-dessus).
+Les instructions de scoping (repo dédié, permissions `Issues: Read and
+write` / `Metadata: Read-only`, `claude setup-token`) et les 2 champs
+`type="password"` (GH_TOKEN, CLAUDE_CODE_OAUTH_TOKEN) n'apparaissent que
+dans `#np-ccw-post-bloc`, révélé APRÈS le succès de la création du dépôt.
+Validation stricte **côté client ET serveur** : à la création, seul le
+topic ntfy est exigé côté client (le topic est **exigé explicitement**
 plutôt que de résoudre le défaut serveur silencieusement — évite toute
 divergence entre le topic CCL réellement écrit dans le `.conf` du nouveau
-projet et celui transmis à l'issue CCW).
+projet et celui transmis à l'issue CCW) ; les 2 tokens ne sont exigés
+qu'à l'étape 2, juste avant l'appel à `/projet-ccw/bootstrap`.
 
 **Séquence côté serveur (`app/projet_ccw.py::bootstrap_projet_ccw`,
-`POST /projet-ccw/bootstrap`, appelée par le JS après le succès de
-`/nouveau-projet`) :**
+`POST /projet-ccw/bootstrap`, appelée par le JS au clic sur « Finaliser le
+bootstrap CCW », séparément de `/nouveau-projet`) :**
 1. Validation (nom/dépôt/topic transmis, 2 tokens non vides, cache de clé
-   publique présent) — sinon échec propre, aucune issue créée.
+   publique présent, **dépôt cible existant** via `_depot_existe_deja`,
+   #560) — sinon échec propre, aucune issue créée.
 2. Chiffrement des 2 tokens (`_chiffrer_token`, RSA/OAEP-SHA256, base64 sur
    une seule ligne) — miroir exact, côté chiffrement, de
    `dechiffrer_token_bootstrap` (`watcher.py`, §16.6) : même padding, même
@@ -2598,7 +2629,8 @@ corps des 2 issues (celui de l'issue CCW vérifié **parsable** par
 `watcher.creation_demandee`/`extraire_champs_creation` — le verrou anti-
 régression le plus important de ce fichier), titres déterministes,
 création d'issue via un faux `gh` (succès + anti-doublon), et la route
-`bootstrap_projet_ccw` complète de bout en bout (validations, chemin de
+`bootstrap_projet_ccw` complète de bout en bout (validations — y compris le
+refus propre si le dépôt n'existe pas encore, garde-fou #560 — chemin de
 succès avec déchiffrement réel des tokens postés, cross-référence,
 démarrage du watcher neutralisé pour ne jamais lancer un vrai sous-
 processus pendant le test).

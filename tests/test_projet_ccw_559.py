@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Test de non-régression — issue #559 (3/3) : case « Projet CCW » sur le
-formulaire de création de projet — chiffrement et génération automatique
-des 2 issues (app/projet_ccw.py).
+"""Test de non-régression — issue #559 (3/3, ordre du flux corrigé par
+#560) : case « Projet CCW » sur le formulaire de création de projet —
+chiffrement et génération automatique des 2 issues (app/projet_ccw.py).
 
 Couvre, SANS vraie machine CCW ni vraie issue GitHub (même technique que
 tests/test_creation_bootstrap_ccw_556.py — `gh` remplacé par un faux
@@ -23,11 +23,11 @@ exécutable sur le PATH) :
   anti-doublon (aucun `gh issue create` déclenché si une issue ouverte
   porte déjà ce titre) ;
 - `bootstrap_projet_ccw` (route Flask complète, via test_request_context) :
-  validations (tokens manquants, clé publique absente du cache), puis
-  chemin de succès bout en bout — les 2 issues sont créées avec les BONS
-  labels/corps, la référence croisée est postée, et le démarrage du
-  watcher (best-effort) est neutralisé pour ne jamais lancer un vrai
-  sous-processus watcher.py pendant le test.
+  validations (tokens manquants, clé publique absente du cache, **dépôt pas
+  encore créé — garde-fou #560**), puis chemin de succès bout en bout — les
+  2 issues sont créées avec les BONS labels/corps, la référence croisée est
+  postée, et le démarrage du watcher (best-effort) est neutralisé pour ne
+  jamais lancer un vrai sous-processus watcher.py pendant le test.
 
 Exécution :  python3 tests/test_projet_ccw_559.py
 Sortie      :  code 0 si tous les scénarios passent, 1 sinon.
@@ -152,11 +152,20 @@ def scenario_titres_deterministes():
 # ─── Scénarios : _creer_issue_gh (faux `gh`) ────────────────────────────────
 
 FAUX_GH = """#!/bin/bash
-# Faux `gh` — issue #559. issue list : renvoie $TEST_559_LISTE_OUVERTES
-# (JSON, defaut []) pour piloter l'anti-doublon. issue create : journalise
-# repo/titre/label/corps dans $TEST_559_LOG_CREATE, renvoie une URL avec un
-# numero incremental ($TEST_559_COMPTEUR). issue comment : journalise dans
-# $TEST_559_LOG_COMMENT.
+# Faux `gh` — issue #559 (+ garde-fou #560). issue list : renvoie
+# $TEST_559_LISTE_OUVERTES (JSON, defaut []) pour piloter l'anti-doublon.
+# issue create : journalise repo/titre/label/corps dans
+# $TEST_559_LOG_CREATE, renvoie une URL avec un numero incremental
+# ($TEST_559_COMPTEUR). issue comment : journalise dans
+# $TEST_559_LOG_COMMENT. repo view : pilote _depot_existe_deja (#560) via
+# $TEST_559_DEPOT_EXISTE (defaut "1", vide/absent = existe, "0" = n'existe
+# pas encore).
+if [ "$1" = "repo" ] && [ "$2" = "view" ]; then
+    if [ "$TEST_559_DEPOT_EXISTE" = "0" ]; then
+        exit 1
+    fi
+    exit 0
+fi
 if [ "$1" = "issue" ] && [ "$2" = "list" ]; then
     if [ -n "$TEST_559_LISTE_OUVERTES" ] && [ -f "$TEST_559_LISTE_OUVERTES" ]; then
         cat "$TEST_559_LISTE_OUVERTES"
@@ -389,6 +398,42 @@ def scenario_bootstrap_succes_complet(tmp_path_factory):
     return {}
 
 
+def scenario_bootstrap_depot_inexistant_refuse(tmp_path_factory):
+    """Garde-fou #560 — l'ordre corrigé du flux (case « Projet CCW ») : si le
+    dépôt cible n'existe pas ENCORE sur GitHub, /projet-ccw/bootstrap refuse
+    proprement AVANT de chiffrer quoi que ce soit ou de créer une issue.
+    C'est le scénario qui aurait dû se produire dans l'ancien flux #559 (token
+    demandé avant la création du dépôt) : plutôt que de laisser l'utilisateur
+    coller un token scopé sur un dépôt inexistant, le serveur revérifie et
+    bloque — aucune ligne ne doit apparaître dans le log `gh issue create`."""
+    tmp = tmp_path_factory()
+    bin_dir = _preparer_bin(tmp)
+    _priv, pub = _generer_paire_cles(tmp / "cles")
+
+    ancien_path = os.environ.get("PATH", "")
+    ancien_cle = projet_ccw.CHEMIN_CLE_PUBLIQUE_CACHE
+    log_create = tmp / "log_create.txt"
+    os.environ["TEST_559_LOG_CREATE"] = str(log_create)
+    os.environ["TEST_559_DEPOT_EXISTE"] = "0"
+    try:
+        os.environ["PATH"] = f"{bin_dir}:{ancien_path}"
+        projet_ccw.CHEMIN_CLE_PUBLIQUE_CACHE = pub
+        r = _appeler_bootstrap({
+            "nom": "monprojet", "depot": "AlainDelree/MonProjet",
+            "topic": "bridge-monprojet",
+            "gh_token": "ghp_x", "oauth_token": "oauth_y",
+        })
+        assert not r["succes"], r
+        assert "n'existe pas encore" in r["erreur"], r
+        assert not log_create.exists(), "aucune issue n'aurait dû être créée (dépôt inexistant)"
+    finally:
+        os.environ["PATH"] = ancien_path
+        for var in ("TEST_559_LOG_CREATE", "TEST_559_DEPOT_EXISTE"):
+            os.environ.pop(var, None)
+        projet_ccw.CHEMIN_CLE_PUBLIQUE_CACHE = ancien_cle
+    return {}
+
+
 def main():
     tmp = tempfile.TemporaryDirectory()
     compteur = {"n": 0}
@@ -417,6 +462,8 @@ def main():
          lambda: scenario_bootstrap_cle_publique_absente(_tmp_path_factory)),
         ("bootstrap_projet_ccw : chemin complet, succès (2 issues, format CREATION, cross-réf, watcher neutralisé)",
          lambda: scenario_bootstrap_succes_complet(_tmp_path_factory)),
+        ("bootstrap_projet_ccw : dépôt pas encore créé → refus propre, aucune issue (garde-fou #560)",
+         lambda: scenario_bootstrap_depot_inexistant_refuse(_tmp_path_factory)),
     ]
     echecs = 0
     for nom, fn in tests:

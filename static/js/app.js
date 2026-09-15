@@ -5584,14 +5584,18 @@ function ouvrirNouveauProjet() {
   document.getElementById('np-message').style.display = 'none';
   document.getElementById('np-rappel-git').style.display = 'none';
   document.getElementById('np-rappel-projet').style.display = 'none';
-  // Case « Projet CCW » (issue #559) : toujours décochée à l'ouverture, tokens
-  // jamais pré-remplis d'une session à l'autre.
+  // Case « Projet CCW » (issue #559, ordre corrigé par #560) : toujours
+  // décochée à l'ouverture, tokens jamais pré-remplis d'une session à
+  // l'autre. Le bloc étape 2 (#np-ccw-post-bloc) est masqué tant que le
+  // projet n'a pas été (re)créé avec succès dans CETTE ouverture du modal.
   document.getElementById('np-ccw').checked = false;
   document.getElementById('np-ccw-bloc').style.display = 'none';
   document.getElementById('np-ccw-gh-token').value = '';
   document.getElementById('np-ccw-oauth-token').value = '';
   document.getElementById('np-ccw-msg').textContent = '';
   document.getElementById('np-ccw-cle-etat').textContent = '';
+  document.getElementById('np-ccw-post-bloc').style.display = 'none';
+  document.getElementById('np-ccw-post-msg').textContent = '';
   document.getElementById('np-rappel-ccw').style.display = 'none';
   const btn = document.getElementById('np-creer');
   btn.disabled = false; btn.textContent = 'Créer le projet';
@@ -5751,10 +5755,10 @@ function npMsg(texte, type) {
   el.style.display = 'block';
 }
 
-// Case « Projet CCW » (issue #559, 3/3) : affiche/masque le bloc
-// d'instructions + les 2 champs tokens, et vérifie l'état du cache local de
-// la clé publique de bootstrap (sans bloquer la saisie — juste informatif,
-// la validation réelle a lieu à la soumission côté serveur).
+// Case « Projet CCW » (issue #559, 3/3 ; ordre corrigé par #560) :
+// affiche/masque le bloc d'information « avant création » (PAS de champs
+// tokens à ce stade — le dépôt n'existe pas encore) et vérifie l'état du
+// cache local de la clé publique de bootstrap.
 function npCcwToggle() {
   const actif = document.getElementById('np-ccw').checked;
   document.getElementById('np-ccw-bloc').style.display = actif ? 'block' : 'none';
@@ -5813,10 +5817,14 @@ async function npCcwRafraichirCle(btn) {
   }
 }
 
-// Chiffrement + génération des 2 issues croisées, appelé APRÈS le succès de
-// la création classique du projet CCL (jamais avant — cf. app/projet_ccw.py).
+// Chiffrement + génération des 2 issues croisées — appelé UNIQUEMENT par un
+// clic explicite sur « Finaliser le bootstrap CCW » (npCcwFinaliser), donc
+// forcément après le succès de la création du dépôt (issue #560 : impossible
+// de scoper un token fine-grained sur un dépôt qui n'existe pas encore).
 // Échec ici n'annule pas la création du projet CCL déjà faite : affiché dans
-// un encart séparé, le projet reste utilisable normalement côté CCL.
+// un encart séparé, le projet reste utilisable normalement côté CCL. Renvoie
+// true/false pour que l'appelant sache s'il doit permettre une nouvelle
+// tentative (bloc de saisie laissé visible) ou non.
 async function npCcwBootstrap(nom, depot, topic, ghToken, oauthToken) {
   const box = document.getElementById('np-rappel-ccw');
   box.innerHTML = '<div class="titre">⏳ Projet CCW — génération des 2 issues…</div>';
@@ -5832,7 +5840,7 @@ async function npCcwBootstrap(nom, depot, topic, ghToken, oauthToken) {
   } catch (e) {
     box.innerHTML = '<div class="titre">❌ Projet CCW — erreur réseau</div><div>'
                    + escapeHtml(e.message) + '</div>';
-    return;
+    return false;
   }
   if (r.succes) {
     box.innerHTML =
@@ -5843,14 +5851,55 @@ async function npCcwBootstrap(nom, depot, topic, ghToken, oauthToken) {
       + r.issue_ccw_numero + '</a></div>'
       + '<div style="margin-top:6px">Si CCW est éteint, l\'issue CCW attend simplement dans la '
       + 'file — aucune action supplémentaire nécessaire.</div>';
-  } else {
-    let html = '<div class="titre">❌ Projet CCW — échec</div><div>' + escapeHtml(r.erreur || 'Erreur inconnue.') + '</div>';
-    if (r.issue_ccl_numero) {
-      html += '<div>Issue CCL déjà créée : <a href="' + escapeHtml(r.issue_ccl_url) + '" target="_blank">#'
-            + r.issue_ccl_numero + '</a></div>';
-    }
-    box.innerHTML = html;
+    return true;
   }
+  let html = '<div class="titre">❌ Projet CCW — échec</div><div>' + escapeHtml(r.erreur || 'Erreur inconnue.') + '</div>';
+  if (r.issue_ccl_numero) {
+    html += '<div>Issue CCL déjà créée : <a href="' + escapeHtml(r.issue_ccl_url) + '" target="_blank">#'
+          + r.issue_ccl_numero + '</a></div>';
+  }
+  box.innerHTML = html;
+  return false;
+}
+
+// Étape 2 (issue #560) : révèle le bloc de finalisation CCW une fois le
+// dépôt réellement créé (res.depot connu), avec son nom injecté dans les
+// instructions — c'est SEULEMENT à partir d'ici que l'utilisateur peut créer
+// un token fine-grained valide (scopé sur un dépôt qui existe). Masque le
+// bloc « avant création » pour éviter toute confusion sur l'étape en cours.
+function npCcwAfficherPostBloc(nom, depot, topic) {
+  document.getElementById('np-ccw-bloc').style.display = 'none';
+  document.getElementById('np-ccw-post-depot').textContent = depot;
+  document.getElementById('np-ccw-post-depot-2').textContent = depot;
+  document.getElementById('np-ccw-gh-token').value = '';
+  document.getElementById('np-ccw-oauth-token').value = '';
+  document.getElementById('np-ccw-post-msg').textContent = '';
+  const post = document.getElementById('np-ccw-post-bloc');
+  post.dataset.nom = nom;
+  post.dataset.depot = depot;
+  post.dataset.topic = topic;
+  post.style.display = 'block';
+}
+
+// Clic sur « Finaliser le bootstrap CCW » (étape 2, issue #560) : lit les 2
+// tokens saisis MAINTENANT (dépôt déjà créé, donc scopables) et déclenche
+// npCcwBootstrap. Le bloc de saisie reste affiché en cas d'échec (nouvelle
+// tentative possible sans recréer le projet) et se masque au succès.
+async function npCcwFinaliser() {
+  const post  = document.getElementById('np-ccw-post-bloc');
+  const gh    = document.getElementById('np-ccw-gh-token').value;
+  const oauth = document.getElementById('np-ccw-oauth-token').value;
+  const msg   = document.getElementById('np-ccw-post-msg');
+  if (!gh || !oauth) {
+    msg.textContent = 'Les deux tokens (GH_TOKEN, CLAUDE_CODE_OAUTH_TOKEN) sont requis.';
+    msg.style.color = '#a32d2d';
+    return;
+  }
+  const btn = document.getElementById('np-ccw-btn-finaliser');
+  btn.disabled = true; btn.textContent = 'Finalisation…';
+  const ok = await npCcwBootstrap(post.dataset.nom, post.dataset.depot, post.dataset.topic, gh, oauth);
+  btn.disabled = false; btn.textContent = 'Finaliser le bootstrap CCW';
+  if (ok) post.style.display = 'none';
 }
 
 async function soumettreNouveauProjet() {
@@ -5860,21 +5909,20 @@ async function soumettreNouveauProjet() {
   cr.style.display = 'none';
   document.getElementById('np-rappel-git').style.display = 'none';
   document.getElementById('np-rappel-projet').style.display = 'none';
+  document.getElementById('np-ccw-post-bloc').style.display = 'none';
   document.getElementById('np-rappel-ccw').style.display = 'none';
   if (!nom) { npMsg('Un nom de projet est requis.', 'erreur'); return; }
 
-  // Validation stricte (client) de la case « Projet CCW » (issue #559) :
-  // revérifiée aussi côté serveur (app/projet_ccw.py), jamais confiance seule
-  // au JS — le topic est exigé explicitement ici (pas de résolution du
-  // défaut serveur côté client, pour ne jamais transmettre un topic CCW qui
-  // ne correspondrait pas à celui réellement écrit dans le .conf CCL).
+  // Validation stricte (client) de la case « Projet CCW » (issue #559,
+  // ordre corrigé par #560) : revérifiée aussi côté serveur
+  // (app/projet_ccw.py). Seul le topic est exigé ICI, à la création — les 2
+  // tokens ne sont PLUS demandés à ce stade (le dépôt n'existe pas encore,
+  // un token fine-grained ne peut pas y être scopé) : ils ne seront saisis
+  // qu'à l'étape 2, une fois le dépôt réellement créé (npCcwAfficherPostBloc).
   const ccwActif = document.getElementById('np-ccw').checked;
   const ccwTopic = document.getElementById('np-topic').value.trim();
-  const ccwGh    = document.getElementById('np-ccw-gh-token').value;
-  const ccwOauth = document.getElementById('np-ccw-oauth-token').value;
-  if (ccwActif && (!ccwTopic || !ccwGh || !ccwOauth)) {
-    npMsg('« Projet CCW » coché : le topic ntfy et les 2 tokens (GH_TOKEN, '
-        + 'CLAUDE_CODE_OAUTH_TOKEN) sont obligatoires.', 'erreur');
+  if (ccwActif && !ccwTopic) {
+    npMsg('« Projet CCW » coché : le topic ntfy est obligatoire.', 'erreur');
     return;
   }
 
@@ -5936,11 +5984,14 @@ async function soumettreNouveauProjet() {
     // #257 — sans eux l'encart ci-dessus, seul affiché jusque-là, laissait
     // croire à tort que rien d'autre n'était à faire.
     afficherRappelProjet(res);
-    // Case « Projet CCW » (issue #559) : chiffrement + génération des 2
-    // issues croisées, APRÈS le succès ci-dessus, jamais avant — un échec
-    // ici n'annule pas la création CCL déjà faite (encart séparé).
+    // Case « Projet CCW » (issue #559, ordre corrigé par #560) : le dépôt
+    // (res.depot) vient d'être créé avec succès — c'est SEULEMENT
+    // maintenant qu'un token fine-grained peut être scopé dessus. On révèle
+    // donc le bloc de finalisation (étape 2) au lieu d'appeler
+    // /projet-ccw/bootstrap directement ; l'appel réel n'a lieu qu'au clic
+    // sur « Finaliser le bootstrap CCW » (npCcwFinaliser).
     if (ccwActif) {
-      npCcwBootstrap(res.nom, res.depot, ccwTopic, ccwGh, ccwOauth);
+      npCcwAfficherPostBloc(res.nom, res.depot, ccwTopic);
     }
     // Création réussie : on verrouille « Créer » (évite un double envoi) et on
     // renomme « Fermer » en « Terminé ».
