@@ -86,3 +86,60 @@ Confirmer que `CCW-Watcher` est bien à l'état `running`, soit localement
 (`nssm status CCW-Watcher` ou services.msc sur le PC fixe), soit depuis
 CCL via l'onglet **CCW** de l'interface web (`new_issue.py`) — voir
 `BRIDGE_AGENT_DOC.md` §16.2.
+
+### 7. Recréer les services multi-projets dédiés
+
+Les étapes 1 à 6 ne remettent en place que le service de **base**
+`CCW-Watcher` (canal `for-windows` de Bridge_Agent). En production tournent
+en plus **4 services dédiés**, un par projet du modèle multi-projets actif
+(issue #170, cf. `BRIDGE_AGENT_DOC.md` §16) — eux aussi recréés à zéro par
+la réinstallation, puisque le service NSSM et ses tokens ne survivent pas :
+
+| Projet | Dépôt GitHub |
+|--------|--------------|
+| `alchess` | `AlainDelree/AlChess` |
+| `actualise` | `AlainDelree/Actualise` |
+| `rummikub` | `AlainDelree/Rummikub` |
+| `scrabble` | `AlainDelree/Scrabble` |
+
+Rappel : les fichiers `.conf` de chaque projet (ex. `configs\alchess-ccw.conf`)
+vivent dans le dépôt du projet lui-même, donc **survivent** à la
+réinstallation — rien à reconstruire de ce côté. Seuls la recréation du
+service NSSM et la resaisie des deux tokens (GitHub dédié + Claude Code)
+par projet restent nécessaires.
+
+Cette liste est maintenue à un seul endroit : le tableau `$Projets` dans
+`reinstaller_projets_ccw.ps1` (ce dossier) fait foi en cas de divergence —
+le tableau ci-dessus n'en est qu'une reproduction pour la lecture. Toujours
+en admin sur le PC fixe, depuis `C:\CCW\Bridge_Agent` :
+
+```powershell
+.\provisioning\windows\reinstaller_projets_ccw.ps1
+```
+
+Ce script séquence l'appel à `creer_projet_ccw_complet.ps1` (racine du
+dépôt, §16.5 de `BRIDGE_AGENT_DOC.md`) pour chacun des 4 projets — évitant
+de devoir taper 4 commandes séparées de mémoire. Les deux tokens restent
+demandés **par projet**, à l'intérieur de la boucle : le script structure
+la séquence, il ne contourne pas la saisie. En cas d'échec sur un projet,
+il s'arrête et affiche comment reprendre uniquement les projets restants
+(`-SeulementProjets`).
+
+Vérifier ensuite l'état des 5 services (base + 4 dédiés) via
+`provisioning\windows\lister_projets_ccw.ps1`, ou depuis CCL via l'onglet
+**CCW** de l'interface web.
+
+---
+
+## Prérequis côté Linux (ThinkPad) — `cifs-utils`
+
+Sans rapport direct avec la réinstallation Windows, mais lié à
+l'infrastructure CCW et à garder en mémoire au même endroit : le montage du
+partage réseau avec l'option `credentials=` (utilisé pour accéder au PC fixe
+CCW depuis le ThinkPad) nécessite le paquet **`cifs-utils`** côté Linux.
+Sans lui, le montage échoue silencieusement ou avec une erreur peu explicite
+sur `credentials=`. À installer une fois sur le ThinkPad si absent :
+
+```bash
+sudo apt install cifs-utils
+```
