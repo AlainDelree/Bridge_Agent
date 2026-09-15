@@ -1,0 +1,148 @@
+# creer_projet_ccw_complet.ps1
+#
+# Enchaine TOUTES les etapes mecaniques pour ajouter un projet CCW
+# (issue #492) : clone + .conf + service NSSM + PATH correct des le depart
+# (evite le piege rencontre avec Scrabble : services NSSM demarres au boot
+# n'heritent pas du PATH utilisateur, notamment %LOCALAPPDATA%\...\.local\bin
+# ou vit claude.exe).
+#
+# Ne demande QUE ce qui ne peut pas etre automatise : les deux tokens.
+# Le reste (nom, depot, dossiers, service) est deduit du nom de projet.
+#
+# Usage :
+#   cd C:\CCW\Bridge_Agent
+#   powershell -ExecutionPolicy Bypass -File creer_projet_ccw_complet.ps1 -NomProjet actualise -Depot AlainDelree/Actualise
+#
+# Avant de lancer : cree le token GitHub dedie (repo unique, Issues=RW,
+# Metadata=RO, expiration alignee ~2026-11-14 comme les tokens CCW recents)
+# sur github.com/settings/tokens, et prepare `claude setup-token` en tete.
+
+param(
+    [Parameter(Mandatory=$true)][string]$NomProjet,
+    [Parameter(Mandatory=$true)][string]$Depot,
+    [string]$TopicNtfy = "hippocampe-ff-galerie-xyz123"
+)
+
+$ErrorActionPreference = "Stop"
+
+$NomService = "CCW-Watcher-$NomProjet"
+$RepTravail = "C:\CCW\$NomProjet"
+$CheminConf = "configs\$NomProjet-ccw.conf"
+$NomLog     = "ccw-$NomProjet-service.log"
+$CheminClaude = "C:\Users\AlainW\.local\bin"
+
+Write-Host "[creer-projet-complet] Projet      : $NomProjet"
+Write-Host "[creer-projet-complet] Depot       : $Depot"
+Write-Host "[creer-projet-complet] Dossier     : $RepTravail"
+Write-Host "[creer-projet-complet] Service     : $NomService"
+Write-Host ""
+
+# --- Etape 1 : clone + .conf + service (scripts officiels existants) -------
+Write-Host "[creer-projet-complet] Etape 1/3 - ajouter_projet_ccw.ps1..."
+powershell -ExecutionPolicy Bypass -File provisioning\windows\ajouter_projet_ccw.ps1 -NomProjet $NomProjet -Depot $Depot
+
+# --- Etape 2 : TOPIC_NTFY (edition ciblee, meme logique que finaliser_projet_ccw.ps1) ---
+Write-Host ""
+Write-Host "[creer-projet-complet] Etape 2/3 - TOPIC_NTFY..."
+$cheminConfComplet = "$RepTravail\configs\$NomProjet-ccw.conf"
+if (-not (Test-Path $cheminConfComplet)) {
+    Write-Host "[creer-projet-complet] .conf introuvable a $cheminConfComplet -- recherche automatique..."
+    $trouve = Get-ChildItem -Path "C:\CCW" -Filter "$NomProjet-ccw.conf" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($trouve) {
+        $cheminConfComplet = $trouve.FullName
+        Write-Host "[creer-projet-complet] Trouve : $cheminConfComplet"
+    } else {
+        Write-Host "[creer-projet-complet] ERREUR : impossible de trouver le .conf. Arret."
+        exit 1
+    }
+}
+(Get-Content $cheminConfComplet -Raw) -replace '###TOPIC_NTFY_A_DEFINIR###', $TopicNtfy |
+    Set-Content $cheminConfComplet -Encoding UTF8 -NoNewline
+Write-Host "[creer-projet-complet] TOPIC_NTFY defini a " $TopicNtfy "."
+
+# --- Etape 3 : tokens + PATH correct (LA partie qui a pose probleme pour Scrabble) ---
+Write-Host ""
+Write-Host "[creer-projet-complet] Etape 3/3 - Tokens et PATH"
+Write-Host "[creer-projet-complet] Cree le token GitHub dedie si pas deja fait :"
+Write-Host "[creer-projet-complet]   - Repository access -> $Depot UNIQUEMENT"
+Write-Host "[creer-projet-complet]   - Permissions : Issues = Read and write, Metadata = Read-only"
+Write-Host "[creer-projet-complet]   - Expiration : aligne-toi sur les tokens CCW recents (~2026-11-14)"
+Write-Host ""
+Read-Host "Appuie sur Entree une fois le token GitHub cree et copie (rien a taper ici)"
+
+$ghToken = Read-Host "Colle la valeur de GH_TOKEN" -AsSecureString
+$ghTokenPlain = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto(
+    [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($ghToken))
+
+Write-Host ""
+Write-Host "[creer-projet-complet] Genere maintenant le token Claude Code :"
+Write-Host "[creer-projet-complet]   claude setup-token"
+Write-Host "[creer-projet-complet] (lance-le dans un AUTRE terminal si besoin, puis reviens ici)"
+Write-Host ""
+$claudeToken = Read-Host "Colle la valeur de CLAUDE_CODE_OAUTH_TOKEN" -AsSecureString
+$claudeTokenPlain = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto(
+    [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($claudeToken))
+
+# Nettoyage anti-saut-de-ligne (piege rencontre avec Scrabble : un token
+# affiche sur 2 lignes visuellement par le terminal peut etre colle avec un
+# vrai retour a la ligne inclus -> "Invalid Authorization header value").
+$ghTokenPlain = $ghTokenPlain -replace "`r`n|`n|`r", ""
+$claudeTokenPlain = $claudeTokenPlain -replace "`r`n|`n|`r", ""
+
+Write-Host ""
+Write-Host "[creer-projet-complet] Longueur GH_TOKEN : $($ghTokenPlain.Length) caracteres"
+Write-Host "[creer-projet-complet] Longueur CLAUDE_CODE_OAUTH_TOKEN : $($claudeTokenPlain.Length) caracteres"
+if ($ghTokenPlain.Length -eq 0 -or $claudeTokenPlain.Length -eq 0) {
+    Write-Host "[creer-projet-complet] ERREUR : un des deux tokens est vide (saisie ratee). Arret."
+    exit 1
+}
+
+# Test des DEUX tokens en isolation AVANT de les appliquer au service (issue
+# #492 bis : mieux vaut echouer ici, vite et clairement, que decouvrir un 401
+# apres redemarrage du service en devinant depuis les logs).
+Write-Host ""
+Write-Host "[creer-projet-complet] Test du GH_TOKEN sur $Depot ..."
+$env:GH_TOKEN = $ghTokenPlain
+$testGh = gh repo view $Depot 2>&1
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "[creer-projet-complet] ERREUR : GH_TOKEN invalide ou mal scope sur $Depot"
+    Write-Host $testGh
+    Write-Host "[creer-projet-complet] Verifie le token sur github.com/settings/tokens (repository access, expiration) et relance."
+    exit 1
+}
+Write-Host "[creer-projet-complet] GH_TOKEN OK."
+
+Write-Host "[creer-projet-complet] Test du CLAUDE_CODE_OAUTH_TOKEN..."
+$env:CLAUDE_CODE_OAUTH_TOKEN = $claudeTokenPlain
+$testClaude = claude --print "reponds juste OK" 2>&1
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "[creer-projet-complet] ERREUR : CLAUDE_CODE_OAUTH_TOKEN invalide"
+    Write-Host $testClaude
+    Write-Host "[creer-projet-complet] Regenere-le avec : claude setup-token"
+    exit 1
+}
+Write-Host "[creer-projet-complet] CLAUDE_CODE_OAUTH_TOKEN OK."
+
+# PATH complet + dossier claude.exe explicite (LE fix du probleme Scrabble :
+# un service NSSM demarre au boot n'herite pas forcement du PATH utilisateur
+# ou vit claude.exe sous %LOCALAPPDATA%\...\.local\bin).
+$pathActuel = $env:PATH
+$nouvelExtra = "GH_TOKEN=$ghTokenPlain`nCLAUDE_CODE_OAUTH_TOKEN=$claudeTokenPlain`nPATH=$pathActuel;$CheminClaude"
+
+Write-Host ""
+Write-Host "[creer-projet-complet] Ecriture de AppEnvironmentExtra (avec PATH incluant $CheminClaude)..."
+nssm set $NomService AppEnvironmentExtra $nouvelExtra | Out-Null
+
+Write-Host "[creer-projet-complet] Redemarrage du service " $NomService "..."
+nssm restart $NomService | Out-Null
+Start-Sleep -Seconds 8
+
+Write-Host ""
+Write-Host "[creer-projet-complet] Dernieres lignes de $RepTravail\logs\$NomLog :"
+Write-Host "----------------------------------------------------------------------"
+Get-Content "$RepTravail\logs\$NomLog" -Tail 10
+Write-Host "----------------------------------------------------------------------"
+Write-Host ""
+Write-Host "[creer-projet-complet] Projet " $NomProjet " cree et finalise."
+Write-Host "[creer-projet-complet] Verif : nssm status $NomService  /  Get-Service $NomService"
+Write-Host "[creer-projet-complet] Si erreur 401 ci-dessus : le GH_TOKEN a probablement un espace ou saut de ligne parasite. Relance uniquement l etape des tokens en collant plus prudemment."
