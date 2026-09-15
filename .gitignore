@@ -14,3 +14,8 @@ configs/templates_*.json
 # Dossier inbox du watcher_issues_inbox (issue #483) : fichiers .txt déposés
 # par Claude Chat / traités par le watcher — état transitoire, pas du code.
 issues_inbox/
+# Cache local de la clé publique de bootstrap CCW (case « Projet CCW »,
+# issue #559) — pas secrète, mais spécifique à l'instance CCW courante et
+# sans intérêt dans l'historique git (régénérée à chaque réinstallation de
+# CCW, cf. REINSTALLATION_CCW.md §8). Rafraîchie manuellement, jamais committée.
+configs/ccw_bootstrap_publique.pem

@@ -5584,6 +5584,15 @@ function ouvrirNouveauProjet() {
   document.getElementById('np-message').style.display = 'none';
   document.getElementById('np-rappel-git').style.display = 'none';
   document.getElementById('np-rappel-projet').style.display = 'none';
+  // Case « Projet CCW » (issue #559) : toujours décochée à l'ouverture, tokens
+  // jamais pré-remplis d'une session à l'autre.
+  document.getElementById('np-ccw').checked = false;
+  document.getElementById('np-ccw-bloc').style.display = 'none';
+  document.getElementById('np-ccw-gh-token').value = '';
+  document.getElementById('np-ccw-oauth-token').value = '';
+  document.getElementById('np-ccw-msg').textContent = '';
+  document.getElementById('np-ccw-cle-etat').textContent = '';
+  document.getElementById('np-rappel-ccw').style.display = 'none';
   const btn = document.getElementById('np-creer');
   btn.disabled = false; btn.textContent = 'Créer le projet';
   document.getElementById('np-fermer').textContent = 'Fermer';
@@ -5742,6 +5751,108 @@ function npMsg(texte, type) {
   el.style.display = 'block';
 }
 
+// Case « Projet CCW » (issue #559, 3/3) : affiche/masque le bloc
+// d'instructions + les 2 champs tokens, et vérifie l'état du cache local de
+// la clé publique de bootstrap (sans bloquer la saisie — juste informatif,
+// la validation réelle a lieu à la soumission côté serveur).
+function npCcwToggle() {
+  const actif = document.getElementById('np-ccw').checked;
+  document.getElementById('np-ccw-bloc').style.display = actif ? 'block' : 'none';
+  if (actif) npCcwChargerEtatCle();
+}
+
+async function npCcwChargerEtatCle() {
+  const etat = document.getElementById('np-ccw-cle-etat');
+  etat.textContent = 'Vérification de la clé publique de bootstrap…';
+  etat.style.color = '#555';
+  let r;
+  try {
+    r = await (await fetch('/projet-ccw/cle-publique/etat')).json();
+  } catch (e) {
+    etat.textContent = '⚠ Impossible de vérifier la clé publique (erreur réseau).';
+    etat.style.color = '#a32d2d';
+    return;
+  }
+  if (r.presente) {
+    etat.textContent = '✓ Clé publique en cache (rafraîchie le ' + r.derniere_maj + ').';
+    etat.style.color = '#2e7d32';
+  } else {
+    etat.textContent = '⚠ Aucune clé publique en cache — cliquez « Rafraîchir la clé » '
+                      + 'ci-dessous avant de soumettre (CCW doit être allumé et joignable en SSH).';
+    etat.style.color = '#a32d2d';
+  }
+}
+
+// Rafraîchissement MANUEL du cache local (SSH vers CCW) — jamais déclenché
+// automatiquement à la soumission (voir décision documentée dans
+// app/projet_ccw.py) : à utiliser après une (première génération ou)
+// rotation de la paire de clés côté CCW.
+async function npCcwRafraichirCle(btn) {
+  const avant = btn.textContent;
+  btn.disabled = true; btn.textContent = 'Récupération…';
+  const msg = document.getElementById('np-ccw-msg');
+  msg.textContent = '';
+  let r;
+  try {
+    const rep = await fetch('/projet-ccw/rafraichir-cle', {method: 'POST'});
+    r = await rep.json();
+  } catch (e) {
+    btn.disabled = false; btn.textContent = avant;
+    msg.textContent = 'Erreur réseau : ' + e.message;
+    msg.style.color = '#a32d2d';
+    return;
+  }
+  btn.disabled = false; btn.textContent = avant;
+  if (r.succes) {
+    msg.textContent = '✓ ' + (r.message || 'Clé rafraîchie.');
+    msg.style.color = '#2e7d32';
+    npCcwChargerEtatCle();
+  } else {
+    msg.textContent = '❌ ' + (r.erreur || 'Échec.');
+    msg.style.color = '#a32d2d';
+  }
+}
+
+// Chiffrement + génération des 2 issues croisées, appelé APRÈS le succès de
+// la création classique du projet CCL (jamais avant — cf. app/projet_ccw.py).
+// Échec ici n'annule pas la création du projet CCL déjà faite : affiché dans
+// un encart séparé, le projet reste utilisable normalement côté CCL.
+async function npCcwBootstrap(nom, depot, topic, ghToken, oauthToken) {
+  const box = document.getElementById('np-rappel-ccw');
+  box.innerHTML = '<div class="titre">⏳ Projet CCW — génération des 2 issues…</div>';
+  box.style.display = 'block';
+  let r;
+  try {
+    const rep = await fetch('/projet-ccw/bootstrap', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({nom, depot, topic, gh_token: ghToken, oauth_token: oauthToken}),
+    });
+    r = await rep.json();
+  } catch (e) {
+    box.innerHTML = '<div class="titre">❌ Projet CCW — erreur réseau</div><div>'
+                   + escapeHtml(e.message) + '</div>';
+    return;
+  }
+  if (r.succes) {
+    box.innerHTML =
+      '<div class="titre">✅ Projet CCW — 2 issues créées</div>'
+      + '<div>Issue CCL (réinstallation) : <a href="' + escapeHtml(r.issue_ccl_url) + '" target="_blank">#'
+      + r.issue_ccl_numero + '</a></div>'
+      + '<div>Issue CCW (création du service) : <a href="' + escapeHtml(r.issue_ccw_url) + '" target="_blank">#'
+      + r.issue_ccw_numero + '</a></div>'
+      + '<div style="margin-top:6px">Si CCW est éteint, l\'issue CCW attend simplement dans la '
+      + 'file — aucune action supplémentaire nécessaire.</div>';
+  } else {
+    let html = '<div class="titre">❌ Projet CCW — échec</div><div>' + escapeHtml(r.erreur || 'Erreur inconnue.') + '</div>';
+    if (r.issue_ccl_numero) {
+      html += '<div>Issue CCL déjà créée : <a href="' + escapeHtml(r.issue_ccl_url) + '" target="_blank">#'
+            + r.issue_ccl_numero + '</a></div>';
+    }
+    box.innerHTML = html;
+  }
+}
+
 async function soumettreNouveauProjet() {
   const nom = document.getElementById('np-nom').value.trim().toLowerCase();
   const cr  = document.getElementById('np-compte-rendu');
@@ -5749,7 +5860,23 @@ async function soumettreNouveauProjet() {
   cr.style.display = 'none';
   document.getElementById('np-rappel-git').style.display = 'none';
   document.getElementById('np-rappel-projet').style.display = 'none';
+  document.getElementById('np-rappel-ccw').style.display = 'none';
   if (!nom) { npMsg('Un nom de projet est requis.', 'erreur'); return; }
+
+  // Validation stricte (client) de la case « Projet CCW » (issue #559) :
+  // revérifiée aussi côté serveur (app/projet_ccw.py), jamais confiance seule
+  // au JS — le topic est exigé explicitement ici (pas de résolution du
+  // défaut serveur côté client, pour ne jamais transmettre un topic CCW qui
+  // ne correspondrait pas à celui réellement écrit dans le .conf CCL).
+  const ccwActif = document.getElementById('np-ccw').checked;
+  const ccwTopic = document.getElementById('np-topic').value.trim();
+  const ccwGh    = document.getElementById('np-ccw-gh-token').value;
+  const ccwOauth = document.getElementById('np-ccw-oauth-token').value;
+  if (ccwActif && (!ccwTopic || !ccwGh || !ccwOauth)) {
+    npMsg('« Projet CCW » coché : le topic ntfy et les 2 tokens (GH_TOKEN, '
+        + 'CLAUDE_CODE_OAUTH_TOKEN) sont obligatoires.', 'erreur');
+    return;
+  }
 
   const btn = document.getElementById('np-creer');
   const avant = btn.textContent;
@@ -5809,6 +5936,12 @@ async function soumettreNouveauProjet() {
     // #257 — sans eux l'encart ci-dessus, seul affiché jusque-là, laissait
     // croire à tort que rien d'autre n'était à faire.
     afficherRappelProjet(res);
+    // Case « Projet CCW » (issue #559) : chiffrement + génération des 2
+    // issues croisées, APRÈS le succès ci-dessus, jamais avant — un échec
+    // ici n'annule pas la création CCL déjà faite (encart séparé).
+    if (ccwActif) {
+      npCcwBootstrap(res.nom, res.depot, ccwTopic, ccwGh, ccwOauth);
+    }
     // Création réussie : on verrouille « Créer » (évite un double envoi) et on
     // renomme « Fermer » en « Terminé ».
     btn.disabled = true;

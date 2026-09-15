@@ -2501,11 +2501,107 @@ faux `powershell` sur le `PATH`), et un scénario bout en bout via
 `traiter_issue` vérifiant qu'un faux `claude` marqueur n'est **jamais**
 touché.
 
-**Reste à faire (issue 3/3, #559 ou suivant, hors périmètre de #556) :** le
-formulaire web qui génère automatiquement ces 6 champs (récupération de
-`bootstrap_publique.pem`, chiffrement des deux tokens, remplissage du
-corps) — cette issue a été testée avec une issue `for-windows` créée à la
-main, sans attendre le formulaire.
+**Formulaire web générant ces 6 champs automatiquement : voir §16.7
+(issue #559, 3/3 — chantier complet).**
+
+### 16.7 Case « Projet CCW » du formulaire de création de projet (issue #559, 3/3)
+
+**But.** Dernière brique du chantier « Projet CCW » (#553 conception → #554
+clés → #555/#556/#557 traitement `CREATION` validé en conditions réelles) :
+une case à cocher dans le modal « Nouveau projet » (`templates/index.html`)
+qui automatise ce que §16.6 documentait comme fait « à la main » —
+récupérer la clé publique, chiffrer les 2 tokens, construire le corps de
+l'issue `CREATION`, créer les 2 issues croisées. Module dédié
+`app/projet_ccw.py` (même séparation que `app/ccw.py`), **jamais** de
+modification de `app/nouveau_projet.py` : appelé par le front-end
+JUSTE APRÈS le succès de la création classique du projet CCL
+(`POST /nouveau-projet`, `np_cli.creer_projet`), jamais avant.
+
+**Décision — cache local de la clé publique de bootstrap (point le plus
+ouvert de la conception #553).** La clé publique
+(`C:\CCW\cles_bootstrap\bootstrap_publique.pem`, #554) n'est **pas**
+récupérée par un aller-retour SSH à chaque création de projet — cela
+réintroduirait exactement la dépendance à « CCW allumé » que ce chantier
+vise à éviter (la case doit fonctionner même PC éteint). Elle est mise en
+cache localement dans `configs/ccw_bootstrap_publique.pem` (gitignoré :
+état local de la machine CCL, spécifique à l'instance CCW courante, sans
+intérêt dans l'historique git — régénérée à chaque réinstallation de CCW,
+cf. `REINSTALLATION_CCW.md` §8). **Rafraîchissement MANUEL** : bouton « 🔄
+Rafraîchir la clé publique » dans le bloc d'instructions du formulaire
+(`GET /projet-ccw/cle-publique/etat` pour l'état affiché avant soumission,
+`POST /projet-ccw/rafraichir-cle` pour le rafraîchir), réutilisant le
+mécanisme SSH déjà en place et testé (`app/ccw.py::_charger_config_ssh` /
+`OPTIONS_SSH`, scp `C:/CCW/cles_bootstrap/bootstrap_publique.pem` →
+cache local) — **seul** point de `app/projet_ccw.py` qui exige CCW allumé.
+À relancer après une (première génération ou) rotation de la paire de
+clés côté CCW. Si le cache est absent au moment de la soumission :
+`/projet-ccw/bootstrap` refuse proprement (message explicite), aucune
+issue n'est créée.
+
+**Formulaire (`templates/index.html`, `static/js/app.js`).** Case
+« Projet CCW » à côté des options existantes du modal. Cochée → affichage
+immédiat (JS pur, aucun aller-retour serveur) d'un bloc d'instructions
+(repo dédié, permissions `Issues: Read and write` / `Metadata: Read-only`,
+`claude setup-token`) et de 2 champs `type="password"` (GH_TOKEN,
+CLAUDE_CODE_OAUTH_TOKEN). Validation stricte **côté client ET serveur** :
+case cochée → topic ntfy + 2 tokens obligatoires avant l'appel à
+`/projet-ccw/bootstrap` (le topic est **exigé explicitement** côté client,
+plutôt que de résoudre le défaut serveur silencieusement — évite toute
+divergence entre le topic CCL réellement écrit dans le `.conf` du nouveau
+projet et celui transmis à l'issue CCW).
+
+**Séquence côté serveur (`app/projet_ccw.py::bootstrap_projet_ccw`,
+`POST /projet-ccw/bootstrap`, appelée par le JS après le succès de
+`/nouveau-projet`) :**
+1. Validation (nom/dépôt/topic transmis, 2 tokens non vides, cache de clé
+   publique présent) — sinon échec propre, aucune issue créée.
+2. Chiffrement des 2 tokens (`_chiffrer_token`, RSA/OAEP-SHA256, base64 sur
+   une seule ligne) — miroir exact, côté chiffrement, de
+   `dechiffrer_token_bootstrap` (`watcher.py`, §16.6) : même padding, même
+   encodage, vérifié par aller-retour réel en test (voir plus bas).
+3. Issue **CCL** créée en premier sur `AlainDelree/Bridge_Agent`
+   (`bridge,for-linux,mode_write`) : met à jour
+   `reinstaller_projets_ccw.ps1` (tableau `$Projets`) et le tableau de
+   `REINSTALLATION_CCW.md` §7.
+4. Issue **CCW** créée ensuite, même dépôt (`bridge,for-windows,mode_write`,
+   canal unifié) : corps au format EXACT du §16.6 (les 6 champs
+   `CREATION*`), référence l'issue CCL. Traitée par `watcher.py` (#556)
+   sans aucune session `claude` (décision #554 §2.5) — si CCW est éteint,
+   elle attend simplement dans la file.
+5. Commentaire de référence croisée posté sur l'issue CCL (numéro de
+   l'issue CCW). Best-effort : un échec ici ne remet pas en cause le
+   succès des 2 créations.
+6. Démarrage best-effort du watcher `for-linux` de `bridge_agent` (même
+   logique que `app.issues.envoyer`, issue #202).
+
+**Anti-double-soumission :** `_issue_ouverte_meme_titre` (`app/issues.py`,
+#189, déjà en place) réutilisé avec un titre déterministe par projet
+(`_titre_issue_ccl`/`_titre_issue_ccw`), plus désactivation du bouton
+« Créer » côté JS dès le premier clic (mécanisme déjà existant du modal,
+issue #99).
+
+**Échec partiel assumé** (§4 de la conception #553, pas de mécanisme
+transactionnel) : si l'issue CCW échoue après que l'issue CCL a réussi, la
+réponse renvoie quand même le numéro/l'URL de l'issue CCL déjà créée —
+Alain peut réessayer manuellement le volet CCW sans dupliquer le volet CCL.
+
+**Confirmation utilisateur :** encart dédié (`static/js/app.js::
+npCcwBootstrap`) affichant les liens directs vers les 2 issues créées, avec
+le rappel explicite que l'issue CCW attend simplement dans la file si CCW
+est éteint — aucune action supplémentaire nécessaire.
+
+**Test sans vraie machine CCW ni vraie issue GitHub** (même technique que
+`tests/test_creation_bootstrap_ccw_556.py`) :
+`tests/test_projet_ccw_559.py` — chiffrement réel (aller-retour avec
+`watcher.dechiffrer_token_bootstrap`, y compris le cas mauvaise clé),
+corps des 2 issues (celui de l'issue CCW vérifié **parsable** par
+`watcher.creation_demandee`/`extraire_champs_creation` — le verrou anti-
+régression le plus important de ce fichier), titres déterministes,
+création d'issue via un faux `gh` (succès + anti-doublon), et la route
+`bootstrap_projet_ccw` complète de bout en bout (validations, chemin de
+succès avec déchiffrement réel des tokens postés, cross-référence,
+démarrage du watcher neutralisé pour ne jamais lancer un vrai sous-
+processus pendant le test).
 
 ---
 

@@ -654,10 +654,48 @@
       Pattern Specs MVC (§15) — crée aussi CONTEXTE_VUE / METIER / PERSISTANCE
     </label>
 
+    <!-- ─── Case « Projet CCW » (issue #559, 3/3) ────────────────────────────
+         Cochée → bootstrap automatique (après la création CCL classique) d'un
+         service CCW dédié : chiffrement des 2 tokens + génération des 2
+         issues croisées (CCL réinstallation + CCW création de service). -->
+    <label style="display:block;font-size:13px;color:#333;margin-bottom:8px">
+      <input type="checkbox" id="np-ccw" onchange="npCcwToggle()">
+      Projet CCW — provisionner aussi un service CCW dédié (Windows)
+    </label>
+    <div id="np-ccw-bloc" style="display:none;margin:0 0 16px 24px;padding:10px 12px;
+         background:#f5f7fa;border:1px solid #d8dee6;border-radius:6px;font-size:12.5px;color:#333">
+      <div id="np-ccw-cle-etat" style="margin-bottom:8px"></div>
+      <div style="margin-bottom:8px">
+        Avant de cocher : crée un token GitHub <b>fine-grained</b> DÉDIÉ à ce
+        projet (GitHub → Settings → Developer settings → Fine-grained tokens) :
+        <ul style="margin:4px 0 4px 18px;padding:0">
+          <li>Repository access → ce nouveau dépôt UNIQUEMENT</li>
+          <li>Permissions : <code>Issues = Read and write</code>,
+              <code>Metadata = Read-only</code></li>
+          <li>Expiration : alignée sur les tokens CCW en cours (cf. §16.1 de
+              BRIDGE_AGENT_DOC.md)</li>
+        </ul>
+        Génère aussi un <code>CLAUDE_CODE_OAUTH_TOKEN</code> (<code>claude
+        setup-token</code>), puis colle les deux valeurs ci-dessous.
+      </div>
+      <div class="champ" style="margin-bottom:8px">
+        <label>GH_TOKEN (token GitHub fine-grained dédié)</label>
+        <input type="password" id="np-ccw-gh-token" autocomplete="off">
+      </div>
+      <div class="champ" style="margin-bottom:4px">
+        <label>CLAUDE_CODE_OAUTH_TOKEN</label>
+        <input type="password" id="np-ccw-oauth-token" autocomplete="off">
+      </div>
+      <button type="button" id="np-ccw-rafraichir-cle" onclick="npCcwRafraichirCle(this)"
+              style="margin-top:4px;font-size:12px">🔄 Rafraîchir la clé publique (CCW allumé requis)</button>
+      <div id="np-ccw-msg" style="font-size:12px;min-height:14px;margin-top:6px"></div>
+    </div>
+
     <div id="np-compte-rendu" class="modal-liste" style="display:none"></div>
     <div id="np-message" class="message" style="display:none;margin-bottom:14px"></div>
     <div id="np-rappel-projet" class="np-rappel-projet" style="display:none"></div>
     <div id="np-rappel-git" class="np-rappel-git" style="display:none"></div>
+    <div id="np-rappel-ccw" class="np-rappel-projet" style="display:none"></div>
 
     <div class="modal-boutons">
       <button id="np-fermer" onclick="fermerNouveauProjet()">Fermer</button>

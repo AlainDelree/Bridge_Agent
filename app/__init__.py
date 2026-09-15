@@ -62,6 +62,8 @@ def _enregistrer_routes(app: Flask) -> None:
     from app.auth import login_requis, login, login_post, logout
     from app.projets import get_config, post_config, tester_bip
     from app.nouveau_projet import verifier_nouveau_projet, creer_nouveau_projet
+    from app.projet_ccw import (etat_cle_publique, rafraichir_cle_publique,
+                                bootstrap_projet_ccw)
     from app.watchers import (watchers, lancer_watcher,
                               arreter_watcher_route, statut)
     from app.issues import (apercu, envoyer, issues_liste, issue_detail,
@@ -110,6 +112,10 @@ def _enregistrer_routes(app: Flask) -> None:
     app.add_url_rule("/tester-bip/<nom_projet>", "tester_bip", login_requis(tester_bip), methods=["POST"])
     app.add_url_rule("/nouveau-projet/verifier", "verifier_nouveau_projet", login_requis(verifier_nouveau_projet), methods=["GET"])
     app.add_url_rule("/nouveau-projet", "creer_nouveau_projet", login_requis(creer_nouveau_projet), methods=["POST"])
+    # ─── Case « Projet CCW » (issue #559, 3/3) : chiffrement + 2 issues croisées ─
+    app.add_url_rule("/projet-ccw/cle-publique/etat", "etat_cle_publique", login_requis(etat_cle_publique), methods=["GET"])
+    app.add_url_rule("/projet-ccw/rafraichir-cle", "rafraichir_cle_publique", login_requis(rafraichir_cle_publique), methods=["POST"])
+    app.add_url_rule("/projet-ccw/bootstrap", "bootstrap_projet_ccw", login_requis(bootstrap_projet_ccw), methods=["POST"])
     app.add_url_rule("/watchers", "watchers", login_requis(watchers))
     app.add_url_rule("/lancer-watcher", "lancer_watcher", login_requis(lancer_watcher), methods=["POST"])
     app.add_url_rule("/arreter-watcher", "arreter_watcher_route", login_requis(arreter_watcher_route), methods=["POST"])

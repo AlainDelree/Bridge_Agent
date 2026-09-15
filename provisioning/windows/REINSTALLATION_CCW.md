@@ -148,8 +148,13 @@ stade** : cette étape ne fait que poser la paire de clés elle-même).
   la clé privée n'a rien à y faire).
 - **Clé publique** : `C:\CCW\cles_bootstrap\bootstrap_publique.pem` — pas
   sensible, à récupérer côté CCL pour chiffrer les tokens avant inclusion
-  dans le corps d'une future issue. Deux façons de la récupérer, aucune
-  automatisée pour l'instant :
+  dans le corps d'une future issue. Trois façons de la récupérer :
+  - **automatique (recommandé, issue #559)** : bouton « 🔄 Rafraîchir la clé
+    publique » dans le bloc d'instructions de la case « Projet CCW » du
+    formulaire de création de projet (`POST /projet-ccw/rafraichir-cle`,
+    `app/projet_ccw.py`) — met à jour le cache local
+    `configs/ccw_bootstrap_publique.pem` via la session SSH existante. À
+    relancer après CETTE étape de réinstallation (nouvelle paire de clés) ;
   - **copier-coller manuel** : `provisionner.ps1` affiche son contenu PEM
     intégral en toute fin d'exécution ;
   - **via la session SSH existante** (étape 3 ci-dessus, voir aussi
