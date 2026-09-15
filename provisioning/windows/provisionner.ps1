@@ -20,8 +20,11 @@
     3. installe Claude Code via l'installeur natif officiel (pas de Node.js) :
          irm https://claude.ai/install.ps1 | iex
     4. clone AlainDelree/Bridge_Agent (lecture seule) dans C:\CCW\Bridge_Agent ;
-    5. écrit configs\ccw.conf (LABEL=for-windows, NOM=ccw, …) ;
-    6. enregistre un vrai service Windows (via NSSM) qui lance le watcher au
+    5. génère (une seule fois) la paire de clés RSA de chiffrement des tokens
+       de bootstrap « Projet CCW » (issue #554, 1/3) — clé privée jamais
+       exposée hors de la machine, voir section dédiée plus bas ;
+    6. écrit configs\ccw.conf (LABEL=for-windows, NOM=ccw, …) ;
+    7. enregistre un vrai service Windows (via NSSM) qui lance le watcher au
        démarrage de la machine (sans session ouverte), avec redémarrage
        automatique en cas d'échec.
 
@@ -417,7 +420,99 @@ if (Test-Path (Join-Path $RepDepot '.git')) {
 }
 
 # ---------------------------------------------------------------------------
-# 5. Écriture de configs\ccw.conf.
+# 5. Paire de clés de chiffrement des tokens de bootstrap « Projet CCW »
+#    (issue #554, 1/3 — brique clés seule ; le chiffrement côté formulaire et
+#    le déchiffrement côté watcher.py font l'objet de #555/#556 à suivre).
+#
+#    Contexte : la future case « Projet CCW » du formulaire de création de
+#    projet transmettra GH_TOKEN et CLAUDE_CODE_OAUTH_TOKEN dans le corps
+#    d'une issue GitHub traitée de façon ASYNCHRONE par CCW (PC potentiellement
+#    éteint à la soumission) — chiffrement asymétrique retenu plutôt que clair
+#    en dur. La clé PRIVÉE ne quitte jamais cette machine ; la clé PUBLIQUE
+#    n'est pas sensible et doit être récupérable côté CCL pour chiffrer.
+#
+#    Choix technique : RSA 3072 bits en PEM, généré via openssl.exe — déjà
+#    disponible sans installation supplémentaire puisque Git pour Windows
+#    (étape 1 winget ci-dessus) l'embarque dans son sous-dossier usr\bin
+#    (couche MSYS/MinGW). Écarté : .NET natif
+#    (System.Security.Cryptography), dont les méthodes d'export PEM
+#    (ExportPkcs8PrivateKey / ExportSubjectPublicKeyInfo) ne sont disponibles
+#    qu'à partir de .NET 5+ — absentes de Windows PowerShell 5.1 (.NET
+#    Framework) utilisé par défaut sur ce PC, ce qui aurait exigé de
+#    reconstruire l'encodage ASN.1/DER à la main. Écarté aussi : `age`, pour
+#    éviter d'imposer une dépendance winget supplémentaire alors qu'openssl
+#    est déjà présent de facto. Le format PEM (norme ouverte, contrairement
+#    au XML natif .NET) reste directement exploitable côté CCL (Python) pour
+#    le chiffrement à venir en #555.
+#
+#    Stockage : C:\CCW\cles_bootstrap\, un dossier LOCAL au PC fixe, frère de
+#    $RepDepot mais HORS du clone git (jamais committé) et hors de
+#    C:\CCW_Share (ce dernier est un point de montage réseau accédé depuis
+#    CCL, cf. BRIDGE_AGENT_DOC.md §16.3 — la clé privée n'y a rien à faire).
+#    Permissions restrictives sur le fichier de clé PRIVÉE (icacls,
+#    héritage coupé) : SYSTEM + Administrateurs (lecture/écriture), et
+#    $CompteService en lecture seule (compte sous lequel tourne
+#    CCW-Watcher, futur lecteur de cette clé pour le déchiffrement en #556).
+#
+#    Idempotent : si la paire existe déjà (réinstallations rapprochées lors
+#    d'un test), la génération est sautée — reste UNE clé par cycle de vie
+#    de la machine, régénérée à chaque réinstallation Windows complète (cf.
+#    rappel dans REINSTALLATION_CCW.md sur les issues de bootstrap en vol au
+#    moment d'une réinstallation).
+# ---------------------------------------------------------------------------
+function Resoudre-OpenSSL {
+    $cmd = Get-Command openssl -ErrorAction SilentlyContinue
+    if ($cmd) { return $cmd.Source }
+
+    # Pas sur le PATH : Git pour Windows l'embarque quand même dans son
+    # sous-dossier usr\bin (couche MSYS/MinGW), déjà installé à l'étape 1.
+    try {
+        $execPath  = (git --exec-path).Trim()
+        $racineGit = Split-Path (Split-Path $execPath -Parent) -Parent
+        $candidat  = Join-Path $racineGit 'usr\bin\openssl.exe'
+        if (Test-Path $candidat) { return $candidat }
+    } catch {
+        # Ignoré : on tombe sur l'erreur explicite ci-dessous.
+    }
+
+    throw ("openssl introuvable (ni sur le PATH, ni dans le sous-dossier " +
+           "usr\bin de Git) — impossible de générer la paire de clés de " +
+           "bootstrap. Vérifier l'installation de Git (étape 1).")
+}
+
+function Assurer-ClesBootstrap {
+    $RepCles        = Join-Path $RepCCW 'cles_bootstrap'
+    $CheminPrivee   = Join-Path $RepCles 'bootstrap_privee.pem'
+    $CheminPublique = Join-Path $RepCles 'bootstrap_publique.pem'
+
+    if ((Test-Path $CheminPrivee) -and (Test-Path $CheminPublique)) {
+        Info "Paire de clés de bootstrap déjà présente ($RepCles) — génération sautée (idempotent)."
+        return $CheminPublique
+    }
+
+    Info 'Génération de la paire de clés RSA de bootstrap (chiffrement tokens « Projet CCW », issue #554)…'
+    $openssl = Resoudre-OpenSSL
+    if (-not (Test-Path $RepCles)) { New-Item -ItemType Directory -Path $RepCles | Out-Null }
+
+    & $openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:3072 -out $CheminPrivee
+    if ($LASTEXITCODE -ne 0) { throw "openssl genpkey a échoué (code $LASTEXITCODE)." }
+    & $openssl pkey -in $CheminPrivee -pubout -out $CheminPublique
+    if ($LASTEXITCODE -ne 0) { throw "openssl pkey (extraction de la clé publique) a échoué (code $LASTEXITCODE)." }
+
+    Info 'Restriction des permissions de la clé privée (icacls)…'
+    icacls.exe $CheminPrivee /inheritance:r | Out-Null
+    icacls.exe $CheminPrivee /grant 'SYSTEM:F' | Out-Null
+    icacls.exe $CheminPrivee /grant 'BUILTIN\Administrators:F' | Out-Null
+    icacls.exe $CheminPrivee /grant "${CompteService}:R" | Out-Null
+
+    Info "Paire de clés de bootstrap générée dans $RepCles."
+    return $CheminPublique
+}
+
+$CheminCleBootstrapPublique = Assurer-ClesBootstrap
+
+# ---------------------------------------------------------------------------
+# 6. Écriture de configs\ccw.conf.
 #    REP_TRAVAIL pointe vers C:\CCW_Share, un chemin LOCAL au PC fixe
 #    (issue #446, suite #447) — plus de partage réseau VirtualBox.
 #    TOPIC_NTFY est un placeholder à renseigner (comme le mot de passe phase 1).
@@ -463,7 +558,7 @@ Info "Écriture de $CheminConf…"
 [System.IO.File]::WriteAllText($CheminConf, $contenuConf, (New-Object System.Text.UTF8Encoding($false)))
 
 # ---------------------------------------------------------------------------
-# 6. Service Windows (NSSM) : lance le watcher au démarrage de la machine
+# 7. Service Windows (NSSM) : lance le watcher au démarrage de la machine
 #    (sans session ouverte), avec redémarrage automatique en cas d'échec.
 #
 #    ✅ Équivalent DIRECT des services systemd --user du §13 : démarrage au
@@ -530,3 +625,9 @@ Info '  • interactif : claude auth login'
 Info ''
 Info "RAPPEL — renseigner TOPIC_NTFY dans $CheminConf (placeholder actuel)."
 Info "Le service « $NomService » lance le watcher au démarrage (vérif : nssm status $NomService / Get-Service $NomService)."
+Info ''
+Info "RAPPEL — clé publique de bootstrap « Projet CCW » (issue #554) à récupérer côté CCL :"
+Info "  fichier : $CheminCleBootstrapPublique"
+Info '  (copier-coller le contenu ci-dessous, ou la récupérer via la session SSH — §16.2) :'
+Info ''
+Get-Content $CheminCleBootstrapPublique | ForEach-Object { Info "  $_" }

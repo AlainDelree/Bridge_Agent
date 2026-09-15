@@ -64,7 +64,8 @@ précédente) :
 
 Installe Git, GitHub CLI, Python 3, PyInstaller (winget) et Claude Code
 (installeur natif), clone `Bridge_Agent` en lecture seule dans
-`C:\CCW\Bridge_Agent`, écrit `configs\ccw.conf` (avec un placeholder
+`C:\CCW\Bridge_Agent`, génère la paire de clés de bootstrap « Projet CCW »
+(voir étape 8 ci-dessous), écrit `configs\ccw.conf` (avec un placeholder
 `TOPIC_NTFY`) et enregistre le service Windows `CCW-Watcher` via NSSM.
 
 ### 5. Renseigner le topic ntfy et poser les tokens
@@ -128,6 +129,51 @@ il s'arrête et affiche comment reprendre uniquement les projets restants
 Vérifier ensuite l'état des 5 services (base + 4 dédiés) via
 `provisioning\windows\lister_projets_ccw.ps1`, ou depuis CCL via l'onglet
 **CCW** de l'interface web.
+
+### 8. Paire de clés de bootstrap « Projet CCW » (issue #554, 1/3)
+
+`provisionner.ps1` (étape 4 ci-dessus) génère automatiquement, la première
+fois, une paire de clés **RSA 3072 bits** destinée au futur chiffrement des
+tokens (`GH_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN`) transmis par la case
+« Projet CCW » du formulaire de création de projet (conception #554,
+mécanisme complet à suivre en #555/#556 — **pas encore implémenté à ce
+stade** : cette étape ne fait que poser la paire de clés elle-même).
+
+- **Clé privée** : `C:\CCW\cles_bootstrap\bootstrap_privee.pem` — ne quitte
+  **jamais** le PC fixe. Permissions restreintes par `icacls` (SYSTEM +
+  Administrateurs + le compte de service `AlainW` en lecture seule),
+  héritage coupé. Ce dossier est volontairement **hors** du clone git
+  `C:\CCW\Bridge_Agent` (jamais committé) et hors de `C:\CCW_Share` (point
+  de montage réseau accédé depuis CCL, cf. `BRIDGE_AGENT_DOC.md` §16.3 —
+  la clé privée n'a rien à y faire).
+- **Clé publique** : `C:\CCW\cles_bootstrap\bootstrap_publique.pem` — pas
+  sensible, à récupérer côté CCL pour chiffrer les tokens avant inclusion
+  dans le corps d'une future issue. Deux façons de la récupérer, aucune
+  automatisée pour l'instant :
+  - **copier-coller manuel** : `provisionner.ps1` affiche son contenu PEM
+    intégral en toute fin d'exécution ;
+  - **via la session SSH existante** (étape 3 ci-dessus, voir aussi
+    `BRIDGE_AGENT_DOC.md` §16.2) :
+    ```bash
+    ssh -i ~/.ssh/ccl_ccw AlainW@<ip> type C:\CCW\cles_bootstrap\bootstrap_publique.pem
+    ```
+
+Génération via `openssl.exe` (déjà présent : embarqué par Git pour Windows,
+sous-dossier `usr\bin`) plutôt que `.NET` natif ou `age` — voir le
+commentaire détaillé en tête de la section correspondante dans
+`provisionner.ps1` pour la justification complète du choix.
+
+> ⚠️ **La clé privée ne survit PAS à une réinstallation.** Comme le reste de
+> l'état local du PC fixe, `C:\CCW\cles_bootstrap\` disparaît avec le disque
+> effacé à l'étape 1 (réinstallation Windows) ; la paire de clés régénérée
+> par l'étape 4 suivante n'a **aucun rapport** avec l'ancienne. Conséquence
+> pratique à ne
+> pas oublier (cas déjà identifié dans la conception #554) : **toute issue
+> de bootstrap chiffrée avec l'ancienne clé publique, encore en attente de
+> traitement au moment d'une réinstallation, devient définitivement
+> indéchiffrable** — il faudra la ré-émettre depuis le formulaire une fois
+> la nouvelle clé publique récupérée côté CCL. Ne pas soumettre une case
+> « Projet CCW » juste avant une réinstallation planifiée du PC fixe.
 
 ---
 
