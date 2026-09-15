@@ -175,16 +175,16 @@ MODE_LECTURE        = "lecture"         # défaut : diagnostic, aucune écriture
 MODE_LECTURE_ACTIVE = "lecture_active"  # écriture confinée au scratch (label mode_scratch)
 MODE_ECRITURE       = "ecriture"        # écriture libre dans REP_TRAVAIL (label mode_write)
 
-# ─── Allowlist fine pour MODE_LECTURE (issue #542) ─────────────────────────────
+# ─── Allowlist fine pour MODE_LECTURE (issue #542, révisé #546) ────────────────
 # Confirmé par test direct du CLI `claude` (sans flag) : `git fetch`/`git pull`
-# (et, sur CCW, `Add-Type -AssemblyName ...` pour charger un assembly .NET) sont
-# bloqués par le système de permissions interactif de Claude Code, qui demande
-# une approbation — impossible à satisfaire en session non-interactive (`--print`,
-# lancée par watcher.py). MODE_LECTURE n'a jamais eu --dangerously-skip-permissions
-# (ce flag est réservé à MODE_ECRITURE/MODE_LECTURE_ACTIVE, cf. lancer_claude) : le
-# désarmer entièrement pour débloquer ces deux commandes désarmerait TOUTES les
-# protections en lecture seule, sans le filet de sécurité technique (empreinte
-# avant/après) dont bénéficie la lecture active — inacceptable.
+# sont bloqués par le système de permissions interactif de Claude Code, qui
+# demande une approbation — impossible à satisfaire en session non-interactive
+# (`--print`, lancée par watcher.py). MODE_LECTURE n'a jamais eu
+# --dangerously-skip-permissions (ce flag est réservé à
+# MODE_ECRITURE/MODE_LECTURE_ACTIVE, cf. lancer_claude) : le désarmer entièrement
+# pour débloquer ces commandes désarmerait TOUTES les protections en lecture
+# seule, sans le filet de sécurité technique (empreinte avant/après) dont
+# bénéficie la lecture active — inacceptable.
 #
 # Solution retenue : --allowedTools, mécanisme de Claude Code qui autorise des
 # commandes précises SANS désarmer le reste (toute commande hors de cette liste
@@ -200,22 +200,50 @@ MODE_ECRITURE       = "ecriture"        # écriture libre dans REP_TRAVAIL (labe
 #                              cycle sur REP_TRAVAIL (cf. CONTEXTE.md). `git pull`
 #                              SANS --ff-only reste bloqué (merge/rebase = écriture
 #                              non garantie sans risque).
-#   - `Add-Type -AssemblyName` : charge un assembly .NET nommé depuis le GAC
-#                              (PresentationFramework, System.Windows.Forms, ...) —
-#                              pas d'exécution de code arbitraire. Le préfixe exclut
-#                              volontairement `Add-Type -TypeDefinition`, qui
-#                              compile et exécute du C# arbitraire et doit rester
-#                              soumis à approbation. Spécifique à CCW (PowerShell) ;
-#                              inoffensif à garder aussi côté CCL (jamais invoqué
-#                              sous bash) — non vérifié en conditions réelles sur
-#                              Windows faute d'environnement CCW disponible ici.
+#
+# `Add-Type -AssemblyName` RETIRÉ (issue #546) : ce n'était pas un problème de
+# préfixe ou de transmission de la liste, mais un plafond du CLI lui-même —
+# confirmé en désassemblant le binaire `claude` installé (recherche de chaînes
+# dans node_modules/@anthropic-ai/claude-code-linux-x64/claude) : toute commande
+# PowerShell contenant "Add-Type" déclenche un classifieur codé en dur
+# (fonction minifiée du type `function Ezp(e){if(fvo(e,"Add-Type"))return
+# {behavior:"ask", message:"Command compiles and loads .NET code"}...}`) qui
+# force la réponse "ask" — message identique, au mot près, à celui observé sur
+# CCW dans l'issue de test. Un "ask" côté CLI exige une confirmation interactive
+# et N'EST PAS pilotable par --allowedTools/settings.json : aucune entrée de
+# cette liste n'aurait jamais pu débloquer cette commande. Il existe plusieurs
+# classifieurs de ce genre, tous spécifiques à l'analyse statique PowerShell
+# (Invoke-Expression, New-Object -ComObject, Start-Process -Verb runas, etc.) —
+# un futur besoin similaire sur CCW doit d'abord être vérifié contre cette liste
+# de classifieurs figés avant de supposer qu'une entrée --allowedTools suffira.
+#
 # git status/log/diff/show ne sont volontairement PAS dans cette liste : déjà
 # testés non bloqués par défaut (heuristique interne de Claude Code), donc rien
 # à y ajouter.
+#
+# Remarque #546 (non totalement élucidée) : sur CCW, un `git pull --ff-only`
+# seul — préfixe pourtant exact — a malgré tout été bloqué ("This command
+# requires approval", message générique de non-correspondance, PAS un
+# classifieur dédié comme ci-dessus). Reproduction impossible depuis CCL : même
+# construction de `cmd`, même liste, même ordre d'arguments → succès systématique
+# en local (Linux, CLI 2.1.199). Cause plausible mais NON confirmée (accès à
+# CCW hors du périmètre de cette tâche) : le passage de plusieurs éléments
+# séparés après --allowedTools (option variadique `<tools...>` du CLI) traverse
+# deux ré-encodages successifs de la ligne de commande sous Windows
+# (list2cmdline de Python, puis le décodeur argv du binaire `claude.exe`) —
+# absents côté Linux où execve reçoit l'argv tel quel, sans ré-échappement.
+# Plusieurs entrées de cette liste contiennent un espace interne
+# ("git pull --ff-only"), donc nécessitent un ré-échappement des guillemets à
+# la traversée Windows, contrairement aux entrées sans espace. Correctif
+# défensif appliqué : un seul argument, valeurs jointes par virgule (format
+# alternatif documenté par `claude --help` : "Comma or space-separated list"),
+# ce qui réduit la liste à transmettre à UN SEUL token au lieu de N — supprime
+# le risque lié à la reségmentation variadique et minimise la surface exposée
+# au ré-échappement Windows. À reconfirmer sur CCW par une nouvelle issue de
+# test après ce correctif.
 OUTILS_LECTURE_AUTORISES = [
     "Bash(git fetch:*)",
     "Bash(git pull --ff-only:*)",
-    "Bash(Add-Type -AssemblyName:*)",
 ]
 
 
@@ -2422,11 +2450,14 @@ Si la tâche échoue, remplace ✅ par ❌ et explique la cause en une ligne.
         cmd.append("--dangerously-skip-permissions")
     cmd.append(prompt)
     if mode == MODE_LECTURE:
-        # Issue #542 : allowlist fine plutôt que --dangerously-skip-permissions
-        # (voir commentaire sur OUTILS_LECTURE_AUTORISES) — débloque git
-        # fetch/pull --ff-only et le chargement d'assembly .NET sans désarmer le
-        # reste des protections de Claude Code en lecture seule.
-        cmd += ["--allowedTools"] + OUTILS_LECTURE_AUTORISES
+        # Issue #542, révisé #546 : allowlist fine plutôt que
+        # --dangerously-skip-permissions (voir commentaire sur
+        # OUTILS_LECTURE_AUTORISES) — débloque git fetch/pull --ff-only sans
+        # désarmer le reste des protections de Claude Code en lecture seule.
+        # Un seul argument joint par virgules (et non un token par entrée) :
+        # voir la remarque #546 dans le commentaire ci-dessus sur
+        # OUTILS_LECTURE_AUTORISES.
+        cmd += ["--allowedTools", ",".join(OUTILS_LECTURE_AUTORISES)]
 
     # Popen (plutôt que subprocess.run) pour garder la main sur le PID : le
     # nettoyage de l'arbre de process (issue #247, révisé #249) doit
