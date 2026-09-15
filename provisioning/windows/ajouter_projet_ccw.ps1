@@ -253,10 +253,16 @@ nssm set $NomService AppStdout        $LogService
 nssm set $NomService AppStderr        $LogService
 
 # Réappliquer les tokens préservés (AppEnvironmentExtra) lus avant le remove, pour
-# que la relance n'efface pas les tokens déjà posés (issue #181). Chaque élément
-# de $envExtra est une entrée KEY=valeur, passée comme argument distinct à nssm set.
+# que la relance n'efface pas les tokens déjà posés (issue #181). BUG #558 : passer
+# $envExtra splatté (@envExtra) fait recevoir à nssm.exe chaque entrée KEY=valeur
+# comme un argument SÉPARÉ, au lieu d'une unique valeur multi-lignes — nssm échoue
+# alors avec « Environment should comprise strings of the form KEY=VALUE ». Comme
+# mettre_a_jour_tokens_ccw.ps1 et creer_projet_ccw_complet.ps1 (seul pattern qui
+# fonctionne avec nssm), les entrées doivent être jointes en UNE SEULE chaîne, avec
+# un saut de ligne `n comme séparateur, avant d'être passées à nssm set.
 if ($tokensPreserve) {
-    nssm set $NomService AppEnvironmentExtra @envExtra | Out-Null
+    $envExtraChaine = [string]::Join("`n", $envExtra)
+    nssm set $NomService AppEnvironmentExtra $envExtraChaine | Out-Null
     Info "Tokens existants réappliqués (AppEnvironmentExtra préservé) — relance sans perte."
 }
 
