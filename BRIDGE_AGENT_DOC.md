@@ -2368,6 +2368,145 @@ et avoir `claude setup-token` prêt à lancer pour générer le second token.
 Le script s'arrête (code de sortie 1) et invite à vérifier/recréer le
 token concerné si l'un des deux manque ou échoue au test à blanc.
 
+### 16.6 Bootstrap automatique via le champ `CREATION` (issues #554/#556, 2/3)
+
+**But.** Créer un service CCW dédié **de bout en bout à partir d'une seule
+issue GitHub**, sans aucune session `claude` (décision #554 §2.5) : les
+scripts PowerShell déjà testés en §16.5/tableau de provisioning
+(`ajouter_projet_ccw.ps1` puis `finaliser_projet_ccw_auto.ps1
+-FichierValeurs`) sont appelés directement par `watcher.py`, en Python
+déterministe. Le problème résolu est la transmission **asynchrone** de
+`GH_TOKEN`/`CLAUDE_CODE_OAUTH_TOKEN` : le PC CCW peut être éteint au moment
+où l'issue est créée, donc les tokens ne peuvent pas transiter en clair —
+d'où le chiffrement asymétrique avec la paire de clés de bootstrap générée
+par `provisionner.ps1` (issue #554, 1/3, `C:\CCW\cles_bootstrap\`).
+
+**Détection et traitement (`watcher.py`, issue #556).** `_traiter_issue_
+synchrone` détecte le champ `| CREATION | oui |` **tôt dans le dispatch**,
+juste après la garde d'idempotence habituelle et AVANT tout ce qui touche au
+pipeline `lancer_claude` (mode, périmètre, verrou) — `creation_demandee(body)`
+→ délégation complète à `_traiter_creation_projet_ccw`, qui gère seule tout
+le cycle de vie de l'issue (aucun retour au dispatch normal). Sans objet sur
+n'importe quel autre canal/projet : en pratique n'a de sens que posté sur le
+dépôt `AlainDelree/Bridge_Agent` avec le label `for-windows` (canal unifié,
+service `CCW-Watcher`, seul habilité à écrire les 4 services concernés —
+chicken-and-egg sinon : le nouveau projet n'a par définition pas encore de
+token pour recevoir sa propre issue de bootstrap).
+
+**Format attendu du corps de l'issue.** Six champs dans le tableau d'en-tête
+(en plus des champs standards SOURCE/DEST/…, §6) :
+
+```markdown
+| CREATION              | oui |
+| CREATION_NOM_PROJET   | <NomProjet> |
+| CREATION_DEPOT        | <owner/repo> |
+| CREATION_TOPIC_NTFY   | <topic ntfy dédié> |
+| CREATION_GH_TOKEN     | <token GH_TOKEN chiffré, base64> |
+| CREATION_OAUTH_TOKEN  | <token CLAUDE_CODE_OAUTH_TOKEN chiffré, base64> |
+```
+
+- `CREATION` : déclencheur. Valeurs actives reconnues : `oui`/`true`/`vrai`
+  (insensible à la casse) ; absent ou toute autre valeur → dispatch normal
+  inchangé (comportement historique, aucun risque de régression).
+- `CREATION_NOM_PROJET` / `CREATION_DEPOT` : passés **tels quels** à
+  `ajouter_projet_ccw.ps1 -NomProjet -Depot` (même validation qu'un appel
+  manuel — nom sans espace, dépôt au format `owner/repo`).
+- `CREATION_TOPIC_NTFY` : passé tel quel dans le fichier de valeurs
+  (`TOPIC_NTFY=`, voir plus bas).
+- `CREATION_GH_TOKEN` / `CREATION_OAUTH_TOKEN` : les deux tokens, **chiffrés
+  individuellement** avec la clé PUBLIQUE de bootstrap (`bootstrap_publique.
+  pem`, récupérée depuis CCW — cf. §554 1/3), puis encodés en base64 **sur
+  une seule ligne** (`base64 -w0` ou équivalent — indispensable pour tenir
+  dans une cellule de tableau markdown). Convention de chiffrement, à
+  respecter EXACTEMENT côté formulaire (issue à venir, 3/3) :
+
+  ```bash
+  # Une seule fois : récupérer bootstrap_publique.pem depuis CCW (§554 1/3).
+  echo -n "<token en clair>" | openssl pkeyutl -encrypt \
+      -pubin -inkey bootstrap_publique.pem \
+      -pkeyopt rsa_padding_mode:oaep -pkeyopt rsa_oaep_md:sha256 \
+      -out token.bin
+  base64 -w0 token.bin        # → valeur du champ CREATION_GH_TOKEN/CREATION_OAUTH_TOKEN
+  ```
+
+  **Padding OAEP/SHA-256 impératif des deux côtés** (chiffrement côté
+  formulaire, déchiffrement côté `watcher.py`/`dechiffrer_token_bootstrap`)
+  — propriété volontaire d'OAEP : un mauvais padding fait **échouer**
+  `openssl pkeyutl -decrypt` plutôt que de réussir silencieusement avec un
+  résultat corrompu, contrairement au padding PKCS#1 v1.5 historique
+  (`RSA genpkey`/`rsa_keygen_bits:3072`, issue #554 — la taille de clé
+  n'impose aucune contrainte de padding, choisi indépendamment ici).
+
+**Comportement précis de `watcher.py` (issue #556).**
+
+1. Extraction des 6 champs (`extraire_champs_creation`) ; un seul manquant
+   → échec **définitif** immédiat (`needs-human`, aucun retry, aucun script
+   PowerShell ni déchiffrement tenté) — erreur de configuration/issue, pas
+   un échec transitoire, même logique que `REPO_CIBLE`/`SOUS_DOSSIER`.
+2. **Retrait immédiat** des deux tokens chiffrés du corps GitHub
+   (`gh issue edit --body-file`, remplacés par `<retiré après application>`)
+   — AVANT même la tentative de déchiffrement, dès que les valeurs sont en
+   mémoire : limite le temps d'exposition résiduel (§2.4 de #554).
+   Best-effort (un échec ici ne bloque pas le bootstrap, juste journalisé).
+3. Résolution robuste du chemin `openssl` (`_resoudre_openssl`) : PATH →
+   installation manuelle Windows documentée en #557
+   (`C:\Program Files\OpenSSL-Win64\bin\openssl.exe`, **pas** sur le PATH par
+   défaut sur CCW) → repli `usr\bin` de Git pour Windows (même binaire que
+   celui utilisé par `provisionner.ps1` pour la GÉNÉRATION des clés,
+   `Resoudre-OpenSSL` côté PowerShell — dupliqué en Python plutôt que
+   dot-sourcé, cette fonction n'ayant besoin que d'un chemin).
+4. Déchiffrement des deux tokens avec `C:\CCW\cles_bootstrap\bootstrap_
+   privee.pem` (chemin dérivé de `DOSSIER_SCRIPT.parent` — jamais un
+   `C:\CCW` en dur — puisque `watcher.py` vit toujours dans
+   `<RepCCW>\Bridge_Agent`, cf. plus haut dans ce §16).
+5. Écriture d'un fichier temporaire « clé=valeur » **au format EXACT** déjà
+   lu par `finaliser_projet_ccw_auto.ps1 -FichierValeurs` (vérifié en lisant
+   le script avant d'écrire ce code — identique à celui déjà produit par
+   `app/ccw.py`, `ccw_finaliser_projet`) : trois lignes `TOPIC_NTFY=`/
+   `GH_TOKEN=`/`CLAUDE_CODE_OAUTH_TOKEN=`, UTF-8, **aucun espace autour du
+   `=`** (`Lire-ValeurFichier` côté PowerShell ne rogne que la clé, pas la
+   valeur).
+6. Appel séquentiel `ajouter_projet_ccw.ps1 -NomProjet -Depot` puis
+   `finaliser_projet_ccw_auto.ps1 -NomProjet -FichierValeurs` (PowerShell
+   **local** — `watcher.py` tourne déjà sur la machine CCW cible,
+   contrairement à l'onglet CCW de l'interface web qui pilote la même paire
+   de scripts à distance via SSH, `app/ccw.py`). Sortie complète des deux
+   scripts capturée pour le compte-rendu.
+7. Suppression du fichier de valeurs en deux lignes de défense : le
+   `finally` PowerShell de `finaliser_projet_ccw_auto.ps1` (déjà en place),
+   PUIS un nettoyage Python en repli (couvre le cas où le script n'a jamais
+   démarré ou a planté avant son propre `finally`) — même prudence que
+   `app/ccw.py`.
+8. Selon le résultat : commentaire de compte-rendu (log complet des deux
+   scripts en accordéon `<details>`) + fermeture de l'issue si succès (codes
+   0 et 2 — 2 = tokens appliqués mais vérification finale non concluante,
+   signalé en avertissement, pas un échec), ou `needs-human` + log complet
+   en commentaire si échec (code ≠ 0/2, timeout, script introuvable, erreur
+   de déchiffrement…).
+
+**Sans objet pour l'agent Linux (CCL).** `_traiter_creation_projet_ccw`
+vérifie `platform.system() == "Windows"` avant toute tentative réelle
+(scripts PowerShell inexistants sur CCL) — échec propre et explicite
+(`needs-human`) plutôt qu'une exception si le champ apparaissait par erreur
+sur un canal `for-linux`.
+
+**Test sans vraie issue GitHub ni machine CCW réelle** (sur le modèle du
+test unitaire `SOUS_DOSSIER` de #550) :
+`tests/test_creation_bootstrap_ccw_556.py` — extraction/détection des
+champs, non-collision `CREATION`/`CREATION_NOM_PROJET` (préfixe partagé),
+retrait des tokens du corps, résolution `openssl` (3 replis), chiffrement/
+déchiffrement RÉEL via un openssl local, chemin complet de
+`_traiter_creation_projet_ccw` (succès/champ manquant/dry-run, faux `gh` et
+faux `powershell` sur le `PATH`), et un scénario bout en bout via
+`traiter_issue` vérifiant qu'un faux `claude` marqueur n'est **jamais**
+touché.
+
+**Reste à faire (issue 3/3, #559 ou suivant, hors périmètre de #556) :** le
+formulaire web qui génère automatiquement ces 6 champs (récupération de
+`bootstrap_publique.pem`, chiffrement des deux tokens, remplissage du
+corps) — cette issue a été testée avec une issue `for-windows` créée à la
+main, sans attendre le formulaire.
+
 ---
 
 ## 17. Notifications centralisées — détection serveur des transitions (issue #187)
