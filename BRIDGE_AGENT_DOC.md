@@ -1715,6 +1715,50 @@ strict des builds par construction (un seul process `watcher.py` sur ce
 canal, une issue à la fois) et supprime tout risque de contention CPU/RAM
 entre deux builds parallèles.
 
+> **Champ d'en-tête `SOUS_DOSSIER` (issue #550) — cibler un sous-projet du
+> canal unifié sans blocage `git`.** Sur ce canal, `claude` démarrait
+> jusqu'ici TOUJOURS avec pour cwd `REP_TRAVAIL` tout entier
+> (`C:\CCW_Share`), même quand l'issue ne visait qu'un sous-projet précis
+> (ex. `C:\CCW_Share\CCW\gestionmail\`). **Confirmé empiriquement** (issue
+> #550, reproduction locale Linux avec la même structure cwd-parent +
+> sous-dossier-cible) : quand le cwd réel du process diverge du dossier où
+> une commande `git` opère effectivement — atteint via `git -C <chemin>` ou
+> `cd <chemin> &&` —, Claude Code bloque la commande par une demande
+> d'approbation interactive (`This command requires approval`, ou pour la
+> forme `cd && git` : `This command changes directory before running git,
+> which can execute untrusted hooks from the target directory`), **même si
+> son préfixe correspond exactement à une entrée de
+> `OUTILS_LECTURE_AUTORISES`** — `--allowedTools` ne pilote pas ce
+> garde-fou-là. `git pull --ff-only` **bare** (sans `-C` ni `cd`), lancé
+> avec un cwd déjà positionné sur le bon dossier, n'est en revanche PAS
+> bloqué. C'était la cause racine réelle du blocage persistant constaté sur
+> `gestionmail` dans #546/#548/#549 — les correctifs successifs sur
+> l'allowlist (#546) et l'hypothèse de version CLI (#549) portaient sur le
+> mauvais mécanisme.
+>
+> Pour une issue `for-windows` ciblant un sous-projet du canal unifié,
+> ajouter dans l'en-tête un champ optionnel `| SOUS_DOSSIER | CCW\<projet> |`
+> (chemin **relatif** à `REP_TRAVAIL`, jamais absolu — un chemin absolu
+> reste l'usage de `REPO_CIBLE`, §périmètre dynamique). `watcher.py`
+> (`extraire_sous_dossier`/`valider_sous_dossier`) construit alors
+> `cwd_effectif = REP_TRAVAIL / SOUS_DOSSIER` (rejeté si absolu, si la
+> résolution sort de `REP_TRAVAIL` — traversée `..`/lien symbolique —, ou si
+> le dossier n'existe pas ; erreur définitive, `needs-human`, aucun retry) et
+> l'utilise aussi bien comme cwd réel du process que comme périmètre
+> effectif du prompt. Sans objet si le projet est déjà en
+> `PERIMETRE_DYNAMIQUE`/`REPO_CIBLE` (#125) ou si la tâche tourne dans un
+> worktree isolé (#337) — ces deux mécanismes restent seuls décisifs si
+> combinés par erreur. **Absent de l'issue (usage historique, sans
+> sous-projet ciblé) : comportement strictement inchangé**, `cwd_effectif`
+> reste `REP_TRAVAIL`.
+>
+> **Protocole de retest** (à rejouer sur CCW, hors du périmètre Linux de la
+> tâche #550 qui a implémenté ce champ) : ouvrir une issue `for-windows` en
+> mode lecture, en-tête `| SOUS_DOSSIER | CCW\gestionmail |`, corps demandant
+> `git pull --ff-only` dans `C:\CCW_Share\CCW\gestionmail\` — succès attendu
+> sans demande d'approbation, désormais que le cwd du process coïncide avec
+> ce dossier.
+
 > **Ce canal de build coexiste avec le modèle multi-projets (issue #170,
 > actif — voir plus bas dans ce §16).** Des services NSSM **additionnels**
 > `CCW-Watcher-<Projet>` surveillent chacun les issues **directement dans
