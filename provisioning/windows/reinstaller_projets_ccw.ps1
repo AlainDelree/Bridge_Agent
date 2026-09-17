@@ -40,7 +40,6 @@ $Projets = @(
     @{ NomProjet = "actualise"; Depot = "AlainDelree/Actualise" }
     @{ NomProjet = "rummikub";  Depot = "AlainDelree/Rummikub" }
     @{ NomProjet = "scrabble";  Depot = "AlainDelree/Scrabble" }
-    @{ NomProjet = "testccwprojet"; Depot = "AlainDelree/Testccwprojet" }
 )
 
 if ($SeulementProjets) {
