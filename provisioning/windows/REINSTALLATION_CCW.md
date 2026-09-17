@@ -102,6 +102,7 @@ la réinstallation, puisque le service NSSM et ses tokens ne survivent pas :
 | `actualise` | `AlainDelree/Actualise` |
 | `rummikub` | `AlainDelree/Rummikub` |
 | `scrabble` | `AlainDelree/Scrabble` |
+| `testccwprojet` | `AlainDelree/Testccwprojet` |
 
 Rappel : les fichiers `.conf` de chaque projet (ex. `configs\alchess-ccw.conf`)
 vivent dans le dépôt du projet lui-même, donc **survivent** à la
