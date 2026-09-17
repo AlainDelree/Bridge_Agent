@@ -180,6 +180,20 @@ LABEL_SCRATCH   = "mode_scratch"  # ARME la lecture active (écriture confinée 
 LABEL_ECHEC     = "needs-human"   # posé après échec définitif : stoppe le retraitement auto
 LABEL_FAIT      = "done"          # posé au succès
 
+# Garde-fou explicite sur l'AUTEUR de l'issue (issue #563), en complément du
+# filtre par labels (#477 ci-dessous dans lister_issues). Jusqu'ici, la seule
+# protection contre une issue créée par un tiers était INDIRECTE : poser un
+# label exige les droits d'écriture sur le dépôt GitHub, donc un inconnu sur un
+# dépôt public ne peut pas rendre sa propre issue éligible. Cette protection
+# cesse d'être suffisante dès qu'un collaborateur existe sur le dépôt (droits
+# d'écriture, donc capable de labelliser N'IMPORTE QUELLE issue — y compris une
+# qu'il n'a pas écrite lui-même) : elle pourrait alors être traitée en
+# mode_write, voire déclencher CREATION (bootstrap automatique d'un service
+# CCW, #556). En dur plutôt qu'en config (comme LABEL_* ci-dessus) : c'est un
+# contrat de sécurité du protocole commun, pas un réglage qui doit pouvoir
+# diverger d'un projet à l'autre par erreur.
+AUTEURS_AUTORISES = {"AlainDelree"}
+
 # ─── Mode de traitement à trois valeurs (issue #327) ───────────────────────────
 # Remplace l'ancien booléen `autoriser_ecriture`, qui ne pouvait piloter que
 # DEUX états — insuffisant depuis que #326 introduit un 3e mode, la « lecture
@@ -822,7 +836,7 @@ def lister_issues():
              "--repo", CFG.depot,
              "--label", CFG.label,
              "--state", "open",
-             "--json", "number,title,body,labels,createdAt"],
+             "--json", "number,title,body,labels,createdAt,author"],
             capture_output=True, text=True,
             encoding="utf-8", errors="replace", timeout=30
         )
@@ -842,6 +856,25 @@ def lister_issues():
             if any(l.get("name", "") in ("for-linux", "for-windows")
                    for l in i.get("labels", []))
         ]
+        # Garde-fou explicite sur l'AUTEUR (issue #563, cf. AUTEURS_AUTORISES en
+        # tête de fichier). Contrairement au filtre #477 ci-dessus, une issue
+        # rejetée ici N'EST PAS un simple non-match anodin : elle porte les BONS
+        # labels (donc a été labellisée par quelqu'un ayant les droits
+        # d'écriture sur le dépôt) mais ne vient pas d'un auteur autorisé — un
+        # événement digne d'attention, d'où le log.warning explicite plutôt
+        # qu'un filtrage silencieux.
+        issues_autorisees = []
+        for i in issues:
+            auteur = (i.get("author") or {}).get("login", "")
+            if auteur in AUTEURS_AUTORISES:
+                issues_autorisees.append(i)
+            else:
+                log.warning(
+                    f"Issue #{i.get('number')} ignorée : auteur '{auteur}' non "
+                    f"autorisé (labels valides mais hors {sorted(AUTEURS_AUTORISES)}) — "
+                    f"issue #563."
+                )
+        issues = issues_autorisees
         # Tri FIFO explicite : la plus ancienne issue en premier (issue #134).
         # createdAt est un timestamp ISO 8601 UTC (…Z), donc l'ordre
         # lexicographique croissant équivaut à l'ordre chronologique croissant.

@@ -708,6 +708,38 @@ hors périmètre même si l'issue le demande explicitement :
   `configs/*.conf` (topic ntfy, mot de passe hashé), `ssl/` (clé privée),
   `logs/`, `venv/`. Le repo ne contient que du code et de la documentation.
 
+### Filtrage des issues traitées : labels + auteur (issues #477, #563)
+
+`lister_issues()` (`watcher.py`) applique deux gardes-fous successifs, aux
+comportements délibérément différents, avant qu'une issue ne devienne
+éligible au traitement :
+
+1. **Labels** (issue #477) — en plus du filtre `--label CFG.label` de `gh
+   issue list`, toute issue ne portant ni `for-linux` ni `for-windows` est
+   ignorée **silencieusement** (aucun log). Certains dépôts (ex.
+   `FF_Galerie`) génèrent leurs propres issues applicatives (alertes, bugs
+   production) qui ne sont pas destinées au bridge — un non-match de label
+   est un événement banal, pas digne d'un log.
+2. **Auteur** (issue #563) — l'auteur de l'issue (champ `author.login` de
+   `gh issue list --json ...,author`) doit figurer dans la constante
+   `AUTEURS_AUTORISES` (en tête de `watcher.py`, contient au minimum
+   `AlainDelree`). Avant cette issue, la seule protection contre une issue
+   créée par un tiers était **indirecte** : poser un label exige les droits
+   d'écriture sur le dépôt GitHub, donc un inconnu sur un dépôt public ne
+   pouvait pas rendre sa propre issue éligible. Cette protection cesse
+   d'être suffisante dès qu'un collaborateur existe sur le dépôt (cas réel :
+   `GestionMail`) — un collaborateur avec droits d'écriture pourrait en
+   théorie labelliser une issue qu'il n'a pas écrite lui-même et la faire
+   traiter en `mode_write`, voire déclencher `CREATION` (bootstrap
+   automatique d'un service CCW, §16.6). Une issue par ailleurs éligible
+   (bons labels) mais d'auteur non autorisé est donc ignorée avec un
+   **`log.warning` explicite** — à la différence du filtre #477, c'est un
+   événement digne d'attention : quelqu'un d'autorisé en écriture a
+   labellisé une issue qui ne vient pas d'un auteur autorisé. Ce filtre
+   s'applique dans `lister_issues()`, donc en amont de TOUT traitement — les
+   trois modes (lecture, écriture, `CREATION`) en bénéficient uniformément,
+   sans exception.
+
 ---
 
 ## 9. Accès externe
