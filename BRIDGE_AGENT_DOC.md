@@ -1693,6 +1693,21 @@ Windows natif.
 `configurer_ssh_ccw.ps1` → `provisionner.ps1` → tokens → vérification) dans
 `provisioning/windows/REINSTALLATION_CCW.md` (issue #451).
 
+> **🚀 Démarrage rapide — ajouter CCW à un projet (issue #559/#560).**
+> Dans le modal « + Nouveau projet », coche la case **« Projet CCW »**,
+> remplis le topic ntfy, puis clique **« Créer le projet »**. Une fois le
+> projet créé, un bloc **« Finaliser le bootstrap CCW »** apparaît avec le
+> nom du dépôt réel : crée à ce moment-là un token GitHub fine-grained
+> dédié (accès **uniquement** au nouveau dépôt, `Issues: Read and write` /
+> `Metadata: Read-only`) et un `CLAUDE_CODE_OAUTH_TOKEN` (`claude
+> setup-token`), colle les deux, clique **« Finaliser le bootstrap CCW »**.
+> C'est tout — un service Windows dédié se crée automatiquement, même si
+> CCW est éteint au moment du clic (l'issue attend simplement en file).
+> Si le bouton « Rafraîchir la clé publique » indique une clé absente ou
+> périmée, CCW doit être allumé le temps de cliquer dessus une fois — voir
+> §16.7 pour le détail. Le reste de ce §16 documente le fonctionnement
+> interne, pas la marche à suivre au quotidien.
+
 > **⚠️ Changement de plateforme (depuis août 2026, issue #446).** CCW ne
 > tourne plus dans une VM VirtualBox mais **sur un PC fixe physique**
 > (Pentium G2020). De nombreux paragraphes ci-dessous décrivent encore
