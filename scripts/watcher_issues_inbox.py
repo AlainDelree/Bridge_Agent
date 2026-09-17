@@ -58,7 +58,8 @@ DOSSIER_SCRIPT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(DOSSIER_SCRIPT))
 
 from watcher import (charger_config, lire_conf, est_titre_chef,  # noqa: E402
-                     LABEL_NOTIF_PC, LABEL_NOTIF_GSM, LABEL_NOTIF_TOUS)
+                     LABEL_NOTIF_PC, LABEL_NOTIF_GSM, LABEL_NOTIF_TOUS,
+                     valider_sous_dossier, valider_repo_cible)  # noqa: E402 (issue #567)
 from app.watchers import demarrer_watcher  # noqa: E402 (issue #486)
 from app.issues import _issue_ouverte_meme_titre  # noqa: E402 (issue #491)
 from app.interruption import relancer_issue  # noqa: E402 (issue #516)
@@ -182,7 +183,11 @@ TITRE_RE = re.compile(r"^#Titre:\s*(.*)$", re.IGNORECASE | re.MULTILINE)
 # RELANCE (issue #516) : champ optionnel en cohérence avec SUITE_DE (§6 du
 # DOC) — présent, il détourne tout le bloc du chemin de création habituel
 # vers le chemin de relance d'une issue EXISTANTE (voir _traiter_relance).
-CHAMPS_ENTETE = ("PROJET", "TIMEOUT", "MODELE", "MODE", "LABELS", "RELANCE")
+# SOUS_DOSSIER/REPO_CIBLE (issue #567) : extraits ici comme TIMEOUT/MODELE
+# pour rester disponibles au chemin RELANCE (_fusionner_entete) — inutilisés
+# côté création (construire_body ne les réinsère pas, ce champ n'étant pas un
+# format supporté par issues_inbox pour créer une issue, §3.3 du DOC).
+CHAMPS_ENTETE = ("PROJET", "TIMEOUT", "MODELE", "MODE", "LABELS", "RELANCE", "SOUS_DOSSIER", "REPO_CIBLE")
 
 
 def extraire_champs(contenu: str) -> dict:
@@ -211,6 +216,8 @@ def extraire_champs(contenu: str) -> dict:
         "mode_brut":    valeurs["MODE"],
         "labels_brut":  valeurs["LABELS"],
         "relance_brut": valeurs["RELANCE"],
+        "sous_dossier_brut": valeurs["SOUS_DOSSIER"],
+        "repo_cible_brut":   valeurs["REPO_CIBLE"],
         "titre":        titre,
         "corps":        reste.strip("\n"),
     }
@@ -315,16 +322,27 @@ def valider(champs: dict):
 # app.interruption.relancer_issue() (cœur du bouton « 🔄 Relancer », issue
 # #460) plutôt que de dupliquer le retrait de label + la pose du commentaire.
 #
-# Champs corrigibles volontairement limités à TIMEOUT et MODELE : purement
-# textuels dans le corps, sans effet de bord. MODE est exclu (le mode réel
+# Champs corrigibles : TIMEOUT, MODELE, SOUS_DOSSIER et REPO_CIBLE (issue
+# #567 pour ces deux derniers) — quatre champs de chemin/paramètre purement
+# opérationnels, sans implication de sécurité. MODE reste exclu (le mode réel
 # est arme par le label GitHub `mode_write`, pas par le texte du corps — le
 # changer sans re-synchroniser ce label serait trompeur, et synchroniser un
-# label qui ARME l'écriture pour CCL depuis ce chemin est jugé hors-scope
-# pour cette première itération) ; LABELS est exclu aussi (il n'apparaît
-# jamais dans le corps — voir construire_body — donc « corriger le corps »
-# n'a pas de sens pour ce champ). RELANCE ne fait que CORRIGER un champ déjà
-# présent dans le corps existant : un champ absent du corps cible reste
-# absent (pas d'insertion de ligne d'en-tête).
+# label qui ARME l'écriture pour CCL depuis ce chemin ouvrirait une voie de
+# contournement du garde-fou d'auteur d'issue, issue #563) ; LABELS est exclu
+# aussi (il n'apparaît jamais dans le corps — voir construire_body — donc
+# « corriger le corps » n'a pas de sens pour ce champ). RELANCE ne fait que
+# CORRIGER un champ déjà présent dans le corps existant : un champ absent du
+# corps cible reste absent (pas d'insertion de ligne d'en-tête).
+#
+# SOUS_DOSSIER/REPO_CIBLE (#567) réutilisent leurs validateurs respectifs
+# (valider_sous_dossier/valider_repo_cible, watcher.py) au moment de la
+# relance, exactement comme à la première exécution — une correction
+# invalide est rejetée, jamais acceptée silencieusement. REPO_CIBLE vérifie
+# en plus que le projet a `PERIMETRE_DYNAMIQUE = true` dans son .conf : ce
+# garde-fou existant (watcher.py, traitement de l'issue) s'applique de toute
+# façon À CHAQUE traitement, RELANCE ou non — cette vérification côté
+# `valider_relance` ne fait qu'échouer tôt et clairement plutôt que de
+# laisser passer une correction qui serait silencieusement sans effet.
 
 RELANCE_RE = re.compile(r"^#?\s*(\d+)\s*$")
 
@@ -343,7 +361,16 @@ def valider_relance(champs: dict):
     exploitable, sinon (False, détail_erreur, None, None). Ne vérifie PAS
     l'existence/l'ouverture/le dépôt de l'issue ciblée — cf. _recuperer_issue,
     qui s'en charge via `gh issue view --repo` (échoue déjà si l'issue #N
-    n'appartient pas à ce dépôt)."""
+    n'appartient pas à ce dépôt).
+
+    SOUS_DOSSIER/REPO_CIBLE (issue #567) sont validés ici avec les MÊMES
+    fonctions qu'à la première exécution de l'issue (valider_sous_dossier/
+    valider_repo_cible, watcher.py) — une correction invalide est rejetée,
+    pas silencieusement acceptée. REPO_CIBLE vérifie en plus que le projet a
+    `PERIMETRE_DYNAMIQUE = true` : sans ce réglage, watcher.py ignorerait de
+    toute façon le champ à chaque traitement (garde-fou déjà appliqué, pas
+    seulement à la création) — le rejeter ici évite juste une correction qui
+    n'aurait aucun effet."""
     if not champs["projet"]:
         return False, "en-tête malformé : champ PROJET manquant ou vide.", None, None
 
@@ -367,6 +394,20 @@ def valider_relance(champs: dict):
         valeur = champs["timeout_brut"].strip().lower().rstrip("s")
         if not valeur.isdigit():
             return False, f"TIMEOUT invalide : « {champs['timeout_brut']} » (doit être un nombre).", None, None
+
+    if champs.get("sous_dossier_brut"):
+        ok_sd, raison_sd, _ = valider_sous_dossier(cfg_projet.rep_travail, champs["sous_dossier_brut"])
+        if not ok_sd:
+            return False, f"SOUS_DOSSIER invalide : « {champs['sous_dossier_brut']} » ({raison_sd}).", None, None
+
+    if champs.get("repo_cible_brut"):
+        if not getattr(cfg_projet, "perimetre_dynamique", False):
+            return False, (f"REPO_CIBLE fourni mais le projet « {champs['projet']} » n'a pas "
+                            f"PERIMETRE_DYNAMIQUE=true dans son .conf — ce champ n'a d'effet que "
+                            f"pour un projet à périmètre dynamique (issue #125)."), None, None
+        ok_rc, raison_rc = valider_repo_cible(champs["repo_cible_brut"])
+        if not ok_rc:
+            return False, f"REPO_CIBLE invalide : « {champs['repo_cible_brut']} » ({raison_rc}).", None, None
 
     return True, "", cfg_projet, numero
 
@@ -407,9 +448,10 @@ def _maj_ligne_entete(corps: str, champ: str, valeur: str) -> str:
 
 
 def _fusionner_entete(corps_existant: str, champs: dict) -> tuple[str, list]:
-    """Applique au corps existant de l'issue ciblée les champs TIMEOUT/MODELE
-    fournis par le fichier RELANCE. Retourne (nouveau_corps, champs_modifies)
-    — la liste sert à la fois au commentaire de trace et au log."""
+    """Applique au corps existant de l'issue ciblée les champs TIMEOUT/MODELE/
+    SOUS_DOSSIER/REPO_CIBLE (issue #567 pour ces deux derniers) fournis par le
+    fichier RELANCE. Retourne (nouveau_corps, champs_modifies) — la liste sert
+    à la fois au commentaire de trace et au log."""
     nouveau = corps_existant
     modifies = []
 
@@ -425,6 +467,18 @@ def _fusionner_entete(corps_existant: str, champs: dict) -> tuple[str, list]:
         nouveau = _maj_ligne_entete(nouveau, "MODELE", champs["modele"])
         if nouveau != avant:
             modifies.append(f"MODELE → {champs['modele']}")
+
+    if champs.get("sous_dossier_brut"):
+        avant = nouveau
+        nouveau = _maj_ligne_entete(nouveau, "SOUS_DOSSIER", champs["sous_dossier_brut"])
+        if nouveau != avant:
+            modifies.append(f"SOUS_DOSSIER → {champs['sous_dossier_brut']}")
+
+    if champs.get("repo_cible_brut"):
+        avant = nouveau
+        nouveau = _maj_ligne_entete(nouveau, "REPO_CIBLE", champs["repo_cible_brut"])
+        if nouveau != avant:
+            modifies.append(f"REPO_CIBLE → {champs['repo_cible_brut']}")
 
     return nouveau, modifies
 

@@ -457,7 +457,7 @@ fichier n'est supprimé qu'une fois **tous** les blocs traités :
   ce déplacement : chaque motif d'échec a déjà été journalisé individuellement
   ci-dessus.
 
-### 3.14 Champ `RELANCE` : corriger/relancer une issue `needs-human` existante (issue #516)
+### 3.14 Champ `RELANCE` : corriger/relancer une issue `needs-human` existante (issues #516, #567)
 
 **Problème résolu.** Corriger une issue en échec (`needs-human`) —
 typiquement pour ajuster un `TIMEOUT` trop court après un échec par
@@ -498,17 +498,36 @@ Le TIMEOUT de 900s était trop court : la tâche a échoué par dépassement.
 Tout échec → rejet vers `rejected/` avec motif clair, même mécanique que
 §3.4 (`_rejeter`).
 
-**Champs corrigibles dans le corps : `TIMEOUT` et `MODELE` uniquement**
-(`_fusionner_entete`/`_maj_ligne_entete`). Ces deux champs sont purement
-textuels dans le corps GitHub existant de l'issue ciblée, sans effet de bord
-— la fonction **corrige une ligne déjà présente**, elle n'en insère jamais
-une nouvelle. `MODE` est volontairement exclu : le mode réellement appliqué
-est armé par le label GitHub `mode_write`/`mode_scratch` (§5), pas par le
-texte du corps ; le changer sans resynchroniser ce label serait trompeur, et
-resynchroniser un label qui arme l'écriture pour CCL depuis ce chemin est
-jugé hors-scope pour cette première itération. `LABELS` est exclu aussi : ce
-champ n'apparaît jamais dans le corps (`construire_body` ne l'y écrit pas,
-§3.3) — « corriger le corps » n'a pas de sens pour lui ici.
+**Champs corrigibles dans le corps : `TIMEOUT`, `MODELE`, `SOUS_DOSSIER` et
+`REPO_CIBLE`** (`_fusionner_entete`/`_maj_ligne_entete`). Ces quatre champs
+sont des paramètres de chemin/configuration purement opérationnels dans le
+corps GitHub existant de l'issue ciblée, sans implication de sécurité — la
+fonction **corrige une ligne déjà présente**, elle n'en insère jamais une
+nouvelle. `MODE` est volontairement exclu : le mode réellement appliqué est
+armé par le label GitHub `mode_write`/`mode_scratch` (§5), pas par le texte
+du corps ; le changer sans resynchroniser ce label serait trompeur, et
+resynchroniser un label qui arme l'écriture pour CCL depuis ce chemin
+ouvrirait une voie de contournement du garde-fou d'auteur d'issue (issue
+#563) — jugé hors-scope, y compris après l'élargissement de #567. `LABELS`
+est exclu aussi : ce champ n'apparaît jamais dans le corps (`construire_body`
+ne l'y écrit pas, §3.3) — « corriger le corps » n'a pas de sens pour lui ici.
+
+`SOUS_DOSSIER` (#550) et `REPO_CIBLE` (#125) ont été ajoutés aux champs
+corrigibles par l'issue #567, retour d'expérience après un premier usage réel
+de `RELANCE` (#566) : ce sont deux champs de la même famille que `TIMEOUT`
+(un paramètre mal réglé peut provoquer un `needs-human`, sans impliquer le
+contournement d'un contrôle de sécurité). Leur correction réutilise **les
+mêmes validateurs qu'à la première exécution de l'issue**
+(`valider_sous_dossier`/`valider_repo_cible`, `watcher.py`) : une valeur
+invalide est rejetée par `valider_relance` exactement comme elle l'aurait été
+à la création, jamais acceptée silencieusement. `REPO_CIBLE` vérifie en plus
+que le projet a `PERIMETRE_DYNAMIQUE = true` dans son `.conf` — ce garde-fou
+n'est pas propre à `RELANCE` : `watcher.py` l'applique de toute façon à
+**chaque** traitement de l'issue, quel que soit le chemin par lequel son
+corps a été corrigé (RELANCE ou édition manuelle sur GitHub), donc `RELANCE`
+ne peut pas s'en affranchir. Le vérifier aussi dans `valider_relance` ne fait
+qu'échouer tôt avec un message clair, plutôt que de laisser passer une
+correction qui resterait de toute façon sans effet.
 
 **Retrait de `needs-human` + commentaire de trace : réutilisation de
 `app.interruption.relancer_issue()`**, extraite du cœur de `route_relancer()`
