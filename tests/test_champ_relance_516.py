@@ -132,9 +132,14 @@ def scenario_5_traiter_relance_chemin_complet_succes(tmp_path_factory):
         return "ok", [{"etape": "retrait_label_needs_human", "statut": "succes", "message": ""},
                         {"etape": "commentaire", "statut": "succes", "message": ""}]
 
+    def _faux_demarrer_watcher(cfg, forcer=False):
+        appels["watcher_demarre_pour"] = cfg.nom
+        return False, 4242   # watcher déjà actif — pas de redémarrage dans ce scénario
+
     w._recuperer_issue = _fausse_recuperation
     w._modifier_corps_gh = _faux_edit_corps
     w.relancer_issue = _faux_relancer
+    w.demarrer_watcher = _faux_demarrer_watcher
 
     contenu = (
         "| PROJET  | bridge_agent |\n"
@@ -157,6 +162,9 @@ def scenario_5_traiter_relance_chemin_complet_succes(tmp_path_factory):
     assert "TIMEOUT → 1800s" in appels["commentaire"], appels["commentaire"]
     assert "échoué par dépassement" in appels["commentaire"], appels["commentaire"]
     assert appels["numero_relance"] == 77
+    assert appels["watcher_demarre_pour"] == "bridge_agent"
+    assert "redémarré automatiquement" not in appels["commentaire"], appels["commentaire"]
+    assert "watcher CCL démarré" not in texte, texte
     return {"texte": texte}
 
 
@@ -345,6 +353,7 @@ def scenario_15_traiter_relance_sous_dossier_chemin_complet_succes(tmp_path_fact
     w._recuperer_issue = _fausse_recuperation
     w._modifier_corps_gh = _faux_edit_corps
     w.relancer_issue = _faux_relancer
+    w.demarrer_watcher = lambda cfg, forcer=False: (False, 4242)
 
     champs = w.extraire_champs(
         "| PROJET       | bridge_agent |\n"
@@ -358,6 +367,110 @@ def scenario_15_traiter_relance_sous_dossier_chemin_complet_succes(tmp_path_fact
     assert succes, texte
     assert "| SOUS_DOSSIER | bonchemin |" in appels["corps_envoye"], appels["corps_envoye"]
     assert "SOUS_DOSSIER → bonchemin" in appels["commentaire"], appels["commentaire"]
+    return {"texte": texte}
+
+
+# ─── Issue #572 : RELANCE redémarre le watcher cible s'il est éteint ───────
+
+def scenario_16_traiter_relance_redemarre_watcher_eteint(tmp_path_factory):
+    """Le watcher du projet ciblé est éteint (demarrer_watcher retourne
+    demarre=True) : _traiter_relance le redémarre, le trace dans le
+    commentaire GitHub posté et dans le suffixe de log."""
+    tmp_dir = tmp_path_factory()
+    _preparer_config_bidon(tmp_dir)
+
+    appels = {}
+
+    def _fausse_recuperation(depot, numero):
+        return True, "", {"number": numero, "state": "OPEN", "title": "Issue bloquée",
+                           "body": "| PROJET | bridge_agent |\n"}
+
+    def _faux_relancer(depot, numero, commentaire=""):
+        appels["commentaire"] = commentaire
+        return "ok", [{"etape": "retrait_label_needs_human", "statut": "succes", "message": ""},
+                        {"etape": "commentaire", "statut": "succes", "message": ""}]
+
+    def _faux_demarrer_watcher(cfg, forcer=False):
+        assert forcer is False   # même modalité que le bouton « Relancer le watcher »
+        return True, 9999   # watcher était éteint, vient d'être démarré
+
+    w._recuperer_issue = _fausse_recuperation
+    w.relancer_issue = _faux_relancer
+    w.demarrer_watcher = _faux_demarrer_watcher
+
+    champs = w.extraire_champs("| PROJET | bridge_agent |\n| RELANCE | #77 |\n")
+    succes, titre, projet, texte, resultat_gh = w._traiter_relance(w.ConfigInbox(), champs)
+
+    assert succes, texte
+    assert "redémarré automatiquement" in appels["commentaire"], appels["commentaire"]
+    assert "pid 9999" in appels["commentaire"], appels["commentaire"]
+    assert "watcher CCL démarré (pid 9999)" in texte, texte
+    return {"texte": texte}
+
+
+def scenario_17_traiter_relance_watcher_deja_actif_pas_de_trace(tmp_path_factory):
+    """Le watcher du projet ciblé tourne déjà (demarre=False) : aucune trace
+    de redémarrage dans le commentaire ni le suffixe — cohérent avec le
+    chemin de création (#486), silencieux quand il n'y a rien à faire."""
+    tmp_dir = tmp_path_factory()
+    _preparer_config_bidon(tmp_dir)
+
+    appels = {}
+
+    def _fausse_recuperation(depot, numero):
+        return True, "", {"number": numero, "state": "OPEN", "title": "Issue bloquée",
+                           "body": "| PROJET | bridge_agent |\n"}
+
+    def _faux_relancer(depot, numero, commentaire=""):
+        appels["commentaire"] = commentaire
+        return "ok", [{"etape": "retrait_label_needs_human", "statut": "succes", "message": ""},
+                        {"etape": "commentaire", "statut": "succes", "message": ""}]
+
+    w._recuperer_issue = _fausse_recuperation
+    w.relancer_issue = _faux_relancer
+    w.demarrer_watcher = lambda cfg, forcer=False: (False, 1234)
+
+    champs = w.extraire_champs("| PROJET | bridge_agent |\n| RELANCE | #77 |\n")
+    succes, titre, projet, texte, resultat_gh = w._traiter_relance(w.ConfigInbox(), champs)
+
+    assert succes, texte
+    assert "redémarré" not in appels["commentaire"], appels["commentaire"]
+    assert "watcher CCL démarré" not in texte, texte
+    return {"texte": texte}
+
+
+def scenario_18_traiter_relance_echec_demarrage_watcher_trace_sans_bloquer(tmp_path_factory):
+    """demarrer_watcher lève une exception : la relance elle-même réussit
+    quand même (needs-human retiré, commentaire posté), mais l'échec du
+    redémarrage est tracé dans ce même commentaire — visibilité plutôt que
+    correction/échec silencieux."""
+    tmp_dir = tmp_path_factory()
+    _preparer_config_bidon(tmp_dir)
+
+    appels = {}
+
+    def _fausse_recuperation(depot, numero):
+        return True, "", {"number": numero, "state": "OPEN", "title": "Issue bloquée",
+                           "body": "| PROJET | bridge_agent |\n"}
+
+    def _faux_relancer(depot, numero, commentaire=""):
+        appels["commentaire"] = commentaire
+        return "ok", [{"etape": "retrait_label_needs_human", "statut": "succes", "message": ""},
+                        {"etape": "commentaire", "statut": "succes", "message": ""}]
+
+    def _demarrer_watcher_qui_echoue(cfg, forcer=False):
+        raise RuntimeError("configs/bridge_agent.conf illisible")
+
+    w._recuperer_issue = _fausse_recuperation
+    w.relancer_issue = _faux_relancer
+    w.demarrer_watcher = _demarrer_watcher_qui_echoue
+
+    champs = w.extraire_champs("| PROJET | bridge_agent |\n| RELANCE | #77 |\n")
+    succes, titre, projet, texte, resultat_gh = w._traiter_relance(w.ConfigInbox(), champs)
+
+    assert succes, texte   # la relance elle-même n'échoue pas à cause du watcher
+    assert "échoué" in appels["commentaire"], appels["commentaire"]
+    assert "configs/bridge_agent.conf illisible" in appels["commentaire"], appels["commentaire"]
     return {"texte": texte}
 
 
@@ -383,6 +496,9 @@ def main():
         ("valider_relance : REPO_CIBLE valide accepté avec PERIMETRE_DYNAMIQUE (#567)", lambda: scenario_13_valider_relance_repo_cible_valide_avec_perimetre_dynamique(_tmp_path_factory)),
         ("valider_relance : REPO_CIBLE invalide rejeté même avec PERIMETRE_DYNAMIQUE (#567)", lambda: scenario_14_valider_relance_repo_cible_invalide_rejete(_tmp_path_factory)),
         ("_traiter_relance : chemin complet SOUS_DOSSIER, succès (#567)", lambda: scenario_15_traiter_relance_sous_dossier_chemin_complet_succes(_tmp_path_factory)),
+        ("_traiter_relance : watcher éteint → redémarré et tracé (#572)", lambda: scenario_16_traiter_relance_redemarre_watcher_eteint(_tmp_path_factory)),
+        ("_traiter_relance : watcher déjà actif → aucune trace (#572)", lambda: scenario_17_traiter_relance_watcher_deja_actif_pas_de_trace(_tmp_path_factory)),
+        ("_traiter_relance : échec démarrage watcher tracé sans bloquer la relance (#572)", lambda: scenario_18_traiter_relance_echec_demarrage_watcher_trace_sans_bloquer(_tmp_path_factory)),
     ]
     echecs = 0
     for nom, fn in tests:

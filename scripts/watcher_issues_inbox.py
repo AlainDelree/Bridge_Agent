@@ -20,6 +20,10 @@ Champ RELANCE (issue #516) : `| RELANCE | #N |` dans l'en-tête détourne tout
 le bloc vers la correction/relance de l'issue #N déjà ouverte (needs-human
 typiquement) plutôt qu'une création — aucune issue créée, anti-doublon
 court-circuité (il n'a de sens que pour une création). Voir _traiter_relance.
+Depuis l'issue #572, une RELANCE redémarre aussi automatiquement le watcher
+CCL du projet ciblé s'il s'est entre-temps auto-éteint par inactivité (#200)
+— ce script-ci tourne en permanence, indépendamment des watchers de projet
+(voir plus bas).
 
 Après création réussie de l'issue, le watcher CCL du projet concerné
 (`watcher.py --config configs/<projet>.conf`) est démarré automatiquement
@@ -343,6 +347,16 @@ def valider(champs: dict):
 # façon À CHAQUE traitement, RELANCE ou non — cette vérification côté
 # `valider_relance` ne fait qu'échouer tôt et clairement plutôt que de
 # laisser passer une correction qui serait silencieusement sans effet.
+#
+# Redémarrage auto du watcher cible (issue #572) : watcher_issues_inbox.py
+# est un process séparé et toujours actif — voir docstring de module — donc
+# une RELANCE déposée après l'auto-extinction par inactivité (#200) du
+# watcher CCL du projet ciblé est bien vue et traitée par CE watcher-ci ;
+# seul le REDÉMARRAGE du watcher cible manquait jusqu'ici (_traiter_relance
+# appelait relancer_issue() sans jamais vérifier/relancer le watcher, à la
+# différence du chemin de création qui le fait déjà depuis #486). Corrigé en
+# réutilisant demarrer_watcher(forcer=False) de app/watchers.py — même
+# fonction que le bouton « Relancer le watcher » de new_issue.py.
 
 RELANCE_RE = re.compile(r"^#?\s*(\d+)\s*$")
 
@@ -532,9 +546,36 @@ def _traiter_relance(cfg: ConfigInbox, champs: dict):
             return (False, issue.get("title") or f"#{numero}", champs["projet"],
                     f"mise à jour du corps de #{numero} échouée : {detail_edit}", "")
 
+    # Redémarrage auto du watcher CCL cible si éteint (issue #572) : un
+    # RELANCE déposé après que ce watcher se soit auto-éteint par inactivité
+    # (§20 du DOC, issue #200) resterait sinon bloqué en file jusqu'à ce
+    # qu'Alain clique lui-même sur « Relancer le watcher » dans new_issue.py —
+    # ce watcher_issues_inbox.py tourne lui en permanence, indépendamment des
+    # watchers de projet (voir docstring de module). Réutilise TEL QUEL
+    # demarrer_watcher(forcer=False) de app/watchers.py — même mécanisme que
+    # ce bouton, pas de logique de démarrage séparée : ne fait rien si le
+    # watcher tourne déjà, le démarre sinon. Tracé dans le commentaire posté
+    # ci-dessous, quel que soit le cas (visibilité plutôt que correction
+    # silencieuse, cf. §11 du DOC).
+    trace_watcher = ""
+    watcher_demarre, watcher_pid = False, None
+    try:
+        watcher_demarre, watcher_pid = demarrer_watcher(cfg_projet, forcer=False)
+        if watcher_demarre:
+            trace_watcher = (f"\n\n⚙️ Watcher CCL du projet « {champs['projet']} » redémarré "
+                              f"automatiquement (il était éteint — pid {watcher_pid}, issue #572).")
+            log.info(f"Watcher CCL redémarré pour la relance de #{numero} "
+                     f"(projet « {champs['projet']} », pid {watcher_pid}).")
+    except Exception as e:
+        trace_watcher = (f"\n\n⚠️ Redémarrage auto du watcher CCL « {champs['projet']} » "
+                          f"échoué : {e}")
+        log.warning(f"Redémarrage auto du watcher CCL « {champs['projet']} » "
+                    f"(relance de #{numero}) échoué : {e}")
+
     commentaire = COMMENTAIRE_RELANCE_INBOX
     if modifies:
         commentaire += "\n\nChamps corrigés : " + ", ".join(modifies) + "."
+    commentaire += trace_watcher
     if champs["corps"]:
         commentaire += "\n\n" + champs["corps"]
 
@@ -545,6 +586,8 @@ def _traiter_relance(cfg: ConfigInbox, champs: dict):
                 f"relance de #{numero} incomplète : {detail_erreurs}", "")
 
     suffixe = f" — relance de #{numero}" + (f" ({', '.join(modifies)})" if modifies else "")
+    if watcher_demarre:
+        suffixe += f" — watcher CCL démarré (pid {watcher_pid})"
     return True, issue.get("title") or f"#{numero}", champs["projet"], suffixe, ""
 
 
