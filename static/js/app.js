@@ -235,36 +235,48 @@ async function mettreAJourInfoProjet(reinitialiserTimeout = true) {
   } catch(e) {}
 }
 
+// Écrit une valeur dans un champ de l'onglet Configuration sans planter si
+// l'élément est absent du DOM (page pas encore rafraîchie après un déploiement
+// ayant ajouté ce champ, ou valeur absente/null/undefined renvoyée par le
+// serveur — issue #570) : ignore ce champ plutôt que d'interrompre le
+// chargement des champs suivants.
+function majChampConfig(id, valeur, proprite = 'value') {
+  const el = document.getElementById(id);
+  if (el) el[proprite] = valeur;
+}
+
 async function chargerConfig() {
   const nom = document.getElementById('projet').value;
   try {
     const rep = await fetch('/config/' + encodeURIComponent(nom));
     const cfg = await rep.json();
 
-    document.getElementById('config-readonly').innerHTML =
+    majChampConfig('config-readonly',
       `NOM = ${cfg.nom}<br>DEPOT = ${cfg.depot}<br>` +
       `REP_TRAVAIL = ${cfg.rep_travail}<br>` +
       (cfg.perimetre  ? `PERIMETRE = ${cfg.perimetre}<br>` : '') +
-      (cfg.cmd_backup ? `CMD_BACKUP = ${cfg.cmd_backup}` : '');
+      (cfg.cmd_backup ? `CMD_BACKUP = ${cfg.cmd_backup}` : ''),
+      'innerHTML');
 
-    document.getElementById('conf-TOPIC_NTFY').value        = cfg.topic_ntfy        || '';
-    document.getElementById('conf-LABEL').value             = cfg.label             || 'for-linux';
-    document.getElementById('conf-INTERVALLE').value        = cfg.intervalle        || 10;
-    document.getElementById('conf-MAX_ESSAIS').value        = cfg.max_essais        || 3;
-    document.getElementById('conf-TIMEOUT_CLAUDE').value    = cfg.timeout_claude    || 300;
-    document.getElementById('conf-SCRIPT_BIP').value        = cfg.script_bip        || '';
+    majChampConfig('conf-TOPIC_NTFY', cfg.topic_ntfy || '');
+    majChampConfig('conf-LABEL', cfg.label || 'for-linux');
+    majChampConfig('conf-INTERVALLE', cfg.intervalle || 10);
+    majChampConfig('conf-MAX_ESSAIS', cfg.max_essais || 3);
+    majChampConfig('conf-TIMEOUT_CLAUDE', cfg.timeout_claude || 300);
+    majChampConfig('conf-SCRIPT_BIP', cfg.script_bip || '');
     // ?? et non || : 0 est une valeur valide (tonalité normale).
-    document.getElementById('conf-TONALITE_BIP').value      = cfg.tonalite_bip      ?? 0;
-    document.getElementById('tonalite-bip-valeur').textContent = cfg.tonalite_bip   ?? 0;
-    document.getElementById('conf-FICHIER_CONTEXTE').value  = cfg.fichier_contexte  || '';
-    document.getElementById('conf-MODELE_CCL').value        = cfg.modele_ccl        || '';
-    document.getElementById('conf-LOG_TAILLE_MAX_MO').value = cfg.log_taille_max_mo || 1;
-    document.getElementById('conf-LOG_ARCHIVES').value      = cfg.log_archives      || 5;
+    majChampConfig('conf-TONALITE_BIP', cfg.tonalite_bip ?? 0);
+    majChampConfig('tonalite-bip-valeur', cfg.tonalite_bip ?? 0, 'textContent');
+    majChampConfig('conf-FICHIER_CONTEXTE', cfg.fichier_contexte || '');
+    majChampConfig('conf-MODELE_CCL', cfg.modele_ccl || '');
+    majChampConfig('conf-LOG_TAILLE_MAX_MO', cfg.log_taille_max_mo || 1);
+    majChampConfig('conf-LOG_ARCHIVES', cfg.log_archives || 5);
     // ?? et non || : 0 est une valeur valide (auto-extinction désactivée).
-    document.getElementById('conf-DELAI_INACTIVITE_MIN').value = cfg.delai_inactivite_min ?? 20;
-    document.getElementById('conf-MAX_WRITE_PARALLELE').value      = cfg.max_write_parallele      || 2;
-    document.getElementById('max-write-parallele-valeur').textContent = cfg.max_write_parallele || 2;
-    document.getElementById('msg-config').style.display = 'none';
+    majChampConfig('conf-DELAI_INACTIVITE_MIN', cfg.delai_inactivite_min ?? 20);
+    majChampConfig('conf-MAX_WRITE_PARALLELE', cfg.max_write_parallele || 2);
+    majChampConfig('max-write-parallele-valeur', cfg.max_write_parallele || 2, 'textContent');
+    const msgConfig = document.getElementById('msg-config');
+    if (msgConfig) msgConfig.style.display = 'none';
   } catch(e) {
     const msg = document.getElementById('msg-config');
     msg.textContent = 'Erreur de chargement : ' + e.message;

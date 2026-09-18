@@ -1318,6 +1318,11 @@ SCRIPT_BIP        = {script_bip}
 # 0 = tonalité normale ; réglable aussi depuis l'onglet Configuration.
 # TONALITE_BIP    = 0
 
+# Nombre de tâches mode_write concurrentes via git worktrees (issue #337),
+# 1-4, plafonné à 4 (issue #568). 2 = défaut ; réglable aussi depuis l'onglet
+# Configuration.
+# MAX_WRITE_PARALLELE = 2
+
 # ─── Journaux (rotation par taille, archives datées) ──────────────────────────
 LOG_TAILLE_MAX_MO = 1
 LOG_ARCHIVES      = 5
