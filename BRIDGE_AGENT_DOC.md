@@ -79,6 +79,7 @@ Claude Chat → crée une issue → GitHub → watcher.py détecte → CCL exéc
 | `ecole` | AlainDelree/Ecole | ~/Ecole | (conf local) |
 | `ff_galerie` | AlainDelree/FF_Galerie | ~/FF_Galerie | (conf local) |
 | `gestionmail` | AlainDelree/GestionMail | ~/GestionMail | (conf local) |
+| `relecture_bridge` | AlainDelree/Relecture_Bridge | ~/Relecture_Bridge | (conf local) |
 | `rummikub` | AlainDelree/Rummikub | ~/Rummikub | (conf local) |
 | `scrabble` | AlainDelree/Scrabble | ~/Scrabble | (conf local) |
 <!-- FIN:TABLEAU_PROJETS_ACTIFS -->
@@ -715,6 +716,7 @@ hors périmètre même si l'issue le demande explicitement :
 | `ecole` | /home/alain/Ecole |
 | `ff_galerie` | /home/alain/FF_Galerie |
 | `gestionmail` | /home/alain/GestionMail |
+| `relecture_bridge` | /home/alain/Relecture_Bridge |
 | `rummikub` | /home/alain/Rummikub |
 | `scrabble` | /home/alain/Scrabble |
 <!-- FIN:TABLEAU_PERIMETRE_PROJETS -->
