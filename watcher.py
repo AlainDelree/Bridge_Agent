@@ -760,19 +760,26 @@ def rafraichir_depot(rep: Path, dry_run: bool = False):
         log.warning(f"  [pull] échoué : {premiere} — poursuite sur le code local.")
 
 
-def _lister_worktrees_secondaires() -> list[dict]:
+def _lister_worktrees_secondaires(rep_travail: Path = None) -> list[dict]:
     """Liste les worktrees git du projet AUTRES que le worktree principal
-    (`CFG.rep_travail`) — les répertoires frères créés pour la
-    parallélisation mode_write (issue #337), via `git worktree list
-    --porcelain`. Chaque entrée : {"chemin": str, "branche": str}.
+    (`rep_travail`, par défaut `CFG.rep_travail`) — les répertoires frères
+    créés pour la parallélisation mode_write (issue #337), via `git worktree
+    list --porcelain`. Chaque entrée : {"chemin": str, "branche": str}.
+
+    Paramètre explicite (plutôt que le seul `CFG` global) depuis l'issue
+    #569 : permet à l'interface web (app/git_etat.py) de réutiliser cette
+    fonction pour lister les worktrees de N'IMPORTE QUEL projet, pas
+    seulement celui du watcher courant.
 
     Best-effort : dossier absent ou pas un dépôt git, ou toute erreur
     d'exécution git → liste vide, jamais d'exception propagée."""
-    if not CFG.rep_travail.is_dir() or not _est_depot_git(CFG.rep_travail):
+    if rep_travail is None:
+        rep_travail = CFG.rep_travail
+    if not rep_travail.is_dir() or not _est_depot_git(rep_travail):
         return []
     try:
         res = subprocess.run(
-            ["git", "-C", str(CFG.rep_travail), "worktree", "list", "--porcelain"],
+            ["git", "-C", str(rep_travail), "worktree", "list", "--porcelain"],
             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=15,
         )
     except (OSError, subprocess.SubprocessError):
@@ -796,7 +803,7 @@ def _lister_worktrees_secondaires() -> list[dict]:
     if courant:
         worktrees.append(courant)
 
-    principal = str(CFG.rep_travail.resolve())
+    principal = str(rep_travail.resolve())
     return [
         w for w in worktrees
         if w.get("chemin") and str(Path(w["chemin"]).resolve()) != principal

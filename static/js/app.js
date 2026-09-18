@@ -146,7 +146,7 @@ function appliquerAccentProjet(nom) {
 }
 
 function basculerOnglet(nom) {
-  const noms = ['creation', 'resultats', 'inbox', 'journal', 'config', 'watchers', 'ccw'];
+  const noms = ['creation', 'resultats', 'inbox', 'journal', 'config', 'watchers', 'git', 'ccw'];
   document.querySelectorAll('.onglet').forEach((o, i) =>
     o.classList.toggle('actif', noms[i] === nom));
   noms.forEach(n =>
@@ -173,6 +173,10 @@ function basculerOnglet(nom) {
   // (chaque requête déclenche des appels SSH coûteux — l'utilisateur
   // rafraîchit à la demande via les boutons dédiés).
   if (nom === 'ccw') ccwOuvrirOnglet();
+  // Onglet « Git » (issue #569) : chargé à l'ouverture, PAS de polling
+  // automatique (une commande git par projet et par worktree à chaque appel) —
+  // même principe que l'onglet CCW ci-dessus, rafraîchi à la demande.
+  if (nom === 'git') chargerGitEtat();
   // Onglet « Résultats inbox » (issue #483) : rafraîchissement immédiat à
   // l'ouverture — le polling continu (rafraichirInbox, tout en bas de ce
   // fichier) garde le badge de l'onglet à jour même hors de cette vue.
@@ -4683,6 +4687,46 @@ async function chargerWatchers() {
     toutes.length > 0 &&
     tbody.querySelectorAll('.cb-watcher:checked').length === toutes.length;
   mettreAJourCompte();
+}
+
+// ─── Onglet « Git » (issue #569) : worktrees actifs + commits locaux non
+// poussés, par projet, lecture seule ────────────────────────────────────────
+async function chargerGitEtat() {
+  const corps = document.getElementById('git-corps-projets');
+  const msg   = document.getElementById('git-msg');
+  msg.textContent = 'Interrogation des dépôts…';
+  msg.className = 'message';
+  corps.innerHTML = '';
+  try {
+    const rep = await fetch('/git-etat');
+    const j   = await rep.json();
+    const projets = j.projets || [];
+    msg.textContent = '';
+    corps.innerHTML = projets.map(function(p) {
+      const worktreesHtml = p.worktrees.length === 0
+        ? '<span style="color:#aaa">aucun</span>'
+        : '<ul style="margin:4px 0 0 18px;padding:0">' + p.worktrees.map(function(w) {
+            return '<li>' + escapeHtml(w.chemin)
+              + (w.branche ? ' <span style="color:#888">(branche ' + escapeHtml(w.branche) + ')</span>' : '')
+              + '</li>';
+          }).join('') + '</ul>';
+      const commitsHtml = p.commits.length === 0
+        ? '<span style="color:#aaa">aucun</span>'
+        : '<ul style="margin:4px 0 0 18px;padding:0;font-family:monospace;font-size:12px">'
+          + p.commits.map(function(c) { return '<li>' + escapeHtml(c) + '</li>'; }).join('') + '</ul>';
+      return '<div style="padding:12px 0;border-bottom:1px solid #f0efe9">'
+        + '<div style="font-size:13px;font-weight:600">' + escapeHtml(p.nom)
+        + ' <span style="font-weight:400;color:#888">— ' + escapeHtml(p.depot) + '</span></div>'
+        + '<div style="margin-top:6px;font-size:12.5px">'
+        + '<b>Worktrees actifs (' + p.worktrees.length + ')</b>' + worktreesHtml + '</div>'
+        + '<div style="margin-top:8px;font-size:12.5px">'
+        + '<b>Commits non poussés (' + p.commits.length + ')</b>' + commitsHtml + '</div>'
+        + '</div>';
+    }).join('') || '<div style="color:#aaa;padding:12px 0">Aucun projet.</div>';
+  } catch (e) {
+    msg.textContent = 'Erreur réseau lors de la lecture de l\'état git.';
+    msg.className = 'message erreur';
+  }
 }
 
 function selectionnerTous(cb) {
