@@ -9,6 +9,69 @@ milliers de caractères sur une seule ligne logique, coûteux à relire et
 
 Convention d'ajout : voir §10 de `BRIDGE_AGENT_DOC.md`.
 
+## 18 septembre 2026 — issue #571
+
+§2 « Projets actifs » et §7 « Périmètre par projet » de
+`BRIDGE_AGENT_DOC.md` n'étaient maintenus qu'à la main, indépendamment des
+`configs/*.conf` réellement lus par `watcher.py` — source de vérité
+fonctionnelle (`NOM`/`DEPOT`/`REP_TRAVAIL`/`PERIMETRE`). Toute divergence
+(création, suppression, renommage d'un projet oublié dans un des
+tableaux) pouvait se reproduire, et s'était reproduite : `testccwprojet`
+(projet de test entièrement nettoyé — dépôt GitHub, service CCW, `.conf`
+local, entrées de `reinstaller_projets_ccw.ps1`) restait visible dans ces
+deux tableaux.
+
+Nouveau script `regenerer_tableaux_projets.py` (racine) : scanne
+`configs/*.conf`, ignore les fichiers sans champ `NOM` (ex.
+`configs/ccw_ssh.conf`, config technique de connexion SSH, pas un projet
+watcher), et remplace intégralement le contenu des deux tableaux entre
+des marqueurs HTML dédiés (`<!-- DEBUT:TABLEAU_PROJETS_ACTIFS -->`/
+`<!-- DEBUT:TABLEAU_PERIMETRE_PROJETS -->` + `FIN:` correspondants,
+ajoutés dans `BRIDGE_AGENT_DOC.md`) — jamais d'édition manuelle. Projets
+triés par ordre alphabétique du `NOM` (l'ordre chronologique d'ajout
+historique n'est pas reconstituable depuis le disque) ; effet de bord
+assumé, la casse affichée suit désormais celle du `NOM` du `.conf`
+(`apiselect`, en minuscules, remplace l'ancien `ApiSelect` du tableau —
+qui ne correspondait à aucun champ réel).
+
+`nouveau_projet.py::mettre_a_jour_doc()` (route Flask) et `etape_doc()`
+(CLI interactif) dupliquaient chacun leur propre logique d'insertion de
+ligne (`_inserer_ligne_tableau`, `_afficher_rep`) — les deux délèguent
+maintenant à `regenerer_tableaux_projets.regenerer()`, un seul mécanisme
+écrit désormais dans ces tableaux ; helpers dupliqués supprimés, ainsi
+que `MOIS_FR`/`from datetime import date`, devenus inutiles dans
+`nouveau_projet.py`. Le script reste aussi utilisable seul et à la
+demande (`python3 regenerer_tableaux_projets.py`, sans argument) — la
+commande à relancer après un nettoyage manuel de projet (pas de flux de
+suppression automatisé aujourd'hui) pour resynchroniser la doc avec la
+réalité du disque ; conséquence directe, testé en simulant un cycle
+création/suppression d'un `.conf` de test, `testccwprojet` disparaît des
+deux tableaux — de même que `relecture_bridge`, ajouté au commit
+précédent (§2/§7) mais sans `configs/relecture_bridge.conf` présent sur
+ce disque : ⚠️ à vérifier par Alain (projet réellement sans watcher
+dédié, ou `.conf` restant à créer — CCL n'a pas le droit de créer/modifier
+`configs/*.conf`).
+
+Piège évité en cours de route (documenté en §10 de `BRIDGE_AGENT_DOC.md`,
+déjà rencontré à l'issue #268) : le premier essai de mise à jour
+automatique de la date de pied de page utilisait un `re.sub` sur le texte
+entier du fichier, qui a corrompu l'exemple donné en §10
+(`` *Dernière mise à jour : <date> — ...* ``) au lieu du vrai pied de
+page en fin de fichier — corrigé en ne substituant que sur la ligne qui
+**commence** par le marqueur (même garde-fou que l'ancien code de
+`nouveau_projet.py`), avec test de non-régression manuel (relecture du
+diff avant/après).
+
+Tableau §7 de `provisioning/windows/REINSTALLATION_CCW.md` (étape 7,
+recréation des services CCW dédiés) : choix documenté de le laisser **en
+dehors** de ce mécanisme, pas appliqué silencieusement. Ce n'est pas la
+même liste : un sous-ensemble des projets (ceux avec un service Windows
+dédié), décision manuelle indépendante des `.conf` Linux, dont la source
+de vérité déclarée reste déjà le tableau `$Projets` de
+`reinstaller_projets_ccw.ps1` (issue #552) — note ajoutée dans
+`REINSTALLATION_CCW.md` pour expliciter cette distinction plutôt que de
+laisser deviner pourquoi ce tableau-ci échappe à la régénération.
+
 ## 14 septembre 2026 — issue #542
 
 Mode lecture bloqué sur des commandes nécessitant une approbation

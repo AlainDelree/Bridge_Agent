@@ -111,8 +111,18 @@ par projet restent nécessaires.
 
 Cette liste est maintenue à un seul endroit : le tableau `$Projets` dans
 `reinstaller_projets_ccw.ps1` (ce dossier) fait foi en cas de divergence —
-le tableau ci-dessus n'en est qu'une reproduction pour la lecture. Toujours
-en admin sur le PC fixe, depuis `C:\CCW\Bridge_Agent` :
+le tableau ci-dessus n'en est qu'une reproduction pour la lecture.
+
+**Choix documenté (issue #571)** : ce tableau n'est **pas** régénéré par
+`regenerer_tableaux_projets.py` (qui régénère §2/§7 de `BRIDGE_AGENT_DOC.md`
+depuis `configs/*.conf`), même si les deux mécanismes se ressemblent. Ce
+ne sont pas la même liste : celle-ci n'est qu'un **sous-ensemble** — les
+projets dotés d'un service CCW Windows dédié, une décision manuelle
+(matériel/charge Windows) qui ne se lit dans aucun `.conf` Linux. La
+source de vérité de ce sous-ensemble reste `$Projets` ci-dessus, à mettre
+à jour à la main en cas d'ajout/retrait d'un service dédié.
+
+Toujours en admin sur le PC fixe, depuis `C:\CCW\Bridge_Agent` :
 
 ```powershell
 .\provisioning\windows\reinstaller_projets_ccw.ps1

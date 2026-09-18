@@ -63,22 +63,25 @@ Claude Chat → crée une issue → GitHub → watcher.py détecte → CCL exéc
 
 ## 2. Projets actifs
 
+<!-- DEBUT:TABLEAU_PROJETS_ACTIFS (généré automatiquement par regenerer_tableaux_projets.py
+     depuis configs/*.conf — issue #571 ; ne pas éditer cette zone à la main,
+     lancer `python3 regenerer_tableaux_projets.py` après toute création/suppression
+     manuelle de projet) -->
 | Nom | Dépôt GitHub | Répertoire de travail CCL | Topic ntfy |
 |-----|-------------|--------------------------|------------|
-| `bridge_agent` | AlainDelree/Bridge_Agent | ~/Bridge_Agent | (conf local) |
-| `alchess` | AlainDelree/AlChess | ~/NicLink | (conf local) |
-| `ff_galerie` | AlainDelree/FF_Galerie | ~/FF_Galerie | (conf local) |
-| `ecole` | AlainDelree/Ecole | ~/Ecole | (conf local) |
-| `scrabble` | AlainDelree/Scrabble | ~/Scrabble | (conf local) |
-| `diagnostique_programme` | AlainDelree/Diagnostique_Programme | ~/Diagnostique_Programme | (conf local) |
 | `actualise` | AlainDelree/Actualise | ~/Actualise | (conf local) |
+| `alchess` | AlainDelree/AlChess | ~/NicLink | (conf local) |
+| `apiselect` | AlainDelree/ApiSelect | ~/ApiSelect | (conf local) |
 | `bloc_score` | AlainDelree/Bloc_score | ~/Bloc_score | (conf local) |
-| `rummikub` | AlainDelree/Rummikub | ~/Rummikub | (conf local) |
-| `ApiSelect` | AlainDelree/ApiSelect | ~/ApiSelect | (conf local) |
+| `bridge_agent` | AlainDelree/Bridge_Agent | ~/Bridge_Agent | (conf local) |
 | `chesscoach` | AlainDelree/Chesscoach | ~/ChessCoach | (conf local) |
+| `diagnostique_programme` | AlainDelree/Diagnostique_Programme | ~/Diagnostique_Programme | (conf local) |
+| `ecole` | AlainDelree/Ecole | ~/Ecole | (conf local) |
+| `ff_galerie` | AlainDelree/FF_Galerie | ~/FF_Galerie | (conf local) |
 | `gestionmail` | AlainDelree/GestionMail | ~/GestionMail | (conf local) |
-| `testccwprojet` | AlainDelree/Testccwprojet | ~/Testccwprojet | (conf local) |
-| `relecture_bridge` | AlainDelree/Relecture_Bridge | ~/Relecture_Bridge | (conf local) |
+| `rummikub` | AlainDelree/Rummikub | ~/Rummikub | (conf local) |
+| `scrabble` | AlainDelree/Scrabble | ~/Scrabble | (conf local) |
+<!-- FIN:TABLEAU_PROJETS_ACTIFS -->
 
 Chaque projet a son propre watcher (`watcher.py --config configs/<nom>.conf`)
 et son propre journal de log (`logs/watcher-<nom>.log`).
@@ -696,22 +699,25 @@ Format dans le corps :
 CCL est contraint à un répertoire précis par projet — il refuse de travailler
 hors périmètre même si l'issue le demande explicitement :
 
+<!-- DEBUT:TABLEAU_PERIMETRE_PROJETS (généré automatiquement par regenerer_tableaux_projets.py
+     depuis configs/*.conf — issue #571 ; ne pas éditer cette zone à la main,
+     lancer `python3 regenerer_tableaux_projets.py` après toute création/suppression
+     manuelle de projet) -->
 | Projet | Périmètre autorisé |
 |--------|-------------------|
-| `bridge_agent` | /home/alain/Bridge_Agent |
-| `alchess` | /home/alain/NicLink |
-| `ff_galerie` | /home/alain/FF_Galerie |
-| `ecole` | /home/alain/Ecole |
-| `scrabble` | /home/alain/Scrabble |
-| `diagnostique_programme` | /home/alain/Diagnostique_Programme |
 | `actualise` | /home/alain/Actualise |
+| `alchess` | /home/alain/NicLink |
+| `apiselect` | /home/alain/ApiSelect |
 | `bloc_score` | /home/alain/Bloc_score |
-| `rummikub` | /home/alain/Rummikub |
-| `ApiSelect` | /home/alain/ApiSelect |
+| `bridge_agent` | /home/alain/Bridge_Agent |
 | `chesscoach` | /home/alain/ChessCoach |
+| `diagnostique_programme` | /home/alain/Diagnostique_Programme |
+| `ecole` | /home/alain/Ecole |
+| `ff_galerie` | /home/alain/FF_Galerie |
 | `gestionmail` | /home/alain/GestionMail |
-| `testccwprojet` | /home/alain/Testccwprojet |
-| `relecture_bridge` | /home/alain/Relecture_Bridge |
+| `rummikub` | /home/alain/Rummikub |
+| `scrabble` | /home/alain/Scrabble |
+<!-- FIN:TABLEAU_PERIMETRE_PROJETS -->
 
 ---
 
@@ -3489,7 +3495,36 @@ de création d'issue, seul valable pour du contenu qu'il produit.
 
 ---
 
-*Dernière mise à jour : 18 septembre 2026 — Sous-section « Couleur d'accent
+*Dernière mise à jour : 18 septembre 2026 — §2 « Projets actifs » et §7
+« Périmètre par projet » n'étaient maintenus qu'à la main, indépendamment
+des `configs/*.conf` réellement lus par `watcher.py` — source de vérité
+fonctionnelle. Toute divergence pouvait se reproduire, et s'était
+reproduite : `testccwprojet` (projet de test entièrement nettoyé) restait
+visible dans ces deux tableaux (issue #571). Nouveau script
+`regenerer_tableaux_projets.py` (racine) : scanne `configs/*.conf`, ignore
+les fichiers sans champ `NOM` (ex. `configs/ccw_ssh.conf`, config
+technique, pas un projet watcher), et remplace intégralement le contenu
+des deux tableaux entre des marqueurs HTML dédiés — jamais d'édition
+manuelle. Projets triés par ordre alphabétique du `NOM` ; effet de bord
+assumé, la casse affichée suit désormais celle du `.conf`
+(`apiselect` en minuscules remplace l'ancien `ApiSelect`, qui ne
+correspondait à aucun champ réel). `nouveau_projet.py::mettre_a_jour_doc()`
+(Flask) et `etape_doc()` (CLI) dupliquaient chacun leur propre logique
+d'insertion de ligne — les deux délèguent maintenant à ce script, un seul
+mécanisme écrit dans ces tableaux ; helpers dupliqués supprimés. Le script
+reste aussi utilisable seul et à la demande (`python3
+regenerer_tableaux_projets.py`), pour resynchroniser la doc après un
+nettoyage manuel de projet (pas de flux de suppression automatisé
+aujourd'hui) — testé en simulant un cycle création/suppression d'un
+`.conf` de test. Conséquence directe : `testccwprojet` disparaît des deux
+tableaux, de même que `relecture_bridge` (ajouté au commit précédent mais
+sans `.conf` présent sur ce disque — ⚠️ à vérifier par Alain). Tableau §7
+de `provisioning/windows/REINSTALLATION_CCW.md` (services CCW dédiés) :
+choix documenté de le laisser hors de ce mécanisme — sous-ensemble
+distinct dont la source de vérité déclarée reste `$Projets` dans
+`reinstaller_projets_ccw.ps1` (issue #552).
+
+Précédemment — 18 septembre 2026 — Sous-section « Couleur d'accent
 des projets » (§12) complétée (issue #540) : procédure de recyclage de la
 couleur d'un projet mis à l'arrêt, appliquée à `ecole`/`ff_galerie`. Nouvelle
 constante partagée `COULEUR_PROJET_INACTIF` (`#767676`, contraste texte noir
@@ -3520,27 +3555,6 @@ dépendance externe ; `scripts/bip_Cloche.py` (legacy, encore utilisé par
 échoue. Nouveau curseur `-12`…`+12` demi-tons dans l'onglet Configuration
 de `new_issue.py`, avec un bouton « Tester le son » (`POST
 /tester-bip/<projet>`, `app/projets.py::tester_bip`) qui joue le bip avec
-la tonalité du curseur avant tout enregistrement.
-
-Précédemment — 7 septembre 2026 — §3/§11/§20 « Retrait des
-mentions du copier-coller pour la création d'issues » (issue #518) : le
-copier-coller dans le formulaire web `new_issue.py` n'est plus présenté
-comme une méthode normale de création d'issue à partir de contenu produit
-par Claude Chat — depuis #483, Claude Chat ne doit produire que des
-fichiers `.txt` déposés dans `issues_inbox/` (§3). §20 : le bloc « Format
-du corps pour copier-coller depuis Claude Chat » et son exemple deviennent
-« Format du corps reconnu par le formulaire » (saisie manuelle par Alain,
-plus copier-coller) ; « Envoi en lot (plusieurs issues d'un seul
-copier-coller) » devient « Envoi en lot (plusieurs issues dans un même
-corps) » ; le bloc « Convention de présentation côté Claude Chat »
-(issues #153/#443) devient « Regroupement des blocs pour le mode lot »,
-avec rappel explicite que Claude Chat ne doit plus produire de texte
-destiné à être copié-collé dans ce formulaire. §11 : la règle « Alain
-colle le tout — un seul copier-coller » remplacée par un renvoi au flux
-`issues_inbox/` (§3). §3.3 : reformulation d'un renvoi à §20 qui laissait
-entendre que Claude Chat produisait du contenu pour le formulaire web.
-Usages légitimes du formulaire (aperçu `gh issue create`, création
-manuelle par Alain, repli si le watcher `issues_inbox` est indisponible)
-inchangés.*
+la tonalité du curseur avant tout enregistrement.*
 
 Historique complet : voir [`CHANGELOG.md`](CHANGELOG.md).

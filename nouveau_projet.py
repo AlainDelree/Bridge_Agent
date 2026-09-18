@@ -25,8 +25,9 @@ import re
 import subprocess
 import sys
 import unicodedata
-from datetime import date
 from pathlib import Path
+
+import regenerer_tableaux_projets
 
 # Racine du dépôt Bridge_Agent : ce script vit à la racine, à côté de watcher.py
 # et du dossier configs/.
@@ -442,9 +443,6 @@ TIMEOUT_GIT_PUSH = 60
 # #258) — leur seule présence ne doit pas bloquer le push automatique.
 FICHIERS_CREES_PAR_SCRIPT = frozenset({"CONTEXTE.md", ".gitignore", *FICHIERS_SPECS})
 
-MOIS_FR = ["", "janvier", "février", "mars", "avril", "mai", "juin", "juillet",
-           "août", "septembre", "octobre", "novembre", "décembre"]
-
 
 # ─── Entrées / sorties interactives ───────────────────────────────────────────
 
@@ -844,35 +842,16 @@ def initialiser_git(rep: str, depot: str) -> dict:
             "detail": detail, "commande_manuelle": commande_manuelle}
 
 
-def mettre_a_jour_doc(nom: str, depot: str, rep: str, perimetre: str) -> dict:
-    """Insère le projet dans les tableaux §2 et §7 de BRIDGE_AGENT_DOC.md et
-    rafraîchit la date en bas. Renvoie {existe, ok2, ok7, ok_date}."""
-    if not DOC.exists():
-        return {"existe": False, "ok2": False, "ok7": False, "ok_date": False}
-
-    lignes = DOC.read_text(encoding="utf-8").splitlines()
-
-    ligne_2 = (f"| `{nom}` | {depot} | {_afficher_rep(rep)} | (conf local) |")
-    ligne_7 = f"| `{nom}` | {perimetre} |"
-
-    ok2 = _inserer_ligne_tableau(lignes, "## 2. Projets actifs", ligne_2)
-    ok7 = _inserer_ligne_tableau(lignes, "## 7. Périmètre par projet", ligne_7)
-
-    aujourd_hui = date.today()
-    date_fr = f"{aujourd_hui.day} {MOIS_FR[aujourd_hui.month]} {aujourd_hui.year}"
-    ok_date = False
-    for i, ligne in enumerate(lignes):
-        if ligne.startswith("*Dernière mise à jour :"):
-            lignes[i] = re.sub(
-                r"(\*Dernière mise à jour : )[^—]*( —)",
-                rf"\g<1>{date_fr}\g<2>",
-                ligne,
-            )
-            ok_date = True
-            break
-
-    DOC.write_text("\n".join(lignes) + "\n", encoding="utf-8")
-    return {"existe": True, "ok2": ok2, "ok7": ok7, "ok_date": ok_date}
+def mettre_a_jour_doc() -> dict:
+    """Régénère les tableaux §2/§7 de BRIDGE_AGENT_DOC.md depuis
+    configs/*.conf (délègue à regenerer_tableaux_projets — issue #571). Le
+    .conf du nouveau projet est déjà écrit sur disque à ce stade (étape 2
+    de creer_projet), donc la régénération depuis le disque le voit déjà.
+    Renvoie {existe, ok2, ok7, ok_date}."""
+    resultat = regenerer_tableaux_projets.regenerer()
+    ok = resultat["existe"] and resultat["erreur"] is None
+    return {"existe": resultat["existe"], "ok2": ok, "ok7": ok,
+            "ok_date": resultat["modifie"]}
 
 
 def creer_projet(nom: str, depot: str = "", rep: str = "", perimetre: str = "",
@@ -967,7 +946,7 @@ def creer_projet(nom: str, depot: str = "", rep: str = "", perimetre: str = "",
                    "detail": git_res["detail"]})
 
     # 6. Mise à jour de BRIDGE_AGENT_DOC.md (§2, §7, date).
-    doc = mettre_a_jour_doc(nom, depot, rep, perimetre)
+    doc = mettre_a_jour_doc()
     if not doc["existe"]:
         etapes.append({"etape": "Documentation", "ok": False,
                        "detail": "BRIDGE_AGENT_DOC.md introuvable — non mis à jour."})
@@ -1208,76 +1187,26 @@ def etape_git(depot: str, rep: str) -> dict:
 
 
 # ─── Mise à jour de la documentation (§2, §7, date) ───────────────────────────
+# Régénération complète depuis configs/*.conf, déléguée à
+# regenerer_tableaux_projets.py (issue #571) — un seul mécanisme écrit dans
+# ces tableaux, plutôt que cette insertion ligne à ligne et sa jumelle
+# mettre_a_jour_doc() (route Flask) maintenues indépendamment.
 
-def _inserer_ligne_tableau(lignes: list[str], titre_section: str,
-                           nouvelle_ligne: str) -> bool:
-    """Insère `nouvelle_ligne` après la dernière ligne de tableau (commençant
-    par '|') de la section identifiée par `titre_section`. Renvoie True si
-    l'insertion a eu lieu."""
-    # Localiser le titre de section (ex. "## 2. Projets actifs").
-    debut = None
-    for i, ligne in enumerate(lignes):
-        if ligne.strip().startswith(titre_section):
-            debut = i
-            break
-    if debut is None:
-        return False
-
-    # Parcourir jusqu'au tableau, puis mémoriser la dernière ligne '|'.
-    derniere_ligne_tableau = None
-    for i in range(debut + 1, len(lignes)):
-        s = lignes[i].strip()
-        if s.startswith("## "):        # section suivante atteinte
-            break
-        if s.startswith("|"):
-            derniere_ligne_tableau = i
-    if derniere_ligne_tableau is None:
-        return False
-
-    lignes.insert(derniere_ligne_tableau + 1, nouvelle_ligne)
-    return True
-
-
-def _afficher_rep(rep: str) -> str:
-    """Affiche le répertoire avec le raccourci ~ comme dans la doc existante."""
-    home = str(Path.home())
-    return rep.replace(home, "~", 1) if rep.startswith(home) else rep
-
-
-def etape_doc(nom: str, depot: str, rep: str, perimetre: str) -> bool:
+def etape_doc() -> bool:
     titre("9. Mise à jour de BRIDGE_AGENT_DOC.md")
-    if not DOC.exists():
+    resultat = regenerer_tableaux_projets.regenerer()
+    if not resultat["existe"]:
         print(f"   ⚠️  {DOC.name} introuvable — mise à jour ignorée.")
         return False
-
-    lignes = DOC.read_text(encoding="utf-8").splitlines()
-
-    ligne_2 = (f"| `{nom}` | {depot} | {_afficher_rep(rep)} | (conf local) |")
-    ligne_7 = f"| `{nom}` | {perimetre} |"
-
-    ok2 = _inserer_ligne_tableau(lignes, "## 2. Projets actifs", ligne_2)
-    # §7 vient après §2 : on réinsère sur la liste déjà modifiée.
-    ok7 = _inserer_ligne_tableau(lignes, "## 7. Périmètre par projet", ligne_7)
-
-    # Ligne de date en bas : "*Dernière mise à jour : JJ mois AAAA — …*"
-    aujourd_hui = date.today()
-    date_fr = f"{aujourd_hui.day} {MOIS_FR[aujourd_hui.month]} {aujourd_hui.year}"
-    ok_date = False
-    for i, ligne in enumerate(lignes):
-        if ligne.startswith("*Dernière mise à jour :"):
-            lignes[i] = re.sub(
-                r"(\*Dernière mise à jour : )[^—]*( —)",
-                rf"\g<1>{date_fr}\g<2>",
-                ligne,
-            )
-            ok_date = True
-            break
-
-    DOC.write_text("\n".join(lignes) + "\n", encoding="utf-8")
-    print(f"   §2 (Projets actifs)      : {'✓ ligne ajoutée' if ok2 else '⚠️ non trouvée'}")
-    print(f"   §7 (Périmètre par projet): {'✓ ligne ajoutée' if ok7 else '⚠️ non trouvée'}")
-    print(f"   Date en bas              : {'✓ mise à jour' if ok_date else '⚠️ non trouvée'}")
-    return ok2 and ok7
+    if resultat["erreur"]:
+        print(f"   ⚠️  {resultat['erreur']}")
+        return False
+    if resultat["modifie"]:
+        print(f"   §2/§7 régénérés depuis configs/*.conf "
+              f"({resultat['n_projets']} projet(s)).")
+    else:
+        print("   §2/§7 déjà à jour — aucune modification.")
+    return True
 
 
 # ─── Gabarit du .conf ─────────────────────────────────────────────────────────
@@ -1363,7 +1292,7 @@ def main() -> None:
         fichiers_contexte += etape_contexte(rep, avec_specs=True)
 
     git_res = etape_git(depot, rep)
-    doc_ok = etape_doc(nom, depot, rep, perimetre)
+    doc_ok = etape_doc()
 
     # 10. Résumé final.
     titre("✅ Résumé")
