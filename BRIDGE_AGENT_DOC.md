@@ -1591,6 +1591,21 @@ séquentiellement dans `REP_TRAVAIL` (hors périmètre de cette issue).
   de tâches `mode_write` concurrentes. `1` = comportement séquentiel
   historique intégral (aucun thread, aucun worktree créé, `traiter_issue`
   reste synchrone). `0` = désactivé, identique à `1`.
+- **Réglage via l'interface et plafond de 4 (issue #568)** : réglable depuis
+  l'onglet Configuration de `new_issue.py` via un slider (`min="1" max="4"`,
+  sur le modèle de celui de `TONALITE_BIP`) — la valeur invalide est donc
+  physiquement impossible à sélectionner par ce chemin, sans validation
+  serveur à contourner. Le plafond de 4 est un choix délibéré : au-delà,
+  risque de contention sur CCW (Pentium G2020 dual-core) et de diluer la
+  relecture humaine des diffs sur CCL. Rien n'empêche cependant une
+  modification manuelle du `.conf` au-delà de ce plafond : `charger_config`
+  plafonne alors silencieusement `CFG.max_write_parallele` à `4` pour
+  l'exécution en cours (jamais de blocage total du traitement du projet
+  pour ce seul motif), **sans jamais modifier le `.conf`** — règle absolue
+  du projet, le `.conf` reste le domaine exclusif d'Alain. Tant que l'écart
+  persiste, `verifier_plafond_max_write_parallele()` (appelée en début de
+  cycle, comme `verifier_accumulation_worktrees()`) émet un `log.warning`
+  explicite à **chaque cycle** — jamais une fois puis silence.
 - **Décision de parallélisation** (`traiter_issue`, point d'entrée public
   appelé pour chaque issue) : la **première** issue `mode_write` détectée
   sans autre tâche `mode_write` déjà en cours est dispatchée dans un thread

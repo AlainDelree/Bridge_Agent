@@ -258,6 +258,8 @@ async function chargerConfig() {
     document.getElementById('conf-LOG_ARCHIVES').value      = cfg.log_archives      || 5;
     // ?? et non || : 0 est une valeur valide (auto-extinction désactivée).
     document.getElementById('conf-DELAI_INACTIVITE_MIN').value = cfg.delai_inactivite_min ?? 20;
+    document.getElementById('conf-MAX_WRITE_PARALLELE').value      = cfg.max_write_parallele      || 2;
+    document.getElementById('max-write-parallele-valeur').textContent = cfg.max_write_parallele || 2;
     document.getElementById('msg-config').style.display = 'none';
   } catch(e) {
     const msg = document.getElementById('msg-config');
@@ -281,6 +283,7 @@ async function sauvegarderConfig(relancer) {
     LOG_TAILLE_MAX_MO: document.getElementById('conf-LOG_TAILLE_MAX_MO').value,
     LOG_ARCHIVES:      document.getElementById('conf-LOG_ARCHIVES').value,
     DELAI_INACTIVITE_MIN: document.getElementById('conf-DELAI_INACTIVITE_MIN').value,
+    MAX_WRITE_PARALLELE: document.getElementById('conf-MAX_WRITE_PARALLELE').value,
   };
   const rep  = await fetch('/config/' + encodeURIComponent(nom), {
     method: 'POST',

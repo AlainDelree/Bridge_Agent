@@ -370,7 +370,8 @@ class Config:
     notifier_local: bool   = True  # ce watcher émet-il lui-même bip/notify-send/ntfy à la fin d'une issue (issue #187) ? True = comportement historique. Mettre à False sur la VM CCW (et éventuellement CCL) pour laisser new_issue.py notifier de façon centralisée sur le ThinkPad, sans doublon.
     delai_inactivite_min: int = 20  # auto-extinction : minutes sans aucune issue traitable avant que le watcher ne s'arrête proprement (issue #200). 0 = désactivé (le watcher tourne indéfiniment, comportement historique).
     libelle_agent: str     = ""    # libellé de l'agent affiché dans l'ACK (ex. "agent Linux", "agent Windows") — vide = déduit automatiquement de la plateforme (issue #239)
-    max_write_parallele: int = 2   # parallélisation mode_write via git worktrees (issue #337) : nombre max de tâches mode_write concurrentes. 1 = comportement séquentiel historique (aucun worktree, aucun thread). 0 = désactivé (identique à 1).
+    max_write_parallele: int = 2   # parallélisation mode_write via git worktrees (issue #337) : nombre max de tâches mode_write concurrentes, effectivement appliqué (déjà plafonné à 4, issue #568). 1 = comportement séquentiel historique (aucun worktree, aucun thread). 0 = désactivé (identique à 1).
+    max_write_parallele_brut: int = 2  # valeur MAX_WRITE_PARALLELE telle que lue dans le .conf, AVANT plafonnement (issue #568) — sert uniquement à détecter et signaler un dépassement manuel à chaque cycle ; ne jamais l'utiliser pour piloter la parallélisation elle-même (voir max_write_parallele).
     seuil_alerte_worktrees: int = 3  # alerte accumulation de worktrees (issue #432) : au-delà de ce nombre de worktrees secondaires actifs (hors REP_TRAVAIL), un log.warning est émis à chaque cycle — le nettoyage (merge + git worktree remove + git branch -d) reste manuel, cf. WORKTREES.md.
 
     @property
@@ -465,7 +466,8 @@ def charger_config(chemin: Path) -> Config:
         notifier_local      = booleen("NOTIFIER_LOCAL", True),
         delai_inactivite_min = entier("DELAI_INACTIVITE_MIN", 20),
         libelle_agent       = brut.get("LIBELLE_AGENT", ""),
-        max_write_parallele = entier("MAX_WRITE_PARALLELE", 2),
+        max_write_parallele = min(entier("MAX_WRITE_PARALLELE", 2), 4),
+        max_write_parallele_brut = entier("MAX_WRITE_PARALLELE", 2),
         seuil_alerte_worktrees = entier("SEUIL_ALERTE_WORKTREES", 3),
     )
 
@@ -825,6 +827,26 @@ def verifier_accumulation_worktrees() -> None:
         f"⚠️  {len(secondaires)} worktrees git actifs pour {CFG.nom} "
         f"(seuil {CFG.seuil_alerte_worktrees}) — pensez à merger/nettoyer "
         f"(git worktree remove + git branch -d) : {detail}"
+    )
+
+
+def verifier_plafond_max_write_parallele() -> None:
+    """Plafonnement défensif de MAX_WRITE_PARALLELE (issue #568) : le slider de
+    l'onglet Configuration ne peut produire qu'une valeur entre 1 et 4, mais
+    rien n'empêche Alain (ou un futur oubli) d'écrire directement une valeur
+    ≥ 5 dans le .conf. `charger_config` a déjà plafonné `CFG.max_write_parallele`
+    à 4 pour l'exécution en cours — le .conf lui-même n'est JAMAIS modifié
+    (règle absolue du projet). Cette fonction, appelée en début de cycle,
+    se contente de signaler l'écart tant qu'il persiste : un log.warning à
+    CHAQUE cycle plutôt qu'une fois puis silence, cohérent avec
+    `verifier_accumulation_worktrees` ci-dessus."""
+    if CFG.max_write_parallele_brut <= 4:
+        return
+    log.warning(
+        f"⚠️  MAX_WRITE_PARALLELE={CFG.max_write_parallele_brut} dans le .conf de {CFG.nom} "
+        f"dépasse le plafond de 4 — 4 utilisé pour cette exécution (le .conf n'est jamais "
+        f"modifié automatiquement ; corrigez-le à la main ou via le slider de l'onglet "
+        f"Configuration)."
     )
 
 
@@ -4374,6 +4396,9 @@ def main():
             # Alerte accumulation de worktrees (issue #432), best-effort et
             # silencieuse en dessous du seuil — voir verifier_accumulation_worktrees().
             verifier_accumulation_worktrees()
+            # Plafonnement défensif de MAX_WRITE_PARALLELE (issue #568), best-effort et
+            # silencieux sous le plafond — voir verifier_plafond_max_write_parallele().
+            verifier_plafond_max_write_parallele()
             issues = lister_issues()
             # Activité = présence d'au moins une issue réellement traitable (ni
             # done, ni needs-human). On réarme AVANT le traitement : le cycle qui

@@ -428,6 +428,16 @@
     </div>
 
     <div class="champ" style="margin-bottom:14px">
+      <label title="Nombre maximum de tâches mode_write concurrentes (issue #337), via git worktrees. 1 = traitement séquentiel historique. Plafonné à 4 : au-delà, risque de contention sur CCW (Pentium G2020 dual-core) et de diluer la relecture humaine des diffs.">Tâches mode_write en parallèle (1-4)</label>
+      <div style="display:flex;align-items:center;gap:10px">
+        <input type="range" id="conf-MAX_WRITE_PARALLELE" min="1" max="4" step="1" value="2"
+               oninput="document.getElementById('max-write-parallele-valeur').textContent = this.value"
+               style="flex:1">
+        <span id="max-write-parallele-valeur" style="min-width:2.5em;text-align:right">2</span>
+      </div>
+    </div>
+
+    <div class="champ" style="margin-bottom:14px">
       <label>Fichier de contexte projet (relatif au rep. de travail)</label>
       <input type="text" id="conf-FICHIER_CONTEXTE"
              placeholder="ex: CONTEXTE.md ou BRIDGE_AGENT_DOC.md">
