@@ -78,6 +78,7 @@ Claude Chat → crée une issue → GitHub → watcher.py détecte → CCL exéc
 | `chesscoach` | AlainDelree/Chesscoach | ~/ChessCoach | (conf local) |
 | `gestionmail` | AlainDelree/GestionMail | ~/GestionMail | (conf local) |
 | `testccwprojet` | AlainDelree/Testccwprojet | ~/Testccwprojet | (conf local) |
+| `relecture_bridge` | AlainDelree/Relecture_Bridge | ~/Relecture_Bridge | (conf local) |
 
 Chaque projet a son propre watcher (`watcher.py --config configs/<nom>.conf`)
 et son propre journal de log (`logs/watcher-<nom>.log`).
@@ -710,6 +711,7 @@ hors périmètre même si l'issue le demande explicitement :
 | `chesscoach` | /home/alain/ChessCoach |
 | `gestionmail` | /home/alain/GestionMail |
 | `testccwprojet` | /home/alain/Testccwprojet |
+| `relecture_bridge` | /home/alain/Relecture_Bridge |
 
 ---
 
@@ -3487,7 +3489,7 @@ de création d'issue, seul valable pour du contenu qu'il produit.
 
 ---
 
-*Dernière mise à jour : 17 septembre 2026 — Sous-section « Couleur d'accent
+*Dernière mise à jour : 18 septembre 2026 — Sous-section « Couleur d'accent
 des projets » (§12) complétée (issue #540) : procédure de recyclage de la
 couleur d'un projet mis à l'arrêt, appliquée à `ecole`/`ff_galerie`. Nouvelle
 constante partagée `COULEUR_PROJET_INACTIF` (`#767676`, contraste texte noir
