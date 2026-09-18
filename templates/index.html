@@ -79,7 +79,6 @@
     <div class="onglet" onclick="basculerOnglet('journal')">Journal watcher</div>
     <div class="onglet" onclick="basculerOnglet('config')">Configuration</div>
     <div class="onglet" onclick="basculerOnglet('watchers')">Watchers</div>
-    <div class="onglet" onclick="basculerOnglet('git')">Git</div>
     <div class="onglet" onclick="basculerOnglet('ccw')">CCW</div>
   </div>
 
@@ -374,20 +373,6 @@
         <button class="danger" onclick="actionWatchers('arreter')">Éteindre</button>
       </div>
     </div>
-  </div>
-
-  <!-- ─── Onglet « Git » (issue #569) : worktrees actifs + commits locaux non
-       poussés, par projet — lecture seule, chargé à l'ouverture de l'onglet
-       (pas de polling automatique, comme l'onglet CCW : chaque rafraîchissement
-       lance des commandes git par projet). ──────────────────────────────── -->
-  <div id="panneau-git" class="panneau">
-    <div class="titre-section" style="display:flex;align-items:center">
-      <span>Worktrees et commits en attente de push, par projet</span>
-      <button onclick="chargerGitEtat()"
-              style="margin-left:auto;font-size:12px;padding:4px 10px">Rafraîchir</button>
-    </div>
-    <div id="git-msg" class="message"></div>
-    <div id="git-corps-projets"></div>
   </div>
 
   <!-- ─── Onglet 3 : configuration ────────────────────────────────────── -->

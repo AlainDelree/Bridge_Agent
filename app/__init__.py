@@ -85,7 +85,6 @@ def _enregistrer_routes(app: Flask) -> None:
     from app.diag_heartbeat import visibilite as diag_visibilite   # DIAGNOSTIC TEMPORAIRE — issue #157, à retirer
     from app.son import get_son_actif, post_son_actif, tester_son
     from app.vues import index
-    from app.git_etat import etat_git
 
     app.add_url_rule("/login", "login", login, methods=["GET"])
     app.add_url_rule("/login", "login_post", login_post, methods=["POST"])
@@ -155,6 +154,3 @@ def _enregistrer_routes(app: Flask) -> None:
     app.add_url_rule("/son-actif", "get_son_actif", login_requis(get_son_actif), methods=["GET"])
     app.add_url_rule("/son-actif", "post_son_actif", login_requis(post_son_actif), methods=["POST"])
     app.add_url_rule("/tester-son", "tester_son", login_requis(tester_son), methods=["POST"])
-    # ─── Onglet « Git » (issue #569) : worktrees actifs + commits non poussés,
-    # par projet, lecture seule ────────────────────────────────────────────
-    app.add_url_rule("/git-etat", "etat_git", login_requis(etat_git), methods=["GET"])
