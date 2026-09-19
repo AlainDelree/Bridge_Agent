@@ -18,7 +18,7 @@
     <h1>Bridge Agent</h1>
     <span class="statut">{{ projets|length }} projet(s) disponible(s)</span>
     {% if auth_active %}
-    <button class="danger" onclick="location.href='/logout'"
+    <button class="danger" onclick="if(confirm('Se déconnecter ?')) location.href='/logout'"
             style="font-size:12px;padding:5px 12px">Déconnexion</button>
     {% endif %}
     <button id="btn-quitter" class="danger" onclick="quitter()"
