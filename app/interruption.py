@@ -469,10 +469,23 @@ def relancer_issue(depot: str, numero: int, commentaire: str = COMMENTAIRE_RELAN
 def route_relancer():
     """POST /relancer-issue — remet en file d'attente une issue bloquée en
     needs-human (issue #460), sans recréer une nouvelle issue. Mince wrapper
-    Flask autour de relancer_issue() ci-dessus, qui porte la logique réelle."""
+    Flask autour de relancer_issue() ci-dessus, qui porte la logique réelle.
+
+    Redémarrage auto du watcher CCL cible si éteint (issue #574) : c'était le
+    seul des trois chemins qui remettent une issue en circuit à ne PAS
+    redémarrer le watcher si l'auto-extinction par inactivité (#200) l'a
+    éteint entre-temps — à la différence de la création d'issue
+    (app/issues.py::envoyer, #202) et du bloc RELANCE
+    (scripts/watcher_issues_inbox.py::_traiter_relance, #572), qui le font
+    déjà tous les deux. Même garde que ces deux chemins (uniquement
+    for-linux — for-windows est traité par CCW, rien à démarrer ici) et même
+    philosophie : un échec du démarrage ne doit JAMAIS transformer une
+    relance réussie en erreur (try/except large), tracé dans le commentaire
+    posté sur l'issue ET dans la réponse JSON plutôt que silencieux."""
     data   = request.json or {}
     depot  = (data.get("depot") or "").strip()
     numero = data.get("numero")
+    labels = [str(l).strip().lower() for l in (data.get("labels") or [])]
 
     if not depot:
         return jsonify(succes=False, erreur="Dépôt GitHub manquant."), 400
@@ -480,5 +493,22 @@ def route_relancer():
         return jsonify(succes=False, erreur="Numéro d'issue invalide."), 400
     numero = int(numero)
 
-    statut_global, etapes = relancer_issue(depot, numero)
-    return jsonify(succes=True, statut_global=statut_global, etapes=etapes)
+    cfg = projet_par_depot(depot)
+
+    trace_watcher = ""
+    watcher_demarre, watcher_pid = None, None
+    if cfg and "for-linux" in labels:
+        try:
+            from app.watchers import demarrer_watcher
+            watcher_demarre, watcher_pid = demarrer_watcher(cfg, forcer=False)
+            if watcher_demarre:
+                trace_watcher = (f"\n\n⚙️ Watcher CCL du projet « {cfg.nom} » redémarré "
+                                  f"automatiquement (il était éteint — pid {watcher_pid}, issue #574).")
+        except Exception as e:
+            watcher_demarre = None
+            trace_watcher = (f"\n\n⚠️ Redémarrage auto du watcher CCL « {cfg.nom} » "
+                              f"échoué : {e}")
+
+    statut_global, etapes = relancer_issue(depot, numero, commentaire=COMMENTAIRE_RELANCE + trace_watcher)
+    return jsonify(succes=True, statut_global=statut_global, etapes=etapes,
+                   watcher_demarre=watcher_demarre, watcher_pid=watcher_pid)

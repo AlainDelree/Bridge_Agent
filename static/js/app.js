@@ -3986,24 +3986,28 @@ async function interrompreEtRelancer(nom, numero) {
 // ce label côté GitHub (route Flask /relancer-issue, app/interruption.py) —
 // il n'existe PAS de label « pending » dans ce projet, une issue ouverte
 // sans needs-human ni done est déjà éligible au prochain cycle du watcher
-// (voir watcher.py). Ne relance PAS le watcher lui-même : si celui-ci est
-// éteint, une relance manuelle depuis l'onglet Watchers reste nécessaire.
+// (voir watcher.py). Redémarre aussi le watcher CCL cible s'il s'était
+// éteint par inactivité (issue #574, cohérence avec la création d'issue
+// #202 et le bloc RELANCE #572) — labels transmis au serveur pour la garde
+// for-linux/for-windows, même mécanisme que interrompreIssue() ci-dessus.
 async function relancerIssue(nom, numero) {
   const depot = depotDuProjet(nom);
   if (!depot) {
     alert('Dépôt GitHub introuvable pour le projet « ' + nom + ' » — impossible de relancer.');
     return;
   }
+  const labels = labelsIssueDepuisCache(nom, numero);
   if (!confirm("Retirer le label needs-human de l'issue #" + numero + " ?\n\n"
              + "L'issue sera reprise par le watcher "
-             + "à son prochain cycle (s'il tourne).")) return;
+             + "à son prochain cycle (s'il tourne — redémarré automatiquement "
+             + "s'il s'était éteint, issue #574).")) return;
 
   let resultat;
   try {
     const rep = await fetch('/relancer-issue', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({depot: depot, numero: Number(numero)})
+      body: JSON.stringify({depot: depot, numero: Number(numero), labels: labels})
     });
     resultat = await rep.json();
   } catch(e) {
