@@ -20,6 +20,14 @@ Vérifie :
 - Non-régression : `MAX_WRITE_PARALLELE = 1` → `traiter_issue` reste
   strictement synchrone, aucun thread ni worktree créé, comportement
   identique à avant #337.
+- Issue #576 : une issue mode_write abandonnée en `needs-human` continue
+  d'occuper sa place de `MAX_WRITE_PARALLELE` jusqu'à résolution manuelle
+  (retrait du label, ou fermeture de l'issue) — avec `MAX_WRITE_PARALLELE=1`
+  elle bloque tout traitement mode_write suivant ; avec une valeur plus
+  haute, elle occupe une place parmi les autres sans bloquer le reste. Le
+  retrait du label libère la place au prochain passage dans `traiter_issue` ;
+  une fermeture manuelle (issue absente de `lister_issues()`) est détectée
+  séparément par `_reconcilier_issues_en_cours_fermees`.
 
 `gh` et `claude` sont remplacés par de faux exécutables (même technique que
 tests/test_lecture_active_327.py) : aucun appel réseau réel. Le faux `claude`
@@ -32,6 +40,7 @@ Exécution :  python3 tests/test_worktree_parallelisation_337.py
 Sortie      :  code 0 si tous les scénarios passent, 1 sinon.
 """
 
+import contextlib
 import logging
 import os
 import stat
@@ -100,14 +109,89 @@ exit 0
 """
 
 
-def _preparer_bin(tmp_path: Path) -> Path:
+# Faux `claude` — issue #576. Contrairement à FAUX_CLAUDE ci-dessus (toujours
+# un succès), échoue (code 1) à la demande pour un numéro d'issue donné —
+# présence du fichier marqueur $TEST_576_DIR/fail-<numero> — pour déclencher
+# le chemin needs-human. Cherche le numéro d'issue dans TOUS les arguments
+# (pas seulement le dernier) : la passe diagnostique (`diagnostiquer_echec`,
+# mode lecture seule) ajoute `--allowedTools ...` APRÈS le prompt, qui n'est
+# donc plus le dernier argument dans ce cas.
+FAUX_CLAUDE_576 = """#!/bin/bash
+if [ "$#" -ge 2 ]; then
+    numero=""
+    for arg in "$@"; do
+        n=$(echo "$arg" | grep -oE 'Issue #[0-9]+' | head -1 | grep -oE '[0-9]+')
+        if [ -n "$n" ]; then
+            numero="$n"
+        fi
+    done
+    if [ -n "$numero" ]; then
+        echo "$PWD" > "$TEST_576_DIR/pwd-$numero"
+        if [ -f "$TEST_576_DIR/fail-$numero" ]; then
+            echo "erreur simulée pour #$numero" >&2
+            exit 1
+        fi
+    fi
+    sleep 0.05
+    echo "✅ Tâche terminée — test #$numero"
+fi
+exit 0
+"""
+
+
+def _preparer_bin(tmp_path: Path, claude_script: str = FAUX_CLAUDE) -> Path:
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir(exist_ok=True)
-    for nom, contenu in (("claude", FAUX_CLAUDE), ("gh", FAUX_GH)):
+    for nom, contenu in (("claude", claude_script), ("gh", FAUX_GH)):
         chemin = bin_dir / nom
         chemin.write_text(contenu, encoding="utf-8")
         chemin.chmod(chemin.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
     return bin_dir
+
+
+@contextlib.contextmanager
+def _contexte_watcher_isole(tmp_path: Path, **kwargs_config):
+    """Isole tout l'état global mutable de watcher.py pour la durée d'un
+    scénario needs-human (issue #576) — même isolation que
+    `_lancer_deux_issues_paralleles` (verrous fichier, fichiers d'état de
+    calibration, threads/issues en cours), factorisée ici car partagée par
+    plusieurs scénarios qui n'ont pas besoin du dispatch à deux issues.
+    Inclut en plus `_issues_write_bloquees_needs_human` (#576), absent de
+    l'isolation historique de #337."""
+    ancien_cfg                   = watcher.CFG
+    ancien_dossier_verrous       = watcher.DOSSIER_VERROUS
+    ancien_dossier_logs          = watcher.DOSSIER_LOGS
+    ancien_fichier_historique    = watcher.FICHIER_HISTORIQUE
+    ancien_fichier_etat_timeout  = watcher.FICHIER_ETAT_TIMEOUT
+    ancien_fichier_etat_ambiance = watcher.FICHIER_ETAT_AMBIANCE
+    ancien_threads               = list(watcher._threads_ecriture)
+    ancien_issues_en_cours       = set(watcher.issues_en_cours)
+    ancien_bloquees              = set(watcher._issues_write_bloquees_needs_human)
+
+    watcher.DOSSIER_VERROUS = tmp_path / "verrous"
+    watcher.DOSSIER_LOGS = tmp_path / "logs"
+    watcher.FICHIER_HISTORIQUE = watcher.DOSSIER_LOGS / "historique_durees.json"
+    watcher.FICHIER_ETAT_TIMEOUT = watcher.DOSSIER_LOGS / "etat_timeout.json"
+    watcher.FICHIER_ETAT_AMBIANCE = watcher.DOSSIER_LOGS / "etat_ambiance.json"
+    watcher._threads_ecriture.clear()
+    watcher.issues_en_cours.clear()
+    watcher._issues_write_bloquees_needs_human.clear()
+    watcher.CFG = watcher.Config(**kwargs_config)
+    try:
+        yield
+    finally:
+        watcher.CFG = ancien_cfg
+        watcher.DOSSIER_VERROUS = ancien_dossier_verrous
+        watcher.DOSSIER_LOGS = ancien_dossier_logs
+        watcher.FICHIER_HISTORIQUE = ancien_fichier_historique
+        watcher.FICHIER_ETAT_TIMEOUT = ancien_fichier_etat_timeout
+        watcher.FICHIER_ETAT_AMBIANCE = ancien_fichier_etat_ambiance
+        watcher._threads_ecriture.clear()
+        watcher._threads_ecriture.extend(ancien_threads)
+        watcher.issues_en_cours.clear()
+        watcher.issues_en_cours.update(ancien_issues_en_cours)
+        watcher._issues_write_bloquees_needs_human.clear()
+        watcher._issues_write_bloquees_needs_human.update(ancien_bloquees)
 
 
 def _init_depot_git(rep: Path) -> None:
@@ -403,6 +487,181 @@ def scenario_non_regression_max_1():
         return {"sequentiel_preserve": True}
 
 
+def scenario_needs_human_bloque_max_1():
+    """Issue #576 : avec MAX_WRITE_PARALLELE=1, une issue mode_write abandonnée
+    en needs-human (échec réel après épuisement des tentatives) continue
+    d'occuper l'unique place — une deuxième issue mode_write est différée SANS
+    même être tentée (aucun ACK, aucun appel claude) tant que le label n'est
+    pas retiré. Une fois le label retiré (bouton « Relancer » #574, fichier
+    RELANCE #516/#572, ou retrait manuel — simulé ici par des labels frais
+    sans 'needs-human'), la place est libérée et le traitement reprend
+    normalement pour les deux issues."""
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+        rep_travail = tmp_path / "projet"
+        rep_travail.mkdir()
+        _init_depot_git(rep_travail)
+
+        test_dir = tmp_path / "etat_test"
+        test_dir.mkdir()
+        bin_dir = _preparer_bin(tmp_path, claude_script=FAUX_CLAUDE_576)
+
+        ancien_path = os.environ.get("PATH", "")
+        os.environ["PATH"] = f"{bin_dir}{os.pathsep}{ancien_path}"
+        os.environ["TEST_576_DIR"] = str(test_dir)
+        # FAUX_GH (issue comment/view, marqueur de résultat posté) référence
+        # TEST_337_DIR en dur — même dossier, exposé sous les deux noms.
+        os.environ["TEST_337_DIR"] = str(test_dir)
+
+        numero1, numero2 = 93761, 93762
+        with _contexte_watcher_isole(
+            tmp_path, nom="test576max1", depot="AlainDelree/depot-inexistant-test576",
+            rep_travail=rep_travail, topic_ntfy="test576max1",
+            max_essais=1, timeout_claude=15, notifier_local=False,
+            max_write_parallele=1,
+        ):
+            try:
+                (test_dir / f"fail-{numero1}").touch()
+                issue1 = _issue_minimale(numero1, "Test #576 — échec définitif", ["mode_write"])
+                watcher.traiter_issue(issue1, dry_run=False)
+
+                assert numero1 in watcher.issues_en_cours, \
+                    "l'issue needs-human aurait dû rester dans issues_en_cours (#576)"
+                assert watcher._nb_issues_write_bloquees() == 1, \
+                    "l'issue needs-human aurait dû occuper une place de MAX_WRITE_PARALLELE (#576)"
+                assert not (test_dir / f"marqueur-{numero1}").exists(), \
+                    "aucun résultat de succès n'aurait dû être posté (échec attendu)"
+
+                # Deuxième issue mode_write : la seule place est occupée par
+                # l'issue #1 en needs-human — différée sans même être tentée.
+                issue2 = _issue_minimale(numero2, "Test #576 — différée (place occupée)", ["mode_write"])
+                watcher.traiter_issue(issue2, dry_run=False)
+                assert not (test_dir / f"pwd-{numero2}").exists(), \
+                    "l'issue #2 n'aurait pas dû être tentée : la place unique est occupée par needs-human (#576)"
+                assert numero2 not in watcher.issues_en_cours
+
+                # Résolution : label 'needs-human' retiré (Relancer/RELANCE/manuel)
+                # et cause corrigée — la place doit se libérer et l'issue #1
+                # être retraitée normalement.
+                (test_dir / f"fail-{numero1}").unlink()
+                issue1_relance = _issue_minimale(numero1, "Test #576 — échec définitif", ["mode_write"])
+                watcher.traiter_issue(issue1_relance, dry_run=False)
+                assert numero1 not in watcher.issues_en_cours
+                assert watcher._nb_issues_write_bloquees() == 0, \
+                    "la place aurait dû être libérée après retrait du label needs-human (#576)"
+                assert (test_dir / f"marqueur-{numero1}").exists(), "issue #1 relancée : résultat jamais posté"
+
+                # La place étant libre, l'issue #2 peut maintenant être traitée.
+                watcher.traiter_issue(issue2, dry_run=False)
+                assert (test_dir / f"pwd-{numero2}").exists(), "issue #2 aurait dû être traitée une fois la place libérée"
+                assert (test_dir / f"marqueur-{numero2}").exists(), "issue #2 : résultat jamais posté"
+            finally:
+                if ancien_path:
+                    os.environ["PATH"] = ancien_path
+                else:
+                    os.environ.pop("PATH", None)
+                os.environ.pop("TEST_576_DIR", None)
+                os.environ.pop("TEST_337_DIR", None)
+
+        return {"blocage_puis_liberation_ok": True}
+
+
+def scenario_needs_human_compte_avec_max_superieur():
+    """Issue #576 : avec MAX_WRITE_PARALLELE=2, une issue déjà bloquée en
+    needs-human (simulée directement — le cheminement réel est couvert par
+    `scenario_needs_human_bloque_max_1`) occupe une place parmi les autres :
+    UNE tâche mode_write supplémentaire peut démarrer (place restante), mais
+    une DEUXIÈME est bien différée — needs-human + 1 thread actif = 2 places
+    occupées sur 2."""
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+        rep_travail = tmp_path / "projet"
+        rep_travail.mkdir()
+        _init_depot_git(rep_travail)
+
+        test_dir = tmp_path / "etat_test"
+        test_dir.mkdir()
+        bin_dir = _preparer_bin(tmp_path, claude_script=FAUX_CLAUDE_576)
+
+        ancien_path = os.environ.get("PATH", "")
+        os.environ["PATH"] = f"{bin_dir}{os.pathsep}{ancien_path}"
+        os.environ["TEST_576_DIR"] = str(test_dir)
+        # FAUX_GH (issue comment/view, marqueur de résultat posté) référence
+        # TEST_337_DIR en dur — même dossier, exposé sous les deux noms.
+        os.environ["TEST_337_DIR"] = str(test_dir)
+
+        numero_bloquee, numero1, numero2 = 93763, 93764, 93765
+        with _contexte_watcher_isole(
+            tmp_path, nom="test576max2", depot="AlainDelree/depot-inexistant-test576",
+            rep_travail=rep_travail, topic_ntfy="test576max2",
+            max_essais=1, timeout_claude=15, notifier_local=False,
+            max_write_parallele=2,
+        ):
+            try:
+                watcher._issues_en_cours_ajouter(numero_bloquee)
+                watcher._issue_write_bloquee_ajouter(numero_bloquee)
+
+                issue1 = _issue_minimale(numero1, "Test #576 — place restante", ["mode_write"])
+                watcher.traiter_issue(issue1, dry_run=False)
+                actifs_1 = watcher._threads_ecriture_actifs()
+                assert len(actifs_1) == 1, \
+                    f"1 place restante (2 - 1 bloquée en needs-human) : la tâche aurait dû démarrer : {actifs_1}"
+
+                issue2 = _issue_minimale(numero2, "Test #576 — plus de place", ["mode_write"])
+                watcher.traiter_issue(issue2, dry_run=False)
+                actifs_2 = watcher._threads_ecriture_actifs()
+                assert len(actifs_2) == 1, \
+                    "aucune place restante (1 thread actif + 1 needs-human = 2/2) : la 2e tâche n'aurait pas dû démarrer"
+                assert not (test_dir / f"pwd-{numero2}").exists()
+
+                actifs_1[0]["thread"].join(timeout=15)
+                assert not actifs_1[0]["thread"].is_alive(), f"thread issue #{numero1} toujours actif après 15s"
+            finally:
+                if ancien_path:
+                    os.environ["PATH"] = ancien_path
+                else:
+                    os.environ.pop("PATH", None)
+                os.environ.pop("TEST_576_DIR", None)
+                os.environ.pop("TEST_337_DIR", None)
+
+        return {"place_partagee_ok": True}
+
+
+def scenario_reconciliation_fermeture_manuelle():
+    """Issue #576 (cas 3) : une issue needs-human fermée manuellement sur
+    GitHub — plutôt qu'un simple retrait du label — doit elle aussi libérer sa
+    place. Ce cas n'est PAS détecté par `traiter_issue` (qui ne revoit plus
+    jamais cette issue, absente de `lister_issues()` — état `--state open`
+    uniquement) mais par `_reconcilier_issues_en_cours_fermees`, appelée une
+    fois par cycle en tête de boucle principale sur la liste fraîche des
+    issues ouvertes."""
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+        numero = 93766
+        with _contexte_watcher_isole(
+            tmp_path, nom="test576reconcil", depot="AlainDelree/depot-inexistant-test576",
+            rep_travail=tmp_path / "projet_inexistant", topic_ntfy="test576reconcil",
+        ):
+            watcher._issues_en_cours_ajouter(numero)
+            watcher._issue_write_bloquee_ajouter(numero)
+
+            # Toujours ouverte sur GitHub (présente dans le lot, avec le label
+            # needs-human toujours posé) : rien ne doit bouger.
+            watcher._reconcilier_issues_en_cours_fermees(
+                [{"number": numero, "labels": [{"name": "needs-human"}]}])
+            assert numero in watcher.issues_en_cours
+            assert watcher._nb_issues_write_bloquees() == 1
+
+            # Disparue de la liste des issues ouvertes (fermeture manuelle) :
+            # la place doit être libérée.
+            watcher._reconcilier_issues_en_cours_fermees([])
+            assert numero not in watcher.issues_en_cours, \
+                "la place aurait dû être libérée (issue fermée manuellement, #576)"
+            assert watcher._nb_issues_write_bloquees() == 0
+
+        return {"reconciliation_fermeture_ok": True}
+
+
 def main():
     if os.name == "nt":
         print("  (ignoré : ce test s'appuie sur bash/git POSIX, non applicable sous Windows)")
@@ -415,6 +674,12 @@ def main():
         ("parallélisation de 2 issues mode_write : REP_TRAVAIL + worktree dédié, worktree conservé",
          scenario_parallelisation_deux_issues_mode_write),
         ("non-régression MAX_WRITE_PARALLELE=1 : aucun thread, aucun worktree", scenario_non_regression_max_1),
+        ("issue #576 — needs-human bloque la seule place (MAX=1) puis la libère après retrait du label",
+         scenario_needs_human_bloque_max_1),
+        ("issue #576 — needs-human compte parmi les places (MAX=2) sans bloquer le reste",
+         scenario_needs_human_compte_avec_max_superieur),
+        ("issue #576 — fermeture manuelle d'une issue needs-human libère sa place",
+         scenario_reconciliation_fermeture_manuelle),
     ]
 
     logging.getLogger().addHandler(logging.NullHandler())

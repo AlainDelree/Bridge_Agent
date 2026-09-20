@@ -1664,6 +1664,34 @@ séquentiellement dans `REP_TRAVAIL` (hors périmètre de cette issue).
   entier, défaut **3**) — visible dans l'onglet Journal watcher de
   l'interface. Aucune notification ntfy/bureau ; le nettoyage reste
   entièrement manuel (Alain).
+- **`needs-human` occupe sa place jusqu'à résolution manuelle (issue #576,
+  changement de sémantique)** : depuis #576, une issue `mode_write` qui
+  échoue définitivement (label `needs-human` posé — épuisement des
+  tentatives, `SOUS_DOSSIER`/`REPO_CIBLE`/bootstrap CREATION refusé, etc.)
+  **continue d'occuper une place de `MAX_WRITE_PARALLELE`** au lieu d'être
+  libérée aussitôt le thread terminé (comportement d'avant #576). Avec
+  `MAX_WRITE_PARALLELE = 1`, une seule issue `needs-human` oubliée bloque
+  donc tout traitement `mode_write` suivant sur ce projet — comportement
+  voulu, pas un bug : Alain dépose parfois plusieurs issues en cascade
+  potentiellement dépendantes (sans mécanisme de dépendance explicite,
+  volontairement écarté) puis s'absente ; laisser la suivante démarrer sur
+  un état de projet intermédiaire laissé par l'échec serait pire que
+  d'attendre son intervention. Avec une valeur plus haute, l'issue bloquée
+  occupe une place parmi les autres sans empêcher le reste de tourner.
+  La place n'est libérée que par une intervention **explicite** d'Alain,
+  détectée au cycle suivant :
+  - retrait manuel du label `needs-human` sur GitHub (issue toujours
+    ouverte) — détecté par `traiter_issue` à la relecture des labels frais ;
+  - relance via le bouton web « 🔄 Relancer » (#574) ou un fichier
+    `RELANCE` (#516/#572), qui retirent tous deux ce même label ;
+  - fermeture manuelle de l'issue sur GitHub SANS retirer le label — cas
+    distinct, car `lister_issues()` ne renvoie que les issues **ouvertes**
+    et une issue fermée disparaît donc purement et simplement de la liste
+    sans jamais repasser par `traiter_issue` ; détecté séparément par
+    `_reconcilier_issues_en_cours_fermees`, appelée une fois par cycle juste
+    après `lister_issues()`, en tête de boucle principale.
+  Le chemin de succès normal (issue traitée et fermée avec le label `done`)
+  est inchangé : seul le comportement du chemin `needs-human` est affecté.
 
 > Pour le détail du workflow et les procédures de récupération, voir
 > [`WORKTREES.md`](WORKTREES.md).

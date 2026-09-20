@@ -301,7 +301,13 @@ exit 0
         ).stdout
         assert statut.strip() == "", f"REP_TRAVAIL aurait dû être restauré à l'identique : {statut!r}"
 
-        assert 9328 not in watcher.issues_en_cours, "l'issue aurait dû être retirée de issues_en_cours"
+        # Issue #576 : une issue needs-human reste désormais suivie dans
+        # issues_en_cours — la place n'est libérée qu'au retrait effectif du
+        # label (bouton Relancer, RELANCE, ou fermeture manuelle).
+        assert 9328 in watcher.issues_en_cours, (
+            "l'issue needs-human aurait dû rester dans issues_en_cours (occupe "
+            "toujours une place tant qu'un humain n'est pas intervenu, issue #576)")
+        watcher.issues_en_cours.discard(9328)
 
         return {"restaure": True, "needs_human": True}
 
