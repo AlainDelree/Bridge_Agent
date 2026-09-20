@@ -3280,16 +3280,25 @@ def _reconcilier_issues_en_cours_fermees(issues: list[dict]) -> None:
 # tourne dans REP_TRAVAIL, cf. décision ci-dessous), "thread"}.
 #
 # Décision de parallélisation (voir `traiter_issue`, point d'entrée public) :
-# la PREMIÈRE tâche mode_write d'un lot est dispatchée dans un thread ciblant
-# REP_TRAVAIL (worktree=None) — nécessaire pour que la boucle principale reste
-# libre de détecter une deuxième tâche mode_write pendant que la première
-# tourne encore (une boucle `while True` mono-thread ne peut sinon jamais
-# atteindre une deuxième issue tant que `traiter_issue` bloque sur la
-# première). Les tâches mode_write SUIVANTES, détectées pendant qu'au moins un
-# thread mode_write est déjà actif et que `MAX_WRITE_PARALLELE` n'est pas
-# atteint, obtiennent chacune un worktree dédié. `MAX_WRITE_PARALLELE <= 1`
-# désactive tout le mécanisme : traitement strictement séquentiel historique,
-# aucun thread, aucun worktree — comportement identique à avant #337.
+# à `MAX_WRITE_PARALLELE > 1`, la PREMIÈRE tâche mode_write d'un lot est
+# dispatchée dans un thread ciblant REP_TRAVAIL (worktree=None) —
+# nécessaire pour que la boucle principale reste libre de détecter une
+# deuxième tâche mode_write pendant que la première tourne encore (une
+# boucle `while True` mono-thread ne peut sinon jamais atteindre une
+# deuxième issue tant que `traiter_issue` bloque sur la première). Les
+# tâches mode_write SUIVANTES, détectées pendant qu'au moins un thread
+# mode_write est déjà actif et que `MAX_WRITE_PARALLELE` n'est pas atteint,
+# obtiennent chacune un worktree dédié.
+#
+# `MAX_WRITE_PARALLELE <= 1` désactive la parallélisation ENTRE tâches
+# (aucun thread, une seule tâche mode_write à la fois, traitée directement
+# dans le thread principal — comportement séquentiel historique) mais PAS
+# l'isolation vis-à-vis de REP_TRAVAIL (issue #577) : la tâche reçoit malgré
+# tout un worktree dédié, obtenu via `_creer_worktree` puis passé directement
+# à `_traiter_issue_synchrone` sans thread. Alain doit pouvoir manipuler
+# REP_TRAVAIL (commit, stash, navigation) à tout moment, y compris pendant
+# qu'une unique tâche mode_write est en cours, sans jamais entrer en
+# collision avec elle.
 _verrou_threads_ecriture = threading.Lock()
 _threads_ecriture: list[dict] = []
 
@@ -4318,19 +4327,27 @@ def traiter_issue(issue: dict, dry_run: bool) -> None:
 
     Décision de parallélisation (voir commentaire de section au-dessus de
     `_threads_ecriture`) :
-      - `MAX_WRITE_PARALLELE <= 1`, dry-run, ou projet à périmètre dynamique
-        (#125, hors périmètre de #337) → jamais de thread/worktree, chemin
-        historique intégral.
-      - Aucun thread mode_write actif → PREMIER slot : thread dédié ciblant
-        REP_TRAVAIL (pas de worktree) — nécessaire pour que la boucle
-        principale reste libre de détecter une éventuelle deuxième tâche
-        mode_write pendant que celle-ci tourne encore.
-      - Au moins un thread actif et sous `MAX_WRITE_PARALLELE` → worktree dédié
-        + thread. Échec de création du worktree (déjà existant, erreur git) →
-        repli sur `_traiter_issue_synchrone` direct : le verrou par
-        chemin_travail (#189/#322, désormais posé sur REP_TRAVAIL ou le
-        worktree selon le cas, voir #337 point 7) fait alors office de garde-
-        fou — si REP_TRAVAIL est occupé par le premier slot, cette issue est
+      - dry-run, ou projet à périmètre dynamique (#125, hors périmètre de
+        #337) → jamais de worktree, chemin historique intégral dans
+        REP_TRAVAIL.
+      - `MAX_WRITE_PARALLELE <= 1` (issue #577) → pas de thread (une seule
+        tâche mode_write à la fois, thread principal), mais worktree dédié
+        malgré tout : `_creer_worktree` puis `_traiter_issue_synchrone`
+        appelée directement (bloquant) avec ce worktree. Échec de création
+        du worktree (déjà existant, erreur git) → repli direct sur
+        REP_TRAVAIL, comme avant #577.
+      - `MAX_WRITE_PARALLELE > 1`, aucun thread mode_write actif → PREMIER
+        slot : thread dédié ciblant REP_TRAVAIL (pas de worktree) —
+        nécessaire pour que la boucle principale reste libre de détecter une
+        éventuelle deuxième tâche mode_write pendant que celle-ci tourne
+        encore.
+      - `MAX_WRITE_PARALLELE > 1`, au moins un thread actif et sous
+        `MAX_WRITE_PARALLELE` → worktree dédié + thread. Échec de création
+        du worktree (déjà existant, erreur git) → repli sur
+        `_traiter_issue_synchrone` direct : le verrou par chemin_travail
+        (#189/#322, désormais posé sur REP_TRAVAIL ou le worktree selon le
+        cas, voir #337 point 7) fait alors office de garde-fou — si
+        REP_TRAVAIL est occupé par le premier slot, cette issue est
         simplement différée au prochain cycle, sans double écriture possible.
       - À `MAX_WRITE_PARALLELE` déjà atteint → même repli (différée par le
         verrou si REP_TRAVAIL est occupé, traitée directement s'il est libre).
@@ -4434,6 +4451,24 @@ def traiter_issue(issue: dict, dry_run: bool) -> None:
                 thread.start()
                 return
             # Échec de création du worktree : repli séquentiel ci-dessous.
+        else:
+            # MAX_WRITE_PARALLELE <= 1 (issue #577) : pas de parallélisation
+            # entre tâches mode_write (une seule à la fois, thread principal —
+            # PAS de threading.Thread ici), mais REP_TRAVAIL reste isolé
+            # d'Alain comme au-dessus du seuil : la tâche obtient malgré tout
+            # un worktree dédié, et s'exécute directement (appel bloquant,
+            # sans thread) dedans. Échec de création du worktree (déjà
+            # existant, erreur git) → repli direct sur REP_TRAVAIL ci-dessous
+            # via `chemin_worktree=None`, comportement identique à avant #577.
+            chemin_worktree = _creer_worktree(numero)
+            if chemin_worktree is not None:
+                log.info(
+                    f"  Issue #{numero} : traitement séquentiel dans le worktree "
+                    f"{chemin_worktree} — isolation de REP_TRAVAIL systématique "
+                    f"(issue #577)."
+                )
+            _traiter_issue_synchrone(issue, dry_run, chemin_worktree=chemin_worktree)
+            return
 
     _traiter_issue_synchrone(issue, dry_run)
 
@@ -4480,7 +4515,7 @@ def main():
     if CFG.max_write_parallele > 1:
         log.info(f"Parallélisation mode_write via worktrees activée (issue #337) : MAX_WRITE_PARALLELE={CFG.max_write_parallele}.")
     else:
-        log.info(f"Parallélisation mode_write désactivée (MAX_WRITE_PARALLELE={CFG.max_write_parallele}) — traitement séquentiel historique.")
+        log.info(f"Parallélisation mode_write désactivée (MAX_WRITE_PARALLELE={CFG.max_write_parallele}) — traitement séquentiel, mais toujours isolé dans un worktree dédié (issue #577), REP_TRAVAIL libre pour Alain.")
 
     # Horloge monotone d'inactivité (issue #200). Initialisée AVANT la boucle
     # pour qu'un watcher fraîchement démarré ne s'éteigne pas au premier cycle,

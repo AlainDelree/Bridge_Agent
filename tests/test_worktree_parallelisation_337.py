@@ -17,9 +17,13 @@ Vérifie :
   chemin_travail, issue #337 point 7), aboutissent toutes deux avec succès,
   et le worktree de la seconde est CONSERVÉ après coup (pas de `git worktree
   remove` ni de suppression de branche automatique).
-- Non-régression : `MAX_WRITE_PARALLELE = 1` → `traiter_issue` reste
-  strictement synchrone, aucun thread ni worktree créé, comportement
-  identique à avant #337.
+- Issue #577 : `MAX_WRITE_PARALLELE = 1` → `traiter_issue` reste strictement
+  synchrone (aucun thread créé, comme avant #337/#577) mais la tâche
+  s'exécute désormais dans un worktree dédié, jamais directement dans
+  REP_TRAVAIL — celui-ci reste totalement inchangé (aucun fichier ajouté,
+  HEAD identique) pendant tout le traitement, même à parallélisation
+  désactivée. Repli sur REP_TRAVAIL si la création du worktree échoue
+  (chemin déjà pris).
 - Issue #576 : une issue mode_write abandonnée en `needs-human` continue
   d'occuper sa place de `MAX_WRITE_PARALLELE` jusqu'à résolution manuelle
   (retrait du label, ou fermeture de l'issue) — avec `MAX_WRITE_PARALLELE=1`
@@ -419,14 +423,24 @@ def scenario_parallelisation_deux_issues_mode_write():
         return {"parallelisation_ok": True, "worktree_conserve": True}
 
 
-def scenario_non_regression_max_1():
-    """MAX_WRITE_PARALLELE=1 : comportement historique intégral — aucun
-    thread, aucun worktree créé, traiter_issue reste synchrone."""
+def scenario_max_1_isole_dans_worktree():
+    """Issue #577 : MAX_WRITE_PARALLELE=1 — `traiter_issue` reste strictement
+    synchrone (aucun thread créé, comme avant #577), mais la tâche s'exécute
+    désormais dans un worktree dédié, jamais directement dans REP_TRAVAIL :
+    celui-ci reste totalement inchangé (même HEAD, aucun fichier ajouté)
+    pendant tout le traitement — Alain doit pouvoir le manipuler à tout
+    moment sans risque de collision."""
     with tempfile.TemporaryDirectory() as tmp:
         tmp_path = Path(tmp)
         rep_travail = tmp_path / "projet"
         rep_travail.mkdir()
         _init_depot_git(rep_travail)
+
+        head_avant = subprocess.run(
+            ["git", "-C", str(rep_travail), "rev-parse", "HEAD"],
+            capture_output=True, text=True,
+        ).stdout.strip()
+        fichiers_avant = sorted(p.name for p in rep_travail.iterdir())
 
         test_dir = tmp_path / "etat_test"
         test_dir.mkdir()
@@ -451,18 +465,19 @@ def scenario_non_regression_max_1():
 
         numero = 93373
         watcher.CFG = watcher.Config(
-            nom="test337seq", depot="AlainDelree/depot-inexistant-test337",
-            rep_travail=rep_travail, topic_ntfy="test337seq",
+            nom="test577seq", depot="AlainDelree/depot-inexistant-test577",
+            rep_travail=rep_travail, topic_ntfy="test577seq",
             max_essais=1, timeout_claude=15, notifier_local=False,
             max_write_parallele=1,
         )
         watcher.issues_en_cours.discard(numero)
 
         try:
-            issue = _issue_minimale(numero, "Test #337 — non-régression MAX=1", ["mode_write"])
+            issue = _issue_minimale(numero, "Test #577 — isolation worktree à MAX=1", ["mode_write"])
             watcher.traiter_issue(issue, dry_run=False)
             # Appel synchrone : à ce point le traitement est terminé (pas de thread en vol).
-            assert watcher._threads_ecriture_actifs() == [], "aucun thread ne doit être créé quand MAX_WRITE_PARALLELE=1"
+            assert watcher._threads_ecriture_actifs() == [], \
+                "aucun thread ne doit être créé quand MAX_WRITE_PARALLELE=1 (issue #577)"
         finally:
             if ancien_path:
                 os.environ["PATH"] = ancien_path
@@ -477,14 +492,85 @@ def scenario_non_regression_max_1():
             watcher._threads_ecriture.clear()
             watcher._threads_ecriture.extend(ancien_threads)
 
-        pwd = (test_dir / f"pwd-{numero}").read_text(encoding="utf-8").strip()
-        assert Path(pwd) == rep_travail.resolve(), pwd
-        assert not (test_dir / f"worktree_marker-{numero}").exists()
-        assert (test_dir / f"marqueur-{numero}").exists(), "résultat jamais posté"
-        sibling_worktree = rep_travail.parent / f"test337seq-issue{numero}"
-        assert not sibling_worktree.exists(), "aucun worktree n'aurait dû être créé"
+        chemin_worktree = rep_travail.parent / f"test577seq-issue{numero}"
+        assert chemin_worktree.is_dir(), \
+            "un worktree dédié aurait dû être créé même à MAX_WRITE_PARALLELE=1 (issue #577)"
 
-        return {"sequentiel_preserve": True}
+        pwd = (test_dir / f"pwd-{numero}").read_text(encoding="utf-8").strip()
+        assert Path(pwd) == chemin_worktree.resolve(), \
+            f"la tâche aurait dû tourner dans le worktree, pas dans REP_TRAVAIL : {pwd}"
+        assert (test_dir / f"worktree_marker-{numero}").exists(), \
+            "la tâche aurait dû recevoir le bloc d'avertissement worktree dans son prompt"
+        assert (test_dir / f"marqueur-{numero}").exists(), "résultat jamais posté"
+
+        # REP_TRAVAIL reste totalement inchangé : même HEAD, aucun fichier ajouté.
+        head_apres = subprocess.run(
+            ["git", "-C", str(rep_travail), "rev-parse", "HEAD"],
+            capture_output=True, text=True,
+        ).stdout.strip()
+        assert head_apres == head_avant, "REP_TRAVAIL n'aurait pas dû bouger (HEAD modifié)"
+        fichiers_apres = sorted(p.name for p in rep_travail.iterdir())
+        assert fichiers_apres == fichiers_avant, \
+            f"REP_TRAVAIL n'aurait pas dû recevoir de nouveau fichier : {fichiers_apres} != {fichiers_avant}"
+        assert not (rep_travail / f"CHANGELOG-{numero}.md").exists(), \
+            "le fichier écrit par la tâche n'aurait pas dû finir dans REP_TRAVAIL"
+
+        # Le worktree, lui, contient bien le changelog écrit par la tâche —
+        # et reste conservé après coup (fusion/nettoyage manuels par Alain).
+        assert (chemin_worktree / f"CHANGELOG-{numero}.md").exists(), \
+            "le fichier écrit par la tâche aurait dû finir dans le worktree isolé"
+
+        return {"isolation_max_1_ok": True}
+
+
+def scenario_max_1_repli_si_worktree_echoue():
+    """Issue #577 : si la création du worktree échoue (chemin cible déjà
+    occupé), repli propre et direct sur REP_TRAVAIL — pas d'exception, pas de
+    blocage, comportement identique au repli déjà couvert par #337 pour le
+    cas parallélisé."""
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+        rep_travail = tmp_path / "projet"
+        rep_travail.mkdir()
+        _init_depot_git(rep_travail)
+
+        test_dir = tmp_path / "etat_test"
+        test_dir.mkdir()
+        bin_dir = _preparer_bin(tmp_path)
+
+        ancien_path = os.environ.get("PATH", "")
+        os.environ["PATH"] = f"{bin_dir}{os.pathsep}{ancien_path}"
+        os.environ["TEST_337_DIR"] = str(test_dir)
+
+        numero = 93374
+        with _contexte_watcher_isole(
+            tmp_path, nom="test577repli", depot="AlainDelree/depot-inexistant-test577",
+            rep_travail=rep_travail, topic_ntfy="test577repli",
+            max_essais=1, timeout_claude=15, notifier_local=False,
+            max_write_parallele=1,
+        ):
+            try:
+                # Chemin cible du worktree déjà occupé par un dossier
+                # quelconque (garde-fou #337 point 4 de _creer_worktree) →
+                # création refusée, repli attendu sur REP_TRAVAIL.
+                chemin_cible = watcher._chemin_worktree(numero)
+                chemin_cible.mkdir(parents=True)
+
+                issue = _issue_minimale(numero, "Test #577 — repli si worktree impossible", ["mode_write"])
+                watcher.traiter_issue(issue, dry_run=False)
+
+                pwd = (test_dir / f"pwd-{numero}").read_text(encoding="utf-8").strip()
+                assert Path(pwd) == rep_travail.resolve(), \
+                    f"repli attendu dans REP_TRAVAIL si le worktree ne peut être créé : {pwd}"
+                assert (test_dir / f"marqueur-{numero}").exists(), "résultat jamais posté"
+            finally:
+                if ancien_path:
+                    os.environ["PATH"] = ancien_path
+                else:
+                    os.environ.pop("PATH", None)
+                os.environ.pop("TEST_337_DIR", None)
+
+        return {"repli_worktree_echoue_ok": True}
 
 
 def scenario_needs_human_bloque_max_1():
@@ -673,7 +759,10 @@ def main():
         ("_threads_ecriture_actifs : purge des threads terminés", scenario_purge_threads_termines),
         ("parallélisation de 2 issues mode_write : REP_TRAVAIL + worktree dédié, worktree conservé",
          scenario_parallelisation_deux_issues_mode_write),
-        ("non-régression MAX_WRITE_PARALLELE=1 : aucun thread, aucun worktree", scenario_non_regression_max_1),
+        ("issue #577 — MAX_WRITE_PARALLELE=1 : aucun thread, mais worktree dédié, REP_TRAVAIL inchangé",
+         scenario_max_1_isole_dans_worktree),
+        ("issue #577 — MAX_WRITE_PARALLELE=1 : repli sur REP_TRAVAIL si la création du worktree échoue",
+         scenario_max_1_repli_si_worktree_echoue),
         ("issue #576 — needs-human bloque la seule place (MAX=1) puis la libère après retrait du label",
          scenario_needs_human_bloque_max_1),
         ("issue #576 — needs-human compte parmi les places (MAX=2) sans bloquer le reste",

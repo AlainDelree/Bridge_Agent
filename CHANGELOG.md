@@ -9,6 +9,37 @@ milliers de caractères sur une seule ligne logique, coûteux à relire et
 
 Convention d'ajout : voir §10 de `BRIDGE_AGENT_DOC.md`.
 
+## 20 septembre 2026 — issue #577
+
+Section « Parallélisation mode_write via git worktrees » (#337) de
+`BRIDGE_AGENT_DOC.md` : isolation de `REP_TRAVAIL` vis-à-vis d'Alain
+désormais **systématique**, y compris à `MAX_WRITE_PARALLELE = 1` (issue
+#577). Incident réel ayant motivé ce changement, sur `relecture_bridge`
+(`MAX_WRITE_PARALLELE=1`) : Alain a fait un `git commit`/`git stash` manuel
+dans `REP_TRAVAIL` pendant qu'une issue `mode_write` y travaillait
+directement (comportement d'avant #577, gaté par `CFG.max_write_parallele
+> 1`) — collision directe, une modification manuelle temporairement
+effacée, récupérée de justesse depuis un commit orphelin. `watcher.py`
+(`traiter_issue`) découple désormais explicitement les deux besoins que le
+couplage précédent confondait : `MAX_WRITE_PARALLELE` continue de piloter
+uniquement la parallélisation **entre** tâches CCL (thread principal vs
+threads dédiés, utilité réelle seulement `> 1`) ; l'isolation via worktree,
+elle, s'applique dans tous les cas. À `MAX_WRITE_PARALLELE ≤ 1`,
+`_creer_worktree(numero)` est maintenant appelée avant
+`_traiter_issue_synchrone`, celle-ci restant appelée directement (aucun
+`threading.Thread`, comportement séquentiel historique préservé) — mais
+désormais avec `chemin_worktree` renseigné au lieu de `None`. Repli propre
+sur `REP_TRAVAIL` si la création du worktree échoue (chemin/branche déjà
+pris), comme pour le cas parallélisé. Nettoyage/traçabilité déjà en place
+(alerte d'accumulation de worktrees #432, comptage `MAX_WRITE_PARALLELE`
+via `needs-human` #576) inchangés — ces worktrees « solo » sont
+indiscernables des worktrees créés en parallélisation, aucun traitement
+spécial requis. `tests/test_worktree_parallelisation_337.py` étendu : la
+scénario de non-régression à `MAX_WRITE_PARALLELE=1` devient un scénario
+d'isolation (worktree utilisé, `REP_TRAVAIL` inchangé — même HEAD, aucun
+fichier ajouté, aucun thread créé) ; nouveau scénario couvrant le repli sur
+`REP_TRAVAIL` si la création du worktree échoue à `MAX_WRITE_PARALLELE=1`.
+
 ## 18 septembre 2026 — issue #571
 
 §2 « Projets actifs » et §7 « Périmètre par projet » de

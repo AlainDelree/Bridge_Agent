@@ -1588,7 +1588,8 @@ a été remplacée par les deux seuls droits que documente Microsoft pour
   dans l'en-tête de l'issue (l'appel reste bloqué à attendre une réponse qui
   ne vient jamais, jusqu'à expiration).
 
-### Parallélisation mode_write via git worktrees (issue #337)
+### Parallélisation mode_write via git worktrees (issue #337, isolation
+systématique depuis #577)
 
 Par défaut, plusieurs issues `mode_write` peuvent désormais tourner **en
 parallèle**, chacune dans son propre `git worktree` (répertoire frère isolé,
@@ -1597,10 +1598,30 @@ historique (un seul `mode_write` à la fois, dans `REP_TRAVAIL`). Les issues
 `mode_lecture`/`mode_scratch` restent, elles, toujours traitées
 séquentiellement dans `REP_TRAVAIL` (hors périmètre de cette issue).
 
+> **Issue #577 — `REP_TRAVAIL` n'est plus jamais touché directement par une
+> tâche `mode_write`, quelle que soit la valeur de `MAX_WRITE_PARALLELE`.**
+> Incident réel ayant motivé ce changement : sur `relecture_bridge`
+> (`MAX_WRITE_PARALLELE=1`), Alain a fait un `git commit`/`git stash` manuel
+> dans `REP_TRAVAIL` pendant qu'une issue `mode_write` y travaillait
+> directement (comportement d'avant #577) — collision directe, une
+> modification manuelle temporairement effacée, récupérée de justesse depuis
+> un commit orphelin. `MAX_WRITE_PARALLELE` et l'isolation de CCL
+> vis-à-vis d'Alain sont deux besoins distincts : le premier pilote la
+> parallélisation **entre tâches CCL** (thread principal vs threads
+> parallèles, utilité réelle uniquement `> 1`) ; le second doit s'appliquer
+> **systématiquement**, y compris à `MAX_WRITE_PARALLELE = 1` où une seule
+> tâche tourne à la fois. Manipuler `REP_TRAVAIL` (commit, stash,
+> navigation) pendant qu'une issue `mode_write` est en cours est désormais
+> **toujours** sans risque de collision, sans condition ni exception à
+> retenir — en contrepartie, un worktree est à merger après chaque tâche
+> `mode_write`, même sur les projets à `MAX_WRITE_PARALLELE=1`.
+
 - **`MAX_WRITE_PARALLELE`** (`.conf`, entier, défaut **2**) — nombre maximum
-  de tâches `mode_write` concurrentes. `1` = comportement séquentiel
-  historique intégral (aucun thread, aucun worktree créé, `traiter_issue`
-  reste synchrone). `0` = désactivé, identique à `1`.
+  de tâches `mode_write` concurrentes **entre elles**. `1` = pas de
+  parallélisation entre tâches (une seule à la fois, thread principal,
+  aucun `threading.Thread` créé) — mais la tâche obtient malgré tout un
+  worktree dédié (issue #577) : `REP_TRAVAIL` reste libre pour Alain même
+  dans ce cas. `0` = désactivé, identique à `1`.
 - **Réglage via l'interface et plafond de 4 (issue #568)** : réglable depuis
   l'onglet Configuration de `new_issue.py` via un slider (`min="1" max="4"`,
   sur le modèle de celui de `TONALITE_BIP`) — la valeur invalide est donc
@@ -1617,15 +1638,26 @@ séquentiellement dans `REP_TRAVAIL` (hors périmètre de cette issue).
   cycle, comme `verifier_accumulation_worktrees()`) émet un `log.warning`
   explicite à **chaque cycle** — jamais une fois puis silence.
 - **Décision de parallélisation** (`traiter_issue`, point d'entrée public
-  appelé pour chaque issue) : la **première** issue `mode_write` détectée
-  sans autre tâche `mode_write` déjà en cours est dispatchée dans un thread
-  Python ciblant `REP_TRAVAIL` directement — **sans worktree** — nécessaire
-  pour que la boucle principale (mono-thread) reste libre de détecter une
-  éventuelle deuxième issue `mode_write` pendant que la première tourne
-  encore ; sans cela, un `traiter_issue` bloquant sur la première tâche
-  empêcherait à jamais d'en atteindre une seconde. Les issues `mode_write`
-  **suivantes**, détectées pendant qu'au moins un thread est déjà actif et
-  sous `MAX_WRITE_PARALLELE`, obtiennent chacune un worktree dédié.
+  appelé pour chaque issue) :
+  - `MAX_WRITE_PARALLELE > 1` : la **première** issue `mode_write` détectée
+    sans autre tâche `mode_write` déjà en cours est dispatchée dans un thread
+    Python ciblant `REP_TRAVAIL` directement — **sans worktree** — nécessaire
+    pour que la boucle principale (mono-thread) reste libre de détecter une
+    éventuelle deuxième issue `mode_write` pendant que la première tourne
+    encore ; sans cela, un `traiter_issue` bloquant sur la première tâche
+    empêcherait à jamais d'en atteindre une seconde. Les issues `mode_write`
+    **suivantes**, détectées pendant qu'au moins un thread est déjà actif et
+    sous `MAX_WRITE_PARALLELE`, obtiennent chacune un worktree dédié.
+  - `MAX_WRITE_PARALLELE ≤ 1` (issue #577) : aucune raison de garder la
+    boucle principale libre puisqu'une seule tâche `mode_write` tourne à la
+    fois — `_creer_worktree` est appelée directement, puis
+    `_traiter_issue_synchrone` **sans thread**, en appel bloquant, avec ce
+    worktree. Le modèle d'exécution (synchrone vs thread) reste donc piloté
+    par `MAX_WRITE_PARALLELE` comme avant #577 ; seule la présence d'un
+    worktree change — plus jamais `REP_TRAVAIL` directement.
+  - Dans tous les cas, échec de création du worktree (chemin ou branche déjà
+    pris, erreur git) → repli propre sur `REP_TRAVAIL` (`chemin_worktree =
+    None`), jamais d'exception propagée.
 - **Worktree** : chemin `<REP_TRAVAIL>/../<NOM_PROJET>-issue<N>` (répertoire
   frère de `REP_TRAVAIL`), branche `worktree-issue-<N>`, créés par
   `git -C <REP_TRAVAIL> worktree add <chemin> -b worktree-issue-<N>`. Si le
@@ -3525,7 +3557,33 @@ de création d'issue, seul valable pour du contenu qu'il produit.
 
 ---
 
-*Dernière mise à jour : 18 septembre 2026 — §2 « Projets actifs » et §7
+*Dernière mise à jour : 20 septembre 2026 — Section « Parallélisation
+mode_write via git worktrees » (#337) : isolation de `REP_TRAVAIL`
+désormais **systématique**, y compris à `MAX_WRITE_PARALLELE = 1` (issue
+#577). Incident réel ayant motivé ce changement, sur `relecture_bridge`
+(`MAX_WRITE_PARALLELE=1`) : Alain a fait un `git commit`/`git stash` manuel
+dans `REP_TRAVAIL` pendant qu'une issue `mode_write` y travaillait
+directement (comportement d'avant #577) — collision directe, une
+modification manuelle temporairement effacée, récupérée de justesse depuis
+un commit orphelin. `MAX_WRITE_PARALLELE` (parallélisation **entre**
+tâches CCL) et l'isolation de CCL vis-à-vis d'Alain sont deux besoins
+distincts que le couplage précédent confondait. Condition
+`CFG.max_write_parallele > 1` retirée du côté worktree dans `traiter_issue`
+(`watcher.py`) : à `MAX_WRITE_PARALLELE ≤ 1`, `_creer_worktree` est
+maintenant appelée avant `_traiter_issue_synchrone`, qui reste appelée
+directement (sans thread) — seule la présence d'un worktree change, le
+modèle d'exécution (synchrone vs threads) reste piloté par
+`MAX_WRITE_PARALLELE` comme avant. Nettoyage/traçabilité déjà en place
+(alerte d'accumulation #432, comptage `MAX_WRITE_PARALLELE` via
+`needs-human` #576) inchangés, aucun traitement spécial ajouté pour ces
+worktrees « solo » — ils sont indiscernables des worktrees créés en
+parallélisation. Tests étendus dans
+`tests/test_worktree_parallelisation_337.py` : isolation effective à
+`MAX_WRITE_PARALLELE=1` (worktree utilisé, `REP_TRAVAIL` inchangé — même
+HEAD, aucun fichier ajouté) et repli propre sur `REP_TRAVAIL` si la
+création du worktree échoue.
+
+Précédemment — 18 septembre 2026 — §2 « Projets actifs » et §7
 « Périmètre par projet » n'étaient maintenus qu'à la main, indépendamment
 des `configs/*.conf` réellement lus par `watcher.py` — source de vérité
 fonctionnelle. Toute divergence pouvait se reproduire, et s'était
@@ -3569,22 +3627,6 @@ de fonction ; les retirer libère en revanche un emplacement de
 `PALETTE_COULEURS` (`couleurs_disponibles()` : 5 → 6). Côté JS, `ecole`/
 `ff_galerie` restent des clés de `COULEURS_PROJET` (seule source de vérité
 d'affichage), simplement avec la valeur `COULEUR_PROJET_INACTIF` à la place
-de leur ancienne teinte dédiée.
-
-Précédemment — 12 septembre 2026 — §17 « Tonalité du bip par
-projet » (issue #526) : nouvelle clé `.conf` optionnelle `TONALITE_BIP`
-(entier en demi-tons, défaut 0), pour distinguer à l'oreille quel projet
-vient de terminer une issue sans gérer de bibliothèque de sons.
-`notifications.py::bip()`/`notifier()` acceptent un paramètre `tonalite`,
-transmis en CLI (`--tonalite <demi-tons>`) au script bip configuré.
-`scripts/traitement_fin.py` (script partagé par défaut) décale directement
-sa fréquence de synthèse (`f_effective = f_base × 2^(demi-tons/12)`), sans
-dépendance externe ; `scripts/bip_Cloche.py` (legacy, encore utilisé par
-`chesscoach.conf`) pitch-shifte le fichier son via l'effet `pitch` de
-`sox`, avec repli silencieux sur le son d'origine si `sox` est absent ou
-échoue. Nouveau curseur `-12`…`+12` demi-tons dans l'onglet Configuration
-de `new_issue.py`, avec un bouton « Tester le son » (`POST
-/tester-bip/<projet>`, `app/projets.py::tester_bip`) qui joue le bip avec
-la tonalité du curseur avant tout enregistrement.*
+de leur ancienne teinte dédiée.*
 
 Historique complet : voir [`CHANGELOG.md`](CHANGELOG.md).
