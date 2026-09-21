@@ -82,6 +82,7 @@ Claude Chat → crée une issue → GitHub → watcher.py détecte → CCL exéc
 | `relecture_bridge` | AlainDelree/Relecture_Bridge | ~/Relecture_Bridge | (conf local) |
 | `rummikub` | AlainDelree/Rummikub | ~/Rummikub | (conf local) |
 | `scrabble` | AlainDelree/Scrabble | ~/Scrabble | (conf local) |
+| `testrelectureprojet` | AlainDelree/Testrelectureprojet | ~/Testrelectureprojet | (conf local) |
 <!-- FIN:TABLEAU_PROJETS_ACTIFS -->
 
 Chaque projet a son propre watcher (`watcher.py --config configs/<nom>.conf`)
@@ -719,6 +720,7 @@ hors périmètre même si l'issue le demande explicitement :
 | `relecture_bridge` | /home/alain/Relecture_Bridge |
 | `rummikub` | /home/alain/Rummikub |
 | `scrabble` | /home/alain/Scrabble |
+| `testrelectureprojet` | /home/alain/Testrelectureprojet |
 <!-- FIN:TABLEAU_PERIMETRE_PROJETS -->
 
 ---
@@ -3557,7 +3559,7 @@ de création d'issue, seul valable pour du contenu qu'il produit.
 
 ---
 
-*Dernière mise à jour : 20 septembre 2026 — Section « Parallélisation
+*Dernière mise à jour : 21 septembre 2026 — Section « Parallélisation
 mode_write via git worktrees » (#337) : isolation de `REP_TRAVAIL`
 désormais **systématique**, y compris à `MAX_WRITE_PARALLELE = 1` (issue
 #577). Incident réel ayant motivé ce changement, sur `relecture_bridge`
