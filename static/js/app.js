@@ -5602,6 +5602,7 @@ function ouvrirNouveauProjet() {
   document.getElementById('np-compte-rendu').style.display = 'none';
   document.getElementById('np-message').style.display = 'none';
   document.getElementById('np-rappel-git').style.display = 'none';
+  document.getElementById('np-rappel-installer').style.display = 'none';
   document.getElementById('np-rappel-projet').style.display = 'none';
   // Case « Projet CCW » (issue #559, ordre corrigé par #560) : toujours
   // décochée à l'ouverture, tokens jamais pré-remplis d'une session à
@@ -5927,6 +5928,7 @@ async function soumettreNouveauProjet() {
   document.getElementById('np-message').style.display = 'none';
   cr.style.display = 'none';
   document.getElementById('np-rappel-git').style.display = 'none';
+  document.getElementById('np-rappel-installer').style.display = 'none';
   document.getElementById('np-rappel-projet').style.display = 'none';
   document.getElementById('np-ccw-post-bloc').style.display = 'none';
   document.getElementById('np-rappel-ccw').style.display = 'none';
@@ -5999,6 +6001,11 @@ async function soumettreNouveauProjet() {
     // CLI — Alain vérifie puis pousse). Sans push, la doc reste invisible pour
     // Claude Chat. Encart distinct du compte-rendu, sélectionnable en un clic.
     afficherRappelGit(res.nom);
+    // Rappel du hook de relecture Relecture_Bridge (issue #578) : un nouveau
+    // projet n'est détecté par installer.sh qu'au prochain lancement manuel
+    // (celui-ci lit la liste des projets depuis BRIDGE_AGENT_DOC.md §2,
+    // #571) — rien ne le rappelait spontanément, facile à oublier.
+    afficherRappelInstaller();
     // Rappels propres au PROJET créé (dépôt distinct de Bridge_Agent) : issue
     // #257 — sans eux l'encart ci-dessus, seul affiché jusque-là, laissait
     // croire à tort que rien d'autre n'était à faire.
@@ -6038,6 +6045,26 @@ function afficherRappelGit(nom) {
     + 'Le projet est créé, mais la mise à jour de <b>BRIDGE_AGENT_DOC.md</b> (§2) '
     + "n'est que locale. Tant qu'elle n'est pas poussée, le projet reste invisible "
     + 'pour Claude Chat. Exécute (clic pour sélectionner) :'
+    + '<pre onclick="npSelectionnerTexte(this)">' + escapeHtml(cmds) + '</pre>';
+  box.style.display = 'block';
+}
+
+// Affiche l'encart de rappel pour relancer le hook de relecture de
+// Relecture_Bridge : un nouveau projet n'est pas détecté automatiquement,
+// installer.sh doit être relancé pour le repérer et l'installer (#571 : il
+// lit la liste des projets depuis BRIDGE_AGENT_DOC.md §2). Simple rappel —
+// jamais exécuté depuis le process Flask, le hook tourne sur la machine
+// d'Alain (issue #578). Même style/logique de copier-coller que
+// afficherRappelGit ci-dessus.
+function afficherRappelInstaller() {
+  const cmds = 'cd ~/Relecture_Bridge\n'
+             + './installer.sh';
+  const box = document.getElementById('np-rappel-installer');
+  box.innerHTML =
+    '<div class="titre">⚠ Action requise — relancer le hook de relecture</div>'
+    + 'Un nouveau projet ne reçoit pas automatiquement le hook de relecture '
+    + 'de <b>Relecture_Bridge</b>. Relance <code>installer.sh</code> pour le '
+    + 'détecter et l\'installer (clic pour sélectionner) :'
     + '<pre onclick="npSelectionnerTexte(this)">' + escapeHtml(cmds) + '</pre>';
   box.style.display = 'block';
 }
