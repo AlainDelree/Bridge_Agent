@@ -9,6 +9,131 @@ milliers de caractères sur une seule ligne logique, coûteux à relire et
 
 Convention d'ajout : voir §10 de `BRIDGE_AGENT_DOC.md`.
 
+## 22 septembre 2026 — issue #585
+
+Retrait du diagnostic temporaire #157 (`app/diag_heartbeat.py`), balisé
+« à retirer » depuis son ajout le 19 juillet mais resté câblé plus de
+deux mois après validation du correctif heartbeat/SSE. Procédure de
+retrait suivie telle qu'écrite dans le module lui-même : suppression du
+fichier (88 lignes), de l'import et des quatre appels `diag_heartbeat.log_*()`
+dans `app/cycle_vie.py` (heartbeat, connexion/déconnexion SSE, arrêt par
+`surveiller_heartbeat`), de l'import et de l'enregistrement de route dans
+`app/__init__.py`, et du bloc `console.log`/`fetch('/diag-visibilite')`
+dans `demarrerCycleVie()` (`static/js/app.js`) — en conservant
+`envoyerHeartbeat()` sur `visibilitychange`, qui fait partie du correctif
+et non du diagnostic. Point de sécurité traité au passage : la route
+`/diag-visibilite` disparaît avec le reste, ce qui élimine une route POST
+qui n'était pas protégée par `login_requis`, contrairement au reste de
+l'application. `logs/heartbeat_diag.log` n'existait pas dans ce
+worktree, rien à supprimer sur ce point. Vérifié : `py_compile` OK,
+`create_app()` démarre sans erreur, `/diag-visibilite` répond 404, aucune
+référence résiduelle (`grep` sur `diag_heartbeat`/`diag-visibilite`/`DIAG
+#157`), suite de tests existante verte (un seul échec,
+`test_init_git_local_258.py`, pré-existant et sans rapport — dépendant du
+réseau, échoue identiquement avant ce commit).
+
+## 22 septembre 2026 — issue #586
+
+Fix `tests/test_init_git_local_258.py`, périmé et non collecté par pytest
+(diagnostic #579). Deux causes cumulées, une seule anticipée par le
+diagnostic :
+
+1. `scenario_deja_git` comparait le résultat de `initialiser_git()` par
+   égalité stricte de dictionnaire à une valeur écrite avant le fix #530
+   (filet de sécurité email noreply GitHub), donc sans la clé
+   `email_corrige` que la fonction renvoie désormais toujours. Dictionnaire
+   attendu mis à jour avec `"email_corrige": None`.
+2. Non anticipé par #579 : `scenario_contenu_preexistant_pas_de_push`
+   vérifiait `"public" in res["detail"]`, texte retiré du message `detail`
+   de `nouveau_projet.py` par le fix #528 (choix public/privé du dépôt à la
+   création) — un dépôt n'est plus systématiquement public. Assertion
+   corrigée pour ne plus exiger ce mot, seule la mention « non relu »
+   restant garantie et pertinente.
+
+Par ailleurs, aucune fonction du fichier n'était préfixée `test_` : un
+`pytest tests/` classique ne testait donc rien de ce fichier, l'échec ne se
+manifestant qu'en exécution directe
+(`python3 tests/test_init_git_local_258.py`). Les 5 fonctions
+`scenario_*` renommées en `test_*` (et leurs références dans `main()`)
+pour que pytest les collecte réellement.
+
+Vérifié : les 5 scénarios passent en exécution directe (code retour 0) et
+via `pytest tests/test_init_git_local_258.py` (5 passed). Seul le fichier
+de test a été modifié, aucune logique de production touchée.
+
+## 19 septembre 2026 — issue #575
+
+Incident réel en mode `--externe` sur mobile : le bouton « Déconnexion »
+se trouve pile sous le doigt quand on veut fermer le panneau
+Infrastructure sur petit écran — clic accidentel, déconnexion
+immédiate, obligeant à retaper le mot de passe.
+
+`templates/index.html` : le bouton « Déconnexion » demande désormais
+confirmation (`confirm('Se déconnecter ?')`) avant de naviguer vers
+`/logout` — annulable, sans action si refusée. Même pattern déjà en
+place pour le bouton « Quitter » (fonction `quitter()`,
+`static/js/*.js`). Aucun changement d'apparence, de disposition ni de
+media query : uniquement l'`onclick` du bouton, identique sur desktop
+et mobile.
+
+# CHANGELOG-556 — entrées à fusionner dans CHANGELOG.md
+
+## 15 septembre 2026 — issue #556 (2/3)
+
+Traitement du champ d'en-tête `CREATION` dans `watcher.py` — bootstrap
+automatique d'un service CCW dédié, suite de la conception validée en #554
+et de la génération de la paire de clés RSA 3072 (#554 1/3) : ENTIÈREMENT
+déterministe, n'invoque JAMAIS `claude` (décision #554 §2.5) — réutilise
+directement les scripts PowerShell déjà testés (`ajouter_projet_ccw.ps1`
+puis `finaliser_projet_ccw_auto.ps1 -FichierValeurs`, format vérifié par
+lecture du script avant écriture du code, identique à celui déjà produit
+par `app/ccw.py`).
+
+`_traiter_issue_synchrone` détecte `| CREATION | oui |` tôt dans le
+dispatch, AVANT tout ce qui touche au pipeline `lancer_claude`. Convention
+de 6 champs d'en-tête proposée et documentée (`CREATION`,
+`CREATION_NOM_PROJET`, `CREATION_DEPOT`, `CREATION_TOPIC_NTFY`,
+`CREATION_GH_TOKEN`, `CREATION_OAUTH_TOKEN`) : les deux tokens transitent
+chiffrés individuellement (RSA/OAEP-SHA256 via `openssl pkeyutl -encrypt`,
+clé publique de bootstrap) puis encodés en base64 sur une seule ligne.
+`_extraire_champ_entete` compare le nom de champ EXACTEMENT (pas une
+sous-chaîne comme les extracteurs existants SOUS_DOSSIER/REPO_CIBLE) : évite
+la collision entre `CREATION` et son propre préfixe partagé avec
+`CREATION_NOM_PROJET`/etc.
+
+Résolution robuste du chemin `openssl` (`_resoudre_openssl`, point
+d'attention hérité de #557 puisque #558 n'était pas encore mergé au moment
+de cette tâche) : PATH → installation manuelle Windows
+(`C:\Program Files\OpenSSL-Win64\bin\openssl.exe`, pas sur le PATH par
+défaut sur CCW) → repli `usr\bin` de Git pour Windows — dupliqué en Python
+plutôt que réutilisé depuis `Resoudre-OpenSSL` côté PowerShell
+(`provisionner.ps1`, #554) : pas de dot-sourcing PowerShell depuis Python,
+et un simple calcul de chemin ne justifie pas d'exécuter un script externe.
+
+Retrait immédiat des deux tokens chiffrés du corps GitHub (`gh issue edit
+--body-file`, remplacés par `<retiré après application>`) DÈS que les
+valeurs sont en mémoire — avant même la tentative de déchiffrement — pour
+limiter le temps d'exposition résiduel (§2.4 de #554). Fichier de valeurs
+temporaire supprimé en deux lignes de défense (le `finally` PowerShell déjà
+en place côté `finaliser_projet_ccw_auto.ps1`, PUIS un nettoyage Python en
+repli). Compte-rendu + fermeture si succès (codes 0/2), `needs-human` + log
+complet en commentaire si échec — un champ manquant est traité comme une
+erreur de configuration définitive (aucun script PowerShell ni
+déchiffrement tenté).
+
+Testé sans vraie issue GitHub ni machine CCW réelle (sur le modèle du test
+`SOUS_DOSSIER` de #550) : `tests/test_creation_bootstrap_ccw_556.py`, 15
+scénarios — extraction/détection, non-collision `CREATION`/
+`CREATION_NOM_PROJET`, retrait des tokens, résolution `openssl` (3 replis),
+chiffrement/déchiffrement RÉEL via un openssl local (RSA 3072 généré à la
+volée), chemin complet succès/champ manquant/dry-run (faux `gh` et faux
+`powershell` sur le `PATH`), et un scénario bout en bout via `traiter_issue`
+vérifiant qu'un faux `claude` marqueur n'est jamais touché.
+
+Documenté en détail dans `BRIDGE_AGENT_DOC.md` §16.6 (nouvelle
+sous-section), à l'intention du formulaire web à venir (3/3, #559 ou
+suivant — non traité ici, `new_issue.py` non touché).
+
 ## 22 septembre 2026 — issue #584
 
 Verrou anti-collision `REP_TRAVAIL` (`watcher.py`, #189/#322) : filet de
