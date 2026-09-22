@@ -3349,24 +3349,52 @@ def _branche_worktree(numero: int) -> str:
     return f"worktree-issue-{numero}"
 
 
-def _creer_worktree(numero: int) -> Path | None:
+def _creer_worktree(numero: int) -> tuple[Path | None, str | None]:
     """Crée le worktree git dédié à l'issue mode_write `numero` (issue #337) :
     `git -C <REP_TRAVAIL> worktree add <chemin> -b worktree-issue-<numero>`.
 
     Garde-fous (échec propre, jamais d'exception propagée) : chemin déjà
     existant (vérifié AVANT l'appel git, évite une tentative vouée à
     l'échec), ou `git worktree add` en échec pour toute autre raison (branche
-    déjà existante, etc.) — dans les deux cas, retourne None et journalise ;
-    l'appelant retombe alors sur le traitement séquentiel (l'issue attend
-    qu'un slot se libère)."""
+    déjà existante, etc.) — dans les deux cas, retourne (None, ...) et
+    journalise ; l'appelant retombe alors sur le traitement séquentiel dans
+    REP_TRAVAIL.
+
+    Retourne un tuple `(chemin, raison_deja_pris)`. `raison_deja_pris`
+    (issue #589) est une description courte, destinée au compte-rendu de
+    clôture de l'issue, UNIQUEMENT quand l'échec est attribuable à un chemin
+    ou une branche déjà pris (typiquement : un worktree laissé par une
+    tentative précédente non nettoyée) — None dans tous les autres cas
+    (succès, ou échec pour une raison différente que l'on ne veut pas
+    présumer être un repli notable).
+
+    Les deux vérifications « déjà pris » (chemin, branche) sont faites AVANT
+    l'appel à `git worktree add`, plutôt qu'en essayant de reconnaître la
+    cause dans le message d'erreur de `git` en cas d'échec : ce message est
+    localisé (dépend de la langue du système), une détection par mots-clés y
+    serait donc muette sur une machine non-anglophone (issue #589)."""
     chemin = _chemin_worktree(numero)
     branche = _branche_worktree(numero)
     if chemin.exists():
+        raison = f"chemin {chemin} déjà pris par un worktree existant"
         log.warning(
-            f"  Worktree #{numero} : {chemin} existe déjà — fallback séquentiel "
-            f"(l'issue attend qu'un slot se libère)."
+            f"  Worktree #{numero} : {raison} — repli sur REP_TRAVAIL "
+            f"(issue #589 : probable reliquat d'une tentative précédente non "
+            f"nettoyée — nettoyage TOUJOURS manuel, cf. WORKTREES.md)."
         )
-        return None
+        return None, raison
+    verif_branche = subprocess.run(
+        ["git", "-C", str(CFG.rep_travail), "rev-parse", "--verify", "--quiet", f"refs/heads/{branche}"],
+        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=15,
+    )
+    if verif_branche.returncode == 0:
+        raison = f"branche '{branche}' déjà prise (chemin {chemin} libre, mais branche existante)"
+        log.warning(
+            f"  Worktree #{numero} : {raison} — repli sur REP_TRAVAIL "
+            f"(issue #589 : probable reliquat d'une tentative précédente non "
+            f"nettoyée — nettoyage TOUJOURS manuel, cf. WORKTREES.md)."
+        )
+        return None, raison
     try:
         res = subprocess.run(
             ["git", "-C", str(CFG.rep_travail), "worktree", "add", str(chemin), "-b", branche],
@@ -3374,15 +3402,17 @@ def _creer_worktree(numero: int) -> Path | None:
         )
     except (OSError, subprocess.SubprocessError) as e:
         log.warning(f"  Worktree #{numero} : exception à la création ({e}) — fallback séquentiel.")
-        return None
+        return None, None
     if res.returncode != 0:
+        # Erreur git générique (chemin et branche libres au moment des
+        # vérifications ci-dessus, mais `git worktree add` a quand même
+        # échoué) — pas de raison_deja_pris : distinct du cas #589.
         log.warning(
-            f"  Worktree #{numero} : échec de création (branche '{branche}' déjà "
-            f"existante ?) — {res.stderr.strip()} — fallback séquentiel."
+            f"  Worktree #{numero} : échec de création — {res.stderr.strip()} — fallback séquentiel."
         )
-        return None
+        return None, None
     log.info(f"  Worktree #{numero} créé : {chemin} (branche {branche}).")
-    return chemin
+    return chemin, None
 
 
 def _chemin_verrou(rep_travail: Path) -> Path:
@@ -3865,13 +3895,22 @@ def _restaurer_rep_travail_modifie(numero: int, cwd: Path,
     return list(nouveaux.keys())
 
 
-def _traiter_issue_synchrone(issue: dict, dry_run: bool, chemin_worktree: Path | None = None):
+def _traiter_issue_synchrone(issue: dict, dry_run: bool, chemin_worktree: Path | None = None,
+                              echec_worktree_deja_pris: str | None = None):
     """Corps du traitement d'une issue — inchangé depuis avant #337, à
     l'exception du paramètre `chemin_worktree` (issue #337) : chemin du
     worktree git isolé où cette tâche mode_write doit tourner, ou None pour le
     traitement classique dans REP_TRAVAIL. Appelée soit directement (issues
     lecture/lecture active, ou mode_write hors parallélisation), soit depuis un
-    thread dédié via `traiter_issue` (point d'entrée public, voir plus bas)."""
+    thread dédié via `traiter_issue` (point d'entrée public, voir plus bas).
+
+    `echec_worktree_deja_pris` (issue #589) : renseigné par l'appelant quand
+    `chemin_worktree` vaut None PARCE QUE `_creer_worktree` a échoué pour
+    cause de chemin ou branche déjà pris (repli volontaire sur REP_TRAVAIL,
+    cf. BRIDGE_AGENT_DOC.md) — distinct d'un appel normal sans worktree
+    (mode lecture, parallélisation désactivée, etc.). Rend ce repli visible
+    dans le compte-rendu de clôture, en plus du log.warning déjà émis par
+    `_creer_worktree` au moment de l'échec."""
     numero = issue["number"]
     titre  = issue["title"]
     body   = issue.get("body") or ""
@@ -3957,6 +3996,21 @@ def _traiter_issue_synchrone(issue: dict, dry_run: bool, chemin_worktree: Path |
     perimetre_effectif = CFG.perimetre
     cwd_effectif       = CFG.rep_travail
     avertissement_conflit = ""
+
+    # Repli silencieux sur REP_TRAVAIL (issue #589) : rendu visible dans le
+    # compte-rendu de clôture, sur le même modèle qu'avertissement_conflit
+    # ci-dessus — le repli lui-même n'est PAS modifié (toujours propre,
+    # jamais d'exception), seulement signalé.
+    avertissement_worktree_deja_pris = ""
+    if echec_worktree_deja_pris:
+        avertissement_worktree_deja_pris = (
+            f"⚠️ Repli sur REP_TRAVAIL : le worktree dédié à cette issue n'a pas "
+            f"pu être créé ({echec_worktree_deja_pris}). Comportement volontaire "
+            f"(cf. BRIDGE_AGENT_DOC.md) — le travail ci-dessous a bien été fait "
+            f"dans REP_TRAVAIL, mais un worktree orphelin est probablement resté "
+            f"au chemin concerné. Nettoyage TOUJOURS manuel (jamais de `git "
+            f"worktree remove` automatique) — cf. WORKTREES.md.\n\n"
+        )
 
     # Worktree isolé (issue #337) : chemin_travail effectif de CETTE tâche —
     # remplace REP_TRAVAIL comme cwd du subprocess ET comme périmètre du
@@ -4231,7 +4285,7 @@ def _traiter_issue_synchrone(issue: dict, dry_run: bool, chemin_worktree: Path |
 
             if succes:
                 log.info(f"  ✓ Issue #{numero} traitée avec succès.")
-                message_resultat = f"{MARQUEUR_RESULTAT}\n## Résultat\n\n{avertissement_conflit}{sortie}"
+                message_resultat = f"{MARQUEUR_RESULTAT}\n## Résultat\n\n{avertissement_conflit}{avertissement_worktree_deja_pris}{sortie}"
                 # Le commentaire de résultat est critique (issue #195) : on le
                 # poste avec retry/backoff et on ne ferme l'issue QUE s'il a réussi.
                 if not commenter_resultat_avec_retry(numero, message_resultat):
@@ -4372,6 +4426,7 @@ def _traiter_issue_synchrone(issue: dict, dry_run: bool, chemin_worktree: Path |
                                                      cwd=cwd_effectif)
                     message_echec = (
                         f"❌ Échec après {CFG.max_essais} tentatives.\n\n"
+                        f"{avertissement_worktree_deja_pris}"
                         f"Dernière erreur : `{sortie}`\n\n"
                     )
                     if diagnostic:
@@ -4573,7 +4628,7 @@ def traiter_issue(issue: dict, dry_run: bool) -> None:
                 thread.start()
                 return
 
-            chemin_worktree = _creer_worktree(numero)
+            chemin_worktree, raison_deja_pris = _creer_worktree(numero)
             if chemin_worktree is not None:
                 # Même remarque que ci-dessus : pas de _issues_en_cours_ajouter ici.
                 thread = threading.Thread(
@@ -4588,7 +4643,12 @@ def traiter_issue(issue: dict, dry_run: bool) -> None:
                 )
                 thread.start()
                 return
-            # Échec de création du worktree : repli séquentiel ci-dessous.
+            # Échec de création du worktree : repli séquentiel direct (pas de
+            # thread), ici plutôt que via le fallthrough générique en fin de
+            # fonction, pour transmettre `raison_deja_pris` (issue #589) au
+            # compte-rendu de clôture quand applicable.
+            _traiter_issue_synchrone(issue, dry_run, echec_worktree_deja_pris=raison_deja_pris)
+            return
         else:
             # MAX_WRITE_PARALLELE <= 1 (issue #577) : pas de parallélisation
             # entre tâches mode_write (une seule à la fois, thread principal —
@@ -4598,14 +4658,15 @@ def traiter_issue(issue: dict, dry_run: bool) -> None:
             # sans thread) dedans. Échec de création du worktree (déjà
             # existant, erreur git) → repli direct sur REP_TRAVAIL ci-dessous
             # via `chemin_worktree=None`, comportement identique à avant #577.
-            chemin_worktree = _creer_worktree(numero)
+            chemin_worktree, raison_deja_pris = _creer_worktree(numero)
             if chemin_worktree is not None:
                 log.info(
                     f"  Issue #{numero} : traitement séquentiel dans le worktree "
                     f"{chemin_worktree} — isolation de REP_TRAVAIL systématique "
                     f"(issue #577)."
                 )
-            _traiter_issue_synchrone(issue, dry_run, chemin_worktree=chemin_worktree)
+            _traiter_issue_synchrone(issue, dry_run, chemin_worktree=chemin_worktree,
+                                      echec_worktree_deja_pris=raison_deja_pris)
             return
 
     _traiter_issue_synchrone(issue, dry_run)
