@@ -1681,6 +1681,49 @@ séquentiellement dans `REP_TRAVAIL` (hors périmètre de cette issue).
   tandis qu'une issue `mode_lecture`/`mode_scratch` visant `REP_TRAVAIL`
   pendant qu'un worktree y tourne encore (premier slot) reste bloquée par
   le même verrou qu'avant, reprise au cycle suivant.
+- **Libération garantie, quel que soit le chemin de sortie (issue #584)** :
+  `_traiter_issue_synchrone` pose le verrou puis entre immédiatement dans un
+  `try`/`finally` qui enveloppe l'intégralité du traitement — succès, échec
+  après une ou plusieurs tentatives, abandon définitif (`needs-human`), **et
+  refus précoce** (claude répond ❌ en quelques secondes, avant tout travail
+  réel, ex. « hors périmètre ») empruntent tous des `return` internes à ce
+  `try` : le `finally` (`liberer_verrou`) s'exécute dans tous les cas, sans
+  exception. Une issue qui échoue immédiatement ne peut donc pas, par ce
+  mécanisme, laisser le verrou posé pour les issues `mode_write` suivantes
+  sur le même `REP_TRAVAIL` — voir `tests/test_verrou_refus_precoce_584.py`.
+  Seul un arrêt BRUTAL du process watcher lui-même (crash, `kill -9`,
+  redémarrage de service) contourne ce `finally` (aucun `try`/`finally`
+  Python n'y survit, sur aucune plateforme) : c'est le scénario réel
+  identifié derrière l'incident #583 (verrou orphelin bloquant 48 minutes),
+  couvert par le filet de sécurité ci-dessous, pas par un défaut du
+  `try`/`finally` lui-même.
+- **Filet de sécurité contre un verrou orphelin, deux niveaux (issues
+  #322/#584)** : `acquerir_verrou` reprend un verrou existant selon deux
+  critères indépendants (le premier qui matche suffit) :
+  1. **Péremption par ancienneté** (issue #322, mécanisme d'origine) : âge du
+     verrou ≥ `max_essais × (TIMEOUT_projet + pause) + marge`. Pour un projet
+     à `TIMEOUT` élevé (ex. 1800 s), ce délai peut légitimement atteindre
+     plusieurs dizaines de minutes — c'est l'ordre de grandeur du blocage
+     observé sur #583.
+  2. **PID du watcher propriétaire confirmé mort** (issue #584, filet
+     complémentaire, plus rapide) : le fichier verrou porte toujours un champ
+     `pid=<n>` (le PID du watcher qui l'a posé, écrit dès la création — à ne
+     pas confondre avec `claude_pgid=<n>`, ajouté seulement après le
+     lancement de claude). Si ce PID est sondé et confirmé **mort**
+     (`_pid_vivant`, POSIX : `os.kill(pid, 0)` ; Windows : `OpenProcess`), le
+     verrou est repris **immédiatement**, sans attendre l'écoulement de la
+     péremption par ancienneté — corrige directement le délai de 48 minutes
+     de #583. Asymétrie volontaire : PID introuvable ⇒ orphelin certain ; PID
+     vivant, sonde en échec, ou plateforme non gérée ⇒ verrou considéré actif
+     par prudence (repli sur le critère 1, jamais moins sûr qu'avant #584—
+     un PID mort peut en théorie avoir été recyclé par l'OS pour un tout
+     autre process, d'où le choix de ne JAMAIS conclure « orphelin » sur la
+     seule foi d'un PID trouvé vivant).
+  Dans les deux cas, avant de reprendre le verrou, le nettoyage de
+  l'éventuel `claude` orphelin (pgid stocké, POSIX uniquement) reste
+  appliqué à l'identique (issue #322, inchangé). Ce filet reste un
+  complément, pas un remplacement : la libération normale (`finally`
+  ci-dessus) demeure le chemin attendu à chaque traitement.
 - **Fin de tâche** : le worktree n'est **jamais** supprimé automatiquement
   (ni `git worktree remove`, ni suppression de la branche) — Alain merge et
   pousse manuellement une fois le travail relu. Le numéro d'issue, le
@@ -2429,6 +2472,16 @@ Issue différée : un autre traitement détient déjà le verrou sur C:\CCW_Shar
 brutalement, ou redémarrage NSSM du service sans libération propre du
 verrou en cours. Le watcher refuse alors de retraiter l'issue tant que ce
 fichier existe, même après redémarrage.
+
+> **Atténué depuis #584.** Si le redémarrage du service (étape 1 ci-dessous)
+> se produit AVANT la reprise automatique du verrou, `acquerir_verrou` sonde
+> désormais le PID du watcher propriétaire (champ `pid=` du fichier verrou) :
+> confirmé mort, le verrou est repris immédiatement au cycle suivant, sans
+> attendre l'écoulement de la péremption par ancienneté (qui pouvait
+> auparavant dépasser 45 minutes sur un projet à `TIMEOUT` élevé — incident
+> #583, cause de cette procédure). La suppression manuelle ci-dessous reste
+> le repli si la sonde ne peut pas conclure (PID recyclé par l'OS pour un
+> autre process, ou blocage persistant pour toute autre raison).
 
 **Procédure manuelle :**
 
@@ -3559,7 +3612,35 @@ de création d'issue, seul valable pour du contenu qu'il produit.
 
 ---
 
-*Dernière mise à jour : 21 septembre 2026 — Section « Parallélisation
+*Dernière mise à jour : 22 septembre 2026 — issue #584 : le verrou
+anti-collision `REP_TRAVAIL` (section « Parallélisation mode_write via git
+worktrees », #189/#322) gagne un filet de sécurité complémentaire. Incident
+réel : issue #583 (canal unifié for-windows, mode_write) bloquée 48 minutes,
+chaque cycle affichant « un autre traitement détient déjà le verrou sur
+C:\CCW_Share ». Hypothèse initiale (un chemin de sortie anticipée de
+`_traiter_issue_synchrone`, ex. refus précoce avant tout travail réel, ne
+relâcherait pas le verrou faute de `try`/`finally`) vérifiée puis
+**INFIRMÉE** par lecture de code : le `try`/`finally` entourant le verrou
+existe depuis #189 (2026-07-20) et couvre déjà tous les chemins de sortie, y
+compris les refus précoces — confirmé par
+`tests/test_verrou_refus_precoce_584.py`. Cause réelle la plus probable :
+un watcher tué brutalement (crash, `kill -9`, redémarrage de service)
+pendant qu'il détenait le verrou — aucun `try`/`finally` Python n'y survit,
+sur aucune plateforme ; le seul filet existant (péremption par ancienneté,
+issue #322) se calcule à partir de `max_essais × TIMEOUT_projet`,
+potentiellement des dizaines de minutes pour un projet à `TIMEOUT` élevé
+(1800 s dans #583), expliquant l'ordre de grandeur observé. Nouveau filet
+complémentaire dans `acquerir_verrou` : le PID du watcher propriétaire
+(champ `pid=` du fichier verrou, écrit dès la pose) est sondé
+(`_pid_vivant`, POSIX `os.kill(pid, 0)` / Windows `OpenProcess`) ; confirmé
+mort, le verrou est repris immédiatement, sans attendre la péremption par
+ancienneté — corrige directement le délai de #583. Asymétrie volontaire :
+PID introuvable ⇒ orphelin certain, PID vivant/sonde en échec/plateforme non
+gérée ⇒ verrou considéré actif par prudence (repli sur le critère
+d'ancienneté existant, jamais moins sûr qu'avant #584). §16.4 (dépannage
+« Interrompre une issue CCW coincée ») mis à jour en conséquence.
+
+Précédemment — 21 septembre 2026 — Section « Parallélisation
 mode_write via git worktrees » (#337) : isolation de `REP_TRAVAIL`
 désormais **systématique**, y compris à `MAX_WRITE_PARALLELE = 1` (issue
 #577). Incident réel ayant motivé ce changement, sur `relecture_bridge`
@@ -3612,23 +3693,6 @@ sans `.conf` présent sur ce disque — ⚠️ à vérifier par Alain). Tableau 
 de `provisioning/windows/REINSTALLATION_CCW.md` (services CCW dédiés) :
 choix documenté de le laisser hors de ce mécanisme — sous-ensemble
 distinct dont la source de vérité déclarée reste `$Projets` dans
-`reinstaller_projets_ccw.ps1` (issue #552).
-
-Précédemment — 18 septembre 2026 — Sous-section « Couleur d'accent
-des projets » (§12) complétée (issue #540) : procédure de recyclage de la
-couleur d'un projet mis à l'arrêt, appliquée à `ecole`/`ff_galerie`. Nouvelle
-constante partagée `COULEUR_PROJET_INACTIF` (`#767676`, contraste texte noir
-4,62:1, seuil 4,5:1 respecté) définie dans `nouveau_projet.py` **et**
-`static/js/app.js`. Traitement asymétrique entre les deux fichiers, vérifié
-concrètement plutôt que supposé : `ecole`/`ff_galerie` **retirées** de
-`COULEURS_PROJETS_EXISTANTS` (Python, pas remplacées par le gris à cet
-endroit) — ce dictionnaire est passé en `couleurs_a_eviter` à
-`generer_palette()`, qui raisonne en angle de teinte Lab, et un gris
-(a\*/b\*≈0) y produit un angle dégénéré qui fait échouer l'assertion de fin
-de fonction ; les retirer libère en revanche un emplacement de
-`PALETTE_COULEURS` (`couleurs_disponibles()` : 5 → 6). Côté JS, `ecole`/
-`ff_galerie` restent des clés de `COULEURS_PROJET` (seule source de vérité
-d'affichage), simplement avec la valeur `COULEUR_PROJET_INACTIF` à la place
-de leur ancienne teinte dédiée.*
+`reinstaller_projets_ccw.ps1` (issue #552).*
 
 Historique complet : voir [`CHANGELOG.md`](CHANGELOG.md).

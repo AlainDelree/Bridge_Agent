@@ -2463,6 +2463,10 @@ _JobObjectExtendedLimitInformation = 9
 _PROCESS_SET_QUOTA = 0x0100
 _PROCESS_TERMINATE = 0x0001
 _PROCESS_ACCES_JOB = _PROCESS_SET_QUOTA | _PROCESS_TERMINATE
+# Droit minimal (Vista+) pour sonder l'existence d'un process via OpenProcess
+# SANS pouvoir agir dessus — utilisé par _pid_vivant (issue #584), même esprit
+# de moindre privilège que _PROCESS_ACCES_JOB ci-dessus.
+_PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
 
 
 class _JOBOBJECT_BASIC_LIMIT_INFORMATION(ctypes.Structure):
@@ -3433,6 +3437,58 @@ def _maj_verrou_pgid(verrou: Path, pgid: int) -> None:
         log.warning(f"Mise à jour du verrou {verrou} avec le pgid claude ({pgid}) impossible : {e}")
 
 
+def _lire_pid_verrou(verrou: Path) -> int | None:
+    """Lit le champ `pid=<n>` du fichier verrou — le PID du watcher qui l'a
+    posé (voir acquerir_verrou), écrit inconditionnellement dès la création du
+    verrou, contrairement à `claude_pgid` qui n'arrive qu'après le Popen
+    (voir _maj_verrou_pgid). Retourne None si absent ou lecture impossible."""
+    try:
+        contenu = verrou.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    trouve = re.search(r"pid=(\d+)", contenu)
+    if not trouve:
+        return None
+    try:
+        return int(trouve.group(1))
+    except ValueError:
+        return None
+
+
+def _pid_vivant(pid: int | None) -> bool:
+    """Sonde best-effort et cross-plateforme (issue #584) : `pid` désigne-t-il
+    encore un process vivant ? Pure lecture, ne tue ni ne modifie rien.
+    POSIX : os.kill(pid, 0). Windows : OpenProcess en droits minimaux (mêmes
+    constantes que _assigner_job_windows, adaptées en lecture seule).
+
+    Asymétrie volontaire, cruciale pour l'usage qu'en fait acquerir_verrou :
+    PID introuvable ⇒ False, fait certain (aucun faux négatif possible — un
+    PID qui n'existe plus n'existe plus). PID trouvé vivant, sonde en échec,
+    ou plateforme non gérée ⇒ True par prudence : un PID mort peut avoir été
+    RECYCLÉ par l'OS pour un process totalement différent (surtout après un
+    temps long ou un redémarrage), donc « vivant » ne prouve jamais qu'il
+    s'agit encore du MÊME process — dans le doute, l'appelant doit retomber
+    sur le filet de sécurité existant (verrou encore considéré actif), jamais
+    conclure à tort qu'il est orphelin."""
+    if not pid or pid <= 0:
+        return False
+    try:
+        if os.name == "nt":
+            handle = ctypes.windll.kernel32.OpenProcess(_PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+            if not handle:
+                return False
+            ctypes.windll.kernel32.CloseHandle(handle)
+            return True
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except Exception:
+        return True
+
+
 def _nettoyer_orphelin_verrou_perime(verrou: Path) -> None:
     """Best-effort (issue #322) — au moment précis où acquerir_verrou reprend un
     verrou PÉRIMÉ, tue l'éventuel claude orphelin encore attaché à ce verrou
@@ -3504,6 +3560,20 @@ def acquerir_verrou(rep_travail: Path, timeout_projet: int) -> Path | None:
     traitement légitime dure max_essais × (timeout + pause) ; au-delà (+ marge),
     plus aucun claude légitime ne tourne.
 
+    Filet complémentaire (issue #584) : un verrou encore JEUNE au sens de cette
+    péremption par ancienneté peut malgré tout être orphelin — watcher tué
+    brutalement (crash, kill -9, redémarrage de service) alors qu'il détenait
+    le verrou, sur un projet dont TIMEOUT est élevé (la péremption ci-dessus
+    est calculée à partir de max_essais × timeout_projet, potentiellement des
+    dizaines de minutes). Sans ce filet, tout autre traitement visant le même
+    rep_travail reste bloqué jusqu'à l'écoulement complet de ce délai — vécu
+    sur l'issue #583 (canal unifié for-windows, 48 minutes de blocage). Le PID
+    du watcher propriétaire (champ `pid=`, écrit inconditionnellement à la
+    pose, voir plus bas) est sondé via `_pid_vivant` : s'il est confirmé mort,
+    le verrou est repris IMMÉDIATEMENT, sans attendre la péremption par
+    ancienneté. Cette sonde ne peut jamais rendre un verrou encore valide plus
+    fragile qu'avant (voir l'asymétrie volontaire documentée sur _pid_vivant).
+
     Création atomique via O_CREAT|O_EXCL : si un autre process gagne la course
     entre le test de péremption et la création, l'ouverture échoue proprement et
     on renvoie None (pas de double lancement).
@@ -3526,14 +3596,35 @@ def acquerir_verrou(rep_travail: Path, timeout_projet: int) -> Path | None:
             age = time.time() - verrou.stat().st_mtime
         except OSError:
             age = None
-        if age is not None and age < peremption:
+        perime_par_age = age is not None and age >= peremption
+
+        # Issue #584 : la péremption par ancienneté n'a pas encore tranché —
+        # dernier recours avant de considérer le verrou vivant, sonder si le
+        # watcher propriétaire existe encore.
+        pid_proprietaire = None
+        perime_par_pid_mort = False
+        if not perime_par_age:
+            pid_proprietaire = _lire_pid_verrou(verrou)
+            if pid_proprietaire is not None and not _pid_vivant(pid_proprietaire):
+                perime_par_pid_mort = True
+
+        if not perime_par_age and not perime_par_pid_mort:
             return None   # verrou vivant : un autre traitement est en cours sur ce dossier
-        # Verrou périmé (ou stat illisible) : on le reprend.
-        log.warning(
-            f"Verrou périmé sur {rep_travail} "
-            f"(âge {int(age) if age is not None else '?'}s ≥ {int(peremption)}s) — repris "
-            f"(watcher précédent probablement tué avant libération)."
-        )
+
+        if perime_par_pid_mort:
+            log.warning(
+                f"Verrou orphelin sur {rep_travail} : le watcher propriétaire "
+                f"(PID {pid_proprietaire}) n'existe plus — repris immédiatement, "
+                f"sans attendre la péremption par ancienneté (âge "
+                f"{int(age) if age is not None else '?'}s < {int(peremption)}s, issue #584)."
+            )
+        else:
+            # Verrou périmé par ancienneté (ou stat illisible) : on le reprend.
+            log.warning(
+                f"Verrou périmé sur {rep_travail} "
+                f"(âge {int(age) if age is not None else '?'}s ≥ {int(peremption)}s) — repris "
+                f"(watcher précédent probablement tué avant libération)."
+            )
         # Issue #322 : avant de reprendre ce verrou périmé, nettoyer l'éventuel
         # claude orphelin d'un watcher mort brutalement (kill -9, coupure,
         # plantage non capturé) — sinon un nouveau claude serait lancé pendant

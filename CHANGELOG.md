@@ -9,6 +9,80 @@ milliers de caractères sur une seule ligne logique, coûteux à relire et
 
 Convention d'ajout : voir §10 de `BRIDGE_AGENT_DOC.md`.
 
+## 22 septembre 2026 — issue #584
+
+Verrou anti-collision `REP_TRAVAIL` (`watcher.py`, #189/#322) : filet de
+sécurité complémentaire contre un verrou orphelin. Incident réel : issue
+#583 (canal unifié for-windows, mode_write) bloquée 48 minutes
+(12:48–13:36), chaque cycle du watcher affichant « un autre traitement
+détient déjà le verrou sur C:\CCW_Share ». Hypothèse posée dans #584 (un
+chemin de sortie anticipée de `_traiter_issue_synchrone` — refus précoce,
+avant tout travail réel — ne relâcherait pas le verrou faute de
+`try`/`finally` symétrique) vérifiée par lecture de code et **INFIRMÉE** :
+le `try` qui enveloppe tout le corps de `_traiter_issue_synchrone`, verrou
+compris, existe depuis l'introduction même du mécanisme (issue #189,
+2026-07-20, commit `6a91a0a`) et son `finally` (`liberer_verrou`) couvre
+déjà tous les chemins de sortie ajoutés depuis — succès, échec après
+tentative(s), abandon définitif (`needs-human`), et refus précoce (claude
+répond ❌ en quelques secondes, exit code 0, avant tout travail réel).
+Confirmé par deux nouveaux scénarios de `tests/test_verrou_refus_precoce_584.py`
+(`scenario_refus_precoce_libere_verrou`,
+`scenario_echec_rapide_sans_travail_libere_verrou`) : appel direct de
+`_traiter_issue_synchrone` avec un faux `claude` répondant respectivement
+❌ en exit 0 et en échec non-zéro immédiat — verrou absent après coup dans
+les deux cas.
+
+Cause réelle la plus probable de l'incident, en revanche : un watcher tué
+BRUTALEMENT (crash, `kill -9`, redémarrage de service — cohérent avec
+« erreur de conception de l'issue elle-même, corrigée après coup côté
+Alain » évoqué dans #584) pendant qu'il détenait le verrou. Aucun
+`try`/`finally` Python ne survit à un `kill -9`, sur aucune plateforme :
+c'est le rôle du filet de sécurité existant par péremption par ancienneté
+(issue #322, `acquerir_verrou`) — mais celui-ci se calcule à partir de
+`max_essais × (TIMEOUT_projet + pause) + marge`, potentiellement des
+dizaines de minutes pour un projet à `TIMEOUT` élevé (1800 s dans #583),
+ce qui correspond à l'ordre de grandeur du blocage observé.
+
+Nouveau filet complémentaire, plus rapide, dans `acquerir_verrou`
+(`watcher.py`) : ajout de `_pid_vivant(pid)` (sonde cross-plateforme,
+lecture seule — POSIX `os.kill(pid, 0)`, Windows `OpenProcess` avec le
+droit minimal `PROCESS_QUERY_LIMITED_INFORMATION`, même pattern déjà en
+place pour l'objet Job Windows de #249) et `_lire_pid_verrou(verrou)`
+(lit le champ `pid=<n>` du fichier verrou — le PID du **watcher**, écrit
+inconditionnellement dès la création du verrou, à ne pas confondre avec
+`claude_pgid=<n>` qui n'arrive qu'après le lancement de claude, #322). Si
+la péremption par ancienneté n'a pas encore tranché ET que le PID
+propriétaire est confirmé mort, le verrou est repris **immédiatement**
+(nouveau log dédié « Verrou orphelin sur ... — repris immédiatement »),
+sans attendre l'écoulement de la péremption par ancienneté — corrige
+directement le délai de #583. Asymétrie volontaire documentée sur
+`_pid_vivant` : un PID introuvable est un fait certain (aucun faux négatif
+possible), mais un PID trouvé vivant ne prouve pas qu'il s'agit encore du
+même process (réutilisation de PID par l'OS, notamment après un temps long
+ou un reboot) — dans le doute (PID vivant, sonde en échec, plateforme non
+gérée), la fonction répond `True` et l'appelant retombe sur le critère
+d'ancienneté existant : ce filet ne peut donc jamais rendre un verrou
+encore valide plus fragile qu'avant #584. Le nettoyage de l'éventuel
+`claude` orphelin (pgid stocké, POSIX uniquement, #322) reste appliqué à
+l'identique dans les deux cas de reprise. Deux scénarios supplémentaires
+dans `tests/test_verrou_refus_precoce_584.py`
+(`scenario_pid_mort_repris_immediatement`,
+`scenario_pid_vivant_reste_bloque`) : verrou frais (donc très loin de la
+péremption par ancienneté) avec PID propriétaire confirmé mort → repris
+immédiatement ; même verrou frais avec PID propriétaire vivant (le
+process du test lui-même) → reste bloquant, sans régression.
+
+Documentation : section « Parallélisation mode_write via git worktrees »
+de `BRIDGE_AGENT_DOC.md` complétée par deux nouvelles puces (libération
+garantie du verrou quel que soit le chemin de sortie ; filet de sécurité à
+deux niveaux) ; §16.4 « Interrompre une issue CCW coincée » (procédure
+manuelle historique pour ce même symptôme, issue #287) mis à jour pour
+signaler l'atténuation automatique apportée par #584, la procédure
+manuelle restant le repli si la sonde PID ne peut pas conclure (PID
+recyclé par l'OS). Pied de page de `BRIDGE_AGENT_DOC.md` glissé d'un cran
+en conséquence (§10) — l'entrée #540 (couleur d'accent des projets) en
+sort, elle reste disponible ci-dessous.
+
 ## 20 septembre 2026 — issue #577
 
 Section « Parallélisation mode_write via git worktrees » (#337) de
