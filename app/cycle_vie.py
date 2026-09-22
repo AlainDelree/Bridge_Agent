@@ -29,7 +29,6 @@ from threading import Lock, Thread
 
 from flask import Response, current_app, jsonify
 
-from app import diag_heartbeat   # DIAGNOSTIC TEMPORAIRE — issue #157, à retirer
 from app import etat
 from app.tunnel import arreter_tunnel
 
@@ -70,7 +69,6 @@ def heartbeat():
     l'horodatage surveillé par surveiller_heartbeat()."""
     etat.set("LAST_HEARTBEAT", time.time())
     etat.set("HEARTBEAT_RECU", True)
-    diag_heartbeat.log_heartbeat()   # DIAGNOSTIC TEMPORAIRE — issue #157, à retirer
     return jsonify(ok=True)
 
 
@@ -88,7 +86,6 @@ def events():
         # keepalive réussi rafraîchit LAST_SSE_ACTIVITE ; l'échec d'un yield
         # (onglet fermé) déclenche le finally qui décrémente le compteur.
         n = _sse_connecte(config)
-        diag_heartbeat.log_sse("connexion", n)   # DIAGNOSTIC TEMPORAIRE — issue #157, à retirer
         try:
             dernier_ping = time.time()
             while True:
@@ -102,7 +99,6 @@ def events():
                     config["LAST_SSE_ACTIVITE"] = time.time()   # preuve de vie (issue #157)
         finally:
             n = _sse_deconnecte(config)
-            diag_heartbeat.log_sse("déconnexion", n)   # DIAGNOSTIC TEMPORAIRE — issue #157, à retirer
 
     return Response(
         generer(),
@@ -164,7 +160,5 @@ def surveiller_heartbeat(app_instance):
         heartbeat_vivant = heartbeat_recu and delta_hb <= DELAI_HEARTBEAT_MAX
 
         if not sse_vivant and not heartbeat_vivant:
-            diag_heartbeat.log_arret(delta_hb, delta_sse, connexions,   # DIAGNOSTIC TEMPORAIRE — issue #157
-                                     DELAI_HEARTBEAT_MAX, DELAI_SSE_MAX)  # à retirer
             os.kill(os.getpid(), signal.SIGTERM)
             return
