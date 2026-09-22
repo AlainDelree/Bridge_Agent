@@ -22,12 +22,14 @@ n'est pas reconstituable depuis le disque).
 
 Deux usages :
   - Automatique : appelé par `nouveau_projet.py` (Flask et CLI) à la fin de
-    la création d'un projet, une fois son `.conf` déjà écrit sur disque —
-    un seul mécanisme écrit dans ces tableaux, plutôt que deux copies
-    parallèles de la même logique d'insertion.
+    la création d'un projet, une fois son `.conf` déjà écrit sur disque, et
+    par `supprimer_projet.py` (Flask et CLI, issue #587) à la fin de la
+    suppression côté CCL/local d'un projet, une fois son `.conf` déjà
+    retiré du disque — un seul mécanisme écrit dans ces tableaux, plutôt que
+    des copies parallèles de la même logique d'insertion/retrait.
   - À la demande : `python3 regenerer_tableaux_projets.py`, sans argument,
-    pour resynchroniser la doc après un nettoyage manuel (suppression d'un
-    projet, pas de flux de suppression automatisé aujourd'hui).
+    pour resynchroniser la doc après un nettoyage manuel (`.conf` ajouté ou
+    retiré à la main, hors des deux flux ci-dessus).
 
 Le tableau §7 de `provisioning/windows/REINSTALLATION_CCW.md` (sous-ensemble
 des projets avec un service CCW Windows dédié) n'est PAS régénéré par ce

@@ -1091,6 +1091,13 @@ python3 new_issue.py --set-password
 # sans redémarrer new_issue.py). Le script CLI reste utilisable en parallèle.
 python3 nouveau_projet.py
 
+# Supprimer un projet bridge, côté CCL/local uniquement (interactif, terminal ;
+# issue #587). Équivalent web : bouton « 🗑 Supprimer ce projet… » (zone
+# dangereuse de l'onglet Configuration). --dry-run liste ce qui serait
+# supprimé sans rien toucher. Dépôt GitHub distant et côté CCW jamais touchés.
+python3 supprimer_projet.py <nom>
+python3 supprimer_projet.py <nom> --dry-run
+
 # Lancer un watcher manuellement
 python3 watcher.py --config configs/bridge_agent.conf
 python3 watcher.py --config configs/bridge_agent.conf --dry-run
@@ -1217,6 +1224,81 @@ deux, mêmes étapes, mêmes messages, comportement idempotent identique :
 configs/<nom>.conf`), et committer/pousser les changements du dépôt
 Bridge_Agent lui-même (`configs/`, doc) — bien distinct du dépôt du projet
 créé, dont le push initial est géré par l'étape 5 ci-dessus.
+
+### Suppression de projet, côté CCL/local (issue #587)
+
+Diagnostic #580 (fonctionnel) : la création écrit 12 traces persistantes
+réparties CCL/GitHub/CCW (étapes ci-dessus) sans qu'aucun flux ne sache les
+démonter — décommissionner un projet exigeait jusqu'ici une chirurgie
+manuelle sur au moins 8 cibles, avec un risque réel d'oubli. Sur le modèle
+déjà utilisé pour la création (chantier scindé en plusieurs issues
+coordonnées CCL/CCW), cette issue couvre volontairement **uniquement le
+côté CCL/local** — symétrique de `nouveau_projet.py` ci-dessus, mais dans
+l'autre sens. Le côté CCW et la suppression du dépôt GitHub font l'objet
+d'issues séparées.
+
+`supprimer_projet.py` (script CLI) / `app/supprimer_projet.py` (routes web,
+qui réutilisent le script SANS le dupliquer — même relation que
+`nouveau_projet.py`/`app/nouveau_projet.py`) démontent, dans cet ordre :
+
+1. **Répertoire de travail** du projet (contenu, `CONTEXTE.md`/specs) **et**
+   dépôt git local en une seule opération de disque (`.git` vit dans ce même
+   répertoire — voir l'étape 5 de la création ci-dessus) : `shutil.rmtree()`
+   du `REP_TRAVAIL` lu dans le `.conf`. Idempotent : un répertoire déjà
+   absent n'est pas une erreur.
+2. **`configs/<nom>.conf`**.
+3. **`BRIDGE_AGENT_DOC.md`** (§2 Projets actifs, §7 Périmètre, date en bas) —
+   régénéré immédiatement via `regenerer_tableaux_projets.regenerer()` (même
+   mécanisme que l'étape 6 de la création), **pas** en attendant un lancement
+   manuel comme c'était le cas jusqu'ici. Mis à jour **localement** — comme
+   pour la création, jamais poussé automatiquement.
+
+**Ordre volontairement inverse de la création** : le répertoire de travail
+est retiré **en premier**, tant que `configs/<nom>.conf` existe encore pour
+attester du projet. Si cette étape échoue (droits, disque), le `.conf` est
+conservé et les étapes suivantes ne sont **pas** tentées — pas de
+continuation aveugle après un échec. L'inverse (`.conf` supprimé en premier)
+risquerait un répertoire orphelin sur disque sans plus aucune trace de son
+existence en cas d'échec sur l'étape suivante. Pour la même raison, la
+régénération de la doc — qui relit `configs/*.conf` — vient en dernier,
+une fois le `.conf` réellement retiré du disque (sans quoi le projet
+réapparaîtrait dans §2/§7).
+
+**Explicitement hors scope** (décision actée dans le diagnostic #580) :
+suppression du dépôt GitHub et de ses labels — geste destructeur
+volontairement laissé manuel — et tout le côté CCW (clone Windows,
+`configs\<nom>-ccw.conf`, service NSSM, tokens `AppEnvironmentExtra`/
+`TOPIC_NTFY`, entrée `$Projets`, ligne `REINSTALLATION_CCW.md` §7), qui fera
+l'objet d'une issue CCW dédiée.
+
+**Mode à blanc (dry-run)** : `previsualiser_suppression(nom)` /
+`supprimer_projet(nom, dry_run=True)` décrivent les 3 cibles (dépôt GitHub —
+conservé, chemin du répertoire de travail avec son nombre d'éléments et la
+présence ou non d'un dépôt git local, aperçu tronqué du contenu) **sans
+toucher au disque ni à `BRIDGE_AGENT_DOC.md`**. Côté web, `GET
+/supprimer-projet/verifier/<nom>` alimente automatiquement l'aperçu affiché
+dans le modal, avant même que la checklist de confirmation ne soit
+proposée.
+
+**Route web `POST /supprimer-projet`** (protégée par `login_requis`, comme
+le reste de l'application) : appelée depuis le bouton « 🗑 Supprimer ce
+projet… » (zone dangereuse de l'onglet Configuration). Double garde-fou
+avant toute action destructive, cohérent avec la sensibilité du geste :
+
+1. **Côté interface** — 3 cases à cocher (une par cible démontée) **et** le
+   nom du projet retapé à l'identique dans un champ de confirmation ; le
+   bouton « Supprimer définitivement » reste désactivé tant que ces 4
+   conditions ne sont pas toutes réunies.
+2. **Côté serveur** — le champ `confirmation` du corps JSON doit reproduire
+   exactement le nom du projet (`nom`), indépendamment des cases cochées
+   côté navigateur : la checklist d'interface peut être contournée par un
+   appel direct à la route, cette vérification-là ne peut pas l'être. Sans
+   correspondance → 400, aucune suppression tentée.
+
+**Reste à faire manuellement dans tous les cas** : dépôt GitHub + labels
+(hors scope, cf. issue #587), et committer/pousser les changements du dépôt
+Bridge_Agent lui-même (`configs/`, doc) — le script/la route ne poussent
+jamais, comme pour la création.
 
 ### Couleur d'accent des projets (issues #120, #121, #534, #535, #539, #540)
 

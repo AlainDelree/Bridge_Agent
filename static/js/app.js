@@ -6136,3 +6136,149 @@ function ajouterProjetAuSelecteur(nom, depot) {
   if (statut) statut.textContent = select.options.length + ' projet(s) disponible(s)';
   onProjetChange();
 }
+
+// Symétrique de ajouterProjetAuSelecteur ci-dessus (issue #587) : retire
+// l'option du <select> après une suppression réussie et sélectionne le
+// premier projet restant (s'il y en a un) pour laisser l'interface utilisable.
+function retirerProjetDuSelecteur(nom) {
+  const select = document.getElementById('projet');
+  const opt = [...select.options].find(o => o.value === nom);
+  if (opt) opt.remove();
+  const statut = document.querySelector('.entete .statut');
+  if (statut) statut.textContent = select.options.length + ' projet(s) disponible(s)';
+  if (select.options.length) {
+    select.value = select.options[0].value;
+    onProjetChange();
+  }
+}
+
+// ─── Suppression de projet (issue #587) ────────────────────────────────────
+// Modal symétrique à « Nouveau projet » ci-dessus, côté CCL/local uniquement
+// (dépôt GitHub distant + côté CCW jamais touchés ici). L'aperçu (dry-run,
+// GET /supprimer-projet/verifier/<nom>) se charge automatiquement à
+// l'ouverture ; le bouton de suppression réelle reste désactivé tant que les
+// 3 cases de la checklist ne sont pas cochées ET que le nom n'a pas été
+// retapé à l'identique — double garde-fou côté interface, la route serveur
+// revérifie indépendamment la confirmation (app/supprimer_projet.py).
+let spNomCourant = '';
+
+function ouvrirSupprimerProjet() {
+  const nom = document.getElementById('projet').value;
+  if (!nom) return;
+  spNomCourant = nom;
+  document.getElementById('sp-nom-titre').textContent = nom;
+  document.getElementById('sp-nom-confirmation-attendu').textContent = nom;
+  document.getElementById('sp-conf-nom').textContent = 'configs/' + nom + '.conf';
+  document.getElementById('sp-chargement').textContent = 'Chargement de l\'aperçu…';
+  document.getElementById('sp-chargement').style.display = 'block';
+  document.getElementById('sp-contenu').style.display = 'none';
+  document.getElementById('sp-compte-rendu').style.display = 'none';
+  document.getElementById('sp-message').style.display = 'none';
+  document.getElementById('sp-nom-confirmation').value = '';
+  document.querySelectorAll('.sp-case').forEach(c => c.checked = false);
+  const btn = document.getElementById('sp-supprimer');
+  btn.style.display = '';
+  btn.disabled = true;
+  btn.textContent = 'Supprimer définitivement';
+  document.getElementById('sp-fermer').textContent = 'Fermer';
+  document.getElementById('modal-supprimer-projet').classList.add('actif');
+  spChargerApercu(nom);
+}
+
+function fermerSupprimerProjet() {
+  document.getElementById('modal-supprimer-projet').classList.remove('actif');
+}
+
+async function spChargerApercu(nom) {
+  const chargement = document.getElementById('sp-chargement');
+  const contenu = document.getElementById('sp-contenu');
+  let r;
+  try {
+    r = await (await fetch('/supprimer-projet/verifier/' + encodeURIComponent(nom))).json();
+  } catch (e) {
+    chargement.textContent = 'Erreur réseau : ' + e.message;
+    return;
+  }
+  if (!r.existe) {
+    chargement.textContent = '❌ configs/' + nom + '.conf introuvable — rien à supprimer.';
+    return;
+  }
+  chargement.style.display = 'none';
+  contenu.style.display = 'block';
+  document.getElementById('sp-depot').textContent = r.depot || '(inconnu)';
+
+  let html = '<div>Répertoire de travail : <b>' + escapeHtml(r.rep_travail || '') + '</b>'
+    + (r.rep_existe
+        ? ' (' + r.nb_fichiers + ' élément(s)' + (r.git_local ? ', dépôt git local inclus' : '') + ')'
+        : ' — déjà absent')
+    + '</div>';
+  if (r.apercu_fichiers && r.apercu_fichiers.length) {
+    html += '<div style="margin-top:6px;font-size:12px;color:#666">'
+      + r.apercu_fichiers.map(escapeHtml).join('<br>') + '</div>';
+  }
+  document.getElementById('sp-apercu').innerHTML = html;
+  spMajBoutonEtat();
+}
+
+// Rappelée à chaque case cochée/décochée et à chaque frappe dans le champ de
+// confirmation (voir onchange/oninput dans templates/index.html) : le bouton
+// de suppression réelle ne s'active QUE si les 3 cases sont cochées ET que le
+// nom retapé correspond exactement au projet ouvert.
+function spMajBoutonEtat() {
+  const casesOk = [...document.querySelectorAll('.sp-case')].every(c => c.checked);
+  const nomOk = document.getElementById('sp-nom-confirmation').value.trim().toLowerCase()
+              === spNomCourant.toLowerCase();
+  document.getElementById('sp-supprimer').disabled = !(casesOk && nomOk);
+}
+
+function spMsg(texte, type) {
+  const el = document.getElementById('sp-message');
+  el.textContent = texte;
+  el.className = 'message ' + type;
+  el.style.display = 'block';
+}
+
+async function soumettreSupprimerProjet() {
+  const confirmation = document.getElementById('sp-nom-confirmation').value.trim().toLowerCase();
+  const cr = document.getElementById('sp-compte-rendu');
+  document.getElementById('sp-message').style.display = 'none';
+  cr.style.display = 'none';
+  const btn = document.getElementById('sp-supprimer');
+  const avant = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = 'Suppression…';
+
+  let res;
+  try {
+    const rep = await fetch('/supprimer-projet', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({nom: spNomCourant, confirmation}),
+    });
+    res = await rep.json();
+  } catch (e) {
+    btn.disabled = false;
+    btn.textContent = avant;
+    spMsg('Erreur réseau : ' + e.message, 'erreur');
+    return;
+  }
+
+  if (res.etapes && res.etapes.length) {
+    cr.innerHTML = res.etapes.map(e =>
+      (e.ok ? '✓ ' : '❌ ') + '<b>' + escapeHtml(e.etape) + '</b> — ' + escapeHtml(e.detail || '')
+    ).join('<br>');
+    cr.style.display = 'block';
+  }
+
+  if (res.succes) {
+    btn.style.display = 'none';
+    spMsg('✅ Projet « ' + res.nom + ' » supprimé côté CCL/local. Reste à faire à la main : '
+        + 'dépôt GitHub + labels (hors scope, cf. issue #587), puis vérifier et pousser '
+        + 'toi-même les commits locaux (configs/, doc).', 'succes');
+    retirerProjetDuSelecteur(res.nom);
+  } else {
+    btn.disabled = false;
+    btn.textContent = avant;
+    spMsg('❌ ' + (res.erreur || 'Échec.'), 'erreur');
+  }
+}

@@ -62,6 +62,7 @@ def _enregistrer_routes(app: Flask) -> None:
     from app.auth import login_requis, login, login_post, logout
     from app.projets import get_config, post_config, tester_bip
     from app.nouveau_projet import verifier_nouveau_projet, creer_nouveau_projet
+    from app.supprimer_projet import verifier_supprimer_projet, executer_supprimer_projet
     from app.projet_ccw import (etat_cle_publique, rafraichir_cle_publique,
                                 bootstrap_projet_ccw)
     from app.watchers import (watchers, lancer_watcher,
@@ -111,6 +112,10 @@ def _enregistrer_routes(app: Flask) -> None:
     app.add_url_rule("/tester-bip/<nom_projet>", "tester_bip", login_requis(tester_bip), methods=["POST"])
     app.add_url_rule("/nouveau-projet/verifier", "verifier_nouveau_projet", login_requis(verifier_nouveau_projet), methods=["GET"])
     app.add_url_rule("/nouveau-projet", "creer_nouveau_projet", login_requis(creer_nouveau_projet), methods=["POST"])
+    # ─── Suppression de projet, côté CCL/local (issue #587) — symétrique à
+    # /nouveau-projet ci-dessus ; hors scope volontaire : dépôt GitHub + CCW.
+    app.add_url_rule("/supprimer-projet/verifier/<nom_projet>", "verifier_supprimer_projet", login_requis(verifier_supprimer_projet), methods=["GET"])
+    app.add_url_rule("/supprimer-projet", "executer_supprimer_projet", login_requis(executer_supprimer_projet), methods=["POST"])
     # ─── Case « Projet CCW » (issue #559, 3/3) : chiffrement + 2 issues croisées ─
     app.add_url_rule("/projet-ccw/cle-publique/etat", "etat_cle_publique", login_requis(etat_cle_publique), methods=["GET"])
     app.add_url_rule("/projet-ccw/rafraichir-cle", "rafraichir_cle_publique", login_requis(rafraichir_cle_publique), methods=["POST"])
