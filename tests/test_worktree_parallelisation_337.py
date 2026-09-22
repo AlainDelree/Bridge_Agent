@@ -79,6 +79,14 @@ if [ "$1" = "issue" ] && [ "$2" = "comment" ]; then
     if [ -n "$bodyfile" ] && grep -q -- '<!-- bridge:resultat -->' "$bodyfile" 2>/dev/null; then
         touch "$TEST_337_DIR/marqueur-$numero"
     fi
+    # Copie du corps posté (issue #589) : permet aux tests de vérifier le
+    # CONTENU du compte-rendu de clôture (ex. mention de repli worktree),
+    # pas seulement sa présence. `--edit-last` repasse ici aussi (même
+    # sous-commande `issue comment`) : la dernière écriture (corps enrichi
+    # du bloc calibration) l'emporte, ce qui reste la version pertinente.
+    if [ -n "$bodyfile" ]; then
+        cp "$bodyfile" "$TEST_337_DIR/corps-$numero.md"
+    fi
     exit 0
 fi
 if [ "$1" = "issue" ] && [ "$2" = "view" ]; then
@@ -198,6 +206,28 @@ def _contexte_watcher_isole(tmp_path: Path, **kwargs_config):
         watcher._issues_write_bloquees_needs_human.update(ancien_bloquees)
 
 
+@contextlib.contextmanager
+def _capturer_logs_watcher():
+    """Capture les messages log.warning/log.info de `watcher.log` pendant le
+    bloc — nécessaire car `main()` met ce logger en CRITICAL pour le reste de
+    la suite (silencieux). Restaure le niveau précédent en sortie."""
+    messages = []
+
+    class _Handler(logging.Handler):
+        def emit(self, record):
+            messages.append(record.getMessage())
+
+    handler = _Handler()
+    ancien_niveau = watcher.log.level
+    watcher.log.setLevel(logging.INFO)
+    watcher.log.addHandler(handler)
+    try:
+        yield messages
+    finally:
+        watcher.log.removeHandler(handler)
+        watcher.log.setLevel(ancien_niveau)
+
+
 def _init_depot_git(rep: Path) -> None:
     subprocess.run(["git", "init", "-q", "-b", "master", str(rep)], check=True)
     (rep / "fichier.txt").write_text("original\n", encoding="utf-8")
@@ -247,8 +277,9 @@ def scenario_creer_worktree_succes_et_repli():
             rep_travail=rep_travail, topic_ntfy="x",
         )
         try:
-            chemin = watcher._creer_worktree(101)
+            chemin, raison = watcher._creer_worktree(101)
             assert chemin is not None, "la création du worktree aurait dû réussir"
+            assert raison is None, "aucune raison de repli attendue en cas de succès"
             assert chemin.is_dir()
             assert (chemin / "fichier.txt").exists()
             branche = subprocess.run(
@@ -258,8 +289,13 @@ def scenario_creer_worktree_succes_et_repli():
             assert branche == "worktree-issue-101", branche
 
             # Repli 1 : le chemin cible existe déjà (garde-fou #337 point 4).
-            resultat_doublon = watcher._creer_worktree(101)
-            assert resultat_doublon is None, "un chemin déjà existant aurait dû être refusé"
+            # Issue #589 : la raison de repli doit être renseignée et mentionner
+            # le chemin concerné, distinct d'une erreur git générique.
+            chemin_doublon, raison_doublon = watcher._creer_worktree(101)
+            assert chemin_doublon is None, "un chemin déjà existant aurait dû être refusé"
+            assert raison_doublon is not None, \
+                "issue #589 : la raison de repli 'chemin déjà pris' doit être renseignée"
+            assert str(chemin) in raison_doublon, raison_doublon
 
             # Repli 2 : chemin cible différent, mais la BRANCHE existe déjà.
             chemin_101b = watcher._chemin_worktree(101)
@@ -527,7 +563,13 @@ def scenario_max_1_repli_si_worktree_echoue():
     """Issue #577 : si la création du worktree échoue (chemin cible déjà
     occupé), repli propre et direct sur REP_TRAVAIL — pas d'exception, pas de
     blocage, comportement identique au repli déjà couvert par #337 pour le
-    cas parallélisé."""
+    cas parallélisé.
+
+    Issue #589 : ce repli, bien que volontaire, doit rester VISIBLE — un
+    log.warning explicite au moment de l'échec (distinct d'une erreur git
+    générique, avec le chemin concerné) et une mention dans le compte-rendu
+    de clôture posté sur l'issue, pour qu'Alain le voie sans éplucher les
+    logs watcher."""
     with tempfile.TemporaryDirectory() as tmp:
         tmp_path = Path(tmp)
         rep_travail = tmp_path / "projet"
@@ -557,12 +599,26 @@ def scenario_max_1_repli_si_worktree_echoue():
                 chemin_cible.mkdir(parents=True)
 
                 issue = _issue_minimale(numero, "Test #577 — repli si worktree impossible", ["mode_write"])
-                watcher.traiter_issue(issue, dry_run=False)
+                with _capturer_logs_watcher() as logs:
+                    watcher.traiter_issue(issue, dry_run=False)
 
                 pwd = (test_dir / f"pwd-{numero}").read_text(encoding="utf-8").strip()
                 assert Path(pwd) == rep_travail.resolve(), \
                     f"repli attendu dans REP_TRAVAIL si le worktree ne peut être créé : {pwd}"
                 assert (test_dir / f"marqueur-{numero}").exists(), "résultat jamais posté"
+
+                # Issue #589, volet 1 : log.warning explicite, avec le chemin
+                # concerné, au moment précis de l'échec.
+                logs_pertinents = [m for m in logs if str(chemin_cible) in m and "déjà pris" in m]
+                assert logs_pertinents, \
+                    f"aucun log.warning explicite (chemin + 'déjà pris') pour le repli #589 : {logs}"
+
+                # Issue #589, volet 2 : mention dans le compte-rendu de
+                # clôture posté sur l'issue (onglet Résultats), pas seulement
+                # dans les logs watcher.
+                corps = (test_dir / f"corps-{numero}.md").read_text(encoding="utf-8")
+                assert "Repli sur REP_TRAVAIL" in corps and str(chemin_cible) in corps, \
+                    f"le compte-rendu de clôture ne mentionne pas le repli worktree (#589) : {corps}"
             finally:
                 if ancien_path:
                     os.environ["PATH"] = ancien_path
