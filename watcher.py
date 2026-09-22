@@ -2992,6 +2992,16 @@ Instructions :
 1. Lis attentivement la tâche demandée
 2. Effectue le travail demandé (dans les limites du mode ci-dessus)
 3. Si tu dois créer une issue for-windows, utilise : gh issue create --repo {CFG.depot} --label "bridge,for-windows" ...
+4. Si tu délègues une partie du travail à des sous-agents (outil Task/Agent),
+   ATTENDS la fin de TOUS les sous-agents lancés et intègre leurs résultats
+   AVANT de produire ta réponse finale ci-dessous — ne la considère jamais
+   émise tant qu'un sous-agent reste en cours. Cette invocation est unique et
+   non interactive : seule ta toute DERNIÈRE prise de parole est capturée et
+   postée telle quelle sur l'issue. Si un sous-agent te notifie qu'il a
+   terminé APRÈS que tu aies déjà produit cette réponse finale, n'émets
+   AUCUNE nouvelle prise de parole (elle écraserait le rapport déjà produit
+   et serait postée à sa place) — ignore silencieusement cette notification
+   tardive, ton rapport final reste celui déjà émis.
 
 Réponds avec ce format exact, sans rien ajouter avant ni après :
 
@@ -4046,6 +4056,43 @@ def _traiter_issue_synchrone(issue: dict, dry_run: bool, chemin_worktree: Path |
                                            perimetre=perimetre_effectif, cwd=cwd_effectif,
                                            verrou=verrou, chemin_scratch=chemin_scratch,
                                            chemin_worktree=chemin_worktree)
+
+            # Garde-fou de format (issue #581) : le prompt standard impose un
+            # rapport de clôture marqué par ✅ ou ❌ (« Réponds avec ce format
+            # exact »). Cause racine #581 : un sous-agent d'exploration lancé
+            # en arrière-plan par claude (Task/Agent tool) peut terminer APRÈS
+            # que claude ait déjà produit ce rapport final conforme —
+            # `claude --print` reste alors vivant le temps de traiter cette
+            # notification tardive et émet un tour supplémentaire (simple note
+            # de suivi, hors format), qui ÉCRASE le rapport conforme dans le
+            # stdout capturé ci-dessus : exit code 0, donc `succes=True`, mais
+            # contenu hors-sujet/hors-format — cas vécu sur #580, rapport réel
+            # jamais posté nulle part. Détection volontairement large (marqueur
+            # présent N'IMPORTE OÙ dans le texte, pas seulement en tête) : en
+            # pratique claude fait fréquemment précéder le rapport d'une courte
+            # phrase d'intro ("Commit créé avec succès. Le rapport final :"),
+            # anodin et déjà toléré historiquement — seule l'ABSENCE totale du
+            # marqueur (cas #580) doit déclencher ce garde-fou, pas sa position.
+            # dry_run exclu : sa sortie fixe ("[DRY-RUN] ...") ne respecte
+            # jamais ce format et ne passe de toute façon jamais par
+            # `commenter_resultat_avec_retry`.
+            if succes and not dry_run and not ("✅" in sortie or "❌" in sortie):
+                log.warning(
+                    f"  ✗ Tentative {tentative} : sortie de claude sans aucun "
+                    f"marqueur ✅/❌ de clôture — probablement une réponse "
+                    f"tardive (sous-agent en arrière-plan terminé après le "
+                    f"rapport final, issue #581) ayant écrasé le vrai rapport. "
+                    f"Traitée comme un échec de cette tentative."
+                )
+                succes = False
+                sortie = (
+                    "Sortie de claude sans aucun marqueur ✅/❌ de clôture "
+                    "attendu — probablement une réponse tardive émise après la "
+                    "fin réelle du traitement (ex. notification d'un sous-agent "
+                    "en arrière-plan terminé après le rapport final), qui a "
+                    "écrasé la vraie réponse dans la sortie capturée (issue "
+                    f"#581). Sortie obtenue : {sortie.strip()[:500]}"
+                )
 
             if empreinte_configs_avant is not None:
                 _restaurer_configs_modifies(numero, empreinte_configs_avant)
