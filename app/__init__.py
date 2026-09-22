@@ -82,7 +82,6 @@ def _enregistrer_routes(app: Flask) -> None:
     from app.fin_issue import notifier_fin_issue, notifier_debut_issue, stream_fin_issue
     from app.issues_inbox import (etat_inbox, demarrer_watcher_inbox_route,
                                   arreter_watcher_inbox_route)
-    from app.diag_heartbeat import visibilite as diag_visibilite   # DIAGNOSTIC TEMPORAIRE — issue #157, à retirer
     from app.son import get_son_actif, post_son_actif, tester_son
     from app.vues import index
 
@@ -148,7 +147,6 @@ def _enregistrer_routes(app: Flask) -> None:
     # ─── Pilotage du watcher spool depuis #pl-zone-extras (issue #485) ────────
     app.add_url_rule("/issues-inbox/demarrer-watcher", "demarrer_watcher_inbox_route", login_requis(demarrer_watcher_inbox_route), methods=["POST"])
     app.add_url_rule("/issues-inbox/arreter-watcher", "arreter_watcher_inbox_route", login_requis(arreter_watcher_inbox_route), methods=["POST"])
-    app.add_url_rule("/diag-visibilite", "diag_visibilite", diag_visibilite, methods=["POST"])   # DIAGNOSTIC TEMPORAIRE — issue #157, à retirer
     # ─── Interrupteur global plat/cloche du bip (issue #527), distinct de la
     # tonalité par projet (issue #526, /tester-bip/<nom_projet> ci-dessus) ────
     app.add_url_rule("/son-actif", "get_son_actif", login_requis(get_son_actif), methods=["GET"])

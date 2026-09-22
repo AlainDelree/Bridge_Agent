@@ -5453,17 +5453,6 @@ function demarrerCycleVie() {
   // sur la connexion SSE /events (non throttlée), ceci n'est qu'un renfort.
   document.addEventListener('visibilitychange', function() {
     if (!document.hidden) envoyerHeartbeat();
-    // DIAGNOSTIC TEMPORAIRE — issue #157, à retirer : trace chaque passage
-    // avant-plan / arrière-plan (console + POST serveur) pour corréler après
-    // coup « onglet caché » avec « serveur coupé ». Retirer ce bloc (garder le
-    // envoyerHeartbeat() ci-dessus, qui fait partie du correctif).
-    var etat = document.hidden ? 'caché (arrière-plan)' : 'visible (premier plan)';
-    console.log('[DIAG #157] visibilitychange → ' + etat + ' @ ' + new Date().toISOString());
-    fetch('/diag-visibilite', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({etat: etat, horodatage: new Date().toISOString()})
-    }).catch(function() {});
   });
 
   // Canal serveur → onglet.
