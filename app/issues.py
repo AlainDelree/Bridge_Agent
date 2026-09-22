@@ -12,7 +12,7 @@ import subprocess
 import sys  # noqa: F401 (conservé pour parité avec les autres modules extraits)
 import tempfile
 import unicodedata
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 from flask import jsonify, request
@@ -866,6 +866,29 @@ def _parser_priorite(body: str) -> str:
     return "normale"
 
 
+# Fenêtre transitoire (issue #588) : côté watcher.py, le commentaire "Échec
+# après N tentatives" et la pose du label needs-human sont deux appels gh
+# séquentiels non atomiques (chacun avec son propre timeout de 30s côté
+# subprocess) — jusqu'à ~60s peuvent séparer les deux dans le pire cas. Marge
+# de sécurité large pour ne considérer "en cours de pose" que ce court délai,
+# sans empiéter sur le scénario #525 où ce même marqueur date d'un cycle
+# antérieur (minutes/heures avant un retrait manuel du label).
+FENETRE_TRANSITOIRE_ECHEC_S = 120
+
+
+def _echec_recent(horodatage: str | None) -> bool:
+    """Vrai si l'horodatage ISO 8601 (…Z) remonte à moins de
+    FENETRE_TRANSITOIRE_ECHEC_S secondes (issue #588)."""
+    if not horodatage:
+        return False
+    try:
+        dt = datetime.fromisoformat(horodatage.replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    age_s = (datetime.now(timezone.utc) - dt).total_seconds()
+    return 0 <= age_s <= FENETRE_TRANSITOIRE_ECHEC_S
+
+
 def _debut_traitement(commentaires: list) -> str | None:
     """createdAt (ISO) du commentaire ACK que le watcher poste au démarrage du
     traitement, ou None si aucun (issue pas encore prise en charge). gh renvoie
@@ -880,14 +903,25 @@ def _debut_traitement(commentaires: list) -> str | None:
     needs-human retiré) conserve dans son historique les ACK du cycle
     précédent. watcher.py poste, juste avant de poser needs-human, un
     commentaire d'échec définitif ("Échec après N tentatives" —
-    watcher.py:3442) : on borne donc la recherche d'ACK aux commentaires
+    watcher.py:4374) : on borne donc la recherche d'ACK aux commentaires
     postés APRÈS ce marqueur. Si aucun ACK ne suit ce marqueur, le
-    traitement actuel n'a pas encore repris (issue "en file") → None."""
+    traitement actuel n'a pas encore repris (issue "en file") → None.
+
+    Issue #588 : ce même marqueur "Échec après N tentatives" apparaît aussi
+    quand le cycle ACTUEL vient tout juste d'épuiser ses tentatives, needs-
+    human n'étant pas encore posé côté GitHub (fenêtre transitoire entre les
+    deux appels gh de watcher.py — voir FENETRE_TRANSITOIRE_ECHEC_S). Dans ce
+    cas précis, réinitialiser debut afficherait à tort "en file" avec une
+    estimation fraîche pour une issue qui vient de tourner plusieurs minutes.
+    On ne réinitialise donc debut que si ce marqueur n'est PAS récent — sinon
+    on le laisse tel quel (ACK du cycle en cours, déjà trouvée plus haut dans
+    la boucle puisque les commentaires sont chronologiques)."""
     debut = None
     for c in commentaires:
         corps = c.get("body") or ""
         if "Échec après" in corps and "tentatives" in corps:
-            debut = None
+            if not _echec_recent(c.get("createdAt")):
+                debut = None
         elif "ACK —" in corps and "watcher.py" in corps:
             debut = c.get("createdAt")
     return debut
