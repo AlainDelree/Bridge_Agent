@@ -34,7 +34,7 @@ import nouveau_projet as np  # noqa: E402
 DEPOT_INEXISTANT = "AlainDelree/depot-de-test-258-inexistant"
 
 
-def scenario_repertoire_neuf_vide():
+def test_repertoire_neuf_vide():
     """Répertoire vide : comportement inchangé depuis #257 — init + commit +
     tentative de push automatiques, aucun fichier préexistant détecté."""
     with tempfile.TemporaryDirectory() as tmp:
@@ -68,7 +68,7 @@ def scenario_repertoire_neuf_vide():
     return {"push_ok": res["push_ok"], "contenu_preexistant": res["contenu_preexistant"]}
 
 
-def scenario_deja_git():
+def test_deja_git():
     """Répertoire déjà versionné : comportement strictement inchangé — rien
     n'est fait, aucun remote ajouté, le fichier existant reste intact."""
     with tempfile.TemporaryDirectory() as tmp:
@@ -83,7 +83,7 @@ def scenario_deja_git():
         assert res == {
             "ok": True, "deja_git": True, "push_ok": None,
             "contenu_preexistant": [], "detail": "déjà un dépôt git — inchangé.",
-            "commande_manuelle": None,
+            "commande_manuelle": None, "email_corrige": None,
         }, res
         assert marqueur.read_text(encoding="utf-8") == "contenu d'origine"
         remote = subprocess.run(
@@ -93,7 +93,7 @@ def scenario_deja_git():
     return {"deja_git": res["deja_git"]}
 
 
-def scenario_contenu_preexistant_pas_de_push():
+def test_contenu_preexistant_pas_de_push():
     """Cœur de l'issue #258 : répertoire non versionné contenant déjà un
     fichier (ni CONTEXTE.md, ni Specs, ni .gitignore) → init/remote/commit
     faits normalement, mais AUCUNE tentative de push, et la commande
@@ -128,8 +128,8 @@ def scenario_contenu_preexistant_pas_de_push():
             f"CONTEXTE.md ne doit pas apparaître, seul le fichier réellement "
             f"préexistant doit être signalé : {res['contenu_preexistant']}")
         assert res["commande_manuelle"] == f"cd {rep} && git push -u origin master"
-        assert "public" in res["detail"] and "relu" in res["detail"], (
-            f"le compte-rendu doit expliquer pourquoi (dépôt public, non relu) : {res['detail']}")
+        assert "relu" in res["detail"], (
+            f"le compte-rendu doit expliquer pourquoi (contenu non relu) : {res['detail']}")
 
         assert (rep / ".git").exists(), "git init n'a pas créé .git malgré le contenu préexistant"
         commits = vrai_run(["git", "log", "--oneline"], cwd=rep,
@@ -145,7 +145,7 @@ def scenario_contenu_preexistant_pas_de_push():
             "commande_manuelle": res["commande_manuelle"]}
 
 
-def scenario_venv_ignore_par_gitignore_pas_de_retenue():
+def test_venv_ignore_par_gitignore_pas_de_retenue():
     """Cœur de l'issue #260 : répertoire non versionné contenant un `venv/`
     (avec un fichier dedans) et un `__pycache__/`, mais AUCUN fichier
     réellement suivi par git — le `.gitignore` minimal écrit par le script
@@ -192,7 +192,7 @@ def scenario_venv_ignore_par_gitignore_pas_de_retenue():
             "push_ok": res["push_ok"]}
 
 
-def scenario_timeout_git_ne_fait_pas_echouer_la_creation():
+def test_timeout_git_ne_fait_pas_echouer_la_creation():
     """Point 1 de l'issue #258 : un `git push` qui dépasse son timeout doit
     être traité comme un échec normal de l'étape (comme un push refusé par
     le réseau), jamais remonter comme une exception ni bloquer l'appelant.
@@ -241,18 +241,18 @@ def scenario_timeout_git_ne_fait_pas_echouer_la_creation():
 def main():
     tests = [
         ("répertoire neuf vide → init + commit + tentative de push",
-         scenario_repertoire_neuf_vide),
+         test_repertoire_neuf_vide),
         ("déjà un dépôt git → strictement inchangé",
-         scenario_deja_git),
+         test_deja_git),
         ("contenu préexistant (issue #258) → init/commit locaux, "
          "aucun push tenté, commande manuelle renvoyée",
-         scenario_contenu_preexistant_pas_de_push),
+         test_contenu_preexistant_pas_de_push),
         ("venv/__pycache__ préexistants mais ignorés par .gitignore "
          "(issue #260) → aucune retenue, push tenté normalement",
-         scenario_venv_ignore_par_gitignore_pas_de_retenue),
+         test_venv_ignore_par_gitignore_pas_de_retenue),
         ("timeout de git push (issue #258) → échec normal de l'étape, "
          "pas d'exception, création non bloquée",
-         scenario_timeout_git_ne_fait_pas_echouer_la_creation),
+         test_timeout_git_ne_fait_pas_echouer_la_creation),
     ]
     echecs = 0
     for nom, fn in tests:
