@@ -449,6 +449,9 @@ button.danger:hover{background:#f8d7da}
 .modal-boutons{display:flex;justify-content:flex-end;gap:10px}
 button.danger-plein{background:#a32d2d;color:#fff;border-color:#a32d2d}
 button.danger-plein:hover{background:#8f2626}
+button.danger-plein:disabled{background:#ccc;border-color:#ccc;color:#888;
+  cursor:not-allowed}
+button.danger-plein:disabled:hover{background:#ccc}
 /* Overlay « serveur arrêté » — flux normal (position:absolute, pas fixed),
    recouvre tout le body (position:relative). Affiché sur Ctrl+C serveur ou
    coupure brutale de la connexion SSE /events. */
