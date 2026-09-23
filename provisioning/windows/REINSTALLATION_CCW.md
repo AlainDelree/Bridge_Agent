@@ -92,16 +92,9 @@ CCL via l'onglet **CCW** de l'interface web (`new_issue.py`) — voir
 
 Les étapes 1 à 6 ne remettent en place que le service de **base**
 `CCW-Watcher` (canal `for-windows` de Bridge_Agent). En production tournent
-en plus **4 services dédiés**, un par projet du modèle multi-projets actif
+en plus des **services dédiés**, un par projet du modèle multi-projets actif
 (issue #170, cf. `BRIDGE_AGENT_DOC.md` §16) — eux aussi recréés à zéro par
-la réinstallation, puisque le service NSSM et ses tokens ne survivent pas :
-
-| Projet | Dépôt GitHub |
-|--------|--------------|
-| `alchess` | `AlainDelree/AlChess` |
-| `actualise` | `AlainDelree/Actualise` |
-| `rummikub` | `AlainDelree/Rummikub` |
-| `scrabble` | `AlainDelree/Scrabble` |
+la réinstallation, puisque le service NSSM et ses tokens ne survivent pas.
 
 Rappel : les fichiers `.conf` de chaque projet (ex. `configs\alchess-ccw.conf`)
 vivent dans le dépôt du projet lui-même, donc **survivent** à la
@@ -109,18 +102,28 @@ réinstallation — rien à reconstruire de ce côté. Seuls la recréation du
 service NSSM et la resaisie des deux tokens (GitHub dédié + Claude Code)
 par projet restent nécessaires.
 
-Cette liste est maintenue à un seul endroit : le tableau `$Projets` dans
-`reinstaller_projets_ccw.ps1` (ce dossier) fait foi en cas de divergence —
-le tableau ci-dessus n'en est qu'une reproduction pour la lecture.
+**Liste non codée en dur (issue #597, suite de #552/#571)** : contrairement
+à l'ancienne version de ce script, `reinstaller_projets_ccw.ps1` (ce
+dossier) ne maintient plus de tableau `$Projets` figé. Il énumère
+DYNAMIQUEMENT, à chaque exécution, les fichiers `configs\*-ccw.conf`
+présents sur le disque (`C:\CCW\Bridge_Agent\configs\`) — un fichier par
+projet dédié, créé par `ajouter_projet_ccw.ps1` à la création du projet et
+jamais retiré automatiquement à sa suppression. Chaque fichier fournit à la
+fois le nom du projet (préfixe avant `-ccw.conf`) et son dépôt GitHub (clé
+`DEPOT=`). Le canal unifié `for-windows` (`configs\ccw.conf`, sans suffixe
+projet) est explicitement exclu de cette énumération — il est déjà couvert
+par les étapes 1 à 6 ci-dessus, pas par ce script.
 
-**Choix documenté (issue #571)** : ce tableau n'est **pas** régénéré par
-`regenerer_tableaux_projets.py` (qui régénère §2/§7 de `BRIDGE_AGENT_DOC.md`
-depuis `configs/*.conf`), même si les deux mécanismes se ressemblent. Ce
-ne sont pas la même liste : celle-ci n'est qu'un **sous-ensemble** — les
-projets dotés d'un service CCW Windows dédié, une décision manuelle
-(matériel/charge Windows) qui ne se lit dans aucun `.conf` Linux. La
-source de vérité de ce sous-ensemble reste `$Projets` ci-dessus, à mettre
-à jour à la main en cas d'ajout/retrait d'un service dédié.
+Conséquence pratique : la liste des services dédiés recréés par l'étape 7
+reflète toujours fidèlement les fichiers `configs\*-ccw.conf` réellement
+présents au moment de la réinstallation — plus de risque de recréer un
+projet décommissionné (fichier `.conf` absent → non recréé) ni d'oublier un
+projet ajouté hors du flux CREATION standard (fichier `.conf` présent →
+recréé). Ce mécanisme remplace le tableau `$Projets` qui faisait foi
+jusqu'ici (issue #552) et rend caduque la distinction documentée en #571
+avec `regenerer_tableaux_projets.py` (celui-ci régénère §2/§7 de
+`BRIDGE_AGENT_DOC.md` depuis les `.conf`, mais dans un sous-ensemble
+manuellement choisi — ici, la source de vérité est directement le disque).
 
 Toujours en admin sur le PC fixe, depuis `C:\CCW\Bridge_Agent` :
 
@@ -129,14 +132,14 @@ Toujours en admin sur le PC fixe, depuis `C:\CCW\Bridge_Agent` :
 ```
 
 Ce script séquence l'appel à `creer_projet_ccw_complet.ps1` (racine du
-dépôt, §16.5 de `BRIDGE_AGENT_DOC.md`) pour chacun des 4 projets — évitant
-de devoir taper 4 commandes séparées de mémoire. Les deux tokens restent
-demandés **par projet**, à l'intérieur de la boucle : le script structure
-la séquence, il ne contourne pas la saisie. En cas d'échec sur un projet,
-il s'arrête et affiche comment reprendre uniquement les projets restants
-(`-SeulementProjets`).
+dépôt, §16.5 de `BRIDGE_AGENT_DOC.md`) pour chacun des projets détectés —
+évitant de devoir taper une commande par projet de mémoire. Les deux tokens
+restent demandés **par projet**, à l'intérieur de la boucle : le script
+structure la séquence, il ne contourne pas la saisie. En cas d'échec sur un
+projet, il s'arrête et affiche comment reprendre uniquement les projets
+restants (`-SeulementProjets`).
 
-Vérifier ensuite l'état des 5 services (base + 4 dédiés) via
+Vérifier ensuite l'état de tous les services (base + dédiés) via
 `provisioning\windows\lister_projets_ccw.ps1`, ou depuis CCL via l'onglet
 **CCW** de l'interface web.
 
