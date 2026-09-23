@@ -1,10 +1,20 @@
-# Gabarit d'unité systemd --user pour les watchers du bridge (issue #119).
+# Gabarit d'unité systemd --user pour les watchers du bridge (issue #119,
+# réactivé et corrigé par l'issue #596).
 #
 # Une instance par projet actif : le nom du projet est passé via %i.
 #   Ex.  watcher@alchess  ->  %i = "alchess"  ->  configs/alchess.conf
 #
 # Installation : voir installer_services.sh (copie ce fichier dans
 # ~/.config/systemd/user/, daemon-reload, enable --now, enable-linger).
+#
+# Restart=on-failure + SuccessExitStatus=42 (issue #596) : le watcher
+# s'éteint proprement avec le code 42 après une période d'inactivité
+# (DELAI_INACTIVITE_MIN, issues #199/#200 — voir watcher.py, constante
+# EXIT_INACTIVITE). Déclarer 42 en SuccessExitStatus fait traiter cette
+# sortie comme un arrêt normal : systemd ne relance PAS le watcher, ce qui
+# évite la boucle allumage/extinction constatée avec Restart=always (issue
+# #119, abandonné pour cette raison). Un crash réel (tout autre code de
+# sortie non nul, ou terminaison par signal) reste, lui, relancé.
 #
 # Diagnostic :
 #   systemctl --user status watcher@alchess
@@ -19,8 +29,9 @@ Wants=network-online.target
 Type=simple
 WorkingDirectory=/home/alain/Bridge_Agent
 ExecStart=/home/alain/Bridge_Agent/venv/bin/python3 watcher.py --config configs/%i.conf
-Restart=always
+Restart=on-failure
 RestartSec=10
+SuccessExitStatus=42
 StandardOutput=journal
 StandardError=journal
 

@@ -1374,12 +1374,18 @@ futur projet mis à l'arrêt :
 
 Les watchers ne tournent **pas** en permanence : ils s'allument à la demande et
 s'éteignent d'eux-mêmes après une période d'inactivité. Trois mécanismes se
-combinent.
+combinent. Depuis #596 (voir le bloc « Watchers supervisés par systemd --user »
+plus bas), ils sont en plus supervisés par `systemd --user` : démarrage
+automatique au boot du ThinkPad et relance sur crash, sans jamais relancer un
+arrêt volontaire (extinction pour inactivité ci-dessous, ou interruption
+manuelle #323).
 
 **1. Démarrage manuel.** Le bouton « Lancer watcher » de l'onglet « Watchers »
 (ou `python3 watcher.py --config configs/<projet>.conf` en terminal, cf. bloc
-ci-dessus) démarre le watcher d'un projet. L'interface suit le process via un
-fichier PID (`logs/watcher-<nom>.pid`).
+ci-dessus) démarre le watcher d'un projet — désormais via `systemctl --user
+start|restart watcher@<projet>` côté serveur (#596). L'interface suit le
+process via un fichier PID (`logs/watcher-<nom>.pid`), publié par `watcher.py`
+lui-même dès son démarrage.
 
 **2. Démarrage automatique à la création d'une issue** (issues #198 / #202).
 Créer une issue **for-linux** depuis l'interface **rallume automatiquement** le
@@ -1395,7 +1401,9 @@ création d'issue, qui reste réussie.
 #201, correctif horloge #217). En tête de chaque cycle, avant de lister les
 issues, le watcher mesure le temps écoulé depuis la dernière issue **traitable**
 (ni `done`, ni `needs-human`). Au-delà de `DELAI_INACTIVITE_MIN` minutes (défaut
-**20**), il s'arrête proprement (`sys.exit(0)`) et nettoie son fichier PID. Le
+**20**), il s'arrête proprement (`sys.exit(EXIT_INACTIVITE)`, code 42 depuis
+#596 — distinct de 0 pour que `systemd/watcher@.service` puisse le déclarer en
+`SuccessExitStatus` et ne jamais le relancer) et nettoie son fichier PID. Le
 test se fait uniquement **entre** deux cycles complets : un cycle de retry en
 cours (jusqu'à ~20 min, cf. #183) n'est jamais interrompu. L'horloge
 d'inactivité (`derniere_activite`) est réarmée **deux fois** par cycle : une fois
@@ -1627,23 +1635,51 @@ a été remplacée par les deux seuls droits que documente Microsoft pour
 > (`_assigner_job_windows` retournant `False`) — point à surveiller lors de
 > la prochaine validation réelle sur la VM CCW.
 
-> **Historique : services systemd (abandonnés).** L'issue #119 avait déployé les
-> watchers en services `systemd --user` (`systemd/watcher@.service`,
-> `installer_services.sh`) pour un démarrage au boot et un auto-restart
-> (`Restart=always`, `RestartSec=10`). **Ce mécanisme n'est plus déployé** :
-> aucune unité `watcher@*.service` n'existe dans `~/.config/systemd/user/`
-> (`systemctl --user list-unit-files 'watcher@*'` → 0 unité). Le gabarit et le
-> script sont conservés dans le dépôt à titre de référence historique
-> uniquement.
+> **Watchers supervisés par systemd --user (issue #119, corrigé et réactivé
+> par #596).** Chaque projet actif tourne comme service `watcher@<projet>`
+> (`systemd/watcher@.service`), installé par `installer_services.sh` :
 >
-> ⚠️ **Ne pas réactiver `installer_services.sh` sans le retravailler d'abord.**
-> `Restart=always` + `RestartSec=10` est **incompatible** avec l'auto-extinction
-> après inactivité (#199/#200) : systemd relancerait au bout de 10 s tout
-> watcher qui vient de s'éteindre pour inactivité, produisant une boucle sans
-> fin (allumage/extinction toutes les ~20 min + 10 s) et annulant tout l'intérêt
-> du mécanisme. Une éventuelle réintroduction de systemd devrait retirer
-> `Restart=always` (ou passer en `Restart=on-failure` avec un code de sortie
-> d'inactivité distinct traité en `SuccessExitStatus`).
+> - **Démarrage** : à l'ouverture de session (`WantedBy=default.target`) et
+>   dès le boot sans session ouverte, grâce au linger utilisateur
+>   (`loginctl enable-linger`, posé une fois par le script d'installation).
+> - **Redémarrage automatique sur crash, mais pas sur auto-extinction** :
+>   `Restart=on-failure` + `SuccessExitStatus=42`. Le watcher s'éteint
+>   proprement avec le code 42 (constante `EXIT_INACTIVITE`, `watcher.py`)
+>   après `DELAI_INACTIVITE_MIN` minutes sans issue traitable (#199/#200) ;
+>   déclarer ce code en `SuccessExitStatus` fait traiter cette sortie comme
+>   un arrêt normal, donc **jamais relancée**. Toute autre sortie non nulle,
+>   ou une terminaison par signal (crash réel), **est** relancée après
+>   `RestartSec=10`. C'est précisément l'incompatibilité qui avait fait
+>   abandonner la première tentative (#119, `Restart=always`) : elle
+>   relançait systématiquement tout watcher éteint pour inactivité, en
+>   boucle sans fin.
+> - **Installation dynamique** (`installer_services.sh`) : une unité par
+>   `configs/*.conf` valide, listés via `app.projets.lister_projets()` —
+>   plus de liste de projets codée en dur.
+> - **Boutons Démarrer/Arrêter/Relancer de l'interface** : `app/watchers.py`
+>   (`demarrer_watcher`/`arreter_watcher`) appelle `systemctl --user
+>   start|restart|stop watcher@<projet>` côté serveur — même source de
+>   vérité que les services installés, plus de risque de double process.
+>   `watcher_actif()` reste basé sur `logs/watcher-<nom>.pid`, désormais
+>   publié par `watcher.py` lui-même dès son démarrage (quel que soit son
+>   mode de lancement : terminal, `systemctl`, ou bouton de l'interface).
+> - **Bouton « Interrompre cette issue » (#323)** : le SIGKILL de l'arbre de
+>   process est, du point de vue de systemd, une terminaison par signal —
+>   donc normalement relancée par `Restart=on-failure`. `app/interruption.py`
+>   neutralise ce cas via `_neutraliser_relance_systemd()`, qui appelle
+>   `systemctl --user stop` juste après le SIGKILL : un arrêt délibéré de ce
+>   point de vue, qui n'active jamais la politique `Restart=`. Préserve le
+>   contrat de #323 (jamais de relance automatique après une interruption
+>   manuelle).
+> - **Aucune commande sudo requise** : `systemctl --user` gère des services
+>   utilisateur, sans droits root (seul `loginctl enable-linger`, posé une
+>   fois à l'installation, en demande).
+> - **Diagnostic** : `systemctl --user status watcher@<projet>`,
+>   `journalctl --user -u watcher@<projet> -f`.
+>
+> Hors périmètre de #596 : `new_issue.py` reste lancé manuellement (pas de
+> service systemd dédié), et le watcher spool (`scripts/watcher_issues_inbox.py`)
+> garde son propre mécanisme de durée/échéance.
 
 **Diagnostic — CCL ne démarre pas** (issue #279, nuit du 29/07/2026) :
 

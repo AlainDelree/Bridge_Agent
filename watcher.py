@@ -51,6 +51,15 @@ import notifications
 DOSSIER_SCRIPT = Path(__file__).resolve().parent
 DOSSIER_LOGS   = DOSSIER_SCRIPT / "logs"
 
+# Code de sortie dédié à l'auto-extinction pour inactivité (issues #199/#200,
+# service systemd #596). Distinct de 0 (arrêt normal/interruption manuelle,
+# `sys.exit(0)` sur `KeyboardInterrupt`) pour que `systemd/watcher@.service`
+# puisse le déclarer en `SuccessExitStatus` sous `Restart=on-failure` : un
+# watcher qui s'éteint proprement pour inactivité n'est alors PAS relancé,
+# alors qu'un crash (tout autre code de sortie non nul, ou terminaison par
+# signal) l'est.
+EXIT_INACTIVITE = 42
+
 # Bootstrap automatique d'un service CCW dédié (issue #556, 2/3, champ
 # d'en-tête CREATION — voir plus bas et BRIDGE_AGENT_DOC.md §16). Scripts
 # PowerShell déjà en place (issue #170/#173/#174) : watcher.py les APPELLE,
@@ -4784,6 +4793,19 @@ def main():
     CFG = charger_config(chemin)
     configurer_logs(CFG)
 
+    # Fichier PID auto-publié (issue #596) : jusqu'ici c'était le lanceur
+    # (app/watchers.py::demarrer_watcher, via subprocess.Popen) qui écrivait
+    # logs/watcher-<nom>.pid après coup. Depuis #596 le watcher peut aussi être
+    # lancé directement par systemd (`watcher@<nom>.service`), sans passer par
+    # demarrer_watcher : le watcher publie donc lui-même son PID, quel que
+    # soit son mode de lancement (terminal, Popen, systemd). Toute la
+    # détection existante (app.watchers.watcher_actif, _watcher_actif/
+    # detecter_conflit_watcher ci-dessous, app.interruption.interrompre_linux)
+    # continue de lire ce même fichier sans autre changement.
+    pid_file = DOSSIER_LOGS / f"watcher-{CFG.nom}.pid"
+    pid_file.parent.mkdir(parents=True, exist_ok=True)
+    pid_file.write_text(str(os.getpid()))
+
     intervalle = args.interval if args.interval is not None else CFG.intervalle
 
     log.info("=" * 60)
@@ -4846,7 +4868,7 @@ def main():
                     # orphelin au lieu de « inactif ».
                     pid_file = DOSSIER_LOGS / f"watcher-{CFG.nom}.pid"
                     pid_file.unlink(missing_ok=True)
-                    sys.exit(0)
+                    sys.exit(EXIT_INACTIVITE)
 
         try:
             # Rafraîchissement automatique du clone local en début de cycle
@@ -4900,6 +4922,7 @@ def main():
                 derniere_activite = time.monotonic()
         except KeyboardInterrupt:
             log.info("Watcher arrêté par l'utilisateur.")
+            pid_file.unlink(missing_ok=True)
             sys.exit(0)
         except Exception as e:
             log.error(f"Erreur boucle principale : {e}")
