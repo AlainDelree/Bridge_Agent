@@ -82,7 +82,6 @@ Claude Chat → crée une issue → GitHub → watcher.py détecte → CCL exéc
 | `relecture_bridge` | AlainDelree/Relecture_Bridge | ~/Relecture_Bridge | (conf local) |
 | `rummikub` | AlainDelree/Rummikub | ~/Rummikub | (conf local) |
 | `scrabble` | AlainDelree/Scrabble | ~/Scrabble | (conf local) |
-| `testajoutsupp` | AlainDelree/Testajoutsupp | ~/Testajoutsupp | (conf local) |
 <!-- FIN:TABLEAU_PROJETS_ACTIFS -->
 
 Chaque projet a son propre watcher (`watcher.py --config configs/<nom>.conf`)
@@ -720,7 +719,6 @@ hors périmètre même si l'issue le demande explicitement :
 | `relecture_bridge` | /home/alain/Relecture_Bridge |
 | `rummikub` | /home/alain/Rummikub |
 | `scrabble` | /home/alain/Scrabble |
-| `testajoutsupp` | /home/alain/Testajoutsupp |
 <!-- FIN:TABLEAU_PERIMETRE_PROJETS -->
 
 ---
