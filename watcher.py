@@ -137,7 +137,10 @@ K_VARIABILITE               = 3     # issue #475 : backtest sur 1070 observation
 DEMI_VIE_ISSUES             = 15    # demi-vie de l'EWMA duree_typique/variabilite, EN NOMBRE D'ISSUES
 ALPHA_EWMA_ISSUES           = 1 - 0.5 ** (1 / DEMI_VIE_ISSUES)
 DEMI_VIE_AMBIANCE_HEURES    = 4.0   # demi-vie de l'EWMA F_reseau/F_local, TEMPORELLE (pas en nb d'issues)
-SEUIL_SUCCES_RAPIDE         = 0.7   # succès compté « rapide » si duree_reelle < SEUIL × TIMEOUT courant
+SEUIL_SUCCES_RAPIDE         = 0.7   # succès compté « rapide » si duree_reelle < SEUIL × (duree_typique + k×variabilite)
+                                     # — ancré sur le repère historique de la combinaison, PAS sur le TIMEOUT courant
+                                     # (issue #590 : ce dernier inclut déjà le backoff, un backoff emballé rendrait
+                                     # ce seuil inatteignable et empêcherait toute décroissance).
 SUCCES_RAPIDES_POUR_RESET   = 3     # nb de succès rapides consécutifs pour réinitialiser le backoff
 FACTEUR_BACKOFF             = 1.5   # multiplicateur appliqué à chaque timeout de la combinaison
 # Plancher minimum du TIMEOUT_suggéré (secondes). Proposition à valider avec
@@ -149,6 +152,17 @@ FACTEUR_BACKOFF             = 1.5   # multiplicateur appliqué à chaque timeout
 # immédiats) ne fasse suggérer un TIMEOUT dérisoire pour une combinaison encore
 # peu observée.
 TIMEOUT_SUGGERE_PLANCHER    = 30
+# Plafond absolu du TIMEOUT_suggéré (secondes), appliqué en DERNIER sur le
+# résultat final du calcul (filet de sécurité, issue #590). Constaté sur
+# relecture_bridge|normal|write|normal : un backoff resté emballé (succès
+# rapide jamais atteignable, cf. SEUIL_SUCCES_RAPIDE ci-dessus) a produit un
+# TIMEOUT_suggéré ~2 062 012s (~23 jours). Même après le correctif d'ancrage
+# sur duree_typique, ce plafond reste une seconde ligne de défense contre tout
+# scénario non anticipé qui ferait s'emballer le backoff à nouveau. 3600s (1h)
+# reste largement au-dessus des complexités `lourd` observées à ce jour (cf.
+# §19.4 du DOC) sans jamais retomber dans l'ordre de grandeur « des millions
+# de secondes » d'origine.
+TIMEOUT_SUGGERE_PLAFOND     = 3600
 
 # Verrous anti-collision inter-process (issue #189). Chaque traitement pose un
 # fichier de verrou associé au répertoire de travail EFFECTIF avant de lancer
@@ -1317,8 +1331,18 @@ def _cle_combinaison(projet: str, type_issue: str, mode: str, complexite: str) -
     return f"{projet}|{type_issue}|{mode}|{complexite}"
 
 
+def _timeout_suggere_borne(duree_typique: float, variabilite: float,
+                           f_pertinent: float, backoff: float) -> float:
+    """Calcule TIMEOUT_suggéré (formule §19.2 du DOC) et le borne entre
+    TIMEOUT_SUGGERE_PLANCHER et TIMEOUT_SUGGERE_PLAFOND — ce dernier (issue
+    #590) protège contre tout emballement futur du backoff, même après le
+    correctif d'ancrage de SEUIL_SUCCES_RAPIDE sur duree_typique."""
+    brut = (duree_typique + K_VARIABILITE * variabilite) * f_pertinent * backoff
+    return min(max(brut, TIMEOUT_SUGGERE_PLANCHER), TIMEOUT_SUGGERE_PLAFOND)
+
+
 def _maj_combinaison_timeout(donnees: dict, cle: str, *, duree_s: float,
-                              timeout_courant: int, expiree: bool) -> tuple[float | None, dict]:
+                              expiree: bool) -> tuple[float | None, dict]:
     """Met à jour, DANS `donnees` (le dict complet d'etat_timeout.json), l'entrée
     de la combinaison `cle`. Retourne (duree_typique_AVANT_maj, etat_APRES_maj).
 
@@ -1331,10 +1355,14 @@ def _maj_combinaison_timeout(donnees: dict, cle: str, *, duree_s: float,
     Sur succès (expiree=False) : variabilite d'abord (écart absolu à
     duree_typique AVANT cette observation, sinon la mise à jour de
     duree_typique fausserait l'écart mesuré), puis duree_typique. Si la durée
-    réelle est < SEUIL_SUCCES_RAPIDE × timeout_courant, incrémente le compteur
-    de succès rapides consécutifs ; au bout de SUCCES_RAPIDES_POUR_RESET,
-    réinitialise le backoff à 1.0. Un succès non « rapide » remet le compteur à
-    zéro sans toucher au backoff lui-même."""
+    réelle est < SEUIL_SUCCES_RAPIDE × (duree_typique + K_VARIABILITE×variabilite)
+    — le repère historique de LA COMBINAISON elle-même, PAS le TIMEOUT courant
+    de cette exécution (issue #590 : ce dernier inclut le backoff courant: un
+    backoff déjà emballé rendrait la barre inatteignable et le système ne
+    pourrait plus jamais en sortir seul) — incrémente le compteur de succès
+    rapides consécutifs ; au bout de SUCCES_RAPIDES_POUR_RESET, réinitialise le
+    backoff à 1.0. Un succès non « rapide » remet le compteur à zéro sans
+    toucher au backoff lui-même."""
     combinaisons = donnees.setdefault("combinaisons", {})
     etat = combinaisons.setdefault(cle, {
         "duree_typique": None,
@@ -1355,7 +1383,8 @@ def _maj_combinaison_timeout(donnees: dict, cle: str, *, duree_s: float,
         etat["duree_typique"] = _ewma_maj(duree_typique_avant, duree_s, ALPHA_EWMA_ISSUES)
         etat["n_observations"] = etat.get("n_observations", 0) + 1
 
-        if timeout_courant and duree_s < SEUIL_SUCCES_RAPIDE * timeout_courant:
+        repere_rapide = etat["duree_typique"] + K_VARIABILITE * (etat.get("variabilite") or 0.0)
+        if duree_s < SEUIL_SUCCES_RAPIDE * repere_rapide:
             etat["succes_rapides_consecutifs"] = etat.get("succes_rapides_consecutifs", 0) + 1
             if etat["succes_rapides_consecutifs"] >= SUCCES_RAPIDES_POUR_RESET:
                 etat["multiplicateur_backoff"] = 1.0
@@ -1389,15 +1418,15 @@ def _maj_ambiance(donnees: dict, cle_f: str, ratio: float, date_iso: str):
 
 
 def maj_calibration_timeout(*, projet: str, type_issue: str, mode: str,
-                            duree_s: float, timeout_courant: int, expiree: bool,
+                            duree_s: float, expiree: bool,
                             body: str, date_iso: str, complexite: str = "normal") -> float | None:
     """Point d'entrée de la calibration automatique du TIMEOUT (issue #221),
     appelé après CHAQUE clôture d'issue (succès ou timeout), au même site que
     enregistrer_duree. Met à jour etat_timeout.json (combinaison projet/TYPE/
     mode/complexite, issue #434) et, sur succès avec tag_reseau connu,
     etat_ambiance.json (F_reseau/F_local, global à tous les projets).
-    Journalise et retourne le TIMEOUT_suggéré (secondes, plancher appliqué)
-    pour cette combinaison, ou None si le calcul n'a pas pu aboutir (verrou
+    Journalise et retourne le TIMEOUT_suggéré (secondes, plancher/plafond
+    appliqués) pour cette combinaison, ou None si le calcul n'a pas pu aboutir (verrou
     d'état non obtenu, ou aucune observation de succès encore enregistrée
     pour cette combinaison).
 
@@ -1409,7 +1438,7 @@ def maj_calibration_timeout(*, projet: str, type_issue: str, mode: str,
 
     def _maj_timeout(donnees):
         duree_typique_avant, etat = _maj_combinaison_timeout(
-            donnees, cle, duree_s=duree_s, timeout_courant=timeout_courant, expiree=expiree)
+            donnees, cle, duree_s=duree_s, expiree=expiree)
         capture["duree_typique_avant"] = duree_typique_avant
         capture["etat"] = dict(etat)
         return donnees
@@ -1454,8 +1483,7 @@ def maj_calibration_timeout(*, projet: str, type_issue: str, mode: str,
 
     variabilite = etat.get("variabilite") or 0.0
     backoff = etat.get("multiplicateur_backoff", 1.0)
-    suggere = max((duree_typique + K_VARIABILITE * variabilite) * f_pertinent * backoff,
-                  TIMEOUT_SUGGERE_PLANCHER)
+    suggere = _timeout_suggere_borne(duree_typique, variabilite, f_pertinent, backoff)
 
     log.info(
         f"Calibration TIMEOUT [{cle}] : duree_typique={duree_typique:.1f}s "
@@ -1504,8 +1532,7 @@ def lire_timeout_suggere(projet: str, type_issue: str, mode: str, complexite: st
         f_brut = (_lire_json_best_effort(FICHIER_ETAT_AMBIANCE).get(cle_f) or {}).get("valeur_ewma")
         f_pertinent = max(1.0, f_brut) if f_brut is not None else 1.0
 
-        return max((duree_typique + K_VARIABILITE * variabilite) * f_pertinent * backoff,
-                    TIMEOUT_SUGGERE_PLANCHER)
+        return _timeout_suggere_borne(duree_typique, variabilite, f_pertinent, backoff)
     except Exception as e:
         log.warning(f"Lecture TIMEOUT_suggéré [{projet}/{type_issue}/{mode}] impossible : {e}")
         return None
@@ -4339,7 +4366,6 @@ def _traiter_issue_synchrone(issue: dict, dry_run: bool, chemin_worktree: Path |
                     mode=mode_close,
                     complexite=complexite_close,
                     duree_s=duree_reelle,
-                    timeout_courant=timeout,
                     expiree=False,
                     body=body,
                     date_iso=date_iso_close,
@@ -4402,7 +4428,6 @@ def _traiter_issue_synchrone(issue: dict, dry_run: bool, chemin_worktree: Path |
                     mode=mode_expire,
                     complexite=complexite_expire,
                     duree_s=duree_expiree,
-                    timeout_courant=timeout,
                     expiree=True,
                     body=body,
                     date_iso=date_iso_expire,
