@@ -348,6 +348,14 @@ DELAIS_RETRY_RESULTAT = (5, 10, 20)
 # texte apparaissait un jour dans un commentaire.
 MARQUEUR_RESULTAT = "<!-- bridge:resultat -->"
 
+# Préfixe du message d'échec définitif posté par watcher.py juste avant de
+# poser needs-human (voir plus bas, "❌ Échec après {N} tentatives."). Sert à
+# détecter une RELANCE (champ RELANCE, issue #516) : sa présence dans
+# l'historique de l'issue AVANT l'ACK courante signale que le worktree peut
+# contenir du travail déjà fait par la tentative précédente — la durée
+# mesurée serait alors artificiellement courte (issue #592).
+MARQUEUR_ECHEC_TENTATIVES = "❌ Échec après"
+
 # Abréviations du dictionnaire bridge
 SOURCES = {"CC": "Claude Chat", "CCL": "Claude Code Linux", "CCW": "Claude Code Windows"}
 
@@ -1342,7 +1350,7 @@ def _timeout_suggere_borne(duree_typique: float, variabilite: float,
 
 
 def _maj_combinaison_timeout(donnees: dict, cle: str, *, duree_s: float,
-                              expiree: bool) -> tuple[float | None, dict]:
+                              expiree: bool, relance: bool = False) -> tuple[float | None, dict]:
     """Met à jour, DANS `donnees` (le dict complet d'etat_timeout.json), l'entrée
     de la combinaison `cle`. Retourne (duree_typique_AVANT_maj, etat_APRES_maj).
 
@@ -1352,7 +1360,15 @@ def _maj_combinaison_timeout(donnees: dict, cle: str, *, duree_s: float,
     issues RÉUSSIES, cf. §1 de l'issue #221 — un timeout ne mesure pas une
     durée réelle de traitement, seulement le plafond atteint).
 
-    Sur succès (expiree=False) : variabilite d'abord (écart absolu à
+    Sur succès d'une RELANCE (expiree=False, relance=True, issue #592) : durée
+    traitée comme CENSURÉE, même principe que le timeout ci-dessus — le
+    worktree d'une RELANCE (champ RELANCE, #516) peut contenir du travail déjà
+    fait par la tentative précédente, la durée mesurée (nouvelle ACK →
+    clôture) serait alors artificiellement courte et biaiserait duree_typique/
+    variabilite vers le bas. AUCUNE mise à jour de duree_typique/variabilite/
+    succès rapides/backoff ; seul n_relances_exclues est incrémenté (traçabilité).
+
+    Sur succès normal (expiree=False, relance=False) : variabilite d'abord (écart absolu à
     duree_typique AVANT cette observation, sinon la mise à jour de
     duree_typique fausserait l'écart mesuré), puis duree_typique. Si la durée
     réelle est < SEUIL_SUCCES_RAPIDE × (duree_typique + K_VARIABILITE×variabilite)
@@ -1377,6 +1393,8 @@ def _maj_combinaison_timeout(donnees: dict, cle: str, *, duree_s: float,
     if expiree:
         etat["multiplicateur_backoff"] = etat.get("multiplicateur_backoff", 1.0) * FACTEUR_BACKOFF
         etat["succes_rapides_consecutifs"] = 0
+    elif relance:
+        etat["n_relances_exclues"] = etat.get("n_relances_exclues", 0) + 1
     else:
         ecart = abs(duree_s - duree_typique_avant) if duree_typique_avant is not None else 0.0
         etat["variabilite"] = _ewma_maj(etat.get("variabilite"), ecart, ALPHA_EWMA_ISSUES)
@@ -1419,7 +1437,8 @@ def _maj_ambiance(donnees: dict, cle_f: str, ratio: float, date_iso: str):
 
 def maj_calibration_timeout(*, projet: str, type_issue: str, mode: str,
                             duree_s: float, expiree: bool,
-                            body: str, date_iso: str, complexite: str = "normal") -> float | None:
+                            body: str, date_iso: str, complexite: str = "normal",
+                            relance: bool = False) -> float | None:
     """Point d'entrée de la calibration automatique du TIMEOUT (issue #221),
     appelé après CHAQUE clôture d'issue (succès ou timeout), au même site que
     enregistrer_duree. Met à jour etat_timeout.json (combinaison projet/TYPE/
@@ -1430,6 +1449,12 @@ def maj_calibration_timeout(*, projet: str, type_issue: str, mode: str,
     d'état non obtenu, ou aucune observation de succès encore enregistrée
     pour cette combinaison).
 
+    `relance` (issue #592) : True quand l'appelant a détecté un commentaire
+    d'échec (`_issue_est_relance`) antérieur à l'ACK courante — la durée n'est
+    alors pas une mesure fiable (voir `_maj_combinaison_timeout`) et est
+    exclue à la fois de duree_typique/variabilite ET de F_reseau/F_local
+    ci-dessous (même biais : durée artificiellement courte).
+
     N'APPLIQUE RIEN au comportement d'exécution actuel : le TIMEOUT réellement
     utilisé pour lancer claude reste exclusivement celui de extraire_timeout()
     — cette fonction ne fait que calculer et journaliser."""
@@ -1438,7 +1463,7 @@ def maj_calibration_timeout(*, projet: str, type_issue: str, mode: str,
 
     def _maj_timeout(donnees):
         duree_typique_avant, etat = _maj_combinaison_timeout(
-            donnees, cle, duree_s=duree_s, expiree=expiree)
+            donnees, cle, duree_s=duree_s, expiree=expiree, relance=relance)
         capture["duree_typique_avant"] = duree_typique_avant
         capture["etat"] = dict(etat)
         return donnees
@@ -1454,9 +1479,10 @@ def maj_calibration_timeout(*, projet: str, type_issue: str, mode: str,
     # un timeout est plafonné à la valeur configurée, pas une mesure de la durée
     # réelle nécessaire — l'inclure biaiserait F vers le haut artificiellement.
     # Et seulement si tag_reseau est explicitement connu (jamais deviné, §2).
+    # Une RELANCE (#592) est exclue au même titre — durée elle aussi biaisée.
     tag_reseau = _detecter_tag_reseau(body)
     duree_typique_avant = capture.get("duree_typique_avant")
-    if not expiree and tag_reseau is not None and duree_typique_avant:
+    if not expiree and not relance and tag_reseau is not None and duree_typique_avant:
         ratio = duree_s / duree_typique_avant
         cle_f = "F_reseau" if tag_reseau else "F_local"
 
@@ -1490,6 +1516,7 @@ def maj_calibration_timeout(*, projet: str, type_issue: str, mode: str,
         f"variabilite={variabilite:.1f}s F({cle_f_lecture})={f_pertinent:.3f} "
         f"backoff={backoff:.3f} → TIMEOUT_suggéré={suggere:.0f}s"
         + (" [issue expirée]" if expiree else "")
+        + (" [RELANCE — durée exclue de la calibration]" if relance else "")
     )
     return suggere
 
@@ -2352,6 +2379,38 @@ def _commentaire_marque_present(numero: int, marqueur: str = MARQUEUR_RESULTAT) 
     except Exception as e:
         log.error(f"Erreur vérification présence commentaire issue #{numero} : {e}")
         return False
+
+def _lister_commentaires(numero: int) -> list[str]:
+    """Récupère les corps de tous les commentaires actuels de l'issue, dans
+    l'ordre chronologique renvoyé par `gh` — sert à détecter une RELANCE
+    (issue #592, voir `_issue_est_relance`). Best-effort : liste vide en cas
+    d'erreur de lecture (aucune RELANCE détectée plutôt qu'une exception qui
+    interromprait le traitement)."""
+    try:
+        res = subprocess.run(
+            ["gh", "issue", "view", str(numero),
+             "--repo", CFG.depot,
+             "--json", "comments"],
+            capture_output=True, text=True,
+            encoding="utf-8", errors="replace", timeout=30
+        )
+        if res.returncode != 0:
+            log.error(f"Erreur lecture commentaires issue #{numero} (code {res.returncode}) : {res.stderr.strip()}")
+            return []
+        data = json.loads(res.stdout or "{}")
+        return [c.get("body") or "" for c in data.get("comments", [])]
+    except Exception as e:
+        log.error(f"Erreur lecture commentaires issue #{numero} : {e}")
+        return []
+
+def _issue_est_relance(commentaires: list[str]) -> bool:
+    """True si `commentaires` (historique de l'issue AVANT l'ACK courante)
+    contient déjà un message d'échec définitif du watcher (préfixe
+    `MARQUEUR_ECHEC_TENTATIVES`, posté avant needs-human) — signe d'une
+    RELANCE (champ RELANCE, issue #516) plutôt que d'un premier traitement.
+    Voir `maj_calibration_timeout` (issue #592) pour l'usage : la durée
+    mesurée pour une RELANCE est alors exclue de la calibration TIMEOUT."""
+    return any(MARQUEUR_ECHEC_TENTATIVES in c for c in commentaires)
 
 def commenter_resultat_avec_retry(numero: int, message: str) -> bool:
     """Poste le commentaire de RÉSULTAT avec retry/backoff (issue #195).
@@ -4182,6 +4241,15 @@ def _traiter_issue_synchrone(issue: dict, dry_run: bool, chemin_worktree: Path |
                 return
             statut_rep_travail_avant = _statut_git_rep_travail(cwd_effectif)
 
+        # Détection RELANCE (champ RELANCE, issue #516) AVANT l'ACK courante
+        # (issue #592) : un commentaire d'échec définitif déjà présent dans
+        # l'historique de l'issue signale que le worktree peut contenir du
+        # travail déjà fait par une tentative précédente — la durée mesurée
+        # ci-dessous (ACK → clôture) serait alors artificiellement courte.
+        # Réutilisé côté succès, plus bas, pour exclure cette durée de la
+        # calibration TIMEOUT (maj_calibration_timeout).
+        est_relance = _issue_est_relance(_lister_commentaires(numero))
+
         commenter_issue(
             numero,
             f"✅ ACK — Issue #{numero} reçue par watcher.py ({CFG.libelle_agent_effectif}, projet {CFG.nom}). "
@@ -4369,6 +4437,7 @@ def _traiter_issue_synchrone(issue: dict, dry_run: bool, chemin_worktree: Path |
                     expiree=False,
                     body=body,
                     date_iso=date_iso_close,
+                    relance=est_relance,
                 )
                 # Exposition du TIMEOUT_suggéré dans le commentaire de clôture
                 # GitHub (issue #222) : seul canal fiable pour transmettre cette
