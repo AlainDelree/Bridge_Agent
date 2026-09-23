@@ -82,6 +82,7 @@ Claude Chat → crée une issue → GitHub → watcher.py détecte → CCL exéc
 | `relecture_bridge` | AlainDelree/Relecture_Bridge | ~/Relecture_Bridge | (conf local) |
 | `rummikub` | AlainDelree/Rummikub | ~/Rummikub | (conf local) |
 | `scrabble` | AlainDelree/Scrabble | ~/Scrabble | (conf local) |
+| `testajoutsupp` | AlainDelree/Testajoutsupp | ~/Testajoutsupp | (conf local) |
 <!-- FIN:TABLEAU_PROJETS_ACTIFS -->
 
 Chaque projet a son propre watcher (`watcher.py --config configs/<nom>.conf`)
@@ -719,6 +720,7 @@ hors périmètre même si l'issue le demande explicitement :
 | `relecture_bridge` | /home/alain/Relecture_Bridge |
 | `rummikub` | /home/alain/Rummikub |
 | `scrabble` | /home/alain/Scrabble |
+| `testajoutsupp` | /home/alain/Testajoutsupp |
 <!-- FIN:TABLEAU_PERIMETRE_PROJETS -->
 
 ---
@@ -3692,7 +3694,7 @@ de création d'issue, seul valable pour du contenu qu'il produit.
 
 ---
 
-*Dernière mise à jour : 22 septembre 2026 — issue #584 : le verrou
+*Dernière mise à jour : 23 septembre 2026 — issue #584 : le verrou
 anti-collision `REP_TRAVAIL` (section « Parallélisation mode_write via git
 worktrees », #189/#322) gagne un filet de sécurité complémentaire. Incident
 réel : issue #583 (canal unifié for-windows, mode_write) bloquée 48 minutes,
