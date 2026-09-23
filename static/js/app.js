@@ -143,6 +143,12 @@ function appliquerAccentProjet(nom) {
     label.textContent = 'Projet actif : ' + nom;
     appliquerStyleAccentProjet(label, couleur);
   }
+  // Zone dangereuse (issue #594) : rappelle le projet ciblé juste au-dessus du
+  // bouton de suppression, mis à jour à chaque changement de combobox — pour
+  // qu'un utilisateur ne regardant que le bas de la page sache sans ambiguïté
+  // sur quel projet il s'apprête à agir.
+  const dangerNom = document.getElementById('danger-projet-cible-nom');
+  if (dangerNom) dangerNom.textContent = nom;
 }
 
 function basculerOnglet(nom) {
