@@ -1674,6 +1674,21 @@ a été remplacée par les deux seuls droits que documente Microsoft pour
 > - **Aucune commande sudo requise** : `systemctl --user` gère des services
 >   utilisateur, sans droits root (seul `loginctl enable-linger`, posé une
 >   fois à l'installation, en demande).
+> - **`PATH` explicite obligatoire (issue #598).** Les services systemd
+>   --user démarrent avec un `PATH` minimal, sans les ajouts du shell
+>   interactif — notamment `~/.npm-global/bin` (où réside `claude`) et
+>   `~/Bridge_Agent/venv/bin`. Sans correctif, une issue échoue
+>   immédiatement avec « Claude Code introuvable (claude non trouvé dans
+>   PATH) » (constaté juste après #596, sur l'issue #67 relecture_bridge) —
+>   **même piège** que celui déjà documenté côté CCW/NSSM (§16, service
+>   démarré au boot qui n'hérite pas du `PATH` utilisateur). Corrigé par une
+>   directive `Environment="PATH=..."` dans `[Service]` de
+>   `systemd/watcher@.service`, en chemins **absolus** (`/home/alain/...` —
+>   systemd n'interprète pas `~` dans les fichiers d'unité) : à adapter si le
+>   bridge est réinstallé sous un autre compte ou une autre machine.
+>   Vérification après installation/redémarrage :
+>   `cat /proc/<pid>/environ | tr '\0' '\n' | grep PATH` doit lister
+>   `~/.npm-global/bin` et `~/Bridge_Agent/venv/bin`.
 > - **Diagnostic** : `systemctl --user status watcher@<projet>`,
 >   `journalctl --user -u watcher@<projet> -f`.
 >

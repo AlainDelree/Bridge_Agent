@@ -19,6 +19,15 @@
 # Diagnostic :
 #   systemctl --user status watcher@alchess
 #   journalctl --user -u watcher@alchess -f
+#
+# PATH explicite (issue #598) : les services systemd --user démarrent avec
+# un PATH minimal, sans les ajouts du shell interactif (~/.npm-global/bin,
+# où réside `claude`, et ~/Bridge_Agent/venv/bin) — même piège que celui déjà
+# rencontré côté CCW/NSSM (voir BRIDGE_AGENT_DOC.md, §16). Sans cette
+# directive, une issue échoue immédiatement avec « claude non trouvé dans
+# PATH » (constaté en prod après #596). Chemins en dur (pas de `~`, non
+# interprété dans les fichiers d'unité) : à adapter si réinstallé sous un
+# autre compte/chemin.
 
 [Unit]
 Description=Bridge_Agent watcher — %i
@@ -28,6 +37,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 WorkingDirectory=/home/alain/Bridge_Agent
+Environment="PATH=/home/alain/Bridge_Agent/venv/bin:/home/alain/.npm-global/bin:/home/alain/.local/bin:/home/alain/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games"
 ExecStart=/home/alain/Bridge_Agent/venv/bin/python3 watcher.py --config configs/%i.conf
 Restart=on-failure
 RestartSec=10
