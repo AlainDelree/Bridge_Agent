@@ -14,7 +14,8 @@ exécutable sur le PATH) :
   `watcher.creation_demandee`/`extraire_champs_creation` — format EXACT
   attendu par #556 (BRIDGE_AGENT_DOC.md §16.6), verrou anti-régression le
   plus important de ce fichier ;
-- `_corps_issue_ccl` : référence le script/la doc de réinstallation et la
+- `_corps_issue_ccl` : ne contient plus les 2 étapes manuelles caduques
+  depuis #597 (#602), mais référence toujours le projet/dépôt et la
   cross-référence vers l'issue CCW une fois son numéro connu ;
 - `_titre_issue_ccl`/`_titre_issue_ccw` : déterministes (même nom → même
   titre), condition nécessaire à la réutilisation de
@@ -126,11 +127,13 @@ def scenario_corps_issue_ccw_parsable_par_watcher():
 
 
 def scenario_corps_issue_ccl_contenu():
-    """Le corps de l'issue CCL référence bien les 2 cibles (script +
-    tableau de la doc) et, une fois le numéro CCW connu, la cross-référence."""
+    """Le corps de l'issue CCL ne contient plus les 2 étapes manuelles
+    caduques depuis #597 (tableau $Projets de reinstaller_projets_ccw.ps1 +
+    tableau de rappel REINSTALLATION_CCW.md §7, issue #602), référence bien
+    le projet/dépôt et, une fois le numéro CCW connu, la cross-référence."""
     sans_ref = projet_ccw._corps_issue_ccl("monprojet", "AlainDelree/MonProjet", None)
-    assert "reinstaller_projets_ccw.ps1" in sans_ref
-    assert "REINSTALLATION_CCW.md" in sans_ref
+    assert "reinstaller_projets_ccw.ps1" not in sans_ref
+    assert "REINSTALLATION_CCW.md" not in sans_ref
     assert "monprojet" in sans_ref and "AlainDelree/MonProjet" in sans_ref
     assert "Issue CCW liée" not in sans_ref
 
@@ -451,7 +454,7 @@ def main():
          lambda: scenario_chiffrement_mauvaise_cle_echoue(_tmp_path_factory)),
         ("_corps_issue_ccw : parsable par watcher.creation_demandee/extraire_champs_creation",
          scenario_corps_issue_ccw_parsable_par_watcher),
-        ("_corps_issue_ccl : référence script + doc + cross-référence", scenario_corps_issue_ccl_contenu),
+        ("_corps_issue_ccl : plus d'étapes obsolètes, projet/dépôt + cross-référence", scenario_corps_issue_ccl_contenu),
         ("_titre_issue_ccl/_titre_issue_ccw : déterministes par projet", scenario_titres_deterministes),
         ("_creer_issue_gh : succès, numéro extrait de l'URL", lambda: scenario_creer_issue_gh_succes(_tmp_path_factory)),
         ("_creer_issue_gh : anti-doublon, aucun gh issue create déclenché",
