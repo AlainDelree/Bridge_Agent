@@ -67,21 +67,21 @@ Claude Chat → crée une issue → GitHub → watcher.py détecte → CCL exéc
      depuis configs/*.conf — issue #571 ; ne pas éditer cette zone à la main,
      lancer `python3 regenerer_tableaux_projets.py` après toute création/suppression
      manuelle de projet) -->
-| Nom | Dépôt GitHub | Répertoire de travail CCL | Topic ntfy |
-|-----|-------------|--------------------------|------------|
-| `actualise` | AlainDelree/Actualise | ~/Actualise | (conf local) |
-| `alchess` | AlainDelree/AlChess | ~/NicLink | (conf local) |
-| `apiselect` | AlainDelree/ApiSelect | ~/ApiSelect | (conf local) |
-| `bloc_score` | AlainDelree/Bloc_score | ~/Bloc_score | (conf local) |
-| `bridge_agent` | AlainDelree/Bridge_Agent | ~/Bridge_Agent | (conf local) |
-| `chesscoach` | AlainDelree/Chesscoach | ~/ChessCoach | (conf local) |
-| `diagnostique_programme` | AlainDelree/Diagnostique_Programme | ~/Diagnostique_Programme | (conf local) |
-| `ecole` | AlainDelree/Ecole | ~/Ecole | (conf local) |
-| `ff_galerie` | AlainDelree/FF_Galerie | ~/FF_Galerie | (conf local) |
-| `gestionmail` | AlainDelree/GestionMail | ~/GestionMail | (conf local) |
-| `relecture_bridge` | AlainDelree/Relecture_Bridge | ~/Relecture_Bridge | (conf local) |
-| `rummikub` | AlainDelree/Rummikub | ~/Rummikub | (conf local) |
-| `scrabble` | AlainDelree/Scrabble | ~/Scrabble | (conf local) |
+| Nom | Dépôt GitHub | Répertoire de travail CCL | Topic ntfy | Couleur |
+|-----|-------------|--------------------------|------------|---------|
+| `actualise` | AlainDelree/Actualise | ~/Actualise | (conf local) | `#009DD6` |
+| `alchess` | AlainDelree/AlChess | ~/NicLink | (conf local) | `#00D68F` |
+| `apiselect` | AlainDelree/ApiSelect | ~/ApiSelect | (conf local) | `#FFD429` |
+| `bloc_score` | AlainDelree/Bloc_score | ~/Bloc_score | (conf local) | `#FF8595` |
+| `bridge_agent` | AlainDelree/Bridge_Agent | ~/Bridge_Agent | (conf local) | `#EB0000` |
+| `chesscoach` | AlainDelree/Chesscoach | ~/ChessCoach | (conf local) | `#BB00FF` |
+| `diagnostique_programme` | AlainDelree/Diagnostique_Programme | ~/Diagnostique_Programme | (conf local) | `#FC00A8` |
+| `ecole` | AlainDelree/Ecole | ~/Ecole | (conf local) | `#767676` |
+| `ff_galerie` | AlainDelree/FF_Galerie | ~/FF_Galerie | (conf local) | `#767676` |
+| `gestionmail` | AlainDelree/GestionMail | ~/GestionMail | (conf local) | `#3B45A0` |
+| `relecture_bridge` | AlainDelree/Relecture_Bridge | ~/Relecture_Bridge | (conf local) | `#CCFF00` |
+| `rummikub` | AlainDelree/Rummikub | ~/Rummikub | (conf local) | `#ADFF8F` |
+| `scrabble` | AlainDelree/Scrabble | ~/Scrabble | (conf local) | `#7AFFFF` |
 <!-- FIN:TABLEAU_PROJETS_ACTIFS -->
 
 Chaque projet a son propre watcher (`watcher.py --config configs/<nom>.conf`)
@@ -3803,7 +3803,7 @@ de création d'issue, seul valable pour du contenu qu'il produit.
 
 ---
 
-*Dernière mise à jour : 23 septembre 2026 — issue #584 : le verrou
+*Dernière mise à jour : 24 septembre 2026 — issue #584 : le verrou
 anti-collision `REP_TRAVAIL` (section « Parallélisation mode_write via git
 worktrees », #189/#322) gagne un filet de sécurité complémentaire. Incident
 réel : issue #583 (canal unifié for-windows, mode_write) bloquée 48 minutes,
