@@ -9,6 +9,48 @@ milliers de caractères sur une seule ligne logique, coûteux à relire et
 
 Convention d'ajout : voir §10 de `BRIDGE_AGENT_DOC.md`.
 
+## 24 septembre 2026 — issue #607
+
+Indicateur compact du rate limit GitHub GraphQL dans le bandeau
+supérieur de `new_issue.py`, toujours visible quel que soit l'onglet
+actif (entre le titre « Bridge Agent » et le compteur « N projet(s)
+disponible(s) ») — répond au cas concret du 24/09 (13 watchers
+démarrés simultanément) où l'onglet Résultats affichait « Aucune
+issue à afficher » sans explication pendant que le quota était épuisé.
+
+- **`app/rate_limit.py`** (nouveau) : route `GET /rate-limit`, exécute
+  `gh api rate_limit --jq '.resources.graphql'` côté serveur et
+  renvoie `{ok, used, limit, remaining, reset}` — ou `{ok: false,
+  erreur}` en cas d'échec (gh absent, timeout, rate limit REST atteint)
+  sans jamais lever d'erreur HTTP. Cet appel ne consomme NI le quota
+  `core` NI le quota `graphql` (vérifié empiriquement, issue #263,
+  `scripts/mesurer_api.py`) : son polling ne peut donc pas lui-même
+  épuiser le quota qu'il surveille.
+- **`app/__init__.py`** : enregistrement de la route (`login_requis`,
+  comme `/watchers`/`/statut`).
+- **`templates/index.html`** : `<span id="rate-limit-widget">` inséré
+  entre `<h1>` et `.statut`.
+- **`static/js/app.js`** : `rafraichirRateLimit()`, polling global
+  indépendant de l'onglet actif (`setInterval`, 30s — même cadence que
+  le monitoring infrastructure de la sidebar Résultats), format
+  `⚡ 132 / 5000 · reset 20:15` (heure de reset convertie en local côté
+  navigateur via `toLocaleTimeString`). État dégradé `⚡ ? / 5000` en
+  gris si l'appel échoue, sans faire disparaître le widget.
+- **`static/css/style.css`** : classes `.rate-limit` + `.rl-vert` /
+  `.rl-orange` / `.rl-rouge` / `.rl-gris` (mêmes teintes que les
+  badges de temps restant existants). Seuils de couleur : vert < 70%
+  utilisé, orange 70-90%, rouge > 90% (risque immédiat). Le
+  `margin-left:auto` qui poussait `.statut` à droite est déplacé sur
+  `.rate-limit` : le widget, le compteur de projets et les boutons
+  d'en-tête restent groupés à droite, comme avant.
+
+Vérification : valeurs de `/rate-limit` comparées à `gh api rate_limit
+--jq '.resources.graphql'` en terminal (identiques) ; seuils de
+couleur testés à 69/70/90/91% ; état d'erreur simulé (PATH sans `gh`)
+→ `{ok: false, erreur: "gh introuvable dans le PATH."}`, HTTP 200 (pas
+de plantage) ; `py_compile` sur tous les modules Python touchés +
+suite de tests existante (`pytest tests/`, 14 passed) toujours verts.
+
 ## 24 septembre 2026 — issue #606
 
 §16 « Agent Windows CCW » : extraction de `provisioning/windows/ccw-commun.psm1` (issue #606, sous-issue A de l'étude de faisabilité #604, suite du diagnostic #579) — regroupe ce qui était dupliqué entre les 3 scripts CCW **locaux** (`creer_projet_ccw_complet.ps1` à la racine, `provisioning/windows/ajouter_projet_ccw.ps1`, `provisioning/windows/finaliser_projet_ccw.ps1`) : helpers d'affichage `Info`/`Ok`/`Avert` (préfixe fixé une fois via `Set-PrefixeCcw`), `Get-CheminsProjetCcw` (dérivation `NomService`/`RepDepot`/`NomConf`/`NomLog`/`CheminConf` à partir du seul `NomProjet`, avec le cas spécial `Bridge_Agent` → service `CCW-Watcher` sans suffixe, même convention que `lister_projets_ccw.ps1`/`finaliser_projet_ccw_auto.ps1`), et `Lire-ValeurFichier` (lecture d'une clé dans un `.conf`, reprise de `mettre_a_jour_tokens_ccw.ps1`). Les 3 scripts locaux importent désormais le module (`Import-Module (Join-Path $PSScriptRoot '...ccw-commun.psm1') -Force`) au lieu de dupliquer cette logique. `app/ccw.py::ccw_ajouter_projet()` copie maintenant `ccw-commun.psm1` en plus de `ajouter_projet_ccw.ps1` vers `C:\Windows\Temp\` (seul script local également poussé seul par SCP). Scripts distants (`finaliser_projet_ccw_auto.ps1`, `mettre_a_jour_tokens_ccw.ps1`, `lister_projets_ccw.ps1`) non touchés — leur autonomie sans dépendance externe reste délibérée (#604) ; `lister_projets_ccw.ps1` traité séparément dans la sous-issue B si retenue.
