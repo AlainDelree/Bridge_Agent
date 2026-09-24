@@ -119,13 +119,14 @@ dans **l'un ou l'autre ordre** (issue #512) — en-tête avant `#Titre:` ou
 `#Titre:` avant l'en-tête, les deux sont équivalents et interchangeables —
 puis le corps. Champs d'en-tête reconnus, tous optionnels sauf `PROJET` :
 
-| Champ     | Rôle                                                                |
-|-----------|----------------------------------------------------------------------|
-| `PROJET`  | **Obligatoire** — doit correspondre à `configs/<PROJET>.conf`        |
-| `TIMEOUT` | Nombre (secondes, suffixe `s` toléré) — sinon défaut du projet       |
-| `MODELE`  | Doit être une valeur reconnue (`claude-sonnet-5`, etc.) si fourni    |
-| `MODE`    | Reconnu de façon tolérante (§5) — absent/non reconnu → `lecture`     |
-| `LABELS`  | Labels GitHub additionnels, séparés par des virgules                 |
+| Champ       | Rôle                                                                |
+|-------------|----------------------------------------------------------------------|
+| `PROJET`    | **Obligatoire** — doit correspondre à `configs/<PROJET>.conf`        |
+| `REDACTEUR` | Optionnel — nom du projet depuis le contexte duquel Claude Chat a rédigé l'issue (`bridge_agent`, `scrabble`, `relecture_bridge`, etc.). Validé pour cohérence avec `PROJET` (issue #599, voir §3.4) — absent, aucune validation (rétrocompatibilité). |
+| `TIMEOUT`   | Nombre (secondes, suffixe `s` toléré) — sinon défaut du projet       |
+| `MODELE`    | Doit être une valeur reconnue (`claude-sonnet-5`, etc.) si fourni    |
+| `MODE`      | Reconnu de façon tolérante (§5) — absent/non reconnu → `lecture`     |
+| `LABELS`    | Labels GitHub additionnels, séparés par des virgules                 |
 
 Label de notification par défaut (issue #490) : `construire_labels()` pose
 systématiquement **`notif_pc`** (miroir du comportement le plus courant côté
@@ -192,6 +193,27 @@ c'est du best-effort : un échec de l'appel `gh issue list` sous-jacent
 poursuit normalement plutôt que d'être bloquée par une panne de vérification.
 Aucune logique dupliquée entre les deux flux (formulaire web et
 `issues_inbox/`) : une seule fonction, importée par les deux.
+
+**Cohérence `REDACTEUR` / `PROJET` (issue #599).** Claude Chat peut rédiger
+une issue en confondant le contexte projet actif (distraction, erreur), et
+Alain peut la déposer dans `issues_inbox/` sans avoir bien relu le champ
+`PROJET` — jusqu'ici, aucun filet de sécurité côté watcher ne détectait cette
+incohérence. Quand le champ optionnel `REDACTEUR` est présent, `valider()`
+appelle `valider_redacteur()` (`scripts/watcher_issues_inbox.py`) **avant**
+tout autre traitement (avant même la vérification du titre) :
+
+1. `REDACTEUR == PROJET` → OK, traitement normal (cas courant).
+2. Label `for-windows` présent **ET** `REDACTEUR == bridge_agent` → OK (CCW
+   passe toujours par le canal central `bridge_agent`, quel que soit le
+   `PROJET` réellement ciblé par le build) — noter que le cas
+   `for-windows` + `REDACTEUR == PROJET` est déjà couvert par la règle 1.
+3. Tout autre cas → rejet, même sort que les autres validations ci-dessus,
+   avec un message explicite indiquant la discordance (`REDACTEUR` ≠
+   `PROJET`) — fichier déplacé dans `issues_inbox/rejected/`, ligne
+   `REJECTED` journalisée dans `issues_inbox.log`.
+
+`REDACTEUR` **absent** → aucune validation, traitement normal
+(rétrocompatibilité avec les issues existantes, qui ne portent pas ce champ).
 
 ### 3.5 Journalisation (rotation par nombre de lignes)
 
@@ -674,6 +696,7 @@ Le watcher lit ces champs dans le tableau markdown de l'en-tête :
 | `FICHIER_CONTEXTE` | ex. chemin relatif | Fichier additionnel fourni en contexte à CCL pour cette issue (modifiable via l'onglet Configuration, voir §12) |
 | `SUITE_DE` | ex. `#5` | Indique que cette issue fait suite à l'issue #N (discussion ou tâche complémentaire). Absent = issue inédite. |
 | `RELANCE` | ex. `#612` | **Spécifique à `issues_inbox/`** (issue #516, voir §3.14) — présent, détourne le fichier déposé vers la correction/relance de l'issue #N déjà ouverte (`TIMEOUT`/`MODELE` du fichier fusionnés dans son corps, `needs-human` retiré) plutôt que de créer une nouvelle issue. N'a aucun effet une fois l'issue créée — lu uniquement au dépôt du fichier, jamais par `watcher.py`. |
+| `REDACTEUR` | ex. `bridge_agent` | **Spécifique à `issues_inbox/`** (issue #599, voir §3.4) — optionnel, nom du projet depuis le contexte duquel Claude Chat a rédigé l'issue. Validé pour cohérence avec `PROJET` avant création (`REDACTEUR == PROJET`, ou label `for-windows` + `REDACTEUR == bridge_agent` pour le canal CCW) ; discordance → rejet vers `rejected/`. Absent = aucune validation. Lu uniquement au dépôt du fichier, jamais par `watcher.py`. |
 | `COMPLEXITE` | `rapide` / `court` / `normal` / `lourd` | 4e dimension de la clé EWMA de calibration TIMEOUT (issue #434, voir §19), estimée par Claude Chat au moment de rédiger l'issue. Absent ou valeur non reconnue = `normal` (défaut, ~300s). CCL/CCW doit l'inclure dans les issues chef/ouvrier qu'il crée (voir `consignes/globales.md`) ; pour les issues de Claude Chat, c'est géré côté doc/prompt. |
 | `RESEAU` | `oui` ou `non` | Tag réseau pour la calibration TIMEOUT (issue #220/#435, voir §19) : `oui` = issue impliquant de lourdes opérations réseau (téléchargements, builds avec fetch, etc.), `non` = issue purement locale. Lu par `_detecter_tag_reseau(body)`. Absent ou valeur non reconnue = `None` (F ignoré, facteur d'ambiance neutre). Optionnel (voir `consignes/globales.md`). |
 

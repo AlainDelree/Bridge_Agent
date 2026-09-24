@@ -25,6 +25,14 @@ CCL du projet ciblé s'il s'est entre-temps auto-éteint par inactivité (#200)
 — ce script-ci tourne en permanence, indépendamment des watchers de projet
 (voir plus bas).
 
+Champ REDACTEUR (issue #599) : `| REDACTEUR | <projet> |` optionnel dans
+l'en-tête, comparé au champ PROJET avant tout traitement — filet de sécurité
+contre une issue rédigée par Claude Chat dans le contexte d'un projet puis
+déposée sous un PROJET différent (distraction, relecture insuffisante). Voir
+valider_redacteur() pour les deux cas acceptés (REDACTEUR == PROJET, ou
+canal CCW for-windows avec REDACTEUR == bridge_agent) ; absent, aucune
+validation (rétrocompatibilité avec les issues existantes).
+
 Après création réussie de l'issue, le watcher CCL du projet concerné
 (`watcher.py --config configs/<projet>.conf`) est démarré automatiquement
 s'il n'est pas déjà actif (issue #486, mode « dépose et oublie ») — via
@@ -191,7 +199,14 @@ TITRE_RE = re.compile(r"^#Titre:\s*(.*)$", re.IGNORECASE | re.MULTILINE)
 # pour rester disponibles au chemin RELANCE (_fusionner_entete) — inutilisés
 # côté création (construire_body ne les réinsère pas, ce champ n'étant pas un
 # format supporté par issues_inbox pour créer une issue, §3.3 du DOC).
-CHAMPS_ENTETE = ("PROJET", "TIMEOUT", "MODELE", "MODE", "LABELS", "RELANCE", "SOUS_DOSSIER", "REPO_CIBLE")
+# REDACTEUR (issue #599) : champ optionnel — nom du projet depuis le contexte
+# duquel Claude Chat a rédigé l'issue. Comparé à PROJET par valider_redacteur()
+# (filet de sécurité anti-incohérence, §3.4 du DOC) ; comme SOUS_DOSSIER/
+# REPO_CIBLE ci-dessus, jamais réinséré dans construire_body (pas un format
+# supporté pour la création d'issue). Absent → rétrocompatible, aucune
+# validation (issues existantes sans ce champ).
+CHAMPS_ENTETE = ("PROJET", "REDACTEUR", "TIMEOUT", "MODELE", "MODE", "LABELS",
+                  "RELANCE", "SOUS_DOSSIER", "REPO_CIBLE")
 
 
 def extraire_champs(contenu: str) -> dict:
@@ -215,6 +230,7 @@ def extraire_champs(contenu: str) -> dict:
 
     return {
         "projet":       (valeurs["PROJET"] or "").strip(),
+        "redacteur":    (valeurs["REDACTEUR"] or "").strip(),
         "timeout_brut": valeurs["TIMEOUT"],
         "modele":       (valeurs["MODELE"] or "").strip(),
         "mode_brut":    valeurs["MODE"],
@@ -286,6 +302,44 @@ def reconnaitre_mode(brut: str | None) -> str:
 MODELES_VALIDES = {"claude-sonnet-5", "claude-opus-4-8", "claude-haiku-4-5", "claude-fable-5"}
 
 
+# ─── REDACTEUR — cohérence avec PROJET (issue #599) ────────────────────────
+# Claude Chat peut rédiger une issue en confondant le contexte projet actif
+# (distraction/erreur), et Alain peut la déposer dans issues_inbox/ sans
+# avoir relu le champ PROJET — aucun filet de sécurité n'existait jusqu'ici
+# côté watcher pour détecter cette incohérence. REDACTEUR (optionnel, valeur
+# attendue : nom du projet depuis le contexte duquel l'issue a été rédigée)
+# comble ce trou, validé AVANT toute création d'issue GitHub (§3.4 du DOC).
+
+def _label_for_windows(champs: dict) -> bool:
+    """Vrai si le champ LABELS du fichier déposé demande explicitement le
+    label `for-windows` — même parsing que construire_labels()."""
+    extras = [lab.strip() for lab in (champs["labels_brut"] or "").split(",") if lab.strip()]
+    return "for-windows" in extras
+
+
+def valider_redacteur(champs: dict):
+    """Retourne (True, "") si REDACTEUR est absent (rétrocompatibilité —
+    n'importe pas les issues existantes) ou cohérent avec PROJET, sinon
+    (False, détail_erreur). Règles (§3.4 du DOC) :
+    1. REDACTEUR == PROJET → OK (cas normal).
+    2. Label `for-windows` ET REDACTEUR == bridge_agent → OK (CCW passe
+       toujours par le canal central bridge_agent, quel que soit le PROJET
+       réellement ciblé par le build).
+    3. Tout autre cas → rejet, avec le détail de la discordance."""
+    redacteur = champs.get("redacteur")
+    if not redacteur:
+        return True, ""
+    if redacteur == champs["projet"]:
+        return True, ""
+    if redacteur == "bridge_agent" and _label_for_windows(champs):
+        return True, ""
+    return False, (f"REDACTEUR incohérent avec PROJET : « {redacteur} » "
+                    f"≠ « {champs['projet']} » (issue probablement rédigée "
+                    f"dans le contexte d'un autre projet ; seule exception "
+                    f"admise : REDACTEUR=bridge_agent avec le label "
+                    f"for-windows, canal CCW).")
+
+
 # ─── Validation ─────────────────────────────────────────────────────────────
 
 def valider(champs: dict):
@@ -301,6 +355,10 @@ def valider(champs: dict):
         cfg_projet = charger_config(chemin_conf)
     except SystemExit as e:
         return False, f"config du projet « {champs['projet']} » invalide : {e}", None
+
+    ok_redacteur, detail_redacteur = valider_redacteur(champs)
+    if not ok_redacteur:
+        return False, detail_redacteur, None
 
     if not champs["titre"]:
         return False, "titre manquant (ligne « #Titre: » absente ou vide).", None
