@@ -73,7 +73,7 @@ from watcher import (charger_config, lire_conf, est_titre_chef,  # noqa: E402
                      LABEL_NOTIF_PC, LABEL_NOTIF_GSM, LABEL_NOTIF_TOUS,
                      valider_sous_dossier, valider_repo_cible)  # noqa: E402 (issue #567)
 from app.watchers import demarrer_watcher  # noqa: E402 (issue #486)
-from app.issues import _issue_ouverte_meme_titre  # noqa: E402 (issue #491)
+from app.issues import _issue_ouverte_meme_titre, formater_entete  # noqa: E402 (issues #491, #601)
 from app.interruption import relancer_issue  # noqa: E402 (issue #516)
 
 log = logging.getLogger("watcher_issues_inbox")
@@ -690,22 +690,8 @@ def construire_body(champs: dict, cfg_projet) -> str:
     else:
         timeout = cfg_projet.timeout_chef if chef else cfg_projet.timeout_claude
 
-    lignes = [
-        "## En-tête\n",
-        "| Champ    | Valeur |",
-        "|----------|--------|",
-        "| SOURCE   | CC |",
-        "| DEST     | CCL |",
-        "| RETOUR   | CC |",
-        f"| MODE     | {mode_label} |",
-        "| PRIORITE | normale |",
-        f"| TIMEOUT  | {timeout}s |",
-        f"| PROJET   | {cfg_projet.nom} |",
-    ]
-    if champs["modele"]:
-        lignes.append(f"| MODELE   | {champs['modele']} |")
-
-    entete = "\n".join(lignes)
+    entete = formater_entete(mode_label, "normale", timeout, cfg_projet.nom,
+                              modele=champs["modele"])
     parties = [p for p in (entete, champs["corps"]) if p]
     return "\n\n".join(parties)
 
