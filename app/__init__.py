@@ -84,6 +84,7 @@ def _enregistrer_routes(app: Flask) -> None:
     from app.issues_inbox import (etat_inbox, demarrer_watcher_inbox_route,
                                   arreter_watcher_inbox_route)
     from app.son import get_son_actif, post_son_actif, tester_son
+    from app.rate_limit import rate_limit
     from app.vues import index
 
     app.add_url_rule("/login", "login", login, methods=["GET"])
@@ -157,3 +158,5 @@ def _enregistrer_routes(app: Flask) -> None:
     app.add_url_rule("/son-actif", "get_son_actif", login_requis(get_son_actif), methods=["GET"])
     app.add_url_rule("/son-actif", "post_son_actif", login_requis(post_son_actif), methods=["POST"])
     app.add_url_rule("/tester-son", "tester_son", login_requis(tester_son), methods=["POST"])
+    # ─── Indicateur de rate limit GitHub GraphQL, bandeau supérieur (issue #607) ─
+    app.add_url_rule("/rate-limit", "rate_limit", login_requis(rate_limit), methods=["GET"])
