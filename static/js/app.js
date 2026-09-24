@@ -5406,6 +5406,44 @@ async function rafraichirInbox() {
 rafraichirInbox();
 setInterval(rafraichirInbox, 7000);
 
+// ─── Indicateur de rate limit GitHub GraphQL (issue #607) ─────────────────
+// Pilule compacte du bandeau supérieur, TOUJOURS visible quel que soit
+// l'onglet actif — polling global indépendant des onglets, même cadence
+// (30s) que le monitoring infrastructure de la sidebar Résultats (voir
+// rendrePanneauLateralMonitoring). /rate-limit exécute gh api rate_limit
+// côté serveur, qui ne consomme NI le quota core NI le quota graphql
+// (vérifié empiriquement, issue #263) : ce polling ne peut donc pas
+// lui-même épuiser le quota qu'il surveille.
+async function rafraichirRateLimit() {
+  const el = document.getElementById('rate-limit-widget');
+  if (!el) return;
+  try {
+    const rep = await fetch('/rate-limit');
+    const data = await rep.json();
+    if (!data.ok) {
+      el.textContent = '⚡ ? / 5000';
+      el.className = 'rate-limit rl-gris';
+      el.title = data.erreur || 'Rate limit GitHub indisponible';
+      return;
+    }
+    // Seuils issue #607 : vert < 70% utilisé, orange 70-90%, rouge > 90%
+    // (risque immédiat de « Aucune issue à afficher » sans explication).
+    const pct = data.limit ? (data.used / data.limit) * 100 : 0;
+    const classe = pct > 90 ? 'rl-rouge' : (pct >= 70 ? 'rl-orange' : 'rl-vert');
+    const heureReset = new Date(data.reset * 1000)
+      .toLocaleTimeString('fr-FR', {hour: '2-digit', minute: '2-digit'});
+    el.textContent = '⚡ ' + data.used + ' / ' + data.limit + ' · reset ' + heureReset;
+    el.className = 'rate-limit ' + classe;
+    el.title = data.remaining + ' requêtes GraphQL restantes';
+  } catch(e) {
+    // Best-effort, silencieux : état dégradé plutôt qu'un widget qui disparaît.
+    el.textContent = '⚡ ? / 5000';
+    el.className = 'rate-limit rl-gris';
+  }
+}
+rafraichirRateLimit();
+setInterval(rafraichirRateLimit, 30000);
+
 // ─── Canal SSE de début/fin d'issue (issues #350, #515) ───────────────────
 // Ouvert une seule fois ici, au chargement de la page — indépendamment de
 // l'onglet actif — sur le même principe que le polling permanent du badge
