@@ -2953,9 +2953,11 @@ bootstrap CCW », séparément de `/nouveau-projet`) :**
    `dechiffrer_token_bootstrap` (`watcher.py`, §16.6) : même padding, même
    encodage, vérifié par aller-retour réel en test (voir plus bas).
 3. Issue **CCL** créée en premier sur `AlainDelree/Bridge_Agent`
-   (`bridge,for-linux,mode_write`) : met à jour
-   `reinstaller_projets_ccw.ps1` (tableau `$Projets`) et le tableau de
-   `REINSTALLATION_CCW.md` §7.
+   (`bridge,for-linux,mode_write`) : corps purement informatif depuis #602
+   (les 2 anciennes étapes manuelles — tableau `$Projets` de
+   `reinstaller_projets_ccw.ps1` et tableau de rappel de
+   `REINSTALLATION_CCW.md` §7 — sont caduques depuis #597, dérivation
+   dynamique), sert surtout de support à la cross-référence avec l'issue CCW.
 4. Issue **CCW** créée ensuite, même dépôt (`bridge,for-windows,mode_write`,
    canal unifié) : corps au format EXACT du §16.6 (les 6 champs
    `CREATION*`), référence l'issue CCL. Traitée par `watcher.py` (#556)

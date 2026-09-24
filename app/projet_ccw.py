@@ -176,19 +176,23 @@ def _titre_issue_ccw(nom: str) -> str:
 
 
 def _corps_issue_ccl(nom: str, depot: str, numero_ccw: int | None) -> str:
+    # Les 2 anciennes étapes manuelles (tableau $Projets de
+    # reinstaller_projets_ccw.ps1 + tableau de rappel REINSTALLATION_CCW.md
+    # §7) sont caduques depuis #597 : $Projets est dérivé dynamiquement de
+    # configs\*-ccw.conf, déjà créé automatiquement par ajouter_projet_ccw.ps1
+    # lors du flux CREATION (#556). Il ne reste donc aucune action manuelle —
+    # ce corps ne sert plus qu'à la traçabilité/cross-référence (issue #602).
     from app.issues import formater_entete  # import différé (évite tout cycle, cf. _config_bridge_agent)
     entete = formater_entete("écriture", "normale", 300, "bridge_agent", complexite="rapide")
     reference = f"\nIssue CCW liée (création du service) : #{numero_ccw}.\n" if numero_ccw else ""
     corps = (
-        "## Tâche\n\n"
-        f"Ajouter le projet « {nom} » (dépôt {depot}) à la liste de "
-        "réinstallation CCW (case « Projet CCW » du formulaire, issue #559) :\n\n"
-        "1. `provisioning/windows/reinstaller_projets_ccw.ps1` — ajouter une "
-        f'entrée `@{{ NomProjet = "{nom}"; Depot = "{depot}" }}` au tableau '
-        "`$Projets` (source de vérité, issue #552).\n"
-        "2. `provisioning/windows/REINSTALLATION_CCW.md` (§7) — ajouter la "
-        "ligne correspondante au tableau de rappel (simple reproduction du "
-        "tableau `$Projets` pour la lecture).\n"
+        "## Contexte\n\n"
+        f"Projet « {nom} » (dépôt {depot}) ajouté via la case « Projet CCW » "
+        "du formulaire de création (issue #559). Les anciennes étapes "
+        "manuelles de mise à jour de la réinstallation CCW sont caduques "
+        "depuis #597 (liste des projets dérivée dynamiquement des fichiers "
+        "`.conf`, eux-mêmes déjà créés automatiquement par le flux CREATION, "
+        "#556) : aucune action manuelle n'est requise ici.\n"
         f"{reference}"
     )
     return f"{entete}\n\n{corps}"
