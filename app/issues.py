@@ -170,19 +170,22 @@ MODES = {
 }
 
 
-def formater_entete(mode: str, priorite: str, timeout, projet: str, *,
-                     source: str = "CC", dest: str = "CCL", retour: str = "CC",
-                     modele: str = "", complexite: str = "") -> str:
-    """Construit le tableau markdown "## En-tête" commun aux issues Bridge_Agent
-    (diagnostic #579 pt. 3.2 / issue #601) : jusqu'ici recopié à la main dans
-    app/issues.py, app/projet_ccw.py et scripts/watcher_issues_inbox.py, avec
-    des divergences (TIMEOUT/PRIORITE dynamiques vs codées en dur). Format
-    FIGÉ, ne pas modifier sans mettre à jour watcher.py qui le re-parse.
+def formater_entete(mode, priorite, timeout, projet, *,
+                     source="CC", dest="CCL", retour="CC",
+                     modele=None, complexite=None) -> str:
+    """Construit le tableau markdown "## En-tête" commun aux issues Bridge_Agent.
+
+    Factorisation (diagnostic #579 §3.2, issue #601) du tableau auparavant
+    construit à la main dans app/issues.py, app/projet_ccw.py et
+    scripts/watcher_issues_inbox.py, avec des divergences entre les trois
+    (TIMEOUT/PRIORITE en dur à certains endroits, COMPLEXITE hors tableau).
+    Format INCHANGÉ par rapport à l'existant : NE PAS modifier sans vérifier
+    en parallèle watcher.py (parsing des champs, extraire_complexite).
 
     `timeout` est le nombre de secondes SANS le suffixe "s" (ajouté ici).
-    `complexite`, si fourni, est ajouté sous forme d'une ligne séparée après
-    une ligne vide, hors du tableau principal (format déjà en usage côté
-    app/projet_ccw.py, conservé tel quel)."""
+    `modele` et `complexite` sont optionnels : absents par défaut, chacun
+    n'ajoute sa ligne que s'il est fourni (COMPLEXITE sur une ligne séparée,
+    hors tableau principal, comme dans app/projet_ccw.py)."""
     lignes = [
         "## En-tête\n",
         "| Champ    | Valeur |",
@@ -221,7 +224,8 @@ def construire_body(data: dict) -> str:
     corps           = data.get("corps", "").strip()
     nom_projet      = data.get("projet", "").strip()
 
-    entete = formater_entete(mode, priorite, timeout, nom_projet, modele=modele_ponctuel)
+    entete = formater_entete(mode, priorite, timeout, nom_projet,
+                              modele=modele_ponctuel or None)
     # Ordre final : en-tête → corps. Les consignes ne sont plus empilées ici
     # (déplacées dans le prompt CCL, issue #211). Corps vide omis pour ne pas
     # laisser de ligne blanche superflue.

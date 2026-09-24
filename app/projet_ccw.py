@@ -176,8 +176,9 @@ def _titre_issue_ccw(nom: str) -> str:
 
 
 def _corps_issue_ccl(nom: str, depot: str, numero_ccw: int | None) -> str:
-    from app.issues import formater_entete  # import différé (évite tout cycle, cf. _config_bridge_agent)
-    entete = formater_entete("écriture", "normale", 300, "bridge_agent", complexite="rapide")
+    from app.issues import formater_entete
+    entete = formater_entete("écriture", "normale", 300, "bridge_agent",
+                              complexite="rapide")
     reference = f"\nIssue CCW liée (création du service) : #{numero_ccw}.\n" if numero_ccw else ""
     corps = (
         "## Tâche\n\n"
@@ -201,11 +202,10 @@ def _corps_issue_ccw(nom: str, depot: str, topic: str,
     # premiers après COMPLEXITE forment le bloc CREATION_*, séparé du reste
     # de l'en-tête standard par une ligne vide (même mise en page que
     # l'issue de test réelle #557, déjà traitée avec succès par #556).
-    from app.issues import formater_entete  # import différé (évite tout cycle, cf. _config_bridge_agent)
-    entete = formater_entete("écriture", "normale", 600, "bridge_agent", complexite="normal")
-    entete = "\n".join([
-        entete,
-        "",
+    from app.issues import formater_entete
+    entete = formater_entete("écriture", "normale", 600, "bridge_agent",
+                              complexite="normal")
+    bloc_creation = "\n".join([
         "| CREATION              | oui |",
         f"| CREATION_NOM_PROJET   | {nom} |",
         f"| CREATION_DEPOT        | {depot} |",
@@ -213,6 +213,7 @@ def _corps_issue_ccw(nom: str, depot: str, topic: str,
         f"| CREATION_GH_TOKEN     | {gh_chiffre} |",
         f"| CREATION_OAUTH_TOKEN  | {oauth_chiffre} |",
     ])
+    entete = f"{entete}\n\n{bloc_creation}"
     corps = (
         f"\nBootstrap automatique d'un service CCW dédié pour « {nom} » "
         "(case « Projet CCW », issue #559) — traitement ENTIÈREMENT "
