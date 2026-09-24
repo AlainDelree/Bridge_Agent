@@ -527,16 +527,8 @@ def route_relancer():
     trace_watcher = ""
     watcher_demarre, watcher_pid = None, None
     if cfg and "for-linux" in labels:
-        try:
-            from app.watchers import demarrer_watcher
-            watcher_demarre, watcher_pid = demarrer_watcher(cfg, forcer=False)
-            if watcher_demarre:
-                trace_watcher = (f"\n\n⚙️ Watcher CCL du projet « {cfg.nom} » redémarré "
-                                  f"automatiquement (il était éteint — pid {watcher_pid}, issue #574).")
-        except Exception as e:
-            watcher_demarre = None
-            trace_watcher = (f"\n\n⚠️ Redémarrage auto du watcher CCL « {cfg.nom} » "
-                              f"échoué : {e}")
+        from app.watchers import redemarrer_si_eteint
+        watcher_demarre, watcher_pid, trace_watcher = redemarrer_si_eteint(cfg, tracer=True)
 
     statut_global, etapes = relancer_issue(depot, numero, commentaire=COMMENTAIRE_RELANCE + trace_watcher)
     return jsonify(succes=True, statut_global=statut_global, etapes=etapes,

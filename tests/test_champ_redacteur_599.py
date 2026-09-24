@@ -26,6 +26,7 @@ sys.path.insert(0, str(RACINE))
 sys.path.insert(0, str(RACINE / "scripts"))
 
 import watcher_issues_inbox as w  # noqa: E402
+import app.watchers as watchers_mod  # noqa: E402
 
 
 def _cfg_projet(depot="AlainDelree/Bridge_Agent", nom="bridge_agent"):
@@ -139,7 +140,7 @@ def scenario_9_traiter_fichier_redacteur_egal_projet_traite_normalement(tmp_path
 
     w._issue_ouverte_meme_titre = lambda cfg_p, titre: None
     w._creer_issue = _creer_issue
-    w.demarrer_watcher = lambda cfg_p, forcer=False: (False, 1111)
+    watchers_mod.demarrer_watcher = lambda cfg_p, forcer=False: (False, 1111)
 
     chemin = cfg.inbox_dir / "issue.txt"
     chemin.write_text(
@@ -211,7 +212,7 @@ def scenario_11_traiter_fichier_canal_ccw_for_windows_traite_normalement(tmp_pat
 
     w._issue_ouverte_meme_titre = lambda cfg_p, titre: None
     w._creer_issue = lambda cfg_i, cfg_p, titre, labels, body: (True, "https://x/2")
-    w.demarrer_watcher = lambda cfg_p, forcer=False: (False, 2222)
+    watchers_mod.demarrer_watcher = lambda cfg_p, forcer=False: (False, 2222)
 
     chemin = cfg.inbox_dir / "issue.txt"
     chemin.write_text(
@@ -245,7 +246,7 @@ def scenario_12_traiter_fichier_sans_redacteur_traite_normalement(tmp_path_facto
 
     w._issue_ouverte_meme_titre = lambda cfg_p, titre: None
     w._creer_issue = lambda cfg_i, cfg_p, titre, labels, body: (True, "https://x/3")
-    w.demarrer_watcher = lambda cfg_p, forcer=False: (False, 3333)
+    watchers_mod.demarrer_watcher = lambda cfg_p, forcer=False: (False, 3333)
 
     chemin = cfg.inbox_dir / "issue.txt"
     chemin.write_text("| PROJET | bridge_agent |\n\n#Titre: Tâche sans REDACTEUR.\nCorps.\n")

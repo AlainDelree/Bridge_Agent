@@ -36,7 +36,7 @@ validation (rétrocompatibilité avec les issues existantes).
 Après création réussie de l'issue, le watcher CCL du projet concerné
 (`watcher.py --config configs/<projet>.conf`) est démarré automatiquement
 s'il n'est pas déjà actif (issue #486, mode « dépose et oublie ») — via
-`demarrer_watcher(forcer=False)` de app/watchers.py, réutilisée telle quelle.
+`redemarrer_si_eteint()` de app/watchers.py (issue #600), réutilisée telle quelle.
 
 Usage :
     python3 scripts/watcher_issues_inbox.py
@@ -72,7 +72,7 @@ sys.path.insert(0, str(DOSSIER_SCRIPT))
 from watcher import (charger_config, lire_conf, est_titre_chef,  # noqa: E402
                      LABEL_NOTIF_PC, LABEL_NOTIF_GSM, LABEL_NOTIF_TOUS,
                      valider_sous_dossier, valider_repo_cible)  # noqa: E402 (issue #567)
-from app.watchers import demarrer_watcher  # noqa: E402 (issue #486)
+from app.watchers import redemarrer_si_eteint  # noqa: E402 (issue #486, #600)
 from app.issues import _issue_ouverte_meme_titre, formater_entete  # noqa: E402 (issues #491, #601)
 from app.interruption import relancer_issue  # noqa: E402 (issue #516)
 
@@ -413,8 +413,8 @@ def valider(champs: dict):
 # seul le REDÉMARRAGE du watcher cible manquait jusqu'ici (_traiter_relance
 # appelait relancer_issue() sans jamais vérifier/relancer le watcher, à la
 # différence du chemin de création qui le fait déjà depuis #486). Corrigé en
-# réutilisant demarrer_watcher(forcer=False) de app/watchers.py — même
-# fonction que le bouton « Relancer le watcher » de new_issue.py.
+# réutilisant redemarrer_si_eteint() de app/watchers.py (issue #600) — même
+# mécanisme que le bouton « Relancer le watcher » de new_issue.py.
 
 RELANCE_RE = re.compile(r"^#?\s*(\d+)\s*$")
 
@@ -610,25 +610,15 @@ def _traiter_relance(cfg: ConfigInbox, champs: dict):
     # qu'Alain clique lui-même sur « Relancer le watcher » dans new_issue.py —
     # ce watcher_issues_inbox.py tourne lui en permanence, indépendamment des
     # watchers de projet (voir docstring de module). Réutilise TEL QUEL
-    # demarrer_watcher(forcer=False) de app/watchers.py — même mécanisme que
-    # ce bouton, pas de logique de démarrage séparée : ne fait rien si le
+    # redemarrer_si_eteint() de app/watchers.py (issue #600) — même mécanisme
+    # que ce bouton, pas de logique de démarrage séparée : ne fait rien si le
     # watcher tourne déjà, le démarre sinon. Tracé dans le commentaire posté
     # ci-dessous, quel que soit le cas (visibilité plutôt que correction
     # silencieuse, cf. §11 du DOC).
-    trace_watcher = ""
-    watcher_demarre, watcher_pid = False, None
-    try:
-        watcher_demarre, watcher_pid = demarrer_watcher(cfg_projet, forcer=False)
-        if watcher_demarre:
-            trace_watcher = (f"\n\n⚙️ Watcher CCL du projet « {champs['projet']} » redémarré "
-                              f"automatiquement (il était éteint — pid {watcher_pid}, issue #572).")
-            log.info(f"Watcher CCL redémarré pour la relance de #{numero} "
-                     f"(projet « {champs['projet']} », pid {watcher_pid}).")
-    except Exception as e:
-        trace_watcher = (f"\n\n⚠️ Redémarrage auto du watcher CCL « {champs['projet']} » "
-                          f"échoué : {e}")
-        log.warning(f"Redémarrage auto du watcher CCL « {champs['projet']} » "
-                    f"(relance de #{numero}) échoué : {e}")
+    watcher_demarre, watcher_pid, trace_watcher = redemarrer_si_eteint(cfg_projet, tracer=True)
+    if watcher_demarre:
+        log.info(f"Watcher CCL redémarré pour la relance de #{numero} "
+                 f"(projet « {champs['projet']} », pid {watcher_pid}).")
 
     commentaire = COMMENTAIRE_RELANCE_INBOX
     if modifies:
@@ -841,18 +831,15 @@ def _traiter_bloc(cfg: ConfigInbox, contenu_bloc: str):
     # Démarrage auto du watcher CCL du projet concerné (issue #486) — sans quoi
     # l'issue fraîchement créée resterait en attente indéfiniment si Alain
     # n'a pas déjà lancé ce watcher depuis le panneau Infrastructure. Réutilise
-    # demarrer_watcher(forcer=False) de app/watchers.py (mêmes modalités que le
-    # bouton « Lancer ») : ne fait rien si le watcher tourne déjà (pas question
-    # d'interrompre un traitement d'issue potentiellement en cours sur ce
-    # projet), le démarre sinon.
+    # redemarrer_si_eteint() de app/watchers.py (issue #600, mêmes modalités
+    # que le bouton « Lancer ») : ne fait rien si le watcher tourne déjà (pas
+    # question d'interrompre un traitement d'issue potentiellement en cours
+    # sur ce projet), le démarre sinon.
+    demarre, pid, _trace = redemarrer_si_eteint(cfg_projet)
     suffixe = ""
-    try:
-        demarre, pid = demarrer_watcher(cfg_projet, forcer=False)
-        if demarre:
-            suffixe = f" — watcher CCL démarré (pid {pid})"
-            log.info(f"Watcher CCL démarré pour le projet « {champs['projet']} » (pid {pid}).")
-    except Exception as e:
-        log.warning(f"Démarrage auto du watcher CCL « {champs['projet']} » échoué : {e}")
+    if demarre:
+        suffixe = f" — watcher CCL démarré (pid {pid})"
+        log.info(f"Watcher CCL démarré pour le projet « {champs['projet']} » (pid {pid}).")
 
     return True, champs["titre"], champs["projet"], suffixe, resultat
 

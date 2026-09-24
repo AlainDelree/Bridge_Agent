@@ -391,11 +391,10 @@ def bootstrap_projet_ccw():
     # 4. Démarrage automatique du watcher for-linux de bridge_agent (même
     #    logique que app.issues.envoyer pour toute issue for-linux, issue
     #    #202) — best-effort, ne doit jamais transformer un succès en échec.
-    try:
-        from app.watchers import demarrer_watcher
-        demarrer_watcher(cfg_ba, forcer=False)
-    except Exception:
-        pass
+    #    Un échec produit désormais un log.warning visible (issue #600) au
+    #    lieu d'être avalé silencieusement.
+    from app.watchers import redemarrer_si_eteint
+    redemarrer_si_eteint(cfg_ba)
 
     return jsonify(
         succes=True,
