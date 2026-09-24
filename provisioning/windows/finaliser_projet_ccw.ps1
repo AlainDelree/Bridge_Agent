@@ -51,9 +51,10 @@ param(
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
-function Info($msg)  { Write-Host "[finaliser] $msg" -ForegroundColor Cyan }
-function Ok($msg)    { Write-Host "[finaliser] $msg" -ForegroundColor Green }
-function Avert($msg) { Write-Host "[finaliser] AVERTISSEMENT : $msg" -ForegroundColor Yellow }
+# Helpers d'affichage (Info/Ok/Avert) et dérivation de chemins projet,
+# communs aux scripts CCW locaux (issue #606).
+Import-Module (Join-Path $PSScriptRoot 'ccw-commun.psm1') -Force
+Set-PrefixeCcw 'finaliser'
 
 # ---------------------------------------------------------------------------
 # 1. Paramètre + DÉRIVATION des chemins (même logique qu'ajouter_projet_ccw.ps1)
@@ -65,14 +66,12 @@ if ([string]::IsNullOrWhiteSpace($NomProjet)) {
 $NomProjet = $NomProjet.Trim()
 if ([string]::IsNullOrWhiteSpace($NomProjet)) { throw 'Nom de projet vide — abandon.' }
 
-# Dérivations IDENTIQUES à ajouter_projet_ccw.ps1 (casse conservée pour le
-# dossier et le service, minuscules pour le préfixe config/log).
-$nomMin     = $NomProjet.ToLowerInvariant()
-$NomService = "CCW-Watcher-$NomProjet"
-$RepDepot   = Join-Path $RepCCW $NomProjet
-$NomConf    = "$nomMin-ccw.conf"
-$NomLog     = "ccw-$nomMin-service.log"
-$CheminConf = Join-Path (Join-Path $RepDepot 'configs') $NomConf
+$chemins    = Get-CheminsProjetCcw -NomProjet $NomProjet -RepCCW $RepCCW
+$NomService = $chemins.NomService
+$RepDepot   = $chemins.RepDepot
+$NomConf    = $chemins.NomConf
+$NomLog     = $chemins.NomLog
+$CheminConf = $chemins.CheminConf
 
 Info "Projet      : $NomProjet"
 Info "Dossier     : $RepDepot"

@@ -279,9 +279,18 @@ def ccw_ajouter_projet():
         return err
     hote, utilisateur, cle_privee = ctx
     script = DOSSIER_WINDOWS / "ajouter_projet_ccw.ps1"
-    if not script.exists():
-        return jsonify(succes=False, erreur=f"Script introuvable : {script.name}")
+    # ajouter_projet_ccw.ps1 importe désormais ccw-commun.psm1 (issue #606) —
+    # les deux fichiers doivent atterrir dans le même dossier distant
+    # (DEST_DIR_DISTANT) pour que Import-Module (Join-Path $PSScriptRoot ...)
+    # le retrouve.
+    module_commun = DOSSIER_WINDOWS / "ccw-commun.psm1"
+    for s in (script, module_commun):
+        if not s.exists():
+            return jsonify(succes=False, erreur=f"Script introuvable : {s.name}")
     try:
+        r = _copier(hote, utilisateur, cle_privee, module_commun, TIMEOUT_COURT)
+        if r.returncode != 0:
+            return jsonify(succes=False, erreur=_message_echec("copie du module", r))
         r = _copier(hote, utilisateur, cle_privee, script, TIMEOUT_COURT)
         if r.returncode != 0:
             return jsonify(succes=False, erreur=_message_echec("copie du script", r))

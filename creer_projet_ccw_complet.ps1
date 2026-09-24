@@ -25,10 +25,15 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-$NomService = "CCW-Watcher-$NomProjet"
-$RepTravail = "C:\CCW\$NomProjet"
-$CheminConf = "configs\$NomProjet-ccw.conf"
-$NomLog     = "ccw-$NomProjet-service.log"
+# Helpers d'affichage (Info/Ok/Avert) et dérivation de chemins projet,
+# communs aux scripts CCW locaux (issue #606).
+Import-Module (Join-Path $PSScriptRoot 'provisioning\windows\ccw-commun.psm1') -Force
+Set-PrefixeCcw 'creer-projet-complet'
+
+$chemins      = Get-CheminsProjetCcw -NomProjet $NomProjet
+$NomService   = $chemins.NomService
+$RepTravail   = $chemins.RepDepot
+$NomLog       = $chemins.NomLog
 $CheminClaude = Join-Path $env:USERPROFILE ".local\bin"
 
 # Convertit un SecureString en texte brut le temps strictement necessaire,
@@ -44,42 +49,42 @@ function ConvertFrom-SecureStringPlain([System.Security.SecureString]$Secure) {
     }
 }
 
-Write-Host "[creer-projet-complet] Projet      : $NomProjet"
-Write-Host "[creer-projet-complet] Depot       : $Depot"
-Write-Host "[creer-projet-complet] Dossier     : $RepTravail"
-Write-Host "[creer-projet-complet] Service     : $NomService"
+Info "Projet      : $NomProjet"
+Info "Depot       : $Depot"
+Info "Dossier     : $RepTravail"
+Info "Service     : $NomService"
 Write-Host ""
 
 # --- Etape 1 : clone + .conf + service (scripts officiels existants) -------
-Write-Host "[creer-projet-complet] Etape 1/3 - ajouter_projet_ccw.ps1..."
+Info "Etape 1/3 - ajouter_projet_ccw.ps1..."
 powershell -ExecutionPolicy Bypass -File provisioning\windows\ajouter_projet_ccw.ps1 -NomProjet $NomProjet -Depot $Depot
 
 # --- Etape 2 : TOPIC_NTFY (edition ciblee, meme logique que finaliser_projet_ccw.ps1) ---
 Write-Host ""
-Write-Host "[creer-projet-complet] Etape 2/3 - TOPIC_NTFY..."
-$cheminConfComplet = "$RepTravail\configs\$NomProjet-ccw.conf"
+Info "Etape 2/3 - TOPIC_NTFY..."
+$cheminConfComplet = $chemins.CheminConf
 if (-not (Test-Path $cheminConfComplet)) {
-    Write-Host "[creer-projet-complet] .conf introuvable a $cheminConfComplet -- recherche automatique..."
-    $trouve = Get-ChildItem -Path "C:\CCW" -Filter "$NomProjet-ccw.conf" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+    Avert ".conf introuvable a $cheminConfComplet -- recherche automatique..."
+    $trouve = Get-ChildItem -Path "C:\CCW" -Filter $chemins.NomConf -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
     if ($trouve) {
         $cheminConfComplet = $trouve.FullName
-        Write-Host "[creer-projet-complet] Trouve : $cheminConfComplet"
+        Info "Trouve : $cheminConfComplet"
     } else {
-        Write-Host "[creer-projet-complet] ERREUR : impossible de trouver le .conf. Arret."
+        Avert "ERREUR : impossible de trouver le .conf. Arret."
         exit 1
     }
 }
 $contenuConfMaj = (Get-Content $cheminConfComplet -Raw) -replace '###TOPIC_NTFY_A_DEFINIR###', $TopicNtfy
 [System.IO.File]::WriteAllText($cheminConfComplet, $contenuConfMaj, (New-Object System.Text.UTF8Encoding($false)))
-Write-Host "[creer-projet-complet] TOPIC_NTFY defini a " $TopicNtfy "."
+Ok "TOPIC_NTFY defini a $TopicNtfy."
 
 # --- Etape 3 : tokens + PATH correct (LA partie qui a pose probleme pour Scrabble) ---
 Write-Host ""
-Write-Host "[creer-projet-complet] Etape 3/3 - Tokens et PATH"
-Write-Host "[creer-projet-complet] Cree le token GitHub dedie si pas deja fait :"
-Write-Host "[creer-projet-complet]   - Repository access -> $Depot UNIQUEMENT"
-Write-Host "[creer-projet-complet]   - Permissions : Issues = Read and write, Metadata = Read-only"
-Write-Host "[creer-projet-complet]   - Expiration : aligne-toi sur les tokens CCW recents (~2026-11-14)"
+Info "Etape 3/3 - Tokens et PATH"
+Info "Cree le token GitHub dedie si pas deja fait :"
+Info "  - Repository access -> $Depot UNIQUEMENT"
+Info "  - Permissions : Issues = Read and write, Metadata = Read-only"
+Info "  - Expiration : aligne-toi sur les tokens CCW recents (~2026-11-14)"
 Write-Host ""
 Read-Host "Appuie sur Entree une fois le token GitHub cree et copie (rien a taper ici)"
 
@@ -87,9 +92,9 @@ $ghToken = Read-Host "Colle la valeur de GH_TOKEN" -AsSecureString
 $ghTokenPlain = ConvertFrom-SecureStringPlain $ghToken
 
 Write-Host ""
-Write-Host "[creer-projet-complet] Genere maintenant le token Claude Code :"
-Write-Host "[creer-projet-complet]   claude setup-token"
-Write-Host "[creer-projet-complet] (lance-le dans un AUTRE terminal si besoin, puis reviens ici)"
+Info "Genere maintenant le token Claude Code :"
+Info "  claude setup-token"
+Info "(lance-le dans un AUTRE terminal si besoin, puis reviens ici)"
 Write-Host ""
 $claudeToken = Read-Host "Colle la valeur de CLAUDE_CODE_OAUTH_TOKEN" -AsSecureString
 $claudeTokenPlain = ConvertFrom-SecureStringPlain $claudeToken
@@ -101,10 +106,10 @@ $ghTokenPlain = $ghTokenPlain -replace "`r`n|`n|`r", ""
 $claudeTokenPlain = $claudeTokenPlain -replace "`r`n|`n|`r", ""
 
 Write-Host ""
-Write-Host "[creer-projet-complet] Longueur GH_TOKEN : $($ghTokenPlain.Length) caracteres"
-Write-Host "[creer-projet-complet] Longueur CLAUDE_CODE_OAUTH_TOKEN : $($claudeTokenPlain.Length) caracteres"
+Info "Longueur GH_TOKEN : $($ghTokenPlain.Length) caracteres"
+Info "Longueur CLAUDE_CODE_OAUTH_TOKEN : $($claudeTokenPlain.Length) caracteres"
 if ($ghTokenPlain.Length -eq 0 -or $claudeTokenPlain.Length -eq 0) {
-    Write-Host "[creer-projet-complet] ERREUR : un des deux tokens est vide (saisie ratee). Arret."
+    Avert "ERREUR : un des deux tokens est vide (saisie ratee). Arret."
     exit 1
 }
 
@@ -112,27 +117,27 @@ if ($ghTokenPlain.Length -eq 0 -or $claudeTokenPlain.Length -eq 0) {
 # #492 bis : mieux vaut echouer ici, vite et clairement, que decouvrir un 401
 # apres redemarrage du service en devinant depuis les logs).
 Write-Host ""
-Write-Host "[creer-projet-complet] Test du GH_TOKEN sur $Depot ..."
+Info "Test du GH_TOKEN sur $Depot ..."
 $env:GH_TOKEN = $ghTokenPlain
 $testGh = gh repo view $Depot 2>&1
 if ($LASTEXITCODE -ne 0) {
-    Write-Host "[creer-projet-complet] ERREUR : GH_TOKEN invalide ou mal scope sur $Depot"
+    Avert "ERREUR : GH_TOKEN invalide ou mal scope sur $Depot"
     Write-Host $testGh
-    Write-Host "[creer-projet-complet] Verifie le token sur github.com/settings/tokens (repository access, expiration) et relance."
+    Avert "Verifie le token sur github.com/settings/tokens (repository access, expiration) et relance."
     exit 1
 }
-Write-Host "[creer-projet-complet] GH_TOKEN OK."
+Ok "GH_TOKEN OK."
 
-Write-Host "[creer-projet-complet] Test du CLAUDE_CODE_OAUTH_TOKEN..."
+Info "Test du CLAUDE_CODE_OAUTH_TOKEN..."
 $env:CLAUDE_CODE_OAUTH_TOKEN = $claudeTokenPlain
 $testClaude = claude --print "reponds juste OK" 2>&1
 if ($LASTEXITCODE -ne 0) {
-    Write-Host "[creer-projet-complet] ERREUR : CLAUDE_CODE_OAUTH_TOKEN invalide"
+    Avert "ERREUR : CLAUDE_CODE_OAUTH_TOKEN invalide"
     Write-Host $testClaude
-    Write-Host "[creer-projet-complet] Regenere-le avec : claude setup-token"
+    Avert "Regenere-le avec : claude setup-token"
     exit 1
 }
-Write-Host "[creer-projet-complet] CLAUDE_CODE_OAUTH_TOKEN OK."
+Ok "CLAUDE_CODE_OAUTH_TOKEN OK."
 
 # PATH complet + dossier claude.exe explicite (LE fix du probleme Scrabble :
 # un service NSSM demarre au boot n'herite pas forcement du PATH utilisateur
@@ -141,19 +146,19 @@ $pathActuel = $env:PATH
 $nouvelExtra = "GH_TOKEN=$ghTokenPlain`nCLAUDE_CODE_OAUTH_TOKEN=$claudeTokenPlain`nPATH=$pathActuel;$CheminClaude"
 
 Write-Host ""
-Write-Host "[creer-projet-complet] Ecriture de AppEnvironmentExtra (avec PATH incluant $CheminClaude)..."
+Info "Ecriture de AppEnvironmentExtra (avec PATH incluant $CheminClaude)..."
 nssm set $NomService AppEnvironmentExtra $nouvelExtra | Out-Null
 
-Write-Host "[creer-projet-complet] Redemarrage du service " $NomService "..."
+Info "Redemarrage du service $NomService ..."
 nssm restart $NomService | Out-Null
 Start-Sleep -Seconds 8
 
 Write-Host ""
-Write-Host "[creer-projet-complet] Dernieres lignes de $RepTravail\logs\$NomLog :"
+Info "Dernieres lignes de $RepTravail\logs\$NomLog :"
 Write-Host "----------------------------------------------------------------------"
 Get-Content "$RepTravail\logs\$NomLog" -Tail 10
 Write-Host "----------------------------------------------------------------------"
 Write-Host ""
-Write-Host "[creer-projet-complet] Projet " $NomProjet " cree et finalise."
-Write-Host "[creer-projet-complet] Verif : nssm status $NomService  /  Get-Service $NomService"
-Write-Host "[creer-projet-complet] Si erreur 401 ci-dessus : le GH_TOKEN a probablement un espace ou saut de ligne parasite. Relance uniquement l etape des tokens en collant plus prudemment."
+Ok "Projet $NomProjet cree et finalise."
+Info "Verif : nssm status $NomService  /  Get-Service $NomService"
+Info "Si erreur 401 ci-dessus : le GH_TOKEN a probablement un espace ou saut de ligne parasite. Relance uniquement l etape des tokens en collant plus prudemment."

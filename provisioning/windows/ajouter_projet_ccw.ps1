@@ -59,8 +59,12 @@ param(
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
-function Info($msg)  { Write-Host "[ajouter-projet] $msg" -ForegroundColor Cyan }
-function Avert($msg) { Write-Host "[ajouter-projet] AVERTISSEMENT : $msg" -ForegroundColor Yellow }
+# Helpers d'affichage (Info/Avert) et dérivation de chemins projet, communs
+# aux scripts CCW locaux (issue #606) — ce script est l'exception : à la fois
+# local (dans le clone git) et poussé seul par SCP (app/ccw.py), donc le
+# module est copié à ses côtés dans les deux cas (même dossier : $PSScriptRoot).
+Import-Module (Join-Path $PSScriptRoot 'ccw-commun.psm1') -Force
+Set-PrefixeCcw 'ajouter-projet'
 
 # ---------------------------------------------------------------------------
 # 0. Paramètres (arguments ou prompt interactif) + validation minimale.
@@ -84,10 +88,11 @@ if ($Depot -notmatch '^[^/\s]+/[^/\s]+$') {
 # configs CCL : bridge_agent.conf, scrabble.conf…). Le NomProjet d'origine
 # (casse conservée) sert au dossier et au nom de service, plus lisibles.
 $nomMin      = $NomProjet.ToLowerInvariant()
-$NomService  = "CCW-Watcher-$NomProjet"
-$RepDepot    = Join-Path $RepCCW $NomProjet
-$NomConf     = "$nomMin-ccw.conf"
-$NomLog      = "ccw-$nomMin-service.log"
+$chemins     = Get-CheminsProjetCcw -NomProjet $NomProjet -RepCCW $RepCCW
+$NomService  = $chemins.NomService
+$RepDepot    = $chemins.RepDepot
+$NomConf     = $chemins.NomConf
+$NomLog      = $chemins.NomLog
 
 Info "Projet      : $NomProjet"
 Info "Dépôt       : $Depot"
@@ -136,14 +141,12 @@ $Placeholder     = '###TOPIC_NTFY_A_DEFINIR###'
 $TopicNtfy       = $Placeholder
 $topicPreserve   = $false
 if (Test-Path $CheminConf) {
-    foreach ($ligne in [System.IO.File]::ReadAllLines($CheminConf)) {
-        if ($ligne -match '^\s*TOPIC_NTFY\s*=\s*(.+?)\s*$') {
-            $valeur = $Matches[1].Trim()
-            if ($valeur -and $valeur -ne $Placeholder) {
-                $TopicNtfy     = $valeur
-                $topicPreserve = $true
-            }
-            break
+    $valeurExistante = Lire-ValeurFichier $CheminConf 'TOPIC_NTFY'
+    if ($valeurExistante) {
+        $valeur = $valeurExistante.Trim()
+        if ($valeur -and $valeur -ne $Placeholder) {
+            $TopicNtfy     = $valeur
+            $topicPreserve = $true
         }
     }
 }
