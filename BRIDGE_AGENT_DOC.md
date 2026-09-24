@@ -87,6 +87,15 @@ Claude Chat → crée une issue → GitHub → watcher.py détecte → CCL exéc
 Chaque projet a son propre watcher (`watcher.py --config configs/<nom>.conf`)
 et son propre journal de log (`logs/watcher-<nom>.log`).
 
+**Colonne « Couleur » (issue #608)** : couleur d'accent RÉELLEMENT affichée
+pour ce projet côté interface web (pastilles, badges, fenêtres de
+confirmation), au format hexadécimal — pas nécessairement la valeur brute du
+champ `COULEUR` de son `.conf` (voir « Couleur d'accent des projets »
+ci-dessous pour la règle de priorité et le piège documenté des 6 projets dont
+le `.conf` n'est plus lu). Cette colonne est la seule source publique de
+cette information pour un lecteur externe au périmètre de Bridge_Agent (ex.
+`relecture_web`, qui n'a pas accès à `configs/`).
+
 ---
 
 ## 3. Créer une issue — la méthode normale : watcher `issues_inbox` (issue #483)
@@ -1392,6 +1401,32 @@ futur projet mis à l'arrêt :
    100% ni de distance/teinte Lab (le but est justement de signaler
    visuellement l'absence d'identité propre, pas de rivaliser avec les
    couleurs actives).
+
+**Colonne « Couleur » du tableau §2 (issue #608)** : `relecture_web` (projet
+`relecture_bridge`) n'a accès qu'au tableau public du §2 — `configs/` est hors
+de son périmètre — et voulait pouvoir afficher la couleur d'accent de chaque
+projet (fenêtres de confirmation, en-têtes de page) sans confondre des noms
+proches (`bridge_agent`/`relecture_bridge`, `alchess`/`chesscoach`).
+`regenerer_tableaux_projets.py` ajoute donc une colonne `Couleur`, en
+**dernière position** (pour ne décaler aucune des colonnes existantes),
+contenant pour chaque projet la couleur **réellement affichée**, au même
+format hex que les niveaux 1/2 ci-dessus — pas la valeur brute de son `.conf`
+quand celle-ci n'est plus lue par rien (piège des 6 projets ci-dessus).
+
+Réutilise `couleurProjet()` plutôt que de la réécrire : `couleur_affichee()`
+(nouvelle fonction de `nouveau_projet.py`) applique la même priorité côté
+Python — niveau 1 (`COULEURS_PROJETS_EXISTANTS`), niveau 2 (`COULEUR` du
+`.conf`), niveau 3 (hash de secours, `couleur_hash_projet()`, miroir de
+`couleurHashProjet()` converti en hex plutôt que `hsl(...)`) — avec un niveau
+intercalé pour les projets à couleur recyclée (issue #540, `ecole`,
+`ff_galerie`) : un ensemble miroir `PROJETS_COULEUR_RECYCLEE` (à tenir à jour
+en même temps que `COULEURS_PROJET` côté `app.js`, étape 2 de la procédure de
+recyclage ci-dessus) fait afficher `COULEUR_PROJET_INACTIF` dans cette
+colonne pour ces projets, comme le fait déjà l'interface web.
+`regenerer_tableaux_projets.py` importe `nouveau_projet` localement, dans
+`lire_projets()` — pas en tête de fichier — pour éviter le cycle d'import
+avec `nouveau_projet.py`, qui importe déjà `regenerer_tableaux_projets` à son
+chargement (issue #571).
 
 ### Cycle de vie des watchers (démarrage manuel, démarrage auto, extinction auto)
 

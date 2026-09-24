@@ -61,8 +61,19 @@ MARQUEUR_FIN_PERIMETRE = "<!-- FIN:TABLEAU_PERIMETRE_PROJETS -->"
 
 def lire_projets(dossier_configs: Path = DOSSIER_CONFIGS) -> list[dict]:
     """Scanne configs/*.conf et renvoie la liste des projets (dicts nom/
-    depot/rep_travail/perimetre), triés par nom. Fichiers sans champ NOM
-    ignorés (ex. ccw_ssh.conf)."""
+    depot/rep_travail/perimetre/couleur), triés par nom. Fichiers sans champ
+    NOM ignorés (ex. ccw_ssh.conf).
+
+    Import local de `nouveau_projet` (plutôt qu'en tête de fichier) : ce
+    module importe déjà `regenerer_tableaux_projets` à son chargement (issue
+    #571) — un `from nouveau_projet import couleur_affichee` en tête de CE
+    fichier créerait un cycle qui échoue selon l'ordre d'import (ex. via
+    `app/nouveau_projet.py`, qui importe `nouveau_projet` avant que ce module
+    ait fini de se charger). Différer l'import à l'appel évite le problème :
+    les deux modules sont toujours complètement chargés au moment où cette
+    fonction s'exécute réellement (issue #608)."""
+    import nouveau_projet
+
     projets = []
     for chemin in sorted(dossier_configs.glob("*.conf")):
         brut = lire_conf(chemin)
@@ -74,6 +85,7 @@ def lire_projets(dossier_configs: Path = DOSSIER_CONFIGS) -> list[dict]:
             "depot": brut.get("DEPOT", ""),
             "rep_travail": brut.get("REP_TRAVAIL", ""),
             "perimetre": brut.get("PERIMETRE") or brut.get("REP_TRAVAIL", ""),
+            "couleur": nouveau_projet.couleur_affichee(nom, brut.get("COULEUR", "")),
         })
     projets.sort(key=lambda p: p["nom"])
     return projets
@@ -86,11 +98,15 @@ def _afficher_rep(rep: str) -> str:
 
 
 def _lignes_tableau_actifs(projets: list[dict]) -> list[str]:
-    lignes = ["| Nom | Dépôt GitHub | Répertoire de travail CCL | Topic ntfy |",
-              "|-----|-------------|--------------------------|------------|"]
+    # Colonne « Couleur » ajoutée en DERNIÈRE position (issue #608) : ne pas
+    # décaler les colonnes existantes, lues par d'autres consommateurs
+    # (relecture_web notamment, seule source pour lui — voir le § « Couleur
+    # d'accent des projets »).
+    lignes = ["| Nom | Dépôt GitHub | Répertoire de travail CCL | Topic ntfy | Couleur |",
+              "|-----|-------------|--------------------------|------------|---------|"]
     for p in projets:
         lignes.append(f"| `{p['nom']}` | {p['depot']} | "
-                       f"{_afficher_rep(p['rep_travail'])} | (conf local) |")
+                       f"{_afficher_rep(p['rep_travail'])} | (conf local) | `{p['couleur']}` |")
     return lignes
 
 

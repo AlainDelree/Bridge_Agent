@@ -387,6 +387,61 @@ COULEURS_PROJETS_EXISTANTS = {
 # app.js (seul endroit où elle est réellement utilisée, voir plus haut).
 COULEUR_PROJET_INACTIF = "#767676"
 
+# Projets dont la couleur dédiée a été recyclée (issue #540, procédure décrite
+# ci-dessus) : leur couleur affichée est le gris COULEUR_PROJET_INACTIF, piloté
+# côté app.js dans COULEURS_PROJET (seule source de vérité pour l'affichage —
+# ces clés n'existent volontairement PAS dans COULEURS_PROJETS_EXISTANTS,
+# voir le commentaire juste au-dessus). Ensemble MIROIR ajouté par l'issue
+# #608 pour que regenerer_tableaux_projets.py puisse reproduire fidèlement
+# cette même règle dans la colonne « Couleur » du tableau §2 sans dupliquer
+# couleurProjet() (JS) : à tenir à jour à la même occasion que COULEURS_PROJET
+# (étape 2 de la procédure de recyclage ci-dessus).
+PROJETS_COULEUR_RECYCLEE = frozenset({"ff_galerie", "ecole"})
+
+# Clarté (HSL) de secours pour couleur_hash_projet() ci-dessous — même valeur,
+# même raison que CLARTE_HASH_PROJET côté app.js (voir son commentaire) : 72%
+# couvre, avec marge, toutes les teintes à saturation 100% pour un contraste
+# texte noir >= SEUIL_CONTRASTE_NOIR.
+CLARTE_HASH_PROJET = 72
+
+
+def couleur_hash_projet(nom: str) -> str:
+    """Couleur de secours dérivée du nom, en hex — miroir de couleurHashProjet()
+    (static/js/app.js) : même hash (charCodes, base 31, mod 360), même teinte
+    HSL saturation 100%/clarté CLARTE_HASH_PROJET, converti en hex via
+    _hsl_vers_hex plutôt que renvoyé en 'hsl(...)' pour rester au même format
+    que les deux autres niveaux de priorité de couleur_affichee()."""
+    h = 0
+    for c in nom:
+        h = (h * 31 + ord(c)) % 360
+    return _hsl_vers_hex(h, SATURATION_PALETTE, CLARTE_HASH_PROJET)
+
+
+def couleur_affichee(nom: str, couleur_conf: str = "") -> str:
+    """Couleur RÉELLEMENT affichée pour `nom` (pastilles/badges/fond d'accent
+    de l'interface web) — même ordre de priorité que couleurProjet() dans
+    static/js/app.js, réutilisé plutôt que réécrit (issue #608) :
+      1. COULEURS_PROJETS_EXISTANTS (gelée en dur pour les projets déjà
+         existants au moment de #535, quel que soit leur .conf) ;
+      2. PROJETS_COULEUR_RECYCLEE → COULEUR_PROJET_INACTIF, pour un projet mis
+         à l'arrêt (issue #540) ;
+      3. sinon `couleur_conf` (champ COULEUR du .conf, laissé à la charge de
+         l'appelant — source de vérité pour un projet créé après #535) ;
+      4. sinon un hash de secours dérivé du nom (couleur_hash_projet) : ne
+         devrait normalement jamais s'activer pour un projet déjà installé
+         (creer_projet() écrit toujours un COULEUR en .conf), sauf .conf
+         modifié/tronqué à la main — évite de casser la génération du tableau
+         plutôt que de la faire échouer sur un projet sans aucune des trois
+         sources ci-dessus."""
+    if nom in COULEURS_PROJETS_EXISTANTS:
+        return COULEURS_PROJETS_EXISTANTS[nom]
+    if nom in PROJETS_COULEUR_RECYCLEE:
+        return COULEUR_PROJET_INACTIF
+    if couleur_conf:
+        return couleur_conf
+    return couleur_hash_projet(nom)
+
+
 # Palette proposée à la création d'un NOUVEAU projet (remplace l'ancienne
 # liste figée à la main). Calculée une fois à l'import — déterministe, cf.
 # generer_palette. Une couleur est attribuée dès la création et écrite dans
