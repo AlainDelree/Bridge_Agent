@@ -1,9 +1,9 @@
-# creer_projet_ccw_complet.ps1
+﻿# creer_projet_ccw_complet.ps1
 #
 # Enchaine TOUTES les etapes mecaniques pour ajouter un projet CCW
 # (issue #492) : clone + .conf + service NSSM + PATH correct des le depart
 # (evite le piege rencontre avec Scrabble : services NSSM demarres au boot
-# n'heritent pas du PATH utilisateur, notamment %LOCALAPPDATA%\...\.local\bin
+# n'heritent pas du PATH utilisateur, notamment %USERPROFILE%\.local\bin
 # ou vit claude.exe).
 #
 # Ne demande QUE ce qui ne peut pas etre automatise : les deux tokens.
@@ -29,7 +29,20 @@ $NomService = "CCW-Watcher-$NomProjet"
 $RepTravail = "C:\CCW\$NomProjet"
 $CheminConf = "configs\$NomProjet-ccw.conf"
 $NomLog     = "ccw-$NomProjet-service.log"
-$CheminClaude = "C:\Users\AlainW\.local\bin"
+$CheminClaude = Join-Path $env:USERPROFILE ".local\bin"
+
+# Convertit un SecureString en texte brut le temps strictement necessaire,
+# puis libere immediatement le buffer non manage (BSTR) - le secret ne
+# reste pas en memoire jusqu'au GC (meme pattern que
+# provisioning\windows\mettre_a_jour_tokens_ccw.ps1).
+function ConvertFrom-SecureStringPlain([System.Security.SecureString]$Secure) {
+    $bstr = [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($Secure)
+    try {
+        return [System.Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstr)
+    } finally {
+        [System.Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr)
+    }
+}
 
 Write-Host "[creer-projet-complet] Projet      : $NomProjet"
 Write-Host "[creer-projet-complet] Depot       : $Depot"
@@ -56,8 +69,8 @@ if (-not (Test-Path $cheminConfComplet)) {
         exit 1
     }
 }
-(Get-Content $cheminConfComplet -Raw) -replace '###TOPIC_NTFY_A_DEFINIR###', $TopicNtfy |
-    Set-Content $cheminConfComplet -Encoding UTF8 -NoNewline
+$contenuConfMaj = (Get-Content $cheminConfComplet -Raw) -replace '###TOPIC_NTFY_A_DEFINIR###', $TopicNtfy
+[System.IO.File]::WriteAllText($cheminConfComplet, $contenuConfMaj, (New-Object System.Text.UTF8Encoding($false)))
 Write-Host "[creer-projet-complet] TOPIC_NTFY defini a " $TopicNtfy "."
 
 # --- Etape 3 : tokens + PATH correct (LA partie qui a pose probleme pour Scrabble) ---
@@ -71,8 +84,7 @@ Write-Host ""
 Read-Host "Appuie sur Entree une fois le token GitHub cree et copie (rien a taper ici)"
 
 $ghToken = Read-Host "Colle la valeur de GH_TOKEN" -AsSecureString
-$ghTokenPlain = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto(
-    [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($ghToken))
+$ghTokenPlain = ConvertFrom-SecureStringPlain $ghToken
 
 Write-Host ""
 Write-Host "[creer-projet-complet] Genere maintenant le token Claude Code :"
@@ -80,8 +92,7 @@ Write-Host "[creer-projet-complet]   claude setup-token"
 Write-Host "[creer-projet-complet] (lance-le dans un AUTRE terminal si besoin, puis reviens ici)"
 Write-Host ""
 $claudeToken = Read-Host "Colle la valeur de CLAUDE_CODE_OAUTH_TOKEN" -AsSecureString
-$claudeTokenPlain = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto(
-    [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($claudeToken))
+$claudeTokenPlain = ConvertFrom-SecureStringPlain $claudeToken
 
 # Nettoyage anti-saut-de-ligne (piege rencontre avec Scrabble : un token
 # affiche sur 2 lignes visuellement par le terminal peut etre colle avec un
@@ -125,7 +136,7 @@ Write-Host "[creer-projet-complet] CLAUDE_CODE_OAUTH_TOKEN OK."
 
 # PATH complet + dossier claude.exe explicite (LE fix du probleme Scrabble :
 # un service NSSM demarre au boot n'herite pas forcement du PATH utilisateur
-# ou vit claude.exe sous %LOCALAPPDATA%\...\.local\bin).
+# ou vit claude.exe sous %USERPROFILE%\.local\bin).
 $pathActuel = $env:PATH
 $nouvelExtra = "GH_TOKEN=$ghTokenPlain`nCLAUDE_CODE_OAUTH_TOKEN=$claudeTokenPlain`nPATH=$pathActuel;$CheminClaude"
 
