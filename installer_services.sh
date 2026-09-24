@@ -93,8 +93,8 @@ for p in "${PROJETS[@]}"; do
     UNITES+=("watcher@$p")
 done
 
-echo "-- enable --now : ${UNITES[*]} --"
-systemctl --user enable --now "${UNITES[@]}"
+echo "-- start : ${UNITES[*]} --"
+systemctl --user start "${UNITES[@]}"
 
 # ── 6. Bilan ─────────────────────────────────────────────────────────────────
 echo
