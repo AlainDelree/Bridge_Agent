@@ -9,6 +9,103 @@ milliers de caractères sur une seule ligne logique, coûteux à relire et
 
 Convention d'ajout : voir §10 de `BRIDGE_AGENT_DOC.md`.
 
+## 24 septembre 2026 — issue #603
+
+Alignement de `creer_projet_ccw_complet.ps1` (racine du dépôt) sur les
+conventions des 11 autres scripts `.ps1` de `provisioning/windows/`
+(diagnostic #579, point 4) — 4 problèmes à risque réel corrigés :
+
+- **BOM UTF-8** ajouté en tête du fichier (`EF BB BF`) — sans lui,
+  PowerShell 5.1 plante silencieusement au premier accent ajouté.
+- **`.conf` sans BOM** : remplacement de `Set-Content -Encoding UTF8`
+  (qui écrit un BOM parasite) par `[IO.File]::WriteAllText(...,
+  UTF8Encoding($false))`, comme `ajouter_projet_ccw.ps1` — évite de
+  corrompre silencieusement la lecture par `watcher.py`.
+- **Fuite de secret BSTR** : ajout de la fonction
+  `ConvertFrom-SecureStringPlain` (try/finally +
+  `Marshal::ZeroFreeBSTR`), même pattern que
+  `mettre_a_jour_tokens_ccw.ps1`, appliquée aux deux tokens saisis.
+- **Chemin codé en dur** : `$CheminClaude` dérivé dynamiquement de
+  `$env:USERPROFILE` au lieu du compte `AlainW` en dur — ne casse plus
+  silencieusement si le compte de service change.
+
+Le point 5 du diagnostic (extraction d'un module commun
+`provisioning/windows/ccw-commun.psm1` pour la dérivation de chemins
+projet dupliquée entre ce script et `ajouter_projet_ccw.ps1`/
+`finaliser_projet_ccw.ps1`) dépasse la COMPLEXITE `normal` de cette
+issue — reporté à l'issue séparée #604, comme prévu par le corps de
+#603.
+
+Aucun test PowerShell direct (script non exécutable côté Linux) ; le
+test statique existant `tests/test_ajouter_projet_ccw_env_558.py`
+(cohérence `AppEnvironmentExtra` entre les 3 scripts qui le posent) et
+l'ensemble des tests Python (`py_compile` + suite `tests/`) restent
+verts.
+
+## 24 septembre 2026 — issue #602
+
+Retrait des 2 étapes manuelles caduques depuis #597 du corps de l'issue CCL
+généré par `app/projet_ccw.py::_corps_issue_ccl()` (case « Projet CCW » du
+formulaire de création, issue #559).
+
+- `app/projet_ccw.py::_corps_issue_ccl()` : supprime les 2 anciennes étapes
+  numérotées (ajout d'une entrée au tableau `$Projets` de
+  `reinstaller_projets_ccw.ps1` + ligne dans le tableau de rappel de
+  `REINSTALLATION_CCW.md` §7) — toutes deux automatisées depuis #597
+  (dérivation dynamique de `$Projets` depuis `configs\*-ccw.conf`) et #556
+  (le fichier `.conf` est déjà créé par le flux CREATION). Le corps devient
+  purement informatif (section « Contexte » expliquant qu'aucune action
+  manuelle n'est requise), conservant la référence croisée vers l'issue CCW.
+- `tests/test_projet_ccw_559.py::scenario_corps_issue_ccl_contenu` : les
+  assertions vérifient désormais l'ABSENCE des 2 anciennes instructions
+  plutôt que leur présence.
+- `BRIDGE_AGENT_DOC.md` §16 (séquence `bootstrap_projet_ccw`, point 3) :
+  description mise à jour pour refléter le corps simplifié.
+- Évaluation demandée par l'issue : le corps de l'issue CCL, une fois les 2
+  étapes retirées, ne contient plus aucune action exécutable (seulement du
+  contexte + la cross-référence) — l'issue CCL elle-même pourrait donc être
+  supprimée du flux (route `bootstrap_projet_ccw`, frontend, doc, tests).
+  Non fait ici : ce retrait toucherait le contrat de l'issue CCW (paramètre
+  `numero_ccl`), le template/JS affichant les 2 liens d'issue, et une bonne
+  partie de `tests/test_projet_ccw_559.py` — portée plus large que la
+  COMPLEXITE `normal` déclarée pour #602, et l'issue demande explicitement
+  de ne pas supprimer le flux sans confirmation. Recommandation : ouvrir une
+  issue dédiée si ce retrait complet est souhaité (même logique de scission
+  que #601/#602).
+
+Tests : suite complète (21 fichiers `tests/test_*.py`) toujours verte.
+
+## 24 septembre 2026 — issue #601
+
+Factorisation du tableau markdown `## En-tête` dans une fonction commune
+`formater_entete()` (diagnostic #579 §3.2) : ce tableau était construit à
+la main dans trois sites (`app/issues.py`, `app/projet_ccw.py` ×2,
+`scripts/watcher_issues_inbox.py`), avec des divergences déjà présentes
+(TIMEOUT/PRIORITE en dur à certains endroits, ligne COMPLEXITE hors
+tableau) — or ce tableau est re-parsé tel quel par `watcher.py`, une
+dérive future aurait pu casser le parsing silencieusement.
+
+- `app/issues.py` : nouvelle fonction `formater_entete(mode, priorite,
+  timeout, projet, *, source="CC", dest="CCL", retour="CC", modele=None,
+  complexite=None)` — reproduit EXACTEMENT le format existant (`timeout`
+  sans le suffixe `s`, ajouté par la fonction ; `MODELE` et `COMPLEXITE`
+  optionnels, absents par défaut). `construire_body()` l'utilise
+  désormais au lieu de construire ses lignes à la main.
+- `app/projet_ccw.py` : `_corps_issue_ccl()` et `_corps_issue_ccw()`
+  appellent `formater_entete()` (import local, comme le reste des imports
+  `app.issues` de ce module, pour éviter tout souci d'import circulaire).
+  Le bloc `CREATION_*` de `_corps_issue_ccw()` reste construit à part et
+  concaténé après l'en-tête (format spécifique à ce seul site, non inclus
+  dans la fonction commune).
+- `scripts/watcher_issues_inbox.py` : `construire_body()` appelle
+  `formater_entete()` au lieu de dupliquer les lignes du tableau.
+
+Format de sortie vérifié identique bit-à-bit à l'ancien code (comparaison
+manuelle des chaînes produites, avant/après, pour les trois sites) — pas
+de modification du format attendu par `watcher.py`. Suite de tests
+existante (21 fichiers, dont `tests/test_projet_ccw_559.py`) toujours
+verte sans aucune modification des tests.
+
 ## 24 septembre 2026 — issue #600
 
 Factorisation de l'enrobage « redémarrer le watcher s'il est éteint »,
