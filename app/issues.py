@@ -170,6 +170,43 @@ MODES = {
 }
 
 
+def formater_entete(mode, priorite, timeout, projet, *,
+                     source="CC", dest="CCL", retour="CC",
+                     modele=None, complexite=None) -> str:
+    """Construit le tableau markdown "## En-tête" commun aux issues Bridge_Agent.
+
+    Factorisation (diagnostic #579 §3.2, issue #601) du tableau auparavant
+    construit à la main dans app/issues.py, app/projet_ccw.py et
+    scripts/watcher_issues_inbox.py, avec des divergences entre les trois
+    (TIMEOUT/PRIORITE en dur à certains endroits, COMPLEXITE hors tableau).
+    Format INCHANGÉ par rapport à l'existant : NE PAS modifier sans vérifier
+    en parallèle watcher.py (parsing des champs, extraire_complexite).
+
+    `timeout` est le nombre de secondes SANS le suffixe "s" (ajouté ici).
+    `modele` et `complexite` sont optionnels : absents par défaut, chacun
+    n'ajoute sa ligne que s'il est fourni (COMPLEXITE sur une ligne séparée,
+    hors tableau principal, comme dans app/projet_ccw.py)."""
+    lignes = [
+        "## En-tête\n",
+        "| Champ    | Valeur |",
+        "|----------|--------|",
+        f"| SOURCE   | {source} |",
+        f"| DEST     | {dest} |",
+        f"| RETOUR   | {retour} |",
+        f"| MODE     | {mode} |",
+        f"| PRIORITE | {priorite} |",
+        f"| TIMEOUT  | {timeout}s |",
+        f"| PROJET   | {projet} |",
+    ]
+    if modele:
+        lignes.append(f"| MODELE   | {modele} |")
+    if complexite:
+        lignes.append("")
+        lignes.append(f"| COMPLEXITE | {complexite} |")
+
+    return "\n".join(lignes)
+
+
 def construire_body(data: dict) -> str:
     """Construit le body markdown depuis les champs du formulaire : tableau
     d'en-tête + corps rédigé par Claude Chat.
@@ -188,22 +225,8 @@ def construire_body(data: dict) -> str:
     corps           = data.get("corps", "").strip()
     nom_projet      = data.get("projet", "").strip()
 
-    lignes = [
-        "## En-tête\n",
-        "| Champ    | Valeur |",
-        "|----------|--------|",
-        "| SOURCE   | CC |",
-        "| DEST     | CCL |",
-        "| RETOUR   | CC |",
-        f"| MODE     | {mode} |",
-        f"| PRIORITE | {priorite} |",
-        f"| TIMEOUT  | {timeout}s |",
-        f"| PROJET   | {nom_projet} |",
-    ]
-    if modele_ponctuel:
-        lignes.append(f"| MODELE   | {modele_ponctuel} |")
-
-    entete = "\n".join(lignes)
+    entete = formater_entete(mode, priorite, timeout, nom_projet,
+                              modele=modele_ponctuel or None)
     # Ordre final : en-tête → corps. Les consignes ne sont plus empilées ici
     # (déplacées dans le prompt CCL, issue #211). Corps vide omis pour ne pas
     # laisser de ligne blanche superflue.
