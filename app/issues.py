@@ -339,25 +339,20 @@ def envoyer():
             # Démarrage automatique du watcher (issue #202). Avec l'auto-extinction
             # après inactivité (#200/#201), le watcher du projet peut être éteint au
             # moment où l'on crée une issue : on le rallume ici pour que la tâche
-            # soit prise en charge sans étape manuelle. demarrer_watcher(forcer=False)
-            # est idempotent (no-op si le watcher tourne déjà). Import différé pour
-            # éviter tout cycle d'import entre app.issues et app.watchers.
+            # soit prise en charge sans étape manuelle. redemarrer_si_eteint()
+            # (issue #600) est idempotente (no-op si le watcher tourne déjà). Import
+            # différé pour éviter tout cycle d'import entre app.issues et app.watchers.
             #
             # Garde sur les labels : on ne démarre QUE pour les issues for-linux —
             # une issue for-windows est traitée par CCW, rien à lancer côté Linux.
             # watcher_demarre : True = watcher effectivement (re)démarré (il était
-            # éteint), False = tournait déjà, None = non applicable (for-windows) ou
-            # échec silencieux du démarrage. Un échec ici ne doit JAMAIS transformer
-            # une création d'issue réussie en erreur : try/except large qui retombe
-            # sur None.
+            # éteint), False = tournait déjà ou démarrage échoué (jamais silencieux :
+            # tracé par redemarrer_si_eteint via log.warning, issue #600), None = non
+            # applicable (for-windows).
             watcher_demarre = None
             if "for-linux" in labels.split(","):
-                try:
-                    from app.watchers import demarrer_watcher
-                    demarre, _pid = demarrer_watcher(cfg, forcer=False)
-                    watcher_demarre = demarre
-                except Exception:
-                    watcher_demarre = None
+                from app.watchers import redemarrer_si_eteint
+                watcher_demarre, _pid, _trace = redemarrer_si_eteint(cfg)
             return jsonify(succes=True, url=res.stdout.strip(),
                            watcher_demarre=watcher_demarre)
         else:

@@ -25,6 +25,7 @@ sys.path.insert(0, str(RACINE))
 sys.path.insert(0, str(RACINE / "scripts"))
 
 import watcher_issues_inbox as w  # noqa: E402
+import app.watchers as watchers_mod  # noqa: E402
 
 
 def _cfg_projet(depot="AlainDelree/Bridge_Agent", nom="bridge_agent", rep_travail=None, perimetre_dynamique=False):
@@ -139,7 +140,7 @@ def scenario_5_traiter_relance_chemin_complet_succes(tmp_path_factory):
     w._recuperer_issue = _fausse_recuperation
     w._modifier_corps_gh = _faux_edit_corps
     w.relancer_issue = _faux_relancer
-    w.demarrer_watcher = _faux_demarrer_watcher
+    watchers_mod.demarrer_watcher = _faux_demarrer_watcher
 
     contenu = (
         "| PROJET  | bridge_agent |\n"
@@ -353,7 +354,7 @@ def scenario_15_traiter_relance_sous_dossier_chemin_complet_succes(tmp_path_fact
     w._recuperer_issue = _fausse_recuperation
     w._modifier_corps_gh = _faux_edit_corps
     w.relancer_issue = _faux_relancer
-    w.demarrer_watcher = lambda cfg, forcer=False: (False, 4242)
+    watchers_mod.demarrer_watcher = lambda cfg, forcer=False: (False, 4242)
 
     champs = w.extraire_champs(
         "| PROJET       | bridge_agent |\n"
@@ -396,7 +397,7 @@ def scenario_16_traiter_relance_redemarre_watcher_eteint(tmp_path_factory):
 
     w._recuperer_issue = _fausse_recuperation
     w.relancer_issue = _faux_relancer
-    w.demarrer_watcher = _faux_demarrer_watcher
+    watchers_mod.demarrer_watcher = _faux_demarrer_watcher
 
     champs = w.extraire_champs("| PROJET | bridge_agent |\n| RELANCE | #77 |\n")
     succes, titre, projet, texte, resultat_gh = w._traiter_relance(w.ConfigInbox(), champs)
@@ -428,7 +429,7 @@ def scenario_17_traiter_relance_watcher_deja_actif_pas_de_trace(tmp_path_factory
 
     w._recuperer_issue = _fausse_recuperation
     w.relancer_issue = _faux_relancer
-    w.demarrer_watcher = lambda cfg, forcer=False: (False, 1234)
+    watchers_mod.demarrer_watcher = lambda cfg, forcer=False: (False, 1234)
 
     champs = w.extraire_champs("| PROJET | bridge_agent |\n| RELANCE | #77 |\n")
     succes, titre, projet, texte, resultat_gh = w._traiter_relance(w.ConfigInbox(), champs)
@@ -463,7 +464,7 @@ def scenario_18_traiter_relance_echec_demarrage_watcher_trace_sans_bloquer(tmp_p
 
     w._recuperer_issue = _fausse_recuperation
     w.relancer_issue = _faux_relancer
-    w.demarrer_watcher = _demarrer_watcher_qui_echoue
+    watchers_mod.demarrer_watcher = _demarrer_watcher_qui_echoue
 
     champs = w.extraire_champs("| PROJET | bridge_agent |\n| RELANCE | #77 |\n")
     succes, titre, projet, texte, resultat_gh = w._traiter_relance(w.ConfigInbox(), champs)

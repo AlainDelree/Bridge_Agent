@@ -17,6 +17,7 @@ appel) — ce qui laisse inchangés les autres consommateurs de ce fichier
 app.interruption.interrompre_linux).
 """
 
+import logging
 import os
 import subprocess
 import time
@@ -29,6 +30,8 @@ from flask import jsonify, request
 from app.projets import lister_projets, projet_par_nom
 from app.auth import login_requis  # noqa: F401 (exporté pour l'enregistrement des routes)
 from watcher import Config
+
+log = logging.getLogger(__name__)
 
 
 # ─── Gestion du processus watcher ────────────────────────────────────────────
@@ -80,6 +83,49 @@ def demarrer_watcher(cfg: Config, forcer: bool = True) -> tuple[bool, int | None
                 pass
         time.sleep(0.1)
     return True, None
+
+
+def redemarrer_si_eteint(cfg: Config, *, tracer: bool = False) -> tuple[bool | None, int | None, str]:
+    """Enrobage de demarrer_watcher(cfg, forcer=False) (« relance seulement
+    s'il est éteint »), factorisé (issue #600) à partir de 5 sites qui le
+    dupliquaient avec des comportements divergents en cas d'échec —
+    app/issues.py, app/interruption.py, app/projet_ccw.py,
+    scripts/watcher_issues_inbox.py (×2). Un échec n'est plus jamais
+    silencieux : log.warning systématique (app/projet_ccw.py avalait
+    auparavant l'exception sans aucune trace, ni log ni JSON).
+
+    Garde for-linux : PAS internalisée ici. Dans app/issues.py et
+    app/interruption.py, la garde ne porte pas sur le fait que ce mécanisme
+    (systemctl --user, Linux-only par construction depuis #596) puisse
+    s'appliquer, mais sur le ROUTAGE de l'issue traitée — labels for-linux/
+    for-windows (#164) décidant si CETTE issue relève bien du watcher CCL
+    local plutôt que de CCW. C'est une décision propre à l'appelant (qui a
+    accès aux labels de l'issue), pas à ce helper (qui ne reçoit qu'un cfg de
+    projet et n'a aucune notion de labels) : elle reste à ces 2 sites,
+    inchangée. Les 3 autres sites ne l'ont jamais eue car ils visent toujours
+    un watcher for-linux par construction (projet bridge_agent lui-même, ou
+    contexte déjà filtré) — rien à y ajouter.
+
+    Retourne (demarre, pid, trace) : demarre=True si le watcher a été
+    effectivement (re)lancé à cet appel, False s'il tournait déjà, None si le
+    démarrage a échoué (distinction reprise d'app/interruption.py, pour ne
+    pas confondre « rien à faire » et « échec ») ; trace est une chaîne prête
+    à insérer dans un commentaire GitHub (préfixée par deux sauts de ligne,
+    format repris d'app/interruption.py et scripts/watcher_issues_inbox.py)
+    quand tracer=True — vide sinon, y compris en cas d'échec."""
+    try:
+        demarre, pid = demarrer_watcher(cfg, forcer=False)
+    except Exception as e:
+        log.warning(f"Redémarrage auto du watcher CCL « {cfg.nom} » échoué : {e}")
+        trace = (f"\n\n⚠️ Redémarrage auto du watcher CCL « {cfg.nom} » échoué : {e}"
+                  if tracer else "")
+        return None, None, trace
+
+    trace = ""
+    if demarre and tracer:
+        trace = (f"\n\n⚙️ Watcher CCL du projet « {cfg.nom} » redémarré "
+                  f"automatiquement (il était éteint — pid {pid}).")
+    return demarre, pid, trace
 
 
 def arreter_watcher(cfg: Config) -> tuple[bool, str]:
