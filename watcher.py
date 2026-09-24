@@ -3674,10 +3674,17 @@ def _nettoyer_orphelin_verrou_perime(verrou: Path) -> None:
         )
 
 
-def acquerir_verrou(rep_travail: Path, timeout_projet: int) -> Path | None:
+def acquerir_verrou(rep_travail: Path, timeout_projet: int, mode: str = "") -> Path | None:
     """Tente de poser un verrou exclusif sur `rep_travail`. Retourne le chemin du
     verrou si acquis, ou None si un AUTRE traitement le détient déjà (verrou
     vivant) — l'appelant doit alors s'abstenir de lancer claude.
+
+    `mode` (issue #609) : consigné dans le verrou (champ `mode=`) en plus de
+    `pid=`/`projet=`/`rep=` — permet à taches_en_cours() ci-dessous, et donc à
+    new_issue.py (process séparé, qui n'a pas accès à `issues_en_cours` en
+    mémoire), de savoir si la tâche en cours pour un projet est un mode_write
+    tournant directement dans REP_TRAVAIL plutôt que dans un worktree isolé
+    (repli #589) — l'information que new_issue.py doit signaler visiblement.
 
     Un verrou plus vieux que la durée de traitement plausible d'une issue est
     considéré comme PÉRIMÉ (orphelin d'un watcher tué sans passer par le finally)
@@ -3774,7 +3781,11 @@ def acquerir_verrou(rep_travail: Path, timeout_projet: int) -> Path | None:
         log.warning(f"Pose du verrou {verrou} impossible ({e}) — on poursuit sans verrou fichier.")
         return verrou   # dégradé, comme ci-dessus
     try:
-        os.write(fd, f"pid={os.getpid()} projet={CFG.nom} rep={rep_travail}\n".encode("utf-8"))
+        # `rep=` reste en DERNIÈRE position (avant #609 comme après) : c'est le
+        # seul champ dont la valeur (un chemin) pourrait en théorie contenir un
+        # caractère imprévu — le garder en fin de ligne évite de perturber le
+        # parsing par regex des champs mode/projet/pid qui le précèdent.
+        os.write(fd, f"pid={os.getpid()} projet={CFG.nom} mode={mode} rep={rep_travail}\n".encode("utf-8"))
     finally:
         os.close(fd)
     return verrou
@@ -3791,6 +3802,44 @@ def liberer_verrou(verrou: Path | None):
         pass
     except OSError as e:
         log.warning(f"Libération du verrou {verrou} impossible ({e}).")
+
+
+def taches_en_cours(nom_projet: str) -> list[dict]:
+    """Tâches actuellement en traitement pour `nom_projet`, déterminées via les
+    verrous fichier actifs sous DOSSIER_VERROUS (issue #609). Point d'entrée
+    PUBLIC pour app/watchers.py (process new_issue.py, séparé du process
+    watcher qui traite réellement les issues) : `issues_en_cours`, en mémoire,
+    n'est visible que dans le process watcher lui-même — ce garde-fou fichier
+    (déjà posé par acquerir_verrou pour TOUTE issue, quel que soit le mode,
+    cf. #189) comble ce manque sans nouveau mécanisme dédié.
+
+    Un verrou dont le pid propriétaire (le watcher qui l'a posé, champ `pid=`)
+    n'est plus vivant est ignoré : verrou périmé (watcher mort brutalement),
+    pas une tâche active — même sonde (_pid_vivant) que acquerir_verrou.
+
+    Retourne une liste de dict {"rep": str, "mode": str} — une entrée par
+    verrou actif de ce projet (plusieurs si MAX_WRITE_PARALLELE > 1), vide si
+    aucune tâche en cours."""
+    resultat = []
+    if not DOSSIER_VERROUS.is_dir():
+        return resultat
+    for verrou in DOSSIER_VERROUS.glob("*.lock"):
+        try:
+            contenu = verrou.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        champs = dict(re.findall(r"(\w+)=(\S*)", contenu))
+        if champs.get("projet") != nom_projet:
+            continue
+        pid = champs.get("pid")
+        try:
+            vivant = pid is not None and _pid_vivant(int(pid))
+        except ValueError:
+            vivant = False
+        if not vivant:
+            continue
+        resultat.append({"rep": champs.get("rep", ""), "mode": champs.get("mode", "")})
+    return resultat
 
 
 def _empreinte_configs() -> dict[str, bytes]:
@@ -4211,7 +4260,7 @@ def _traiter_issue_synchrone(issue: dict, dry_run: bool, chemin_worktree: Path |
     # issues_en_cours, sans ACK) pour qu'elle soit reprise au prochain cycle, une
     # fois le verrou libéré. issues_en_cours ne protège que dans CE process ; le
     # verrou fichier étend la protection entre process.
-    verrou = acquerir_verrou(cwd_effectif, timeout)
+    verrou = acquerir_verrou(cwd_effectif, timeout, mode)
     if verrou is None:
         log.warning(
             f"  Issue #{numero} différée : un autre traitement détient déjà le verrou "

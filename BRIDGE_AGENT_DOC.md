@@ -1477,6 +1477,30 @@ une horloge périmée ne reflétant pas le travail réel effectué. `DELAI_INACT
 réglage est exposé par projet dans l'onglet « Configuration » (issue #201) et vit
 dans le `.conf` du projet.
 
+**4. Redémarrage forcé différé pendant une tâche en cours** (issue #609).
+`systemctl --user restart` coupe le process watcher — et toute tâche `claude`
+qu'il a en cours — sans distinction. Vécu sur `relecture_bridge` (issue #73) :
+juste après le lancement d'une issue `mode_write`, une configuration
+enregistrée via l'onglet « Configuration » (bouton « Enregistrer et
+relancer ») a redémarré le watcher pendant que la tâche tournait ; au
+redémarrage, l'issue a été reprise, son worktree dédié était « déjà pris » par
+la première tentative (repli #589 ci-dessous), et le travail — non isolé — a
+été embarqué dans un commit automatique d'un autre outil puis poussé par
+erreur. Depuis #609, un redémarrage **forcé** (`demarrer_watcher_ou_differer`,
+`app/watchers.py`) d'un watcher qui a une tâche en cours — détectée via les
+verrous fichier de `watcher.py` (`logs/verrous/*.lock`, cf. §"Verrous
+anti-collision inter-process, issue #189" plus bas — champ `projet=`,
+sondé vivant), seul canal visible depuis `new_issue.py` puisque
+`issues_en_cours` reste en mémoire du process watcher — n'est **jamais**
+exécuté immédiatement. Il est mémorisé, et un thread démon de `new_issue.py`
+(`surveiller_redemarrages_differes`) l'exécute automatiquement dès la fin de
+la tâche. L'onglet Configuration et l'onglet Watchers l'indiquent clairement
+(« redémarrage différé, appliqué à la fin de la tâche en cours »). Un
+redémarrage `forcer=False` (`redemarrer_si_eteint`, watcher éteint relancé à
+la création d'une issue — point 2 ci-dessus) n'est par construction jamais
+concerné : il ne redémarre qu'un watcher **inactif**, qui ne peut pas avoir de
+tâche en cours.
+
 **Cycle complet.** Watcher éteint pour inactivité → on crée une issue for-linux
 → le watcher est rallumé automatiquement (#202) → il traite la tâche → après
 `DELAI_INACTIVITE_MIN` minutes sans nouvelle issue traitable, il se rééteint
@@ -1856,6 +1880,16 @@ séquentiellement dans `REP_TRAVAIL` (hors périmètre de cette issue).
   toute autre raison, repli propre sur le traitement séquentiel classique
   (l'issue attend qu'un slot se libère au prochain cycle) — jamais
   d'exception propagée.
+- **Signal d'interface (issue #609)** : `new_issue.py` ne peut pas distinguer
+  le premier slot (normal) du repli #589 (échec de création) — les deux
+  laissent une tâche `mode_write` tourner directement dans `REP_TRAVAIL`, même
+  risque dans les deux cas si Alain touche (merge, push) le dossier principal
+  avant la fin. `app.watchers.repli_rep_travail` (via le verrou fichier de
+  `watcher.py`, champ `mode=`, cf. §"Redémarrage forcé différé..." plus haut)
+  ne cherche donc pas à les différencier : dès qu'une tâche `mode_write` est
+  en cours dans `REP_TRAVAIL`, qu'importe la raison, l'onglet Watchers
+  l'affiche (colonne Statut) et un bandeau global (visible sur tous les
+  onglets) le signale.
 - **CHANGELOG** : dans un worktree, CCL reçoit une consigne de prompt dédiée
   lui demandant d'écrire son entrée dans `CHANGELOG-<N>.md` à la racine du
   worktree plutôt que dans `CHANGELOG.md` directement, pour éviter un

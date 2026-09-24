@@ -32,6 +32,7 @@ from app import create_app, etat
 from app.tunnel import demarrer_tunnel, arreter_tunnel
 from app.cycle_vie import surveiller_heartbeat
 from app.notifications_poller import surveiller_transitions
+from app.watchers import surveiller_redemarrages_differes
 from app.issues_inbox import (watcher_inbox_actif, demarrer_watcher_inbox,
                               arreter_watcher_inbox)
 
@@ -180,6 +181,14 @@ def main():
     # Daemon → n'empêche jamais l'arrêt du processus. Désactivable via
     # BRIDGE_NOTIF_SCOPE=off.
     Thread(target=surveiller_transitions, daemon=True).start()
+
+    # Exécution des redémarrages de watcher différés (issue #609) : un
+    # redémarrage forcé demandé (« Enregistrer et relancer », relances
+    # manuelles) pendant qu'une tâche est en cours n'est jamais exécuté tout
+    # de suite (cf. app.watchers.demarrer_watcher_ou_differer) — ce thread
+    # sonde périodiquement et l'exécute dès la fin de la tâche. Daemon →
+    # n'empêche jamais l'arrêt du processus.
+    Thread(target=surveiller_redemarrages_differes, daemon=True).start()
 
     if not args.no_browser:
         Timer(1.2, lambda: webbrowser.open(f"{schema}://localhost:{args.port}")).start()

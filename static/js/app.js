@@ -314,12 +314,20 @@ async function sauvegarderConfig(relancer) {
   msg.className   = 'message ' + (json.succes ? 'succes' : 'erreur');
   msg.style.display = 'block';
   if (json.succes && relancer) {
-    await fetch('/lancer-watcher', {
+    const repW  = await fetch('/lancer-watcher', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({projet: nom, relancer: true})
     });
-    msg.textContent += ' Watcher relancé.';
+    const jsonW = await repW.json();
+    // Issue #609 : un redémarrage forcé pendant qu'une tâche est en cours
+    // n'est jamais exécuté tout de suite (il la couperait) — il est différé
+    // jusqu'à sa fin (app.watchers.demarrer_watcher_ou_differer), et
+    // l'interface doit le dire clairement plutôt que de laisser croire à un
+    // redémarrage immédiat.
+    msg.textContent += jsonW.differe
+      ? ' ⏳ Watcher occupé (tâche en cours) — redémarrage différé, appliqué automatiquement à la fin de la tâche en cours.'
+      : ' Watcher relancé.';
   }
 }
 
@@ -4667,6 +4675,35 @@ async function envoyerIssue() {
   }
 }
 
+// Statut affiché dans la colonne « Statut » de l'onglet Watchers (issue #609) :
+// signale visiblement une tâche en cours (bouton « Enregistrer et relancer »
+// dangereux à cet instant), un redémarrage déjà différé en attente de la fin
+// de cette tâche, et surtout le cas à risque — une tâche mode_write tournant
+// directement dans REP_TRAVAIL, hors worktree isolé. Deux raisons possibles,
+// non distinguées ici (même risque dans les deux cas, cf. app.watchers.
+// repli_rep_travail) : le premier « slot » d'une parallélisation mode_write
+// (normal, fréquent), ou un repli après échec de création de worktree
+// (issue #589, celui qui a coûté le travail perdu de relecture_bridge #73).
+// Dans tous les cas, le dossier principal ne doit pas être touché (merge,
+// push) avant la fin.
+function statutWatcher(w) {
+  if (w.repli_rep_travail) {
+    return '<span style="color:#a32d2d;font-weight:600" '
+         + 'title="Une tâche mode_write tourne directement dans REP_TRAVAIL (pas dans un worktree isolé) — '
+         + 'ne pas merger/pousser le dossier principal de ce projet avant la fin.">'
+         + '⚠️ REP_TRAVAIL en écriture (hors worktree)</span>';
+  }
+  if (w.redemarrage_differe) {
+    return '<span style="color:#b5883a" '
+         + 'title="Redémarrage demandé, différé jusqu\'à la fin de la tâche en cours.">'
+         + '⏳ redémarrage différé</span>';
+  }
+  if (w.tache_en_cours) {
+    return '<span style="color:#888">⏳ tâche en cours</span>';
+  }
+  return '';
+}
+
 async function chargerWatchers() {
   const rep  = await fetch('/watchers');
   const liste = await rep.json();
@@ -4695,7 +4732,8 @@ async function chargerWatchers() {
       <td style="padding:10px 12px;font-size:13px;color:#888">${w.depot}</td>
       <td style="padding:10px 0;font-size:12px;color:#aaa">
         ${w.actif ? 'pid ' + w.pid : '—'}
-      </td>`;
+      </td>
+      <td style="padding:10px 12px;font-size:12px">${statutWatcher(w)}</td>`;
     tbody.appendChild(tr);
   }
   // Recalculer "cb-tous" en fonction de l'état restauré : coché seulement
@@ -5443,6 +5481,43 @@ async function rafraichirRateLimit() {
 }
 rafraichirRateLimit();
 setInterval(rafraichirRateLimit, 30000);
+
+// ─── Bandeau global « écriture directe dans REP_TRAVAIL » (issue #609) ─────
+// Visible sur TOUS les onglets, même principe que le bandeau éval Windows
+// (#454) et l'alarme inbox (#483) ci-dessus. Deux situations distinctes
+// déclenchent ce bandeau (non différenciées ici, même risque dans les deux
+// cas — voir app.watchers.repli_rep_travail) : le premier « slot » d'une
+// parallélisation mode_write (normal, fréquent dès qu'une seule tâche
+// mode_write tourne), ou un repli après échec de création de worktree
+// (issue #589 — celui qui a coûté le travail perdu de relecture_bridge #73,
+// redémarrage du watcher pendant la tâche, reprise sur worktree déjà pris,
+// travail non isolé embarqué dans un commit puis poussé par erreur). Dans
+// les deux cas, le dossier principal du projet est en cours d'écriture et ne
+// doit PAS être touché (merge, push) avant la fin. Réutilise /watchers (déjà
+// interrogé par l'onglet Watchers), à la même cadence que le rate limit
+// ci-dessus plutôt qu'un polling dédié de plus.
+async function rafraichirReplisRepTravail() {
+  const bandeau = document.getElementById('bandeau-repli-rep-travail');
+  if (!bandeau) return;
+  try {
+    const rep   = await fetch('/watchers');
+    const liste = await rep.json();
+    const enRepli = liste.filter(w => w.repli_rep_travail).map(w => w.nom);
+    if (enRepli.length) {
+      bandeau.textContent = '⚠️ Tâche mode_write en cours directement dans REP_TRAVAIL '
+        + '(hors worktree isolé) pour : ' + enRepli.join(', ')
+        + ' — ne pas merger/pousser le dossier principal avant la fin.';
+      bandeau.style.display = 'block';
+    } else {
+      bandeau.style.display = 'none';
+    }
+  } catch(e) {
+    // Best-effort, silencieux : mieux vaut garder le dernier état connu
+    // plutôt qu'un bandeau qui clignote sur une erreur réseau transitoire.
+  }
+}
+rafraichirReplisRepTravail();
+setInterval(rafraichirReplisRepTravail, 30000);
 
 // ─── Canal SSE de début/fin d'issue (issues #350, #515) ───────────────────
 // Ouvert une seule fois ici, au chargement de la page — indépendamment de

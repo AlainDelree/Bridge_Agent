@@ -38,6 +38,12 @@
   </div>
   {% endif %}
 
+  <!-- ─── Bandeau global : tâche(s) mode_write en cours directement dans
+       REP_TRAVAIL, hors worktree isolé (repli #589, issue #609) — visible sur
+       TOUS les onglets, comme le bandeau éval Windows ci-dessus. Alimenté par
+       rafraichirReplisRepTravail() (polling /watchers, static/js/app.js). ─ -->
+  <div id="bandeau-repli-rep-travail" class="bandeau-eval-windows orange" style="display:none"></div>
+
   <!-- ─── Bandeau global : sélecteur de projet (pilote tous les onglets sauf Watchers) ─ -->
   <div class="bandeau-projet">
 
@@ -362,6 +368,7 @@
           <th style="text-align:left;font-size:12px;color:#666;font-weight:500;padding:8px 12px">Projet</th>
           <th style="text-align:left;font-size:12px;color:#666;font-weight:500;padding:8px 12px">Dépôt</th>
           <th style="text-align:left;font-size:12px;color:#666;font-weight:500;padding:8px 0;width:120px">PID</th>
+          <th style="text-align:left;font-size:12px;color:#666;font-weight:500;padding:8px 12px">Statut</th>
         </tr>
       </thead>
       <tbody id="corps-watchers"></tbody>
