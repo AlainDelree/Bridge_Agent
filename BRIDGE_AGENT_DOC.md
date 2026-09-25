@@ -2372,21 +2372,6 @@ robustesse.
 > paramètre `$LettrePartage` (issue #149) et sa logique de résolution de
 > lettre de lecteur réseau n'ont donc plus lieu d'être.
 
-**(obsolète — provisioning distant via VM, conservé à titre historique)
-Lancer le provisioning (une fois Windows installé et la session ouverte) :**
-
-```bash
-# Côté CCL (Linux), VM démarrée avec Guest Additions :
-export CCW_ADMIN_PASSWORD='…'                       # jamais committé
-python3 provisioning/windows/lancer_provisioning.py --dry-run   # vérif
-python3 provisioning/windows/lancer_provisioning.py             # copie + exécute
-```
-
-Puis, dans la VM : renseigner `TOPIC_NTFY` dans `configs\ccw.conf` et
-authentifier Claude (`ANTHROPIC_API_KEY` en variable d'environnement, ou
-`claude auth login` une fois). Sur le PC physique, ces étapes se font
-directement en local, sans orchestration distante via `VBoxManage`.
-
 **Renouveler les tokens du service (issue #168).** Les tokens `GH_TOKEN` et
 `CLAUDE_CODE_OAUTH_TOKEN` du service `CCW-Watcher` sont passés via
 `AppEnvironmentExtra` (NSSM). Piège connu : les deux paires doivent être
@@ -2473,8 +2458,7 @@ Fine-grained tokens) :
 - **Permissions** → *Issues* = **Read and write**, *Metadata* = **Read-only**
   (Metadata est requis implicitement) ;
 - **Expiration** → **la MÊME date que le token Bridge_Agent** (≈ **17 octobre
-  2026**, aligné sur l'éval Windows, cf. §16.1) — surtout **ne pas laisser
-  dériver** vers une autre échéance.
+  2026**) — surtout **ne pas laisser dériver** vers une autre échéance.
 
 > **Règle d'or :** tout nouveau token CCW réutilise la date d'expiration commune
 > (≈ mi-octobre 2026) pour ne garder **qu'une seule fenêtre de maintenance** —
@@ -2482,104 +2466,6 @@ Fine-grained tokens) :
 > Au renouvellement, on recale simplement tout le monde sur la nouvelle date
 > commune. Ne créer aucun token depuis ce dépôt (action manuelle GitHub) : le
 > script se contente de rappeler la marche à suivre.
-
-### 16.1 Maintenance périodique (renouvellement à 90 jours)
-
-> **⚠️ Sous-section entièrement obsolète (PC physique, issue #446), conservée
-> à titre historique.** Elle décrit la procédure de recréation de la VM
-> `CCW-Build` à l'expiration de son éval Windows 90 jours. Sur le PC fixe
-> physique, il n'y a **plus de VM ni d'éval à durée limitée** — cette
-> procédure ne s'applique plus. Le renouvellement des tokens GitHub/Claude
-> (étape 2 ci-dessous) reste en revanche une opération valide en tant que
-> telle, indépendamment de la VM, à refaire simplement à l'échéance propre
-> de chaque token.
-
-> **Procédure unique à suivre le jour de l'échéance.** Cette sous-section est
-> un mode d'emploi séquentiel autonome : elle renvoie aux scripts existants
-> (détaillés plus haut dans le §16) plutôt que de réexpliquer le provisioning.
-> Rien d'autre du §16 n'est nécessaire pour l'exécuter.
-
-**Repères de dates**
-
-| Repère | Valeur | Source |
-|--------|--------|--------|
-| Date d'installation Windows | **2026-08-17** | `provisioning/windows/eval-expiration.json` (`date_installation`) |
-| Expiration éval Windows (90 j) | **2026-11-15** | idem (`date_expiration`, recalculée : install + 90 j) |
-| Expiration token GitHub | **≈ 2026-10-17** (aligné volontairement, non stocké) | *pas de métadonnée dédiée — voir note ci-dessous* |
-
-> Le token GitHub fine-grained a été créé avec une durée alignée sur l'éval
-> Windows (~90 j) pour n'avoir **qu'une seule fenêtre de maintenance** à
-> retenir : Windows et le token expirent ensemble, vers le **17 octobre 2026**.
-> Sa date exacte n'est pas conservée dans un fichier du dépôt (elle vit dans
-> les réglages GitHub du token) ; se fier à l'alignement et à l'échéance
-> Windows comme rappel commun. Si à l'avenir cette date est stockée, l'ajouter
-> à `eval-expiration.json` et à ce tableau.
-
-**Étape 0 — Vérifier où on en est (sans rien casser)**
-
-```bash
-python3 provisioning/windows/verifier_expiration_ccw.py
-```
-
-Affiche les jours restants avant l'expiration Windows. À ≤ 10 jours (ou déjà
-expiré) : avertissement + code de sortie 2. Sinon : confirmation calme (code 0).
-C'est le déclencheur de toute la procédure ci-dessous. *(Si la date d'install
-réelle a changé, ajuster `date_installation` dans `eval-expiration.json` : les
-jours restants sont recalculés à partir de cette date.)*
-
-**Étape 1 — Recréer la VM à l'expiration**
-
-À faire **avant** la date d'expiration (sans urgence) : après expiration,
-Windows redémarre toutes les heures et casse en continu le service `CCW-Watcher`.
-
-```bash
-# 1a. Détruire et recréer la coquille VM (VBoxManage) — n'attache PAS l'ISO :
-python3 provisioning/windows/creer_vm_ccw.py --recreate
-
-# 1b. Ré-attacher un ISO Windows 11 IoT Enterprise LTSC 2024 :
-#     ⚠️ si l'éval a expiré, RE-TÉLÉCHARGER un ISO frais (une nouvelle éval
-#     90 j) — l'ancien ISO redonnerait une install déjà entamée.
-VBoxManage storageattach CCW-Build --storagectl SATA \
-  --port 1 --device 0 --type dvddrive --medium /chemin/vers/windows.iso
-#     (+ placer autounattend.xml à la racine d'une clé/ISO secondaire, cf. §16)
-
-# 1c. Démarrer la VM, laisser l'installation automatisée se dérouler, puis
-#     rejouer le provisioning logiciel (phase 2, dans la VM via CCL) :
-export CCW_ADMIN_PASSWORD='…'                                   # jamais committé
-python3 provisioning/windows/lancer_provisioning.py --dry-run   # vérif
-python3 provisioning/windows/lancer_provisioning.py             # copie + exécute
-```
-
-Après recréation, mettre à jour `date_installation` (et `date_expiration`)
-dans `provisioning/windows/eval-expiration.json` avec la nouvelle date d'install
-réelle, pour que l'étape 0 reparte sur la bonne échéance.
-
-**Étape 2 — Renouveler les tokens (GitHub + Claude)**
-
-Régénérer les deux tokens côté fournisseurs :
-- **GitHub** : nouveau *fine-grained token* (réglages GitHub), durée ~90 j
-  pour rester aligné sur l'éval Windows.
-- **Claude** : nouveau `CLAUDE_CODE_OAUTH_TOKEN` via `claude setup-token`.
-
-Puis les injecter dans le service `CCW-Watcher`, **dans la VM**, sans
-reconstruire à la main la chaîne `AppEnvironmentExtra` (piège du séparateur —
-un espace au lieu du saut de ligne `` `n`` corrompt silencieusement `GH_TOKEN`
-→ « Bad credentials ») :
-
-```powershell
-# Depuis C:\CCW\Bridge_Agent, console PowerShell admin :
-powershell -ExecutionPolicy Bypass -File provisioning\windows\mettre_a_jour_tokens_ccw.ps1
-```
-
-Le script demande les deux valeurs masquées (`Read-Host -AsSecureString`),
-applique `nssm set … AppEnvironmentExtra` + `nssm restart CCW-Watcher`, puis
-affiche les 10 dernières lignes de `logs\ccw-service.log` (OK si aucune ligne
-`ERROR`, sinon code de sortie 2).
-
-**Récapitulatif express :** vérifier (`verifier_expiration_ccw.py`) → recréer
-la VM (`creer_vm_ccw.py --recreate` + ré-attacher un ISO frais +
-`lancer_provisioning.py`) → renouveler les tokens
-(`mettre_a_jour_tokens_ccw.ps1`) → mettre à jour `eval-expiration.json`.
 
 ### 16.2 Onglet « CCW » de l'interface web (issue #174, SSH depuis #447)
 
@@ -2655,21 +2541,6 @@ nécessaire — l'issue est directe.
 
 **Template d'issue build (à adapter par projet) :**
 
-> **⚠️ Étape 0 et note `safe.directory` obsolètes (PC physique, issue #446).**
-> La contrainte `safe.directory` de git ne se déclenche que sur un chemin
-> **UNC** dont le propriétaire diffère de l'utilisateur courant — c'était le
-> cas de l'ancien partage VirtualBox `\\VBoxSvr\CCW_Share`. `C:\CCW_Share`
-> est un chemin **local** appartenant au compte `AlainW` qui exécute
-> `CCW-Watcher` : cette contrainte ne se pose plus, l'étape 0 est donc à
-> **sauter**. Conservée ci-dessous à titre historique.
-
-~~Étape 0 — Ajouter l'exception `safe.directory` (nécessaire sur chemin UNC,
-une seule fois par sous-dossier) :~~
-
-```bash
-git config --global --add safe.directory '%(prefix)///VBoxSvr/CCW_Share/CCW/<projet>'
-```
-
 Étape 1 — Si `C:\CCW_Share\CCW\<projet>\` n'existe pas ou n'est pas un dépôt
 git : cloner `https://github.com/AlainDelree/<Projet>.git` dans
 `C:\CCW_Share\CCW\<projet>\`. Sinon : `git pull --ff-only`.
@@ -2688,25 +2559,15 @@ PyInstaller. Ne pas committer ni pousser.
 
 **Récupération des artefacts :** manuelle, depuis Linux via le point de
 montage réseau local vers `C:\CCW_Share` (accès réseau local au PC
-physique — plus de partage VirtualBox ; chemin exact de montage côté CCL
-selon la configuration réseau en place).
+physique ; chemin exact de montage côté CCL selon la configuration réseau
+en place).
 
 **Dépôts sources :** publics sur GitHub — aucun token Contents requis.
 Le token `CCW-Watcher` (Issues read/write sur Bridge_Agent) suffit.
 
-**Note safe.directory (obsolète, conservée à titre historique) :** git
-refusait de travailler sur le chemin UNC de l'ancien partage VirtualBox
-dont le propriétaire différait de l'utilisateur courant. L'exception était
-à ajouter en étape 0 de chaque première issue sur un nouveau sous-dossier.
-Sans objet avec le chemin local `C:\CCW_Share` du PC physique.
-
-**Note staging local (issue #297, historique — partage VirtualBox) :**
-pattern général de contournement de la corruption de fichiers constatée sur
-l'ancien partage VirtualBox `\\VBOXSVR\CCW_Share`, et checklist par projet
-buildé (dont Scrabble) — voir `BUILD_WINDOWS_CCW.md`. À revalider sur le
-chemin local `C:\CCW_Share` du PC physique (la cause du problème étant
-spécifique aux partages réseau VirtualBox, elle ne s'applique probablement
-plus, mais ce n'est pas encore confirmé).
+**Note staging local (issue #297) :** pattern général de contournement
+d'une corruption de fichiers constatée par le passé, et checklist par
+projet buildé (dont Scrabble) — voir `BUILD_WINDOWS_CCW.md`.
 
 ### 16.4 Interrompre une issue CCW coincée (issue #287)
 
@@ -2751,18 +2612,18 @@ fichier existe, même après redémarrage.
 **Bouton « Interrompre » (issue #323, implémenté).**
 
 > **⚠️ Obsolète sur PC physique (issue #446).** Comme pour l'onglet CCW
-> (§16.2), ce bouton s'appuie sur `VBoxManage guestcontrol` pour agir à
-> distance sur la VM : il est **inopérant** sur un PC physique. En
-> attendant sa refonte, utiliser la **procédure manuelle** décrite
-> ci-dessus (redémarrage du service + suppression des `.lock`).
+> (§16.2), ce bouton s'appuie sur l'ancien mécanisme de pilotage à distance
+> de la VM : il est **inopérant** sur un PC physique. En attendant sa
+> refonte, utiliser la **procédure manuelle** décrite ci-dessus
+> (redémarrage du service + suppression des `.lock`).
 
 Le bouton ⛔ « Interrompre
 cette issue », affiché sur toute issue ouverte ni `done` ni `needs-human` dans
 l'interface, automatise cette procédure à distance depuis Linux pour les
 issues `for-windows` : `POST /interrompre` (`app/interruption.py::
 interrompre_windows`) copie et exécute `provisioning/windows/
-interrompre_projet_ccw.ps1` dans la VM via `VBoxManage guestcontrol` — arrêt
-du service NSSM (`nssm stop <Service>`), vérification bornée (~5 s, kill
+interrompre_projet_ccw.ps1` à distance — arrêt du service NSSM (`nssm stop
+<Service>`), vérification bornée (~5 s, kill
 ciblé si besoin) que l'arbre de process du service (watcher + éventuel
 `claude` orphelin) est bien mort, puis suppression des `.lock` de
 `<RepDepot>\logs\verrous\` **uniquement** si cet arbre est confirmé mort —
