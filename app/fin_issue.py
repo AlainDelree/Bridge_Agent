@@ -1,6 +1,9 @@
 """
 app/fin_issue.py — SSE de fin/début d'issue pour l'onglet Résultats (issues
-#350, #515).
+#350, #515) + événements du dépôt issues_inbox/ (issue #631, backend seul :
+`fichier_recu`, `creation_issue`, `fichier_refuse` — préparent la fusion de
+l'onglet « Résultats inbox » dans Résultats à l'étape 9b ; ignorés sans effet
+par le code actuel, qui ne connaît que `fin_issue`/`debut_issue`).
 
 Objectif : rafraîchir la liste de l'onglet Résultats en moins d'une seconde
 après une transition d'issue (démarrage OU clôture), sans polling GitHub.
@@ -41,6 +44,21 @@ DELAI_PING = 30   # s — garde la connexion /stream ouverte (proxys, navigateur
 _verrou_abonnes = Lock()
 
 
+def _diffuser(nom_evenement: str, payload: dict) -> None:
+    """Pousse `event: <nom_evenement>\\ndata: <payload JSON>\\n\\n` à toutes
+    les files SSE actuellement abonnées (app.config["FIN_ISSUE_ABONNES"]).
+    Cœur commun à `_pousser_evenement` (fin/début d'issue) et aux émetteurs
+    des événements issues_inbox (issue #631) — factorise la construction du
+    message SSE et la copie sous verrou de la liste d'abonnés, seule partie
+    qui différait déjà entre les deux avant #631."""
+    evenement = f"event: {nom_evenement}\ndata: " + json.dumps(payload) + "\n\n"
+    abonnes = current_app.config.setdefault("FIN_ISSUE_ABONNES", [])
+    with _verrou_abonnes:
+        cibles = list(abonnes)
+    for file_attente in cibles:
+        file_attente.put(evenement)
+
+
 def _pousser_evenement(nom_evenement: str):
     """Factorise le POST JSON {"projet":..., "numero":...} → diffusion de
     `event: <nom_evenement>` à toutes les files abonnées. Partagé par
@@ -51,12 +69,7 @@ def _pousser_evenement(nom_evenement: str):
     if not projet or numero is None:
         return jsonify(ok=False, erreur="projet et numero requis"), 400
 
-    evenement = f"event: {nom_evenement}\ndata: " + json.dumps({"projet": projet, "numero": numero}) + "\n\n"
-    abonnes = current_app.config.setdefault("FIN_ISSUE_ABONNES", [])
-    with _verrou_abonnes:
-        cibles = list(abonnes)
-    for file_attente in cibles:
-        file_attente.put(evenement)
+    _diffuser(nom_evenement, {"projet": projet, "numero": numero})
     return jsonify(ok=True)
 
 
@@ -77,6 +90,86 @@ def notifier_debut_issue():
     d'une issue encore inconnue du navigateur. Pas d'authentification, même
     raison que notifier_fin_issue."""
     return _pousser_evenement("debut_issue")
+
+
+# ─── Événements issues_inbox/ (issue #631, backend seul — §3, §17.3 du DOC) ──
+# Même famille que /notifier-fin-issue et /notifier-debut-issue ci-dessus :
+# appel best-effort par un script local (timeout court côté appelant, aucune
+# authentification requise ici), échec silencieux si new_issue.py n'est pas
+# lancé. Trois émetteurs :
+#   - fichier_recu     : scripts/watcher_issues_inbox.py, dès qu'il prend en
+#     charge un fichier déposé dans issues_inbox/ (avant même son parsing) ;
+#   - creation_issue   : après CHAQUE création RÉUSSIE d'une issue (jamais
+#     pour un bloc RELANCE, qui n'en crée aucune) — soit par
+#     watcher_issues_inbox.py (process séparé, via la route POST ci-dessous),
+#     soit par app.issues.envoyer() (formulaire web, MÊME process que
+#     new_issue.py → appel direct à emettre_creation_issue(), sans HTTP) ;
+#   - fichier_refuse   : pour chaque bloc refusé (fichier mono-issue entier,
+#     ou un bloc d'un lot multi-issues, §3.13) — un événement par bloc, dans
+#     l'ordre de traitement.
+# Pour un fichier multi-blocs, watcher_issues_inbox.py émet donc : un
+# fichier_recu, puis une suite de creation_issue/fichier_refuse (un par
+# bloc, dans l'ordre) — jamais groupés.
+
+def emettre_creation_issue(projet: str, numero: int, titre: str, fichier: str | None = None) -> None:
+    """Diffuse l'événement SSE `creation_issue`. Appelée EN DIRECT (même
+    process, pas de HTTP) par `app.issues.envoyer()` juste après une création
+    réussie via le formulaire web ; `notifier_creation_issue()` ci-dessous
+    l'appelle aussi, depuis la route POST utilisée par
+    `scripts/watcher_issues_inbox.py` (process séparé). `fichier` est le nom
+    du fichier d'origine dans issues_inbox/, absent (None) pour une création
+    par formulaire."""
+    _diffuser("creation_issue", {
+        "projet": projet, "numero": numero, "titre": titre, "fichier": fichier,
+    })
+
+
+def notifier_fichier_recu():
+    """POST /notifier-fichier-recu (issue #631) — appelé par
+    scripts/watcher_issues_inbox.py dès qu'il prend en charge un fichier
+    déposé dans issues_inbox/ (avant tout parsing/validation). Corps JSON
+    {"fichier": <nom>}. Pousse un événement SSE `fichier_recu`. Pas
+    d'authentification, même raison que notifier_fin_issue."""
+    corps = request.get_json(silent=True) or {}
+    fichier = corps.get("fichier")
+    if not fichier:
+        return jsonify(ok=False, erreur="fichier requis"), 400
+    _diffuser("fichier_recu", {"fichier": fichier})
+    return jsonify(ok=True)
+
+
+def notifier_creation_issue():
+    """POST /notifier-creation-issue (issue #631) — appelé par
+    scripts/watcher_issues_inbox.py après chaque création réussie d'une issue
+    depuis un fichier d'issues_inbox/ (jamais pour un bloc RELANCE). Corps
+    JSON {"projet", "numero", "titre", "fichier"} (fichier = nom du fichier
+    d'origine). Pas d'authentification, même raison que notifier_fin_issue."""
+    corps = request.get_json(silent=True) or {}
+    projet = corps.get("projet")
+    numero = corps.get("numero")
+    titre = corps.get("titre")
+    if not projet or numero is None or not titre:
+        return jsonify(ok=False, erreur="projet, numero et titre requis"), 400
+    emettre_creation_issue(projet, numero, titre, fichier=corps.get("fichier"))
+    return jsonify(ok=True)
+
+
+def notifier_fichier_refuse():
+    """POST /notifier-fichier-refuse (issue #631) — appelé par
+    scripts/watcher_issues_inbox.py pour chaque bloc refusé (fichier
+    mono-issue entier, ou un bloc d'un lot multi-issues). Corps JSON
+    {"fichier", "titre", "motif"} (titre absent/null si le bloc n'a même pas
+    livré de #Titre: exploitable). Pas d'authentification, même raison que
+    notifier_fin_issue."""
+    corps = request.get_json(silent=True) or {}
+    fichier = corps.get("fichier")
+    motif = corps.get("motif")
+    if not fichier or not motif:
+        return jsonify(ok=False, erreur="fichier et motif requis"), 400
+    _diffuser("fichier_refuse", {
+        "fichier": fichier, "titre": corps.get("titre") or None, "motif": motif,
+    })
+    return jsonify(ok=True)
 
 
 def stream_fin_issue():

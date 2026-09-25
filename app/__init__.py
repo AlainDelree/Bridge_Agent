@@ -85,7 +85,8 @@ def _enregistrer_routes(app: Flask) -> None:
                          ccw_arreter_projet, ccw_nettoyer_verrous)
     from app.interruption import route_interrompre, route_relancer
     from app.cycle_vie import heartbeat, events, quitter
-    from app.fin_issue import notifier_fin_issue, notifier_debut_issue, stream_fin_issue
+    from app.fin_issue import (notifier_fin_issue, notifier_debut_issue, stream_fin_issue,
+                               notifier_fichier_recu, notifier_creation_issue, notifier_fichier_refuse)
     from app.notifications_poller import route_surveiller_issue
     from app.issues_inbox import (etat_inbox, demarrer_watcher_inbox_route,
                                   arreter_watcher_inbox_route)
@@ -157,6 +158,11 @@ def _enregistrer_routes(app: Flask) -> None:
     app.add_url_rule("/notifier-fin-issue", "notifier_fin_issue", notifier_fin_issue, methods=["POST"])
     app.add_url_rule("/notifier-debut-issue", "notifier_debut_issue", notifier_debut_issue, methods=["POST"])
     app.add_url_rule("/stream", "stream_fin_issue", login_requis(stream_fin_issue))
+    # ─── Événements issues_inbox/ (issue #631, backend seul) : même famille
+    # que les deux routes ci-dessus (script local, pas de login_requis).
+    app.add_url_rule("/notifier-fichier-recu", "notifier_fichier_recu", notifier_fichier_recu, methods=["POST"])
+    app.add_url_rule("/notifier-creation-issue", "notifier_creation_issue", notifier_creation_issue, methods=["POST"])
+    app.add_url_rule("/notifier-fichier-refuse", "notifier_fichier_refuse", notifier_fichier_refuse, methods=["POST"])
     # ─── Liste des issues surveillées par le poller de notifications (issue
     # #624) : ajout en direct depuis scripts/watcher_issues_inbox.py (process
     # séparé, ne peut pas muter app.notifications_poller._ISSUES_SURVEILLEES

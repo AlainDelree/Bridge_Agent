@@ -119,6 +119,17 @@ nettoie — sans repasser par le formulaire web.
   `<nom-original>__REJETE-<slug-du-motif>.txt` pour que le motif soit visible
   sans ouvrir le fichier. Laissés en place pour correction manuelle — le
   watcher ne les retraite jamais automatiquement.
+- **`issues_inbox/rejected/.motifs/`** (issue #631) : un sidecar
+  `<nom-du-fichier-rejeté>.motif` par fichier de `rejected/`, écrit par
+  `_deplacer_vers_rejected()` au moment du renommage — conserve le motif de
+  refus **en texte intégral** (le nom du fichier lui-même ne porte qu'un
+  slug tronqué à 40 caractères, sans accents). Lu par
+  `GET /issues-inbox/etat` (`app/issues_inbox.py::_motif_rejet`) pour exposer
+  le motif complet, y compris après un redémarrage de `new_issue.py` (simple
+  lecture disque, aucun état en mémoire). Sous-dossier dédié plutôt qu'un
+  fichier `<nom>.motif` posé directement dans `rejected/` : sinon son nom
+  matcherait aussi tout code énumérant `rejected/` par motif de nom (ex. un
+  glob `*REJETE*`), le confondant avec un vrai fichier rejeté.
 
 ### 3.3 Format attendu du fichier
 
@@ -583,6 +594,48 @@ main sur GitHub, comme avant #516.
 le formulaire sert à **créer** des issues, et dispose déjà d'un chemin dédié
 pour cibler une issue existante (bouton « 🔄 Relancer », §13) — dupliquer
 `RELANCE` là n'apporterait rien.
+
+### 3.15 Événements SSE émis (issue #631, **backend seul**)
+
+Avant #631, aucun événement n'était émis ni au dépôt d'un fichier dans
+`issues_inbox/` ni à la création d'une issue : la nouvelle issue n'apparaissait
+dans l'onglet Résultats qu'à sa prise en charge par le watcher CCL (ACK,
+`debut_issue`, §17.3) ou après un rafraîchissement manuel (↻). Trois nouveaux
+événements sur le canal SSE `/stream` couvrent tout le cycle de vie d'un
+fichier déposé — **backend seul à ce stade** : le code actuel de l'onglet
+Résultats ignore les événements qu'il ne connaît pas, aucun changement visible
+tant que la fusion de l'onglet « Résultats inbox » dans Résultats (étape 9b)
+n'est pas faite. Même famille que `/notifier-fin-issue`/`/notifier-debut-issue`
+(`app/fin_issue.py`, §17.3) : appel POST **best-effort** (timeout court,
+échec silencieux si `new_issue.py` n'est pas lancé), pas de `login_requis`
+(appelées par un script local, pas par un navigateur).
+
+- **`fichier_recu`** — `POST /notifier-fichier-recu`, émis par
+  `scripts/watcher_issues_inbox.py::traiter_fichier()` dès la prise en charge
+  d'un fichier (AVANT tout parsing/validation — le fichier peut malgré tout
+  finir refusé). Corps/événement : `{"fichier": <nom>}`.
+- **`creation_issue`** — `POST /notifier-creation-issue`, émis après **chaque
+  création réussie** d'une issue (jamais pour un bloc `RELANCE`, qui n'en crée
+  aucune — voir §3.14). Deux émetteurs :
+  - `scripts/watcher_issues_inbox.py` (process séparé) → POST sur la route ;
+  - `app.issues.envoyer()` (formulaire web, MÊME process que `new_issue.py`)
+    → appel direct à `app.fin_issue.emettre_creation_issue()`, sans HTTP,
+    même principe que l'ajout à la liste surveillée du poller (issue #624).
+  Événement : `{"projet", "numero", "titre", "fichier"}` — `fichier` est le
+  nom du fichier d'origine dans `issues_inbox/`, absent (`null`) pour une
+  création via le formulaire.
+- **`fichier_refuse`** — `POST /notifier-fichier-refuse`, émis pour **chaque
+  bloc refusé** (fichier mono-issue entier, ou un bloc d'un lot multi-issues,
+  §3.13) : un événement par bloc, dans l'ordre de traitement — jamais groupé
+  pour tout le fichier. Événement : `{"fichier", "titre", "motif"}` (`titre`
+  `null` si le bloc n'a même pas livré de `#Titre:` exploitable).
+
+Pour un fichier multi-blocs (§3.13), la séquence est donc : un `fichier_recu`,
+puis un `creation_issue`/`fichier_refuse` par bloc EXPLOITABLE (un bloc
+`RELANCE` réussi n'émet ni l'un ni l'autre), dans l'ordre du fichier — jamais
+un événement groupé pour tout le lot. Voir `tests/test_evenements_issues_inbox_631.py`
+pour la construction et l'ordre exacts de ces séquences (aucun appel réseau
+ni `gh` réel : `_poster_best_effort` et `_traiter_bloc` sont substitués).
 
 ---
 
@@ -3316,6 +3369,17 @@ déclencheur et un canal SSE dédié comme transport :
   d'issues, pas de projets » ci-dessus) — sans effet sur le SSE `/stream`
   lui-même, qui n'est poussé qu'à la détection effective de l'ACK/de la
   transition, au cycle suivant.
+- **`POST /notifier-fichier-recu` / `/notifier-creation-issue` /
+  `/notifier-fichier-refuse`** (`app/fin_issue.py`, issue #631, sans
+  `login_requis`, même famille que les routes ci-dessus) : trois événements
+  couvrant le cycle de vie d'un fichier déposé dans `issues_inbox/` —
+  `fichier_recu` (prise en charge), `creation_issue` (par
+  `scripts/watcher_issues_inbox.py` ET, en appel direct sans HTTP,
+  `app.issues.envoyer()`), `fichier_refuse` (par bloc refusé). Détail complet
+  du contenu de chaque événement et de l'ordre pour un fichier multi-blocs :
+  §3.15. **Backend seul** : `/stream` les diffuse déjà, mais aucun code
+  navigateur ne les consomme encore (préparation de la fusion de l'onglet
+  « Résultats inbox » dans Résultats, étape 9b).
 - **`GET /stream`** (`app/fin_issue.py`, protégé par `login_requis` comme
   `/events`) : générateur Flask SSE dédié, séparé de `/events` (cycle de vie)
   et de `/journal/<projet>` (log watcher). Mécanisme de diffusion : une

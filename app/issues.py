@@ -403,6 +403,12 @@ def envoyer():
             if numero is not None:
                 from app.notifications_poller import ajouter_issue_surveillee
                 ajouter_issue_surveillee(cfg.depot, numero, labels_liste)
+                # SSE creation_issue (issue #631, backend seul) : même process
+                # que new_issue.py → appel direct, pas de HTTP (à la
+                # différence de scripts/watcher_issues_inbox.py, process
+                # séparé qui POSTe sur /notifier-creation-issue).
+                from app.fin_issue import emettre_creation_issue
+                emettre_creation_issue(cfg.nom, numero, titre)
             maj_rate_limit("app.issues.envoyer")
             return jsonify(succes=True, url=res.stdout.strip(),
                            watcher_demarre=watcher_demarre)
