@@ -32,6 +32,7 @@ from pathlib import Path
 import regenerer_tableaux_projets
 from nouveau_projet import DOSSIER_CONFIGS
 from watcher import lire_conf
+import etat_cases_cochees
 
 
 def conf_chemin(nom: str) -> Path:
@@ -170,6 +171,9 @@ def supprimer_projet(nom: str, dry_run: bool = False) -> dict:
             {"etape": "Documentation", "ok": True,
              "detail": "§2/§7 de BRIDGE_AGENT_DOC.md seraient régénérés depuis "
                        "configs/*.conf, sans ce projet."},
+            {"etape": "Cases cochées (état serveur, issue #629)", "ok": True,
+             "detail": (f"{len(etat_cases_cochees.lire_cases_cochees(nom))} "
+                        "case(s) cochée(s) seraient retirées.")},
         ]
         return {"succes": True, "nom": nom, "dry_run": True,
                 "depot": infos["depot"], "etapes": etapes, "erreur": None}
@@ -211,6 +215,14 @@ def supprimer_projet(nom: str, dry_run: bool = False) -> dict:
                        "detail": "§2/§7/date régénérés (projet retiré)."
                                  if doc["modifie"] else "déjà à jour."})
 
+    # 4. Cases cochées côté serveur (issue #629) — nettoyage purement local,
+    #    sans lien avec GitHub ni la doc ; un échec ici ne remet pas en
+    #    cause les étapes précédentes déjà réalisées avec succès.
+    ok_cases, erreur_cases = etat_cases_cochees.supprimer_projet(nom)
+    etapes.append({"etape": "Cases cochées (état serveur, issue #629)",
+                   "ok": ok_cases,
+                   "detail": "coche(s) retirée(s)." if ok_cases else erreur_cases})
+
     return {"succes": True, "nom": nom, "dry_run": False,
             "depot": infos["depot"], "etapes": etapes, "erreur": None}
 
@@ -240,6 +252,8 @@ def main() -> int:
     print(f"   Dépôt git local       : {'présent, sera supprimé' if apercu['git_local'] else 'absent'}")
     print(f"   Fichier configs/{nom}.conf : sera supprimé")
     print("   BRIDGE_AGENT_DOC.md (§2/§7) : sera régénéré")
+    print(f"   Cases cochées (état serveur, issue #629) : "
+          f"{len(etat_cases_cochees.lire_cases_cochees(nom))} seront retirées")
 
     if args.dry_run:
         print("\n(dry-run — rien n'a été modifié)")

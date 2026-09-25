@@ -1330,6 +1330,61 @@ avant toute action destructive, cohérent avec la sensibilité du geste :
 Bridge_Agent lui-même (`configs/`, doc) — le script/la route ne poussent
 jamais, comme pour la création.
 
+**Étape 4 ajoutée par l'issue #629** : voir « État serveur des cases
+cochées » ci-dessous — la suppression retire aussi toutes les coches du
+projet, best-effort (un échec ici ne remet pas en cause les étapes
+précédentes déjà réalisées avec succès).
+
+### État serveur des cases cochées « traité/lu », backend (issue #629, étape 5a)
+
+Refonte de l'interface web par étapes (§6 d'`ARCHITECTURE.md`). Jusqu'ici, la
+case « traité/lu » de chaque ligne de l'onglet Résultats
+(`static/js/app.js::basculerCocheResultat`, clé localStorage
+`resultat-coche:<projet>:<numero>`, issue #154) vivait **uniquement** dans le
+localStorage du navigateur : état perdu après un plantage du PC, différent
+selon l'adresse d'accès (localhost vs LAN), clés accumulées sans fin.
+Décision d'Alain : cet état passe côté serveur. **Cette issue ne livre que
+le backend** — aucun front ne l'utilise encore, aucun changement visible ;
+la reprise du localStorage existant (via la route d'import ci-dessous)
+viendra à l'étape 5b.
+
+**Stockage** (`etat_cases_cochees.py`, racine) — même modèle que
+`etat_rate_limit.py` (issue #615) : petit fichier JSON
+(`logs/etat_cases_cochees.json`), écriture atomique (fichier temporaire +
+`os.replace`) protégée par un verrou anti-collision (`.lock`, essais avec
+attente courte). Format : `{"<nom_projet>": [<numero>, ...], ...}`.
+
+**Routes web** (`app/cases_cochees.py`), toutes protégées par
+`login_requis` comme le reste de l'interface :
+
+| Méthode | Route | Effet |
+|---------|-------|-------|
+| `GET` | `/cases-cochees/<nom_projet>` | Liste triée des numéros cochés pour ce projet : `{"numeros": [...]}`. |
+| `POST` | `/cases-cochees/<nom_projet>/<numero>` | Coche cette issue (idempotent). Réponse : `{"succes": true, "numeros": [...]}`. |
+| `DELETE` | `/cases-cochees/<nom_projet>/<numero>` | Décoche cette issue (idempotent). Même forme de réponse. |
+| `POST` | `/cases-cochees/importer` | Import en masse, **idempotent** — corps JSON `{"cases": [{"projet": ..., "numero": ...}, ...]}`, potentiellement plusieurs projets à la fois (le localStorage du navigateur n'est pas scindé par projet). Servira à la reprise de l'existant en 5b ; les entrées mal formées sont ignorées silencieusement. Réponse : `{"succes": true, "nb_ajoutees": N}`. |
+
+**Nettoyage au démarrage de `new_issue.py`** (`nettoyer_anciennes()`,
+appelé juste après le chargement du mot de passe) — **sans aucun appel
+GitHub** : pour chaque projet, calcule le plus grand numéro connu **parmi
+les cases cochées elles-mêmes** (seule source disponible sans requête
+réseau), et retire celles dont le numéro est inférieur ou égal à (ce
+maximum − 50). 50 est le plafond du réglage « limite d'issues par projet »
+(`app/issues.py::LIMITE_ISSUES_MAX`) : une issue plus ancienne que cette
+fenêtre ne peut structurellement plus apparaître dans la liste Résultats du
+projet, donc sa coche ne sera plus jamais consultée.
+
+**Suppression d'un projet** (flux de l'issue #587, `supprimer_projet.py`) :
+une étape supplémentaire (`etat_cases_cochees.supprimer_projet(nom)`)
+retire toutes les coches du projet supprimé — voir la section « Suppression
+de projet » ci-dessus.
+
+Tests : `tests/test_cases_cochees_629.py` (stockage isolé du vrai
+`logs/etat_cases_cochees.json` via monkeypatch de `CHEMIN_ETAT`/
+`CHEMIN_VERROU`, comme `tests/test_supprimer_projet_587.py` pour
+`configs/`) — lecture/écriture, idempotence cocher/décocher/import, règle
+de nettoyage, isolation entre projets, suppression de projet, routes Flask.
+
 ### Couleur d'accent des projets (issues #120, #121, #534, #535, #539, #540)
 
 Trois niveaux de priorité déterminent la couleur affichée d'un projet
@@ -3792,7 +3847,23 @@ de création d'issue, seul valable pour du contenu qu'il produit.
 
 ---
 
-*Dernière mise à jour : 24 septembre 2026 — issue #584 : le verrou
+*Dernière mise à jour : 25 septembre 2026 — issue #629 (étape 5a de la
+refonte web, §6 d'`ARCHITECTURE.md`) : nouveau backend d'état serveur pour
+la case « traité/lu » de l'onglet Résultats, jusqu'ici 100% localStorage
+(issue #154) — `etat_cases_cochees.py` (fichier JSON sous `logs/`, écriture
+atomique + verrou anti-collision, même modèle que `etat_rate_limit.py`,
+#615) et ses routes Flask `app/cases_cochees.py` (lire l'état d'un projet,
+cocher/décocher une issue, importer en masse — toutes protégées par
+`login_requis` comme le reste de l'interface). Nettoyage sans aucun appel
+GitHub : au démarrage de `new_issue.py`, les coches dont le numéro est
+inférieur ou égal à (plus grand numéro connu du projet − 50, le plafond de
+`app/issues.py::LIMITE_ISSUES_MAX`) sont retirées ; à la suppression d'un
+projet (flux #587), toutes ses coches le sont aussi. Backend seul :
+**aucun changement visible**, aucun front ne l'utilise encore — la reprise
+du localStorage existant viendra à l'étape 5b. Tests :
+`tests/test_cases_cochees_629.py`.
+
+Précédemment — 24 septembre 2026 — issue #584 : le verrou
 anti-collision `REP_TRAVAIL` (section « Parallélisation mode_write via git
 worktrees », #189/#322) gagne un filet de sécurité complémentaire. Incident
 réel : issue #583 (canal unifié for-windows, mode_write) bloquée 48 minutes,
@@ -3844,35 +3915,6 @@ parallélisation. Tests étendus dans
 `tests/test_worktree_parallelisation_337.py` : isolation effective à
 `MAX_WRITE_PARALLELE=1` (worktree utilisé, `REP_TRAVAIL` inchangé — même
 HEAD, aucun fichier ajouté) et repli propre sur `REP_TRAVAIL` si la
-création du worktree échoue.
-
-Précédemment — 18 septembre 2026 — §2 « Projets actifs » et §7
-« Périmètre par projet » n'étaient maintenus qu'à la main, indépendamment
-des `configs/*.conf` réellement lus par `watcher.py` — source de vérité
-fonctionnelle. Toute divergence pouvait se reproduire, et s'était
-reproduite : `testccwprojet` (projet de test entièrement nettoyé) restait
-visible dans ces deux tableaux (issue #571). Nouveau script
-`regenerer_tableaux_projets.py` (racine) : scanne `configs/*.conf`, ignore
-les fichiers sans champ `NOM` (ex. `configs/ccw_ssh.conf`, config
-technique, pas un projet watcher), et remplace intégralement le contenu
-des deux tableaux entre des marqueurs HTML dédiés — jamais d'édition
-manuelle. Projets triés par ordre alphabétique du `NOM` ; effet de bord
-assumé, la casse affichée suit désormais celle du `.conf`
-(`apiselect` en minuscules remplace l'ancien `ApiSelect`, qui ne
-correspondait à aucun champ réel). `nouveau_projet.py::mettre_a_jour_doc()`
-(Flask) et `etape_doc()` (CLI) dupliquaient chacun leur propre logique
-d'insertion de ligne — les deux délèguent maintenant à ce script, un seul
-mécanisme écrit dans ces tableaux ; helpers dupliqués supprimés. Le script
-reste aussi utilisable seul et à la demande (`python3
-regenerer_tableaux_projets.py`), pour resynchroniser la doc après un
-nettoyage manuel de projet (pas de flux de suppression automatisé
-aujourd'hui) — testé en simulant un cycle création/suppression d'un
-`.conf` de test. Conséquence directe : `testccwprojet` disparaît des deux
-tableaux, de même que `relecture_bridge` (ajouté au commit précédent mais
-sans `.conf` présent sur ce disque — ⚠️ à vérifier par Alain). Tableau §7
-de `provisioning/windows/REINSTALLATION_CCW.md` (services CCW dédiés) :
-choix documenté de le laisser hors de ce mécanisme — sous-ensemble
-distinct dont la source de vérité déclarée reste `$Projets` dans
-`reinstaller_projets_ccw.ps1` (issue #552).*
+création du worktree échoue.*
 
 Historique complet : voir [`CHANGELOG.md`](CHANGELOG.md).

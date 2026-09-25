@@ -12,11 +12,12 @@ réellement dans le dépôt — cohérent avec l'absence de test existant sur
 Couvre :
 - `previsualiser_suppression` : projet introuvable, projet présent (avec
   dépôt git local) — aperçu correct, AUCUNE écriture disque ;
-- `supprimer_projet(dry_run=True)` : décrit les 3 cibles, ne touche à rien
-  (fichier .conf et répertoire de travail intacts après l'appel) ;
+- `supprimer_projet(dry_run=True)` : décrit les 4 cibles (dont les cases
+  cochées côté serveur, issue #629), ne touche à rien (fichier .conf et
+  répertoire de travail intacts après l'appel) ;
 - `supprimer_projet(dry_run=False)` : chemin de succès — répertoire de
-  travail (contenu + `.git`) et `.conf` supprimés, régénération de la doc
-  déclenchée, dans cet ordre ;
+  travail (contenu + `.git`) et `.conf` supprimés, régénération de la doc et
+  nettoyage des cases cochées (issue #629) déclenchés, dans cet ordre ;
 - Arrêt propre si la suppression du répertoire échoue : `.conf` conservé,
   régénération de la doc jamais appelée ;
 - Nom de projet vide → erreur, aucun appel ;
@@ -37,7 +38,19 @@ sys.path.insert(0, str(RACINE))
 import flask  # noqa: E402
 
 import supprimer_projet as sp  # noqa: E402
+import etat_cases_cochees as ecc  # noqa: E402
 from app import supprimer_projet as route_sp  # noqa: E402
+
+
+def _isoler_cases_cochees(tmp: Path):
+    """Redirige etat_cases_cochees.CHEMIN_ETAT/CHEMIN_VERROU vers `tmp`, pour
+    qu'aucun scénario de ce fichier ne touche au vrai
+    logs/etat_cases_cochees.json du dépôt. Retourne (ancien_chemin,
+    ancien_verrou) à restaurer par l'appelant."""
+    ancien_chemin, ancien_verrou = ecc.CHEMIN_ETAT, ecc.CHEMIN_VERROU
+    ecc.CHEMIN_ETAT = tmp / "etat_cases_cochees.json"
+    ecc.CHEMIN_VERROU = ecc.CHEMIN_ETAT.with_suffix(".lock")
+    return ancien_chemin, ancien_verrou
 
 APP_FLASK = flask.Flask(__name__)
 
@@ -113,6 +126,7 @@ def test_dry_run_ne_touche_a_rien():
         compteur = _CompteurRegen()
         ancien_configs = sp.DOSSIER_CONFIGS
         ancien_regen = sp.regenerer_tableaux_projets.regenerer
+        ancien_chemin, ancien_verrou = _isoler_cases_cochees(tmp)
         sp.DOSSIER_CONFIGS = configs
         sp.regenerer_tableaux_projets.regenerer = compteur
         try:
@@ -120,10 +134,11 @@ def test_dry_run_ne_touche_a_rien():
         finally:
             sp.DOSSIER_CONFIGS = ancien_configs
             sp.regenerer_tableaux_projets.regenerer = ancien_regen
+            ecc.CHEMIN_ETAT, ecc.CHEMIN_VERROU = ancien_chemin, ancien_verrou
 
         assert res["succes"] is True
         assert res["dry_run"] is True
-        assert len(res["etapes"]) == 3
+        assert len(res["etapes"]) == 4
         assert all(e["ok"] for e in res["etapes"])
         assert (configs / "monprojet.conf").exists(), "dry-run ne doit pas supprimer le .conf"
         assert (rep / ".git").exists(), "dry-run ne doit pas toucher au répertoire de travail"
@@ -144,13 +159,16 @@ def test_suppression_reelle_succes():
         compteur = _CompteurRegen()
         ancien_configs = sp.DOSSIER_CONFIGS
         ancien_regen = sp.regenerer_tableaux_projets.regenerer
+        ancien_chemin, ancien_verrou = _isoler_cases_cochees(tmp)
         sp.DOSSIER_CONFIGS = configs
         sp.regenerer_tableaux_projets.regenerer = compteur
+        ecc.cocher_issue("monprojet", 12)
         try:
             res = sp.supprimer_projet("monprojet", dry_run=False)
         finally:
             sp.DOSSIER_CONFIGS = ancien_configs
             sp.regenerer_tableaux_projets.regenerer = ancien_regen
+            ecc.CHEMIN_ETAT, ecc.CHEMIN_VERROU = ancien_chemin, ancien_verrou
 
         assert res["succes"] is True, res
         assert not rep.exists(), "répertoire de travail (+ dépôt git local) non supprimé"
@@ -161,6 +179,7 @@ def test_suppression_reelle_succes():
             "Répertoire de travail (contenu + dépôt git local)",
             "Fichier .conf",
             "Documentation",
+            "Cases cochées (état serveur, issue #629)",
         ], noms_etapes
         assert all(e["ok"] for e in res["etapes"]), res["etapes"]
     return {"succes": res["succes"], "appels_regen": compteur.appels}
@@ -244,6 +263,7 @@ def test_route_executer_succes():
         compteur = _CompteurRegen()
         ancien_configs = sp.DOSSIER_CONFIGS
         ancien_regen = sp.regenerer_tableaux_projets.regenerer
+        ancien_chemin, ancien_verrou = _isoler_cases_cochees(tmp)
         sp.DOSSIER_CONFIGS = configs
         sp.regenerer_tableaux_projets.regenerer = compteur
         try:
@@ -254,6 +274,7 @@ def test_route_executer_succes():
         finally:
             sp.DOSSIER_CONFIGS = ancien_configs
             sp.regenerer_tableaux_projets.regenerer = ancien_regen
+            ecc.CHEMIN_ETAT, ecc.CHEMIN_VERROU = ancien_chemin, ancien_verrou
 
         assert rep[1] == 200, rep[0].get_json()
         corps = rep[0].get_json()

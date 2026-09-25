@@ -91,6 +91,8 @@ def _enregistrer_routes(app: Flask) -> None:
                                   arreter_watcher_inbox_route)
     from app.son import get_son_actif, post_son_actif, tester_son
     from app.rate_limit import rate_limit
+    from app.cases_cochees import (lire_cases, cocher_case, decocher_case,
+                                   importer_cases_route)
     from app.vues import index
 
     app.add_url_rule("/login", "login", login, methods=["GET"])
@@ -172,3 +174,9 @@ def _enregistrer_routes(app: Flask) -> None:
     app.add_url_rule("/tester-son", "tester_son", login_requis(tester_son), methods=["POST"])
     # ─── Indicateur de rate limit GitHub GraphQL, bandeau supérieur (issue #607) ─
     app.add_url_rule("/rate-limit", "rate_limit", login_requis(rate_limit), methods=["GET"])
+    # ─── État serveur des cases « traité/lu » de l'onglet Résultats, backend
+    # seul (issue #629, étape 5a) : aucun front ne les appelle encore.
+    app.add_url_rule("/cases-cochees/importer", "importer_cases_route", login_requis(importer_cases_route), methods=["POST"])
+    app.add_url_rule("/cases-cochees/<nom_projet>", "lire_cases", login_requis(lire_cases), methods=["GET"])
+    app.add_url_rule("/cases-cochees/<nom_projet>/<int:numero>", "cocher_case", login_requis(cocher_case), methods=["POST"])
+    app.add_url_rule("/cases-cochees/<nom_projet>/<int:numero>", "decocher_case", login_requis(decocher_case), methods=["DELETE"])

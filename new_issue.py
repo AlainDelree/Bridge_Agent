@@ -35,6 +35,7 @@ from app.notifications_poller import surveiller_transitions
 from app.watchers import surveiller_redemarrages_differes
 from app.issues_inbox import (watcher_inbox_actif, demarrer_watcher_inbox,
                               arreter_watcher_inbox)
+from etat_cases_cochees import nettoyer_anciennes as nettoyer_cases_cochees
 
 DOSSIER_SCRIPT = Path(__file__).resolve().parent
 
@@ -88,6 +89,14 @@ def main():
     # chargement de l'état initial.
     app = create_app()
     app.config["MOT_DE_PASSE"] = etat.charger_mot_de_passe()
+
+    # Nettoyage de l'état des cases cochées « traité/lu » (issue #629) :
+    # purement local, AUCUN appel GitHub — retire, pour chaque projet, les
+    # coches devenues invisibles (numéro trop ancien pour pouvoir encore
+    # apparaître dans la liste Résultats de ce projet).
+    _ok_cases, _nb_cases, _erreur_cases = nettoyer_cases_cochees()
+    if not _ok_cases:
+        print(f"⚠️  Nettoyage des cases cochées (issue #629) impossible : {_erreur_cases}")
 
     # Trois modes de fonctionnement :
     #   • local (défaut)      : host 127.0.0.1, HTTP simple, sans SSL. Destiné à
