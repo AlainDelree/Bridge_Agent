@@ -83,21 +83,19 @@ def tache_en_cours(cfg: Config) -> list[dict]:
 
 def repli_rep_travail(cfg: Config, taches: list[dict] | None = None) -> bool:
     """True si une tâche mode_write est actuellement en cours DIRECTEMENT dans
-    REP_TRAVAIL (et non dans un worktree isolé), pour DEUX raisons distinctes
-    (issue #609) — l'interface ne cherche pas à les distinguer, le risque pour
-    Alain (dossier principal en cours d'écriture, à ne pas toucher — merge,
-    push — avant la fin) est identique dans les deux cas :
-      1. Cas NORMAL et fréquent (MAX_WRITE_PARALLELE > 1, cf. `traiter_issue`
-         dans watcher.py) : le PREMIER slot d'une parallélisation mode_write
-         cible délibérément REP_TRAVAIL, sans worktree — seuls les slots
-         suivants (2e tâche mode_write concurrente, etc.) en obtiennent un.
-         Dès qu'une seule tâche mode_write tourne (le cas le plus courant),
-         cet indicateur est donc normalement actif, pas un signe d'anomalie.
-      2. Repli #589 : `_creer_worktree` a échoué (chemin/branche « déjà
-         pris », erreur git) — celui qui a coûté le travail perdu de
-         relecture_bridge #73 (redémarrage du watcher pendant la tâche,
-         reprise sur un worktree déjà pris, repli silencieux sur REP_TRAVAIL,
-         travail non isolé embarqué dans un commit d'un autre outil)."""
+    REP_TRAVAIL (et non dans un worktree isolé) — depuis l'issue #611, ce
+    n'est plus JAMAIS un cas normal : toute tâche mode_write, y compris la
+    première d'un lot à MAX_WRITE_PARALLELE > 1, obtient d'abord un worktree
+    dédié (`_creer_worktree_avec_retries`, tentatives `-bis`/`-ter`). Cet
+    indicateur ne s'active donc plus que pour le repli en tout DERNIER
+    recours (issue #589/#611) : `_creer_worktree_avec_retries` a épuisé ses 3
+    tentatives (chemin/branche « déjà pris », erreur git) — celui qui a coûté
+    le travail perdu de relecture_bridge #73 (redémarrage du watcher pendant
+    la tâche, reprise sur un worktree déjà pris, repli silencieux sur
+    REP_TRAVAIL, travail non isolé embarqué dans un commit d'un autre outil).
+    Ce repli est désormais aussi signalé activement côté watcher (notify-send
+    immédiat, issue #611) — cet indicateur d'interface reste un second canal,
+    pas le seul."""
     if taches is None:
         taches = tache_en_cours(cfg)
     rep_travail = str(cfg.rep_travail)

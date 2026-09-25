@@ -1,29 +1,41 @@
 #!/usr/bin/env python3
 """Test de non-régression — issue #337 : parallélisation des issues mode_write
-via git worktrees.
+via git worktrees. Mis à jour par l'issue #611 (plus d'exception REP_TRAVAIL
+pour le premier slot d'un lot mode_write).
 
 Vérifie :
 - `_chemin_worktree` / `_branche_worktree` : nommage attendu (répertoire
-  FRÈRE de REP_TRAVAIL, préfixé par CFG.nom ; branche `worktree-issue-<N>`).
+  FRÈRE de REP_TRAVAIL, préfixé par CFG.nom ; branche `worktree-issue-<N>`),
+  y compris avec un suffixe (`-bis`/`-ter`, issue #611).
 - `_creer_worktree` : succès (dépôt git réel temporaire) et repli propre
   (retourne None, aucune exception) quand le chemin cible existe déjà ou
   quand la branche existe déjà.
+- `_creer_worktree_avec_retries` (issue #611) : retente sous un nom
+  alternatif (`-bis` puis `-ter`) quand le nom standard est déjà pris,
+  s'arrête immédiatement sans retenter sur une erreur git générique (aucune
+  chance qu'un changement de nom la résolve), et retourne `(None, raison)`
+  de la DERNIÈRE tentative si les trois échouent.
 - `_nettoyer_threads_ecriture_termines` / `_threads_ecriture_actifs` : purge
   bien les threads terminés de la liste thread-safe.
 - Scénario de bout en bout avec `MAX_WRITE_PARALLELE = 2` et deux issues
-  mode_write dispatchées dans le même cycle : la première tourne dans
-  REP_TRAVAIL (aucun worktree), la seconde dans un worktree dédié créé à la
-  volée — les deux tournent EN PARALLÈLE (verrous distincts par
-  chemin_travail, issue #337 point 7), aboutissent toutes deux avec succès,
-  et le worktree de la seconde est CONSERVÉ après coup (pas de `git worktree
-  remove` ni de suppression de branche automatique).
+  mode_write dispatchées dans le même cycle : les DEUX obtiennent chacune un
+  worktree dédié (issue #611 — plus d'exception REP_TRAVAIL pour la
+  première), tournent EN PARALLÈLE (verrous distincts par chemin_travail,
+  issue #337 point 7), aboutissent toutes deux avec succès, et leurs
+  worktrees sont CONSERVÉS après coup (pas de `git worktree remove` ni de
+  suppression de branche automatique).
 - Issue #577 : `MAX_WRITE_PARALLELE = 1` → `traiter_issue` reste strictement
   synchrone (aucun thread créé, comme avant #337/#577) mais la tâche
   s'exécute désormais dans un worktree dédié, jamais directement dans
   REP_TRAVAIL — celui-ci reste totalement inchangé (aucun fichier ajouté,
   HEAD identique) pendant tout le traitement, même à parallélisation
-  désactivée. Repli sur REP_TRAVAIL si la création du worktree échoue
-  (chemin déjà pris).
+  désactivée.
+- Issue #611 : si LES TROIS tentatives de création du worktree échouent
+  (nom standard + `-bis` + `-ter`), repli en tout dernier recours sur
+  REP_TRAVAIL, signalé activement — `notify-send` (bulle bureau, capturé ici
+  par un faux exécutable), `log.warning` explicite, et mention dans le
+  compte-rendu de clôture — aussi bien à `MAX_WRITE_PARALLELE <= 1` (appel
+  synchrone) qu'à `MAX_WRITE_PARALLELE > 1` (thread de repli).
 - Issue #576 : une issue mode_write abandonnée en `needs-human` continue
   d'occuper sa place de `MAX_WRITE_PARALLELE` jusqu'à résolution manuelle
   (retrait du label, ou fermeture de l'issue) — avec `MAX_WRITE_PARALLELE=1`
@@ -33,12 +45,15 @@ Vérifie :
   une fermeture manuelle (issue absente de `lister_issues()`) est détectée
   séparément par `_reconcilier_issues_en_cours_fermees`.
 
-`gh` et `claude` sont remplacés par de faux exécutables (même technique que
-tests/test_lecture_active_327.py) : aucun appel réseau réel. Le faux `claude`
-consigne dans quel répertoire (`$PWD`) et pour quel numéro d'issue il a
-tourné, et signale si le prompt reçu contenait le bloc d'avertissement
-worktree — ce qui permet de vérifier la bonne cible sans dépendre du
-contenu réel produit par un agent.
+`gh`, `claude` et `notify-send` sont remplacés par de faux exécutables (même
+technique que tests/test_lecture_active_327.py) : aucun appel réseau réel, ni
+bulle bureau réelle. Le faux `claude` consigne dans quel répertoire (`$PWD`)
+et pour quel numéro d'issue il a tourné, et signale si le prompt reçu
+contenait le bloc d'avertissement worktree — ce qui permet de vérifier la
+bonne cible sans dépendre du contenu réel produit par un agent. Le faux
+`notify-send` consigne chaque appel dans un fichier, pour vérifier le
+signalement actif du repli en dernier recours (issue #611) sans dépendre
+d'un vrai environnement de bureau Linux.
 
 Exécution :  python3 tests/test_worktree_parallelisation_337.py
 Sortie      :  code 0 si tous les scénarios passent, 1 sinon.
@@ -101,6 +116,18 @@ fi
 exit 0
 """
 
+FAUX_NOTIFY_SEND = """#!/bin/bash
+# Faux `notify-send` — issue #611. Consigne chaque appel (arguments inclus)
+# dans un fichier marqueur, pour vérifier que le repli en tout dernier
+# recours sur REP_TRAVAIL (échec des 3 tentatives de
+# _creer_worktree_avec_retries) déclenche bien un signalement actif, sans
+# dépendre d'un vrai environnement de bureau Linux.
+if [ -n "$TEST_337_DIR" ]; then
+    echo "$@" >> "$TEST_337_DIR/notify-send-appels.log"
+fi
+exit 0
+"""
+
 FAUX_CLAUDE = """#!/bin/bash
 # Faux `claude` — issue #337. $# -ge 2 distingue le VRAI appel
 # (claude --print --dangerously-skip-permissions <prompt>) de la sonde
@@ -154,7 +181,7 @@ exit 0
 def _preparer_bin(tmp_path: Path, claude_script: str = FAUX_CLAUDE) -> Path:
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir(exist_ok=True)
-    for nom, contenu in (("claude", claude_script), ("gh", FAUX_GH)):
+    for nom, contenu in (("claude", claude_script), ("gh", FAUX_GH), ("notify-send", FAUX_NOTIFY_SEND)):
         chemin = bin_dir / nom
         chemin.write_text(contenu, encoding="utf-8")
         chemin.chmod(chemin.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
@@ -311,6 +338,101 @@ def scenario_creer_worktree_succes_et_repli():
         return {"worktree_cree": True, "reprises_refusees": True}
 
 
+def scenario_creer_worktree_avec_retries_reussit_via_bis():
+    """_creer_worktree_avec_retries (issue #611) : le nom standard est déjà
+    pris (chemin occupé par un reliquat) → retente automatiquement sous
+    `-bis`, qui doit réussir sans intervention de l'appelant."""
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+        rep_travail = tmp_path / "projet"
+        rep_travail.mkdir()
+        _init_depot_git(rep_travail)
+
+        ancien_cfg = watcher.CFG
+        watcher.CFG = watcher.Config(
+            nom="testproj611", depot="AlainDelree/x",
+            rep_travail=rep_travail, topic_ntfy="x",
+        )
+        try:
+            numero = 611001
+            # Occupe le chemin standard AVANT toute tentative — simule un
+            # worktree orphelin non nettoyé (cas le plus fréquent, #589).
+            watcher._chemin_worktree(numero).mkdir(parents=True)
+
+            chemin, raison = watcher._creer_worktree_avec_retries(numero)
+            assert chemin is not None, "la tentative -bis aurait dû réussir"
+            assert raison is None
+            assert chemin == watcher._chemin_worktree(numero, "-bis"), chemin
+            branche = subprocess.run(
+                ["git", "-C", str(chemin), "rev-parse", "--abbrev-ref", "HEAD"],
+                capture_output=True, text=True,
+            ).stdout.strip()
+            assert branche == f"worktree-issue-{numero}-bis", branche
+        finally:
+            watcher.CFG = ancien_cfg
+        return {"retry_bis_ok": True}
+
+
+def scenario_creer_worktree_avec_retries_echoue_toutes_tentatives():
+    """_creer_worktree_avec_retries (issue #611) : les TROIS noms (standard,
+    `-bis`, `-ter`) sont déjà pris → aucune tentative ne réussit, la fonction
+    retourne `(None, raison)` avec la raison de la DERNIÈRE tentative
+    (`-ter`), sans lever d'exception."""
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+        rep_travail = tmp_path / "projet"
+        rep_travail.mkdir()
+        _init_depot_git(rep_travail)
+
+        ancien_cfg = watcher.CFG
+        watcher.CFG = watcher.Config(
+            nom="testproj611b", depot="AlainDelree/x",
+            rep_travail=rep_travail, topic_ntfy="x",
+        )
+        try:
+            numero = 611002
+            for suffixe in ("", "-bis", "-ter"):
+                watcher._chemin_worktree(numero, suffixe).mkdir(parents=True)
+
+            chemin, raison = watcher._creer_worktree_avec_retries(numero)
+            assert chemin is None, "les trois tentatives auraient dû échouer"
+            assert raison is not None, "la raison de la dernière tentative doit être renseignée"
+            assert str(watcher._chemin_worktree(numero, "-ter")) in raison, raison
+        finally:
+            watcher.CFG = ancien_cfg
+        return {"retry_epuise_ok": True}
+
+
+def scenario_creer_worktree_avec_retries_erreur_generique_sans_retry():
+    """_creer_worktree_avec_retries (issue #611) : une erreur git GÉNÉRIQUE
+    (pas 'chemin/branche déjà pris' — ici `REP_TRAVAIL` n'est pas un dépôt
+    git) ne doit PAS déclencher de tentative `-bis`/`-ter` : changer de nom
+    ne résoudrait rien, la fonction s'arrête après le seul essai standard."""
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+        rep_travail = tmp_path / "pas_un_depot_git"
+        rep_travail.mkdir()  # PAS de _init_depot_git : dépôt git absent.
+
+        ancien_cfg = watcher.CFG
+        watcher.CFG = watcher.Config(
+            nom="testproj611c", depot="AlainDelree/x",
+            rep_travail=rep_travail, topic_ntfy="x",
+        )
+        try:
+            numero = 611003
+            chemin, raison = watcher._creer_worktree_avec_retries(numero)
+            assert chemin is None, "la création aurait dû échouer (pas un dépôt git)"
+            assert raison is None, \
+                "erreur générique attendue (raison=None) — pas un cas 'déjà pris' (#589)"
+            assert not watcher._chemin_worktree(numero, "-bis").exists(), \
+                "aucune tentative -bis n'aurait dû être faite après une erreur git générique"
+            assert not watcher._chemin_worktree(numero, "-ter").exists(), \
+                "aucune tentative -ter n'aurait dû être faite après une erreur git générique"
+        finally:
+            watcher.CFG = ancien_cfg
+        return {"pas_de_retry_sur_erreur_generique_ok": True}
+
+
 def scenario_purge_threads_termines():
     """_threads_ecriture_actifs purge bien les threads terminés."""
     ancien = list(watcher._threads_ecriture)
@@ -368,11 +490,16 @@ def _lancer_deux_issues_paralleles(tmp_path: Path, rep_travail: Path,
         # sur la seconde issue voie bien "au moins un thread actif".
         actifs_apres_1 = watcher._threads_ecriture_actifs()
         assert len(actifs_apres_1) == 1, f"la 1ère issue aurait dû être dispatchée en thread : {actifs_apres_1}"
-        assert actifs_apres_1[0]["worktree"] is None, "la 1ère issue (premier slot) ne doit PAS utiliser de worktree"
+        # Issue #611 : plus d'exception REP_TRAVAIL pour le premier slot —
+        # TOUTE tâche mode_write, y compris la première d'un lot, obtient un
+        # worktree dédié.
+        assert actifs_apres_1[0]["worktree"] is not None, \
+            "la 1ère issue (premier slot) aurait dû obtenir un worktree dédié (issue #611)"
 
         watcher.traiter_issue(issue2, dry_run=False)
         actifs_apres_2 = watcher._threads_ecriture_actifs()
         assert len(actifs_apres_2) == 2, f"la 2e issue aurait dû obtenir un worktree dédié : {actifs_apres_2}"
+        entree_1 = next(t for t in actifs_apres_2 if t["numero"] == numero1)
         entree_2 = next(t for t in actifs_apres_2 if t["numero"] == numero2)
         assert entree_2["worktree"] is not None, "la 2e issue aurait dû obtenir un worktree"
 
@@ -381,7 +508,7 @@ def _lancer_deux_issues_paralleles(tmp_path: Path, rep_travail: Path,
             entree["thread"].join(timeout=15)
             assert not entree["thread"].is_alive(), f"thread issue #{entree['numero']} toujours actif après 15s"
 
-        return entree_2["worktree"]
+        return entree_1["worktree"], entree_2["worktree"]
     finally:
         watcher.DOSSIER_VERROUS = ancien_dossier_verrous
         watcher.DOSSIER_LOGS = ancien_dossier_logs
@@ -394,14 +521,20 @@ def _lancer_deux_issues_paralleles(tmp_path: Path, rep_travail: Path,
 
 def scenario_parallelisation_deux_issues_mode_write():
     """Bout en bout : MAX_WRITE_PARALLELE=2, deux issues mode_write dans le
-    même cycle → première dans REP_TRAVAIL, seconde dans un worktree dédié,
-    les deux réussissent et se ferment, le worktree de la seconde est
-    CONSERVÉ après coup (aucune suppression automatique, issue #337 point 6)."""
+    même cycle → issue #611 : les DEUX obtiennent chacune un worktree dédié
+    (plus d'exception REP_TRAVAIL pour la première), tournent en parallèle,
+    réussissent et se ferment, et leurs worktrees respectifs sont CONSERVÉS
+    après coup (aucune suppression automatique, issue #337 point 6)."""
     with tempfile.TemporaryDirectory() as tmp:
         tmp_path = Path(tmp)
         rep_travail = tmp_path / "projet"
         rep_travail.mkdir()
         _init_depot_git(rep_travail)
+
+        head_avant = subprocess.run(
+            ["git", "-C", str(rep_travail), "rev-parse", "HEAD"],
+            capture_output=True, text=True,
+        ).stdout.strip()
 
         test_dir = tmp_path / "etat_test"
         test_dir.mkdir()
@@ -413,7 +546,7 @@ def scenario_parallelisation_deux_issues_mode_write():
 
         numero1, numero2 = 93371, 93372
         try:
-            chemin_worktree = _lancer_deux_issues_paralleles(
+            chemin_worktree_1, chemin_worktree_2 = _lancer_deux_issues_paralleles(
                 tmp_path, rep_travail, numero1, numero2, "test337par")
         finally:
             if ancien_path:
@@ -422,41 +555,57 @@ def scenario_parallelisation_deux_issues_mode_write():
                 os.environ.pop("PATH", None)
             os.environ.pop("TEST_337_DIR", None)
 
-        # La 1ère issue a tourné dans REP_TRAVAIL, sans bloc worktree dans le prompt.
+        # Issue #611 : la 1ère issue (premier slot) a ELLE AUSSI tourné dans
+        # son propre worktree dédié, jamais directement dans REP_TRAVAIL.
         pwd_1 = (test_dir / f"pwd-{numero1}").read_text(encoding="utf-8").strip()
-        assert Path(pwd_1) == rep_travail.resolve(), f"issue #{numero1} aurait dû tourner dans REP_TRAVAIL : {pwd_1}"
-        assert not (test_dir / f"worktree_marker-{numero1}").exists(), \
-            f"issue #{numero1} (premier slot) n'aurait pas dû recevoir le bloc worktree"
+        assert Path(pwd_1) != rep_travail.resolve(), \
+            f"issue #{numero1} (premier slot) n'aurait plus dû tourner dans REP_TRAVAIL (issue #611) : {pwd_1}"
+        assert Path(pwd_1) == chemin_worktree_1.resolve(), \
+            f"issue #{numero1} aurait dû tourner dans {chemin_worktree_1} : {pwd_1}"
+        assert (test_dir / f"worktree_marker-{numero1}").exists(), \
+            f"issue #{numero1} aurait dû recevoir le bloc d'avertissement worktree (issue #611)"
 
-        # La 2e a tourné dans le worktree dédié, avec le bloc d'avertissement.
+        # La 2e a tourné dans son propre worktree dédié, avec le bloc d'avertissement.
         pwd_2 = (test_dir / f"pwd-{numero2}").read_text(encoding="utf-8").strip()
-        assert Path(pwd_2) == chemin_worktree.resolve(), f"issue #{numero2} aurait dû tourner dans {chemin_worktree} : {pwd_2}"
+        assert Path(pwd_2) == chemin_worktree_2.resolve(), f"issue #{numero2} aurait dû tourner dans {chemin_worktree_2} : {pwd_2}"
         assert (test_dir / f"worktree_marker-{numero2}").exists(), \
             f"issue #{numero2} aurait dû recevoir le bloc d'avertissement worktree"
+
+        assert chemin_worktree_1 != chemin_worktree_2, "les deux issues auraient dû obtenir des worktrees DISTINCTS"
 
         # Les deux ont bien abouti (marqueur de résultat posté par le faux gh).
         assert (test_dir / f"marqueur-{numero1}").exists(), f"issue #{numero1} : résultat jamais posté"
         assert (test_dir / f"marqueur-{numero2}").exists(), f"issue #{numero2} : résultat jamais posté"
 
-        # Le worktree est CONSERVÉ après coup — pas de `git worktree remove`
-        # ni de suppression de branche automatique (issue #337 point 6).
-        assert chemin_worktree.is_dir(), "le worktree aurait dû être conservé après le traitement"
-        assert (chemin_worktree / f"CHANGELOG-{numero2}.md").exists(), \
-            "l'entrée CHANGELOG-<N>.md écrite par le faux claude aurait dû survivre dans le worktree conservé"
-        branche = subprocess.run(
-            ["git", "-C", str(chemin_worktree), "rev-parse", "--abbrev-ref", "HEAD"],
+        # REP_TRAVAIL n'a reçu AUCUN des deux traitements (issue #611) : même
+        # HEAD, aucun des deux CHANGELOG-<N>.md n'y a atterri.
+        head_apres = subprocess.run(
+            ["git", "-C", str(rep_travail), "rev-parse", "HEAD"],
             capture_output=True, text=True,
         ).stdout.strip()
-        assert branche == f"worktree-issue-{numero2}", branche
+        assert head_apres == head_avant, "REP_TRAVAIL n'aurait dû recevoir AUCUN des deux traitements (issue #611)"
+        assert not (rep_travail / f"CHANGELOG-{numero1}.md").exists()
+        assert not (rep_travail / f"CHANGELOG-{numero2}.md").exists()
 
+        # Les deux worktrees sont CONSERVÉS après coup — pas de `git worktree
+        # remove` ni de suppression de branche automatique (issue #337 point 6).
         liste_worktrees = subprocess.run(
             ["git", "-C", str(rep_travail), "worktree", "list"],
             capture_output=True, text=True,
         ).stdout
-        assert str(chemin_worktree) in liste_worktrees, \
-            "git worktree list aurait dû toujours référencer le worktree conservé"
+        for numero, chemin_worktree in ((numero1, chemin_worktree_1), (numero2, chemin_worktree_2)):
+            assert chemin_worktree.is_dir(), f"le worktree #{numero} aurait dû être conservé après le traitement"
+            assert (chemin_worktree / f"CHANGELOG-{numero}.md").exists(), \
+                f"l'entrée CHANGELOG-{numero}.md écrite par le faux claude aurait dû survivre dans le worktree conservé"
+            branche = subprocess.run(
+                ["git", "-C", str(chemin_worktree), "rev-parse", "--abbrev-ref", "HEAD"],
+                capture_output=True, text=True,
+            ).stdout.strip()
+            assert branche == f"worktree-issue-{numero}", branche
+            assert str(chemin_worktree) in liste_worktrees, \
+                f"git worktree list aurait dû toujours référencer le worktree #{numero} conservé"
 
-        return {"parallelisation_ok": True, "worktree_conserve": True}
+        return {"parallelisation_ok": True, "worktrees_conserves": True}
 
 
 def scenario_max_1_isole_dans_worktree():
@@ -560,16 +709,17 @@ def scenario_max_1_isole_dans_worktree():
 
 
 def scenario_max_1_repli_si_worktree_echoue():
-    """Issue #577 : si la création du worktree échoue (chemin cible déjà
-    occupé), repli propre et direct sur REP_TRAVAIL — pas d'exception, pas de
-    blocage, comportement identique au repli déjà couvert par #337 pour le
-    cas parallélisé.
+    """Issue #577/#611 : si LES TROIS tentatives de création du worktree
+    échouent (nom standard + `-bis` + `-ter`, tous déjà occupés), repli
+    propre et direct sur REP_TRAVAIL — pas d'exception, pas de blocage,
+    comportement identique au repli déjà couvert par #337 pour le cas
+    parallélisé.
 
-    Issue #589 : ce repli, bien que volontaire, doit rester VISIBLE — un
-    log.warning explicite au moment de l'échec (distinct d'une erreur git
-    générique, avec le chemin concerné) et une mention dans le compte-rendu
-    de clôture posté sur l'issue, pour qu'Alain le voie sans éplucher les
-    logs watcher."""
+    Issue #589/#611 : ce repli, bien que volontaire, doit rester VISIBLE —
+    un log.warning explicite au moment de chaque échec (distinct d'une
+    erreur git générique, avec le chemin concerné), un `notify-send`
+    immédiat, et une mention dans le compte-rendu de clôture posté sur
+    l'issue, pour qu'Alain le voie sans éplucher les logs watcher."""
     with tempfile.TemporaryDirectory() as tmp:
         tmp_path = Path(tmp)
         rep_travail = tmp_path / "projet"
@@ -592,11 +742,14 @@ def scenario_max_1_repli_si_worktree_echoue():
             max_write_parallele=1,
         ):
             try:
-                # Chemin cible du worktree déjà occupé par un dossier
-                # quelconque (garde-fou #337 point 4 de _creer_worktree) →
-                # création refusée, repli attendu sur REP_TRAVAIL.
-                chemin_cible = watcher._chemin_worktree(numero)
-                chemin_cible.mkdir(parents=True)
+                # LES TROIS chemins cibles (standard, -bis, -ter) déjà
+                # occupés par un dossier quelconque (garde-fou #337 point 4
+                # de _creer_worktree) → les 3 tentatives échouent (issue
+                # #611), repli attendu sur REP_TRAVAIL.
+                chemin_standard = watcher._chemin_worktree(numero)
+                chemin_ter = watcher._chemin_worktree(numero, "-ter")
+                for suffixe in ("", "-bis", "-ter"):
+                    watcher._chemin_worktree(numero, suffixe).mkdir(parents=True)
 
                 issue = _issue_minimale(numero, "Test #577 — repli si worktree impossible", ["mode_write"])
                 with _capturer_logs_watcher() as logs:
@@ -604,21 +757,37 @@ def scenario_max_1_repli_si_worktree_echoue():
 
                 pwd = (test_dir / f"pwd-{numero}").read_text(encoding="utf-8").strip()
                 assert Path(pwd) == rep_travail.resolve(), \
-                    f"repli attendu dans REP_TRAVAIL si le worktree ne peut être créé : {pwd}"
+                    f"repli attendu dans REP_TRAVAIL si les 3 tentatives de worktree échouent : {pwd}"
                 assert (test_dir / f"marqueur-{numero}").exists(), "résultat jamais posté"
 
-                # Issue #589, volet 1 : log.warning explicite, avec le chemin
-                # concerné, au moment précis de l'échec.
-                logs_pertinents = [m for m in logs if str(chemin_cible) in m and "déjà pris" in m]
+                # Issue #589, volet 1 : log.warning explicite dès la première
+                # tentative (nom standard), avec le chemin concerné.
+                logs_pertinents = [m for m in logs if str(chemin_standard) in m and "déjà pris" in m]
                 assert logs_pertinents, \
                     f"aucun log.warning explicite (chemin + 'déjà pris') pour le repli #589 : {logs}"
 
-                # Issue #589, volet 2 : mention dans le compte-rendu de
+                # Issue #611, volet 2 : log.warning explicite du repli en
+                # tout dernier recours, après épuisement des 3 tentatives.
+                logs_repli = [m for m in logs if f"#{numero}" in m and "dernier recours" in m]
+                assert logs_repli, \
+                    f"aucun log.warning explicite du repli en dernier recours (#611) : {logs}"
+
+                # Issue #611, volet 3 : notify-send immédiat sur le bureau
+                # Linux, capturé ici par le faux exécutable.
+                fichier_notify = test_dir / "notify-send-appels.log"
+                assert fichier_notify.exists(), \
+                    "notify-send aurait dû être déclenché lors du repli en dernier recours (issue #611)"
+                appels_notify = fichier_notify.read_text(encoding="utf-8")
+                assert f"#{numero}" in appels_notify and "critical" in appels_notify, \
+                    f"l'appel notify-send ne mentionne pas l'issue ou l'urgence attendue : {appels_notify}"
+
+                # Issue #589, volet 4 : mention dans le compte-rendu de
                 # clôture posté sur l'issue (onglet Résultats), pas seulement
-                # dans les logs watcher.
+                # dans les logs watcher — référence la DERNIÈRE tentative
+                # (-ter), celle dont la raison est transmise au repli.
                 corps = (test_dir / f"corps-{numero}.md").read_text(encoding="utf-8")
-                assert "Repli sur REP_TRAVAIL" in corps and str(chemin_cible) in corps, \
-                    f"le compte-rendu de clôture ne mentionne pas le repli worktree (#589) : {corps}"
+                assert "Repli sur REP_TRAVAIL" in corps and str(chemin_ter) in corps, \
+                    f"le compte-rendu de clôture ne mentionne pas le repli worktree (#589/#611) : {corps}"
             finally:
                 if ancien_path:
                     os.environ["PATH"] = ancien_path
@@ -627,6 +796,76 @@ def scenario_max_1_repli_si_worktree_echoue():
                 os.environ.pop("TEST_337_DIR", None)
 
         return {"repli_worktree_echoue_ok": True}
+
+
+def scenario_max_superieur_repli_si_toutes_tentatives_echouent():
+    """Issue #611 : à `MAX_WRITE_PARALLELE > 1`, si LES TROIS tentatives de
+    création du worktree échouent pour une issue mode_write (y compris la
+    PREMIÈRE d'un lot — le cas précis corrigé par #611), le repli en tout
+    dernier recours sur REP_TRAVAIL a bien lieu en THREAD (comme les autres
+    slots, la boucle principale reste libre), et déclenche le même
+    signalement actif (notify-send + log.warning + compte-rendu de clôture)
+    que le cas MAX_WRITE_PARALLELE<=1 couvert par le scénario précédent."""
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+        rep_travail = tmp_path / "projet"
+        rep_travail.mkdir()
+        _init_depot_git(rep_travail)
+
+        test_dir = tmp_path / "etat_test"
+        test_dir.mkdir()
+        bin_dir = _preparer_bin(tmp_path)
+
+        ancien_path = os.environ.get("PATH", "")
+        os.environ["PATH"] = f"{bin_dir}{os.pathsep}{ancien_path}"
+        os.environ["TEST_337_DIR"] = str(test_dir)
+
+        numero = 93375
+        with _contexte_watcher_isole(
+            tmp_path, nom="test611par", depot="AlainDelree/depot-inexistant-test611",
+            rep_travail=rep_travail, topic_ntfy="test611par",
+            max_essais=1, timeout_claude=15, notifier_local=False,
+            max_write_parallele=2,
+        ):
+            try:
+                chemin_ter = watcher._chemin_worktree(numero, "-ter")
+                for suffixe in ("", "-bis", "-ter"):
+                    watcher._chemin_worktree(numero, suffixe).mkdir(parents=True)
+
+                issue = _issue_minimale(numero, "Test #611 — repli parallélisé si worktree impossible", ["mode_write"])
+                watcher.traiter_issue(issue, dry_run=False)
+
+                # Dispatché en THREAD malgré le repli (issue #611 — pas
+                # d'appel bloquant direct, contrairement au cas MAX<=1).
+                actifs = watcher._threads_ecriture_actifs()
+                assert len(actifs) == 1, f"le repli aurait dû être dispatché en thread : {actifs}"
+                assert actifs[0]["worktree"] is None, "le thread de repli cible bien REP_TRAVAIL (worktree=None)"
+                actifs[0]["thread"].join(timeout=15)
+                assert not actifs[0]["thread"].is_alive(), f"thread de repli #{numero} toujours actif après 15s"
+
+                pwd = (test_dir / f"pwd-{numero}").read_text(encoding="utf-8").strip()
+                assert Path(pwd) == rep_travail.resolve(), \
+                    f"repli attendu dans REP_TRAVAIL si les 3 tentatives de worktree échouent : {pwd}"
+                assert (test_dir / f"marqueur-{numero}").exists(), "résultat jamais posté"
+
+                fichier_notify = test_dir / "notify-send-appels.log"
+                assert fichier_notify.exists(), \
+                    "notify-send aurait dû être déclenché lors du repli parallélisé en dernier recours (issue #611)"
+                appels_notify = fichier_notify.read_text(encoding="utf-8")
+                assert f"#{numero}" in appels_notify, \
+                    f"l'appel notify-send ne mentionne pas l'issue concernée : {appels_notify}"
+
+                corps = (test_dir / f"corps-{numero}.md").read_text(encoding="utf-8")
+                assert "Repli sur REP_TRAVAIL" in corps and str(chemin_ter) in corps, \
+                    f"le compte-rendu de clôture ne mentionne pas le repli worktree (#611) : {corps}"
+            finally:
+                if ancien_path:
+                    os.environ["PATH"] = ancien_path
+                else:
+                    os.environ.pop("PATH", None)
+                os.environ.pop("TEST_337_DIR", None)
+
+        return {"repli_parallelise_ok": True}
 
 
 def scenario_needs_human_bloque_max_1():
@@ -812,13 +1051,21 @@ def main():
     tests = [
         ("_chemin_worktree / _branche_worktree : nommage attendu", scenario_chemin_et_branche_worktree),
         ("_creer_worktree : succès + replis propres (chemin/branche déjà pris)", scenario_creer_worktree_succes_et_repli),
+        ("issue #611 — _creer_worktree_avec_retries : réussit via -bis si le nom standard est pris",
+         scenario_creer_worktree_avec_retries_reussit_via_bis),
+        ("issue #611 — _creer_worktree_avec_retries : échoue si standard+-bis+-ter sont tous pris",
+         scenario_creer_worktree_avec_retries_echoue_toutes_tentatives),
+        ("issue #611 — _creer_worktree_avec_retries : pas de retry sur une erreur git générique",
+         scenario_creer_worktree_avec_retries_erreur_generique_sans_retry),
         ("_threads_ecriture_actifs : purge des threads terminés", scenario_purge_threads_termines),
-        ("parallélisation de 2 issues mode_write : REP_TRAVAIL + worktree dédié, worktree conservé",
+        ("issue #611 — parallélisation de 2 issues mode_write : DEUX worktrees dédiés, aucune dans REP_TRAVAIL",
          scenario_parallelisation_deux_issues_mode_write),
         ("issue #577 — MAX_WRITE_PARALLELE=1 : aucun thread, mais worktree dédié, REP_TRAVAIL inchangé",
          scenario_max_1_isole_dans_worktree),
-        ("issue #577 — MAX_WRITE_PARALLELE=1 : repli sur REP_TRAVAIL si la création du worktree échoue",
+        ("issue #577/#611 — MAX_WRITE_PARALLELE=1 : repli sur REP_TRAVAIL + notify-send si les 3 tentatives échouent",
          scenario_max_1_repli_si_worktree_echoue),
+        ("issue #611 — MAX_WRITE_PARALLELE>1 : repli parallélisé (thread) + notify-send si les 3 tentatives échouent",
+         scenario_max_superieur_repli_si_toutes_tentatives_echouent),
         ("issue #576 — needs-human bloque la seule place (MAX=1) puis la libère après retrait du label",
          scenario_needs_human_bloque_max_1),
         ("issue #576 — needs-human compte parmi les places (MAX=2) sans bloquer le reste",

@@ -1804,7 +1804,7 @@ a été remplacée par les deux seuls droits que documente Microsoft pour
   ne vient jamais, jusqu'à expiration).
 
 ### Parallélisation mode_write via git worktrees (issue #337, isolation
-systématique depuis #577)
+systématique depuis #577, sans exception depuis #611)
 
 Par défaut, plusieurs issues `mode_write` peuvent désormais tourner **en
 parallèle**, chacune dans son propre `git worktree` (répertoire frère isolé,
@@ -1813,9 +1813,10 @@ historique (un seul `mode_write` à la fois, dans `REP_TRAVAIL`). Les issues
 `mode_lecture`/`mode_scratch` restent, elles, toujours traitées
 séquentiellement dans `REP_TRAVAIL` (hors périmètre de cette issue).
 
-> **Issue #577 — `REP_TRAVAIL` n'est plus jamais touché directement par une
-> tâche `mode_write`, quelle que soit la valeur de `MAX_WRITE_PARALLELE`.**
-> Incident réel ayant motivé ce changement : sur `relecture_bridge`
+> **Issues #577/#611 — `REP_TRAVAIL` n'est plus jamais touché directement
+> par une tâche `mode_write`, quelle que soit la valeur de
+> `MAX_WRITE_PARALLELE`, sauf échec confirmé du worktree.**
+> Incident réel ayant motivé #577 : sur `relecture_bridge`
 > (`MAX_WRITE_PARALLELE=1`), Alain a fait un `git commit`/`git stash` manuel
 > dans `REP_TRAVAIL` pendant qu'une issue `mode_write` y travaillait
 > directement (comportement d'avant #577) — collision directe, une
@@ -1825,11 +1826,22 @@ séquentiellement dans `REP_TRAVAIL` (hors périmètre de cette issue).
 > parallélisation **entre tâches CCL** (thread principal vs threads
 > parallèles, utilité réelle uniquement `> 1`) ; le second doit s'appliquer
 > **systématiquement**, y compris à `MAX_WRITE_PARALLELE = 1` où une seule
-> tâche tourne à la fois. Manipuler `REP_TRAVAIL` (commit, stash,
-> navigation) pendant qu'une issue `mode_write` est en cours est désormais
-> **toujours** sans risque de collision, sans condition ni exception à
-> retenir — en contrepartie, un worktree est à merger après chaque tâche
-> `mode_write`, même sur les projets à `MAX_WRITE_PARALLELE=1`.
+> tâche tourne à la fois. #577 avait laissé une exception non documentée :
+> à `MAX_WRITE_PARALLELE > 1`, la PREMIÈRE tâche `mode_write` d'un lot était
+> quand même dispatchée directement dans `REP_TRAVAIL` (`worktree=None`),
+> sans isolation — incohérence entre l'encart ci-dessus et le code, qui a
+> laissé du travail inachevé mélangé dans `REP_TRAVAIL` lors d'un redémarrage
+> du watcher pendant ce premier slot (`relecture_bridge` #73). **Issue #611**
+> supprime cette exception : toute tâche `mode_write`, quel que soit son
+> rang dans le lot, obtient d'abord un worktree dédié — avec plusieurs
+> tentatives sous noms alternatifs (`-bis`, `-ter`) si le chemin/la branche
+> standard est déjà pris (reliquat non nettoyé). Manipuler `REP_TRAVAIL`
+> (commit, stash, navigation) pendant qu'une issue `mode_write` est en cours
+> reste donc sans risque de collision dans l'écrasante majorité des cas — la
+> seule exception restante est le repli en tout DERNIER recours, quand
+> **toutes** les tentatives de création de worktree ont échoué : ce cas est
+> volontairement signalé de façon active (notify-send immédiat + log.warning
+> + mention dans le compte-rendu de clôture de l'issue), jamais silencieux.
 
 - **`MAX_WRITE_PARALLELE`** (`.conf`, entier, défaut **2**) — nombre maximum
   de tâches `mode_write` concurrentes **entre elles**. `1` = pas de
@@ -1854,42 +1866,62 @@ séquentiellement dans `REP_TRAVAIL` (hors périmètre de cette issue).
   explicite à **chaque cycle** — jamais une fois puis silence.
 - **Décision de parallélisation** (`traiter_issue`, point d'entrée public
   appelé pour chaque issue) :
-  - `MAX_WRITE_PARALLELE > 1` : la **première** issue `mode_write` détectée
-    sans autre tâche `mode_write` déjà en cours est dispatchée dans un thread
-    Python ciblant `REP_TRAVAIL` directement — **sans worktree** — nécessaire
-    pour que la boucle principale (mono-thread) reste libre de détecter une
-    éventuelle deuxième issue `mode_write` pendant que la première tourne
-    encore ; sans cela, un `traiter_issue` bloquant sur la première tâche
-    empêcherait à jamais d'en atteindre une seconde. Les issues `mode_write`
-    **suivantes**, détectées pendant qu'au moins un thread est déjà actif et
-    sous `MAX_WRITE_PARALLELE`, obtiennent chacune un worktree dédié.
+  - `MAX_WRITE_PARALLELE > 1` : **toute** issue `mode_write` détectée,
+    y compris la première d'un lot (issue #611 — plus d'exception
+    `REP_TRAVAIL` pour ce cas, cf. encart ci-dessus), est dispatchée dans un
+    thread Python après obtention d'un worktree dédié via
+    `_creer_worktree_avec_retries` — nécessaire dans tous les cas pour que la
+    boucle principale (mono-thread) reste libre de détecter d'autres issues
+    `mode_write` pendant que celle-ci tourne encore.
   - `MAX_WRITE_PARALLELE ≤ 1` (issue #577) : aucune raison de garder la
     boucle principale libre puisqu'une seule tâche `mode_write` tourne à la
-    fois — `_creer_worktree` est appelée directement, puis
+    fois — `_creer_worktree_avec_retries` est appelée directement, puis
     `_traiter_issue_synchrone` **sans thread**, en appel bloquant, avec ce
     worktree. Le modèle d'exécution (synchrone vs thread) reste donc piloté
     par `MAX_WRITE_PARALLELE` comme avant #577 ; seule la présence d'un
     worktree change — plus jamais `REP_TRAVAIL` directement.
-  - Dans tous les cas, échec de création du worktree (chemin ou branche déjà
-    pris, erreur git) → repli propre sur `REP_TRAVAIL` (`chemin_worktree =
-    None`), jamais d'exception propagée.
+  - Dans tous les cas, échec de **toutes** les tentatives de création du
+    worktree (chemin ou branche déjà pris, erreur git — voir
+    `_creer_worktree_avec_retries` ci-dessous) → repli propre sur
+    `REP_TRAVAIL` (`chemin_worktree = None`), jamais d'exception propagée,
+    mais désormais signalé activement (issue #611, voir plus bas) plutôt
+    qu'un simple `log.warning`.
 - **Worktree** : chemin `<REP_TRAVAIL>/../<NOM_PROJET>-issue<N>` (répertoire
   frère de `REP_TRAVAIL`), branche `worktree-issue-<N>`, créés par
   `git -C <REP_TRAVAIL> worktree add <chemin> -b worktree-issue-<N>`. Si le
-  chemin ou la branche existe déjà, ou si `git worktree add` échoue pour
-  toute autre raison, repli propre sur le traitement séquentiel classique
+  chemin ou la branche existe déjà, `_creer_worktree_avec_retries` (issue
+  #611) retente jusqu'à 2 fois de plus sous un nom alternatif —
+  `<NOM_PROJET>-issue<N>-bis` puis `-ter`, branches `worktree-issue-<N>-bis`/
+  `-ter` — couvrant le cas le plus fréquent (worktree orphelin non nettoyé),
+  sans introduire de worktree permanent partagé. Si `git worktree add` échoue
+  pour une raison différente (erreur git générique), aucune retentative :
+  changer de nom ne résoudrait rien. Si **toutes** les tentatives échouent,
+  repli propre sur le traitement séquentiel classique dans `REP_TRAVAIL`
   (l'issue attend qu'un slot se libère au prochain cycle) — jamais
-  d'exception propagée.
+  d'exception propagée, mais signalé activement (voir point suivant).
+- **Repli en dernier recours : signalement actif (issue #611)** — quand
+  `_creer_worktree_avec_retries` épuise ses 3 tentatives, `traiter_issue`
+  appelle `_signaler_repli_worktree_echoue` avant de lancer la tâche dans
+  `REP_TRAVAIL` : `notify-send` immédiat (bulle bureau Linux, via
+  `notifier_bureau` — instantané et visible si Alain est présent, sans le
+  délai possible de `ntfy`), `log.warning` explicite avec le chemin
+  concerné, et mention dans le compte-rendu de clôture de l'issue (mécanisme
+  `echec_worktree_deja_pris` déjà en place depuis #589, désormais transmis
+  aussi côté thread parallélisé via `_lancer_thread_ecriture`). Ce repli
+  reste, comme avant, en tâche de fond (thread), pas un appel bloquant : la
+  boucle principale demeure libre même dans ce cas de dernier recours.
 - **Signal d'interface (issue #609)** : `new_issue.py` ne peut pas distinguer
-  le premier slot (normal) du repli #589 (échec de création) — les deux
-  laissent une tâche `mode_write` tourner directement dans `REP_TRAVAIL`, même
-  risque dans les deux cas si Alain touche (merge, push) le dossier principal
-  avant la fin. `app.watchers.repli_rep_travail` (via le verrou fichier de
+  le repli en `MAX_WRITE_PARALLELE ≤ 1` (échec de création, #589) du repli en
+  dernier recours à `MAX_WRITE_PARALLELE > 1` (#611) — les deux laissent une
+  tâche `mode_write` tourner directement dans `REP_TRAVAIL`, même risque dans
+  les deux cas si Alain touche (merge, push) le dossier principal avant la
+  fin. `app.watchers.repli_rep_travail` (via le verrou fichier de
   `watcher.py`, champ `mode=`, cf. §"Redémarrage forcé différé..." plus haut)
   ne cherche donc pas à les différencier : dès qu'une tâche `mode_write` est
   en cours dans `REP_TRAVAIL`, qu'importe la raison, l'onglet Watchers
   l'affiche (colonne Statut) et un bandeau global (visible sur tous les
-  onglets) le signale.
+  onglets) le signale — en plus, désormais, du `notify-send` immédiat émis
+  au moment du repli (issue #611, ci-dessus).
 - **CHANGELOG** : dans un worktree, CCL reçoit une consigne de prompt dédiée
   lui demandant d'écrire son entrée dans `CHANGELOG-<N>.md` à la racine du
   worktree plutôt que dans `CHANGELOG.md` directement, pour éviter un
@@ -1902,8 +1934,9 @@ séquentiellement dans `REP_TRAVAIL` (hors périmètre de cette issue).
   systématiquement par `REP_TRAVAIL` seul — deux worktrees du même projet
   obtiennent donc deux verrous distincts et peuvent tourner sans s'attendre,
   tandis qu'une issue `mode_lecture`/`mode_scratch` visant `REP_TRAVAIL`
-  pendant qu'un worktree y tourne encore (premier slot) reste bloquée par
-  le même verrou qu'avant, reprise au cycle suivant.
+  pendant qu'une tâche `mode_write` y tourne encore (repli en dernier
+  recours, #611, ou `MAX_WRITE_PARALLELE ≤ 1`) reste bloquée par le même
+  verrou qu'avant, reprise au cycle suivant.
 - **Libération garantie, quel que soit le chemin de sortie (issue #584)** :
   `_traiter_issue_synchrone` pose le verrou puis entre immédiatement dans un
   `try`/`finally` qui enveloppe l'intégralité du traitement — succès, échec

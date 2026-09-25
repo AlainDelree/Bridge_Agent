@@ -3389,25 +3389,27 @@ def _reconcilier_issues_en_cours_fermees(issues: list[dict]) -> None:
 # tourne dans REP_TRAVAIL, cf. décision ci-dessous), "thread"}.
 #
 # Décision de parallélisation (voir `traiter_issue`, point d'entrée public) :
-# à `MAX_WRITE_PARALLELE > 1`, la PREMIÈRE tâche mode_write d'un lot est
-# dispatchée dans un thread ciblant REP_TRAVAIL (worktree=None) —
-# nécessaire pour que la boucle principale reste libre de détecter une
-# deuxième tâche mode_write pendant que la première tourne encore (une
-# boucle `while True` mono-thread ne peut sinon jamais atteindre une
-# deuxième issue tant que `traiter_issue` bloque sur la première). Les
-# tâches mode_write SUIVANTES, détectées pendant qu'au moins un thread
-# mode_write est déjà actif et que `MAX_WRITE_PARALLELE` n'est pas atteint,
-# obtiennent chacune un worktree dédié.
+# à `MAX_WRITE_PARALLELE > 1`, TOUTE tâche mode_write d'un lot — y compris la
+# PREMIÈRE — est dispatchée dans un thread ciblant un worktree dédié
+# (issue #611 : l'ancienne exception qui ciblait REP_TRAVAIL pour le premier
+# slot, `worktree=None`, laissait ce premier slot sans isolation — un
+# redémarrage du watcher pendant son exécution tuait le processus CCL et
+# laissait du travail inachevé mélangé dans REP_TRAVAIL, cf. relecture_bridge
+# #73). `_creer_worktree_avec_retries` tente plusieurs noms alternatifs
+# (suffixes `-bis`, `-ter`) avant d'abandonner ; ce n'est qu'en tout dernier
+# recours, si AUCUNE tentative n'aboutit, que le thread cible REP_TRAVAIL
+# (worktree=None) — repli signalé activement (notify-send + log.warning +
+# mention dans le compte-rendu de clôture), pas un chemin normal.
 #
 # `MAX_WRITE_PARALLELE <= 1` désactive la parallélisation ENTRE tâches
 # (aucun thread, une seule tâche mode_write à la fois, traitée directement
 # dans le thread principal — comportement séquentiel historique) mais PAS
 # l'isolation vis-à-vis de REP_TRAVAIL (issue #577) : la tâche reçoit malgré
-# tout un worktree dédié, obtenu via `_creer_worktree` puis passé directement
-# à `_traiter_issue_synchrone` sans thread. Alain doit pouvoir manipuler
-# REP_TRAVAIL (commit, stash, navigation) à tout moment, y compris pendant
-# qu'une unique tâche mode_write est en cours, sans jamais entrer en
-# collision avec elle.
+# tout un worktree dédié, obtenu via `_creer_worktree_avec_retries` puis
+# passé directement à `_traiter_issue_synchrone` sans thread. Alain doit
+# pouvoir manipuler REP_TRAVAIL (commit, stash, navigation) à tout moment, y
+# compris pendant qu'une unique tâche mode_write est en cours, sans jamais
+# entrer en collision avec elle.
 _verrou_threads_ecriture = threading.Lock()
 _threads_ecriture: list[dict] = []
 
@@ -3433,20 +3435,28 @@ def _nb_threads_ecriture_actifs() -> int:
     return len(_threads_ecriture_actifs())
 
 
-def _chemin_worktree(numero: int) -> Path:
+def _chemin_worktree(numero: int, suffixe: str = "") -> Path:
     """Chemin du worktree d'une issue mode_write (issue #337) : répertoire
     FRÈRE de REP_TRAVAIL, nommé d'après le NOM du projet (CFG.nom, pas le nom
-    du dossier REP_TRAVAIL — ce sont deux choses potentiellement différentes)."""
-    return CFG.rep_travail.parent / f"{CFG.nom}-issue{numero}"
+    du dossier REP_TRAVAIL — ce sont deux choses potentiellement différentes).
+
+    `suffixe` (issue #611) : `-bis`/`-ter`, utilisé par
+    `_creer_worktree_avec_retries` pour les tentatives alternatives quand le
+    chemin/la branche standard est déjà pris (reliquat non nettoyé)."""
+    return CFG.rep_travail.parent / f"{CFG.nom}-issue{numero}{suffixe}"
 
 
-def _branche_worktree(numero: int) -> str:
-    return f"worktree-issue-{numero}"
+def _branche_worktree(numero: int, suffixe: str = "") -> str:
+    return f"worktree-issue-{numero}{suffixe}"
 
 
-def _creer_worktree(numero: int) -> tuple[Path | None, str | None]:
+def _creer_worktree(numero: int, suffixe: str = "") -> tuple[Path | None, str | None]:
     """Crée le worktree git dédié à l'issue mode_write `numero` (issue #337) :
     `git -C <REP_TRAVAIL> worktree add <chemin> -b worktree-issue-<numero>`.
+    `suffixe` (issue #611) : voir `_chemin_worktree` — nom alternatif tenté
+    par `_creer_worktree_avec_retries`, qui est l'appelant normal côté
+    `traiter_issue` (cette fonction reste appelable directement, suffixe="",
+    pour les tests et cas d'appel unique).
 
     Garde-fous (échec propre, jamais d'exception propagée) : chemin déjà
     existant (vérifié AVANT l'appel git, évite une tentative vouée à
@@ -3468,12 +3478,12 @@ def _creer_worktree(numero: int) -> tuple[Path | None, str | None]:
     cause dans le message d'erreur de `git` en cas d'échec : ce message est
     localisé (dépend de la langue du système), une détection par mots-clés y
     serait donc muette sur une machine non-anglophone (issue #589)."""
-    chemin = _chemin_worktree(numero)
-    branche = _branche_worktree(numero)
+    chemin = _chemin_worktree(numero, suffixe)
+    branche = _branche_worktree(numero, suffixe)
     if chemin.exists():
         raison = f"chemin {chemin} déjà pris par un worktree existant"
         log.warning(
-            f"  Worktree #{numero} : {raison} — repli sur REP_TRAVAIL "
+            f"  Worktree #{numero}{suffixe} : {raison} "
             f"(issue #589 : probable reliquat d'une tentative précédente non "
             f"nettoyée — nettoyage TOUJOURS manuel, cf. WORKTREES.md)."
         )
@@ -3485,7 +3495,7 @@ def _creer_worktree(numero: int) -> tuple[Path | None, str | None]:
     if verif_branche.returncode == 0:
         raison = f"branche '{branche}' déjà prise (chemin {chemin} libre, mais branche existante)"
         log.warning(
-            f"  Worktree #{numero} : {raison} — repli sur REP_TRAVAIL "
+            f"  Worktree #{numero}{suffixe} : {raison} "
             f"(issue #589 : probable reliquat d'une tentative précédente non "
             f"nettoyée — nettoyage TOUJOURS manuel, cf. WORKTREES.md)."
         )
@@ -3496,18 +3506,70 @@ def _creer_worktree(numero: int) -> tuple[Path | None, str | None]:
             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60,
         )
     except (OSError, subprocess.SubprocessError) as e:
-        log.warning(f"  Worktree #{numero} : exception à la création ({e}) — fallback séquentiel.")
+        log.warning(f"  Worktree #{numero}{suffixe} : exception à la création ({e}).")
         return None, None
     if res.returncode != 0:
         # Erreur git générique (chemin et branche libres au moment des
         # vérifications ci-dessus, mais `git worktree add` a quand même
         # échoué) — pas de raison_deja_pris : distinct du cas #589.
         log.warning(
-            f"  Worktree #{numero} : échec de création — {res.stderr.strip()} — fallback séquentiel."
+            f"  Worktree #{numero}{suffixe} : échec de création — {res.stderr.strip()}."
         )
         return None, None
-    log.info(f"  Worktree #{numero} créé : {chemin} (branche {branche}).")
+    log.info(f"  Worktree #{numero}{suffixe} créé : {chemin} (branche {branche}).")
     return chemin, None
+
+
+def _creer_worktree_avec_retries(numero: int) -> tuple[Path | None, str | None]:
+    """Enveloppe `_creer_worktree` avec plusieurs tentatives sous noms
+    alternatifs (issue #611) : couvre le cas le plus fréquent d'échec — un
+    worktree orphelin non nettoyé qui occupe déjà le chemin/la branche
+    standard — sans jamais introduire de worktree permanent partagé.
+
+    Tentatives : `""` (nom standard `<projet>-issue<numero>`), puis `-bis`,
+    puis `-ter`, dans cet ordre, MAIS seulement tant que l'échec précédent est
+    attribuable à un chemin/branche déjà pris (`raison` renseignée) — une
+    erreur git générique (raison=None) n'a aucune chance d'être résolue par un
+    simple changement de nom, retenter serait donc inutile : on s'arrête
+    immédiatement dans ce cas.
+
+    Retourne `(chemin, None)` dès la première réussite, ou `(None, raison)`
+    (raison de la DERNIÈRE tentative) si toutes échouent — charge à
+    l'appelant de décider du repli (REP_TRAVAIL en tout dernier recours,
+    signalé activement)."""
+    raison = None
+    for suffixe in ("", "-bis", "-ter"):
+        chemin, raison = _creer_worktree(numero, suffixe)
+        if chemin is not None:
+            return chemin, None
+        if raison is None:
+            break
+    return None, raison
+
+
+def _signaler_repli_worktree_echoue(numero: int, raison: str | None) -> None:
+    """Signalement actif (issue #611) du repli en tout dernier recours dans
+    REP_TRAVAIL, quand `_creer_worktree_avec_retries` a épuisé toutes ses
+    tentatives pour l'issue mode_write `numero`. Le repli lui-même n'est PAS
+    modifié par cette fonction (toujours propre, jamais d'exception) — appelée
+    par `traiter_issue` juste avant de l'effectuer, sur trois canaux :
+    notify-send immédiat (bulle bureau Linux, instantané et visible si Alain
+    est présent, contrairement à ntfy qui peut accuser un délai), un
+    log.warning explicite avec le chemin, et une mention dans le compte-rendu
+    de clôture de l'issue (assurée séparément par l'appelant, via
+    `echec_worktree_deja_pris` transmis à `_traiter_issue_synchrone` —
+    mécanisme déjà en place depuis #589)."""
+    log.warning(
+        f"  Issue #{numero} : AUCUNE tentative de création de worktree n'a abouti "
+        f"({raison}) — repli en tout dernier recours dans REP_TRAVAIL "
+        f"({CFG.rep_travail}), issue #611."
+    )
+    notifier_bureau(
+        f"Bridge {CFG.nom} — repli worktree #{numero}",
+        f"Toutes les tentatives de création de worktree ont échoué pour l'issue #{numero} "
+        f"({raison}) — traitement en dernier recours dans REP_TRAVAIL ({CFG.rep_travail}).",
+        urgence="critical",
+    )
 
 
 def _chemin_verrou(rep_travail: Path) -> Path:
@@ -4651,15 +4713,22 @@ def _traiter_issue_synchrone(issue: dict, dry_run: bool, chemin_worktree: Path |
 
 # ─── Point d'entrée public : dispatch séquentiel / parallèle (issue #337) ──────
 
-def _lancer_thread_ecriture(issue: dict, dry_run: bool, chemin_worktree: Path | None) -> None:
+def _lancer_thread_ecriture(issue: dict, dry_run: bool, chemin_worktree: Path | None,
+                             echec_worktree_deja_pris: str | None = None) -> None:
     """Cible du thread Python dédié à une tâche mode_write parallélisée (issue
     #337). Appelle simplement `_traiter_issue_synchrone` — toute la logique
     (ACK, verrou par chemin_travail, retries, fermeture, notifications) reste
     identique, seul le chemin de travail change. `_threads_ecriture` n'a PAS
     besoin d'être purgé ici explicitement : `_nettoyer_threads_ecriture_termines`
     (appelée à chaque décision de dispatch et en tête de boucle principale)
-    détecte `thread.is_alive() == False` dès que cette fonction retourne."""
-    _traiter_issue_synchrone(issue, dry_run, chemin_worktree=chemin_worktree)
+    détecte `thread.is_alive() == False` dès que cette fonction retourne.
+
+    `echec_worktree_deja_pris` (issue #611) : transmis tel quel quand ce
+    thread cible REP_TRAVAIL en tout dernier recours, après épuisement des
+    tentatives de `_creer_worktree_avec_retries` — rend ce repli visible dans
+    le compte-rendu de clôture (voir `_traiter_issue_synchrone`)."""
+    _traiter_issue_synchrone(issue, dry_run, chemin_worktree=chemin_worktree,
+                              echec_worktree_deja_pris=echec_worktree_deja_pris)
 
 
 def traiter_issue(issue: dict, dry_run: bool) -> None:
@@ -4677,25 +4746,24 @@ def traiter_issue(issue: dict, dry_run: bool) -> None:
         REP_TRAVAIL.
       - `MAX_WRITE_PARALLELE <= 1` (issue #577) → pas de thread (une seule
         tâche mode_write à la fois, thread principal), mais worktree dédié
-        malgré tout : `_creer_worktree` puis `_traiter_issue_synchrone`
-        appelée directement (bloquant) avec ce worktree. Échec de création
-        du worktree (déjà existant, erreur git) → repli direct sur
-        REP_TRAVAIL, comme avant #577.
-      - `MAX_WRITE_PARALLELE > 1`, aucun thread mode_write actif → PREMIER
-        slot : thread dédié ciblant REP_TRAVAIL (pas de worktree) —
-        nécessaire pour que la boucle principale reste libre de détecter une
-        éventuelle deuxième tâche mode_write pendant que celle-ci tourne
-        encore.
-      - `MAX_WRITE_PARALLELE > 1`, au moins un thread actif et sous
-        `MAX_WRITE_PARALLELE` → worktree dédié + thread. Échec de création
-        du worktree (déjà existant, erreur git) → repli sur
-        `_traiter_issue_synchrone` direct : le verrou par chemin_travail
-        (#189/#322, désormais posé sur REP_TRAVAIL ou le worktree selon le
-        cas, voir #337 point 7) fait alors office de garde-fou — si
-        REP_TRAVAIL est occupé par le premier slot, cette issue est
-        simplement différée au prochain cycle, sans double écriture possible.
-      - À `MAX_WRITE_PARALLELE` déjà atteint → même repli (différée par le
-        verrou si REP_TRAVAIL est occupé, traitée directement s'il est libre).
+        malgré tout : `_creer_worktree_avec_retries` puis
+        `_traiter_issue_synchrone` appelée directement (bloquant) avec ce
+        worktree. Échec de TOUTES les tentatives → repli direct sur
+        REP_TRAVAIL, signalé activement (issue #611).
+      - `MAX_WRITE_PARALLELE > 1` → TOUTE tâche mode_write du lot, y compris
+        la première (issue #611 — plus d'exception REP_TRAVAIL pour le
+        premier slot, cf. #577 contredit par #337), obtient un worktree dédié
+        via `_creer_worktree_avec_retries` (nom standard, puis `-bis`/`-ter`
+        si le chemin/la branche est déjà pris) + thread. Échec de TOUTES les
+        tentatives → repli en tout DERNIER recours sur REP_TRAVAIL, mais
+        toujours en thread (pour que la boucle principale reste libre de
+        traiter d'autres issues) : le verrou par chemin_travail (#189/#322)
+        protège alors contre une collision avec un autre repli concurrent qui
+        viserait lui aussi REP_TRAVAIL — simple différé au prochain cycle si
+        REP_TRAVAIL est occupé. Signalé activement (notify-send + log.warning
+        + mention dans le compte-rendu de clôture, issue #611/#589).
+      - À `MAX_WRITE_PARALLELE` déjà atteint → différée au prochain cycle,
+        sans même tenter de worktree.
 
     Issue #576 : une issue mode_write bloquée en `needs-human` (échec
     définitif, sans thread actif) continue d'occuper une place de
@@ -4759,30 +4827,18 @@ def traiter_issue(issue: dict, dry_run: bool) -> None:
             return
 
         if CFG.max_write_parallele > 1:
-            if not actifs:
-                # Premier slot : thread sur REP_TRAVAIL (pas de worktree).
-                # PAS de _issues_en_cours_ajouter(numero) ICI : c'est
-                # _traiter_issue_synchrone, exécutée DANS le thread, qui s'en
-                # charge (comportement historique) — l'ajouter ici bloquerait
-                # le thread dès sa première ligne (garde d'idempotence en tête
-                # de _traiter_issue_synchrone). La déduplication inter-cycles
-                # est déjà assurée par `_threads_ecriture` (vérifié plus haut).
-                thread = threading.Thread(
-                    target=_lancer_thread_ecriture, args=(issue, dry_run, None),
-                    name=f"ecriture-issue-{numero}", daemon=True,
-                )
-                with _verrou_threads_ecriture:
-                    _threads_ecriture.append({"numero": numero, "worktree": None, "thread": thread})
-                log.info(
-                    f"  Issue #{numero} : lancement dans REP_TRAVAIL en tâche de fond "
-                    f"(1/{CFG.max_write_parallele}) — parallélisation mode_write active (issue #337)."
-                )
-                thread.start()
-                return
-
-            chemin_worktree, raison_deja_pris = _creer_worktree(numero)
+            # TOUTE tâche mode_write, y compris la première du lot, obtient un
+            # worktree dédié (issue #611 — corrige l'incohérence #577/#337 :
+            # l'ancien premier slot visait REP_TRAVAIL sans isolation, cf.
+            # commentaire de section au-dessus de `_threads_ecriture`).
+            # PAS de _issues_en_cours_ajouter(numero) ICI : c'est
+            # _traiter_issue_synchrone, exécutée DANS le thread, qui s'en
+            # charge (comportement historique) — l'ajouter ici bloquerait le
+            # thread dès sa première ligne (garde d'idempotence en tête de
+            # _traiter_issue_synchrone). La déduplication inter-cycles est
+            # déjà assurée par `_threads_ecriture` (vérifié plus haut).
+            chemin_worktree, raison_deja_pris = _creer_worktree_avec_retries(numero)
             if chemin_worktree is not None:
-                # Même remarque que ci-dessus : pas de _issues_en_cours_ajouter ici.
                 thread = threading.Thread(
                     target=_lancer_thread_ecriture, args=(issue, dry_run, chemin_worktree),
                     name=f"ecriture-issue-{numero}", daemon=True,
@@ -4795,11 +4851,25 @@ def traiter_issue(issue: dict, dry_run: bool) -> None:
                 )
                 thread.start()
                 return
-            # Échec de création du worktree : repli séquentiel direct (pas de
-            # thread), ici plutôt que via le fallthrough générique en fin de
-            # fonction, pour transmettre `raison_deja_pris` (issue #589) au
-            # compte-rendu de clôture quand applicable.
-            _traiter_issue_synchrone(issue, dry_run, echec_worktree_deja_pris=raison_deja_pris)
+
+            # Toutes les tentatives (nom standard + -bis + -ter) ont échoué :
+            # repli en tout DERNIER recours dans REP_TRAVAIL, en tâche de fond
+            # comme les autres slots — le verrou par chemin_travail (#189/#322)
+            # protège contre une collision avec un autre repli concurrent qui
+            # viserait lui aussi REP_TRAVAIL. Signalé activement (issue #611,
+            # pas un chemin normal) : notify-send + log.warning ici,
+            # + mention dans le compte-rendu de clôture assurée par
+            # `_traiter_issue_synchrone` via `echec_worktree_deja_pris`
+            # (transmis à travers `_lancer_thread_ecriture`, issue #589).
+            _signaler_repli_worktree_echoue(numero, raison_deja_pris)
+            thread = threading.Thread(
+                target=_lancer_thread_ecriture,
+                args=(issue, dry_run, None, raison_deja_pris),
+                name=f"ecriture-issue-{numero}", daemon=True,
+            )
+            with _verrou_threads_ecriture:
+                _threads_ecriture.append({"numero": numero, "worktree": None, "thread": thread})
+            thread.start()
             return
         else:
             # MAX_WRITE_PARALLELE <= 1 (issue #577) : pas de parallélisation
@@ -4807,16 +4877,19 @@ def traiter_issue(issue: dict, dry_run: bool) -> None:
             # PAS de threading.Thread ici), mais REP_TRAVAIL reste isolé
             # d'Alain comme au-dessus du seuil : la tâche obtient malgré tout
             # un worktree dédié, et s'exécute directement (appel bloquant,
-            # sans thread) dedans. Échec de création du worktree (déjà
-            # existant, erreur git) → repli direct sur REP_TRAVAIL ci-dessous
-            # via `chemin_worktree=None`, comportement identique à avant #577.
-            chemin_worktree, raison_deja_pris = _creer_worktree(numero)
+            # sans thread) dedans. Échec de TOUTES les tentatives de création
+            # du worktree (nom standard + -bis + -ter, issue #611) → repli
+            # direct sur REP_TRAVAIL ci-dessous via `chemin_worktree=None`,
+            # signalé activement comme pour le cas parallélisé ci-dessus.
+            chemin_worktree, raison_deja_pris = _creer_worktree_avec_retries(numero)
             if chemin_worktree is not None:
                 log.info(
                     f"  Issue #{numero} : traitement séquentiel dans le worktree "
                     f"{chemin_worktree} — isolation de REP_TRAVAIL systématique "
                     f"(issue #577)."
                 )
+            else:
+                _signaler_repli_worktree_echoue(numero, raison_deja_pris)
             _traiter_issue_synchrone(issue, dry_run, chemin_worktree=chemin_worktree,
                                       echec_worktree_deja_pris=raison_deja_pris)
             return
