@@ -406,9 +406,16 @@ def envoyer():
                 # SSE creation_issue (issue #631, backend seul) : même process
                 # que new_issue.py → appel direct, pas de HTTP (à la
                 # différence de scripts/watcher_issues_inbox.py, process
-                # séparé qui POSTe sur /notifier-creation-issue).
+                # séparé qui POSTe sur /notifier-creation-issue). Enrichi
+                # (issue #634) avec les labels réels et les données de temps
+                # (donnees_temps_creation, source unique partagée avec
+                # /issues-en-attente) — le navigateur affiche ainsi la ligne
+                # avec ses vrais labels/estimation/« en file » dès l'événement,
+                # sans fetch réseau supplémentaire.
                 from app.fin_issue import emettre_creation_issue
-                emettre_creation_issue(cfg.nom, numero, titre)
+                donnees_temps = donnees_temps_creation(cfg, titre, body, labels_liste)
+                emettre_creation_issue(cfg.nom, numero, titre,
+                                        labels=labels_liste, timing=donnees_temps)
             maj_rate_limit("app.issues.envoyer")
             return jsonify(succes=True, url=res.stdout.strip(),
                            watcher_demarre=watcher_demarre)
@@ -1097,6 +1104,58 @@ def estimer_duree(historique: list, projet: str, type_issue: str, mode: str,
     return {"mediane": round(_mediane(durees)), "n": n, "fiabilite": "incertain"}
 
 
+# ─── Données de temps connues DÈS LA CRÉATION d'une issue (issue #634) ────────
+# Avant #634, une issue tout juste créée (formulaire web ou issues_inbox)
+# n'apportait aucune donnée de temps à l'événement SSE `creation_issue` : la
+# ligne côté navigateur devait attendre le prochain fetch réussi de
+# /issues-en-attente pour afficher labels/estimation, fetch qui pouvait
+# échouer (issue absente de la réponse `gh issue list`, pas encore indexée —
+# décalage de quelques secondes) et faisait alors DISPARAÎTRE le badge « en
+# file » déjà affiché (chargerTimingProjet purgeait puis réinjectait). Tout ce
+# qui suit est pourtant déjà connu localement au moment même de la création,
+# sans le moindre appel GitHub supplémentaire : c'est la fonction ci-dessous.
+
+def donnees_temps_creation(cfg, titre: str, body: str, labels: list,
+                            historique: list | None = None) -> dict:
+    """Données de temps d'une issue, calculées à partir de ce qui est déjà
+    connu localement (en-tête du body + labels posés à la création + historique/
+    calibration locale) — mêmes champs et mêmes sources que ceux que
+    `issues_en_attente()` calcule pour /issues-en-attente, SEULE différence :
+    `debut` vaut toujours `None` ici (une issue qui vient d'être créée n'a par
+    construction jamais été prise en charge par le watcher — elle est « en
+    file »). Source UNIQUE de ce calcul, réutilisée par `issues_en_attente()`
+    (issue déjà connue de `gh`) ET par les deux chemins de création —
+    `app.issues.envoyer()` (formulaire web) et `scripts/watcher_issues_inbox.py`
+    (dépôt via `issues_inbox/`) — juste après un `gh issue create` réussi,
+    sans attendre que `gh issue list` ait indexé la nouvelle issue.
+
+    `labels` : liste de labels posés à la création (casse quelconque, comparés
+    en minuscules comme dans `issues_en_attente`). `historique` : passé par
+    l'appelant s'il l'a déjà chargé (évite une relecture disque par issue dans
+    la boucle de `issues_en_attente`), sinon rechargé ici."""
+    labels_min = [(lab or "").lower() for lab in labels]
+    priorite = _parser_priorite(body)
+    type_issue = deduire_type_issue(titre, body)
+    if LABEL_ECRITURE in labels_min:
+        mode = "write"
+    elif LABEL_SCRATCH in labels_min:
+        mode = "scratch"
+    else:
+        mode = "read"
+    complexite = extraire_complexite(body)
+    if historique is None:
+        historique = _charger_historique()
+    return {
+        "timeout":     _parser_timeout(body, titre, cfg),
+        "max_essais":  cfg.max_essais,
+        "backoff":     PAUSE_ENTRE_TENTATIVES,
+        "priorite":    priorite,
+        "sans_limite": priorite in ("haute", "critique"),
+        "debut":       None,
+        "estimation":  estimer_duree(historique, cfg.nom, type_issue, mode, complexite),
+    }
+
+
 def issues_en_attente(nom_projet):
     """Retourne les issues ouvertes destinées à un agent (labels for-linux OU
     for-windows), en attente de traitement par le watcher. La liste peut être
@@ -1179,31 +1238,16 @@ def issues_en_attente(nom_projet):
     for it in issues:
         body = it.get("body") or ""
         titre = it.get("title") or ""
-        priorite = _parser_priorite(body)
-        labels = [(l.get("name") or "").lower() for l in it.get("labels", [])]
-        type_issue = deduire_type_issue(titre, body)
-        # "scratch" (issue #327) : population de durées distincte de "read", au
-        # même titre que "write" — sinon l'estimation d'une issue en lecture
-        # active emprunterait à tort la population "read" (mélange de profils
-        # de durée hétérogènes, même défaut que celui corrigé côté UI par #326).
-        if LABEL_ECRITURE in labels:
-            mode = "write"
-        elif LABEL_SCRATCH in labels:
-            mode = "scratch"
-        else:
-            mode = "read"
-        it["timeout"]     = _parser_timeout(body, titre, cfg)
-        it["max_essais"]  = cfg.max_essais
-        it["backoff"]     = PAUSE_ENTRE_TENTATIVES
-        it["priorite"]    = priorite
-        it["sans_limite"] = priorite in ("haute", "critique")
-        it["debut"]       = _debut_traitement(_commentaires_issue(cfg, it["number"]))
-        # Estimation prédictive (médiane historique du même projet+type+mode),
-        # affichée AVANT le badge de décompte, qui reste inchangé (issue #108).
-        # complexite (issue #520) : même extraction que la calibration TIMEOUT
-        # côté watcher, pour retrouver la clé exacte en repli sur etat_timeout.json.
-        complexite = extraire_complexite(body)
-        it["estimation"]  = estimer_duree(historique, cfg.nom, type_issue, mode, complexite)
+        labels = [(l.get("name") or "") for l in it.get("labels", [])]
+        # Source unique du calcul timeout/max_essais/backoff/priorite/
+        # sans_limite/estimation (issue #634) : donnees_temps_creation(), aussi
+        # réutilisée à la CRÉATION d'une issue (app.issues.envoyer(),
+        # scripts/watcher_issues_inbox.py) pour enrichir l'événement SSE
+        # creation_issue sans attendre ce point d'entrée.
+        it.update(donnees_temps_creation(cfg, titre, body, labels, historique))
+        # debut (issue #91) : contrairement à donnees_temps_creation() (toujours
+        # None), ici l'issue est déjà connue de gh — on relit son éventuel ACK.
+        it["debut"] = _debut_traitement(_commentaires_issue(cfg, it["number"]))
         it.pop("body", None)   # body volumineux : inutile au navigateur
     return jsonify(issues)
 

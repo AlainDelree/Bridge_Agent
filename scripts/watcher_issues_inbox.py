@@ -75,7 +75,7 @@ from watcher import (charger_config, lire_conf, est_titre_chef,  # noqa: E402
                      valider_sous_dossier, valider_repo_cible)  # noqa: E402 (issue #567)
 from app.watchers import redemarrer_si_eteint  # noqa: E402 (issue #486, #600)
 from app.issues import (_issue_ouverte_meme_titre, formater_entete,  # noqa: E402 (issues #491, #601, #624)
-                        numero_depuis_url)
+                        numero_depuis_url, donnees_temps_creation)  # (issue #634)
 from app.interruption import relancer_issue  # noqa: E402 (issue #516)
 
 # Ce script tourne dans un process SÉPARÉ de new_issue.py : il ne peut pas
@@ -126,12 +126,19 @@ def _notifier_fichier_recu(nom_fichier: str) -> None:
 
 
 def _notifier_creation_issue(projet: str, numero: int, titre: str,
-                              fichier: str | None = None) -> None:
+                              fichier: str | None = None,
+                              labels: list | None = None,
+                              timing: dict | None = None) -> None:
     """SSE `creation_issue` (issue #631) — après chaque création RÉUSSIE
-    d'une issue (jamais pour un bloc RELANCE, qui n'en crée aucune). Voir
+    d'une issue (jamais pour un bloc RELANCE, qui n'en crée aucune).
+    `labels`/`timing` (issue #634) : enrichissement calculé par
+    `_traiter_bloc()` juste après la création (donnees_temps_creation), pour
+    que la ligne apparaisse côté navigateur avec ses vrais labels et son
+    estimation/« en file » sans appel GitHub supplémentaire. Voir
     app.fin_issue.notifier_creation_issue/emettre_creation_issue."""
     _poster_best_effort(URL_NOTIFIER_CREATION_ISSUE, {
         "projet": projet, "numero": int(numero), "titre": titre, "fichier": fichier,
+        "labels": labels or [], "timing": timing or {},
     })
 
 
@@ -647,20 +654,24 @@ def _modifier_corps_gh(depot: str, numero: int, corps: str) -> tuple[bool, str]:
 def _traiter_relance(cfg: ConfigInbox, champs: dict):
     """Bloc RELANCE (issue #516) : cible l'issue GitHub #N déjà ouverte au
     lieu d'en créer une nouvelle. Retourne le même tuple que _traiter_bloc
-    pour une création (succes, titre, projet, texte, resultat_gh) —
-    `resultat_gh` toujours vide ici, RELANCE ne créant jamais d'issue."""
+    (succes, titre, projet, texte, resultat_gh, labels, donnees_temps) —
+    `resultat_gh` toujours vide et `labels`/`donnees_temps` toujours None ici,
+    RELANCE ne créant jamais d'issue (donc jamais d'événement creation_issue,
+    issue #634)."""
     ok, detail, cfg_projet, numero = valider_relance(champs)
     if not ok:
-        return False, champs["titre"] or f"RELANCE {champs['relance_brut']}", champs["projet"], detail, ""
+        return (False, champs["titre"] or f"RELANCE {champs['relance_brut']}", champs["projet"],
+                detail, "", None, None)
 
     depot = cfg_projet.depot
     ok_view, detail_view, issue = _recuperer_issue(depot, numero)
     if not ok_view:
-        return False, f"#{numero}", champs["projet"], f"issue #{numero} introuvable dans {depot} : {detail_view}", ""
+        return (False, f"#{numero}", champs["projet"],
+                f"issue #{numero} introuvable dans {depot} : {detail_view}", "", None, None)
 
     if (issue.get("state") or "").upper() != "OPEN":
         return (False, issue.get("title") or f"#{numero}", champs["projet"],
-                f"issue #{numero} n'est pas ouverte (état : {issue.get('state')}).", "")
+                f"issue #{numero} n'est pas ouverte (état : {issue.get('state')}).", "", None, None)
 
     corps_existant = issue.get("body") or ""
     nouveau_corps, modifies = _fusionner_entete(corps_existant, champs)
@@ -669,7 +680,7 @@ def _traiter_relance(cfg: ConfigInbox, champs: dict):
         ok_edit, detail_edit = _modifier_corps_gh(depot, numero, nouveau_corps)
         if not ok_edit:
             return (False, issue.get("title") or f"#{numero}", champs["projet"],
-                    f"mise à jour du corps de #{numero} échouée : {detail_edit}", "")
+                    f"mise à jour du corps de #{numero} échouée : {detail_edit}", "", None, None)
 
     # Redémarrage auto du watcher CCL cible si éteint (issue #572) : un
     # RELANCE déposé après que ce watcher se soit auto-éteint par inactivité
@@ -698,7 +709,7 @@ def _traiter_relance(cfg: ConfigInbox, champs: dict):
     if statut_global != "ok":
         detail_erreurs = "; ".join(e["message"] for e in etapes if e["statut"] == "echec")
         return (False, issue.get("title") or f"#{numero}", champs["projet"],
-                f"relance de #{numero} incomplète : {detail_erreurs}", "")
+                f"relance de #{numero} incomplète : {detail_erreurs}", "", None, None)
 
     # Ré-ajout à la liste surveillée par le poller de notifications (issue
     # #624) : l'issue avait été RETIRÉE de la liste à son échec définitif
@@ -711,7 +722,7 @@ def _traiter_relance(cfg: ConfigInbox, champs: dict):
     suffixe = f" — relance de #{numero}" + (f" ({', '.join(modifies)})" if modifies else "")
     if watcher_demarre:
         suffixe += f" — watcher CCL démarré (pid {watcher_pid})"
-    return True, issue.get("title") or f"#{numero}", champs["projet"], suffixe, ""
+    return True, issue.get("title") or f"#{numero}", champs["projet"], suffixe, "", None, None
 
 
 # ─── Construction body/labels (miroir de app/issues.py::construire_body /
@@ -898,12 +909,17 @@ def _traiter_bloc(cfg: ConfigInbox, contenu_bloc: str):
     source ni au log — laissé à l'appelant (mono-issue ou lot), qui décide
     différemment de la disposition finale du fichier selon le cas.
 
-    Retourne (succes, titre, projet, texte, resultat_gh) :
-    - échec → `texte` est le détail d'erreur (nom du fichier rejeté + ligne
-      de log) ;
-    - succès → `texte` est le suffixe optionnel (« — watcher CCL démarré
-      (pid N) »), à ajouter au titre dans la ligne de log ; `resultat_gh` est
-      la sortie de `gh issue create` (URL), pour le seul log console.
+    Retourne (succes, titre, projet, texte, resultat_gh, labels, donnees_temps) :
+    - échec (ou RELANCE, qui n'en crée aucune) → `texte` est le détail
+      d'erreur (nom du fichier rejeté + ligne de log) ; `labels`/`donnees_temps`
+      toujours None (rien n'a été créé, aucun événement creation_issue) ;
+    - succès (création réelle) → `texte` est le suffixe optionnel (« — watcher
+      CCL démarré (pid N) »), à ajouter au titre dans la ligne de log ;
+      `resultat_gh` est la sortie de `gh issue create` (URL), pour le seul log
+      console ; `labels` (liste) et `donnees_temps` (dict, voir
+      app.issues.donnees_temps_creation — issue #634) sont l'enrichissement de
+      l'événement SSE creation_issue, calculés ici pour éviter tout nouvel
+      appel GitHub côté notification.
     """
     champs = extraire_champs(contenu_bloc)
 
@@ -915,7 +931,7 @@ def _traiter_bloc(cfg: ConfigInbox, contenu_bloc: str):
 
     ok, detail, cfg_projet = valider(champs)
     if not ok:
-        return False, champs["titre"], champs["projet"], detail, ""
+        return False, champs["titre"], champs["projet"], detail, "", None, None
 
     # Anti-doublon (issue #491) : réutilise telle quelle la garde du formulaire
     # web (_issue_ouverte_meme_titre, app/issues.py — issue #189) pour refuser
@@ -925,14 +941,15 @@ def _traiter_bloc(cfg: ConfigInbox, contenu_bloc: str):
     doublon = _issue_ouverte_meme_titre(cfg_projet, champs["titre"])
     if doublon is not None:
         return (False, champs["titre"], champs["projet"],
-                f"doublon : une issue #{doublon} portant ce titre est déjà ouverte", "")
+                f"doublon : une issue #{doublon} portant ce titre est déjà ouverte", "",
+                None, None)
 
     labels = construire_labels(champs)
     body = construire_body(champs, cfg_projet)
     succes, resultat = _creer_issue(cfg, cfg_projet, champs["titre"], labels, body)
     if not succes:
         return (False, champs["titre"], champs["projet"],
-                f"gh issue create a échoué : {resultat}", "")
+                f"gh issue create a échoué : {resultat}", "", None, None)
 
     # Ajout immédiat à la liste surveillée par le poller de notifications
     # (issue #624), pour les issues for-windows : sans ce POST, l'issue ne
@@ -955,7 +972,12 @@ def _traiter_bloc(cfg: ConfigInbox, contenu_bloc: str):
         suffixe = f" — watcher CCL démarré (pid {pid})"
         log.info(f"Watcher CCL démarré pour le projet « {champs['projet']} » (pid {pid}).")
 
-    return True, champs["titre"], champs["projet"], suffixe, resultat
+    # Enrichissement de l'événement SSE creation_issue (issue #634) : mêmes
+    # données que /issues-en-attente calculerait pour cette issue, à partir de
+    # ce qui est déjà connu ici (labels tout juste posés, body tout juste
+    # construit) — aucun appel GitHub de plus.
+    donnees_temps = donnees_temps_creation(cfg_projet, champs["titre"], body, labels.split(","))
+    return True, champs["titre"], champs["projet"], suffixe, resultat, labels.split(","), donnees_temps
 
 
 def _traiter_lot(cfg: ConfigInbox, chemin: Path, blocs: list) -> None:
@@ -970,17 +992,19 @@ def _traiter_lot(cfg: ConfigInbox, chemin: Path, blocs: list) -> None:
     nb_total = len(blocs)
     nb_ok = 0
     for i, bloc in enumerate(blocs, start=1):
-        succes, titre, projet, texte, resultat_gh = _traiter_bloc(cfg, bloc)
+        succes, titre, projet, texte, resultat_gh, labels_creation, donnees_temps = _traiter_bloc(cfg, bloc)
         if succes:
             nb_ok += 1
             _ecrire_ligne_log(cfg, projet, "OK", titre + texte)
             log.info(f"Lot {chemin.name} [{i}/{nb_total}] créée : {titre} → {resultat_gh}")
             # SSE creation_issue (issue #631) : jamais pour un bloc RELANCE
             # (resultat_gh vide dans ce cas, cf. _traiter_relance — aucune
-            # issue n'est créée), voir numero_depuis_url.
+            # issue n'est créée), voir numero_depuis_url. Enrichi (issue #634)
+            # des labels/données de temps calculés par _traiter_bloc.
             numero = numero_depuis_url(resultat_gh)
             if numero is not None:
-                _notifier_creation_issue(projet, numero, titre, fichier=chemin.name)
+                _notifier_creation_issue(projet, numero, titre, fichier=chemin.name,
+                                          labels=labels_creation, timing=donnees_temps)
         else:
             _ecrire_ligne_log(cfg, projet or "(unknown)", "REJECTED",
                                f"{titre} — {texte}" if titre else texte)
@@ -1027,7 +1051,7 @@ def traiter_fichier(cfg: ConfigInbox, chemin: Path) -> None:
         _traiter_lot(cfg, chemin, blocs)
         return
 
-    succes, titre, projet, texte, resultat_gh = _traiter_bloc(cfg, contenu)
+    succes, titre, projet, texte, resultat_gh, labels_creation, donnees_temps = _traiter_bloc(cfg, contenu)
     if not succes:
         _rejeter(cfg, chemin, titre, projet, texte)
         return
@@ -1040,10 +1064,12 @@ def traiter_fichier(cfg: ConfigInbox, chemin: Path) -> None:
     _ecrire_ligne_log(cfg, projet, "OK", titre + texte)
     log.info(f"Créée : {chemin.name} → {resultat_gh}")
     # SSE creation_issue (issue #631) : jamais pour un bloc RELANCE
-    # (resultat_gh vide dans ce cas, cf. _traiter_relance).
+    # (resultat_gh vide dans ce cas, cf. _traiter_relance). Enrichi (issue
+    # #634) des labels/données de temps calculés par _traiter_bloc.
     numero = numero_depuis_url(resultat_gh)
     if numero is not None:
-        _notifier_creation_issue(projet, numero, titre, fichier=chemin.name)
+        _notifier_creation_issue(projet, numero, titre, fichier=chemin.name,
+                                  labels=labels_creation, timing=donnees_temps)
 
 
 def traiter_dossier(cfg: ConfigInbox) -> None:

@@ -68,7 +68,8 @@ import { store } from './store.js';
 
 function surEvenementIssue(e) {
   // /stream émet 'debut_issue' / 'fin_issue' : { projet, numero } et
-  // 'creation_issue' (issue #627/#9a) : { projet, numero, titre, fichier? }.
+  // 'creation_issue' (issue #627/#9a, enrichi #634) :
+  // { projet, numero, titre, labels, timing, fichier? }.
   // On note la dernière notification dans le store ; le module Résultats
   // (static/js/resultats.js, issue #627) y est abonné et applique un
   // traitement CIBLÉ (jamais un rechargement de tous les projets).

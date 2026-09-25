@@ -10,6 +10,8 @@ import {
   calculerBadgeEstimation,
   planifierEvenementSse,
   fusionnerChargement,
+  fusionnerTimingProjet,
+  FENETRE_RECENTE_TIMING_MS,
 } from '../resultats.js';
 
 // Repère temporel fixe pour des calculs déterministes.
@@ -142,4 +144,52 @@ test('fusionnerChargement : projets non refetchés conservés, tri par date déc
   assert.equal(fusion.length, 2);
   assert.equal(fusion[0].projet, 'a');   // 2026-06 avant 2026-05
   assert.equal(fusion[1].projet, 'c');
+});
+
+// ─── fusionnerTimingProjet (issue #634 : décalage GitHub après création) ─────
+test('fusionnerTimingProjet : issue récente absente de la réponse → conservée', () => {
+  const ancienTiming = {
+    'p#1': { timeout: 300, max_essais: 3, backoff: 5, debut: null, sans_limite: false, estimation: null },
+  };
+  // #1 vient d'être créée (5s), absente de la réponse (gh pas encore à jour) : conservée telle quelle.
+  const issuesConnues = { 'p#1': { createdAt: ilYA(5) } };
+  const timing = fusionnerTimingProjet(ancienTiming, 'p', [], issuesConnues, T0);
+  assert.deepEqual(timing['p#1'], ancienTiming['p#1']);
+});
+
+test('fusionnerTimingProjet : issue fermée (absente, pas récente) → retirée', () => {
+  const ancienTiming = {
+    'p#1': { timeout: 300, max_essais: 3, backoff: 5, debut: ilYA(600), sans_limite: false, estimation: null },
+  };
+  // #1 créée il y a longtemps (au-delà de la fenêtre de récence), absente de
+  // la réponse : /issues-en-attente ne renvoie plus les issues closes/needs-human.
+  const issuesConnues = { 'p#1': { createdAt: ilYA(FENETRE_RECENTE_TIMING_MS / 1000 + 60) } };
+  const timing = fusionnerTimingProjet(ancienTiming, 'p', [], issuesConnues, T0);
+  assert.equal(timing['p#1'], undefined);
+});
+
+test('fusionnerTimingProjet : absente ET inconnue du store (jamais vue) → retirée par défaut', () => {
+  const ancienTiming = { 'p#1': { timeout: 300, max_essais: 3, backoff: 5, debut: null,
+                                   sans_limite: false, estimation: null } };
+  const timing = fusionnerTimingProjet(ancienTiming, 'p', [], {}, T0);
+  assert.equal(timing['p#1'], undefined);
+});
+
+test('fusionnerTimingProjet : présente dans la réponse → toujours remplacée par les données fraîches', () => {
+  const ancienTiming = { 'p#1': { timeout: 300, max_essais: 3, backoff: 5, debut: null,
+                                   sans_limite: false, estimation: null } };
+  const liste = [{ number: 1, timeout: 300, max_essais: 3, backoff: 5,
+                    debut: ilYA(30), sans_limite: false, estimation: { mediane: 120, n: 5, fiabilite: 'correct' } }];
+  const timing = fusionnerTimingProjet(ancienTiming, 'p', liste, {}, T0);
+  assert.equal(timing['p#1'].debut, ilYA(30));
+  assert.deepEqual(timing['p#1'].estimation, { mediane: 120, n: 5, fiabilite: 'correct' });
+});
+
+test('fusionnerTimingProjet : n\'affecte jamais le timing des AUTRES projets', () => {
+  const ancienTiming = {
+    'p#1': { timeout: 300, max_essais: 3, backoff: 5, debut: null, sans_limite: false, estimation: null },
+    'autre#9': { timeout: 300, max_essais: 3, backoff: 5, debut: null, sans_limite: false, estimation: null },
+  };
+  const timing = fusionnerTimingProjet(ancienTiming, 'p', [], {}, T0);
+  assert.deepEqual(timing['autre#9'], ancienTiming['autre#9']);
 });

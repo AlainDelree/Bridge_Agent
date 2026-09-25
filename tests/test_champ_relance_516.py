@@ -150,7 +150,7 @@ def scenario_5_traiter_relance_chemin_complet_succes(tmp_path_factory):
         "Le précédent essai a échoué par dépassement de délai.\n"
     )
     champs = w.extraire_champs(contenu)
-    succes, titre, projet, texte, resultat_gh = w._traiter_relance(w.ConfigInbox(), champs)
+    succes, titre, projet, texte, resultat_gh, _labels, _donnees_temps = w._traiter_relance(w.ConfigInbox(), champs)
 
     assert succes, texte
     assert titre == "TIMEOUT trop court", titre
@@ -179,7 +179,7 @@ def scenario_6_traiter_relance_issue_fermee_rejetee():
 
     contenu = "| PROJET | bridge_agent |\n| RELANCE | #99 |\n"
     champs = w.extraire_champs(contenu)
-    succes, titre, projet, texte, _ = w._traiter_relance(w.ConfigInbox(), champs)
+    succes, titre, projet, texte, _, _labels, _donnees_temps = w._traiter_relance(w.ConfigInbox(), champs)
     assert not succes
     assert "n'est pas ouverte" in texte, texte
     return {"texte": texte}
@@ -189,7 +189,7 @@ def scenario_7_traiter_relance_numero_invalide_rejete():
     """RELANCE avec une valeur non numérique est rejeté avant tout appel gh."""
     contenu = "| PROJET | bridge_agent |\n| RELANCE | pas-un-numero |\n"
     champs = w.extraire_champs(contenu)
-    succes, titre, projet, texte, _ = w._traiter_relance(w.ConfigInbox(), champs)
+    succes, titre, projet, texte, _, _labels, _donnees_temps = w._traiter_relance(w.ConfigInbox(), champs)
     assert not succes
     assert "RELANCE invalide" in texte, texte
     return {"texte": texte}
@@ -363,7 +363,7 @@ def scenario_15_traiter_relance_sous_dossier_chemin_complet_succes(tmp_path_fact
         "\n"
         "Le SOUS_DOSSIER pointait au mauvais endroit.\n"
     )
-    succes, titre, projet, texte, resultat_gh = w._traiter_relance(w.ConfigInbox(), champs)
+    succes, titre, projet, texte, resultat_gh, _labels, _donnees_temps = w._traiter_relance(w.ConfigInbox(), champs)
 
     assert succes, texte
     assert "| SOUS_DOSSIER | bonchemin |" in appels["corps_envoye"], appels["corps_envoye"]
@@ -400,7 +400,7 @@ def scenario_16_traiter_relance_redemarre_watcher_eteint(tmp_path_factory):
     watchers_mod.demarrer_watcher = _faux_demarrer_watcher
 
     champs = w.extraire_champs("| PROJET | bridge_agent |\n| RELANCE | #77 |\n")
-    succes, titre, projet, texte, resultat_gh = w._traiter_relance(w.ConfigInbox(), champs)
+    succes, titre, projet, texte, resultat_gh, _labels, _donnees_temps = w._traiter_relance(w.ConfigInbox(), champs)
 
     assert succes, texte
     assert "redémarré automatiquement" in appels["commentaire"], appels["commentaire"]
@@ -432,7 +432,7 @@ def scenario_17_traiter_relance_watcher_deja_actif_pas_de_trace(tmp_path_factory
     watchers_mod.demarrer_watcher = lambda cfg, forcer=False: (False, 1234)
 
     champs = w.extraire_champs("| PROJET | bridge_agent |\n| RELANCE | #77 |\n")
-    succes, titre, projet, texte, resultat_gh = w._traiter_relance(w.ConfigInbox(), champs)
+    succes, titre, projet, texte, resultat_gh, _labels, _donnees_temps = w._traiter_relance(w.ConfigInbox(), champs)
 
     assert succes, texte
     assert "redémarré" not in appels["commentaire"], appels["commentaire"]
@@ -467,7 +467,7 @@ def scenario_18_traiter_relance_echec_demarrage_watcher_trace_sans_bloquer(tmp_p
     watchers_mod.demarrer_watcher = _demarrer_watcher_qui_echoue
 
     champs = w.extraire_champs("| PROJET | bridge_agent |\n| RELANCE | #77 |\n")
-    succes, titre, projet, texte, resultat_gh = w._traiter_relance(w.ConfigInbox(), champs)
+    succes, titre, projet, texte, resultat_gh, _labels, _donnees_temps = w._traiter_relance(w.ConfigInbox(), champs)
 
     assert succes, texte   # la relance elle-même n'échoue pas à cause du watcher
     assert "échoué" in appels["commentaire"], appels["commentaire"]

@@ -596,20 +596,23 @@ le formulaire sert à **créer** des issues, et dispose déjà d'un chemin dédi
 pour cibler une issue existante (bouton « 🔄 Relancer », §13) — dupliquer
 `RELANCE` là n'apporterait rien.
 
-### 3.15 Événements SSE émis (issue #631, **backend seul**)
+### 3.15 Événements SSE émis (issues #631, #627, #634)
 
 Avant #631, aucun événement n'était émis ni au dépôt d'un fichier dans
 `issues_inbox/` ni à la création d'une issue : la nouvelle issue n'apparaissait
 dans l'onglet Résultats qu'à sa prise en charge par le watcher CCL (ACK,
 `debut_issue`, §17.3) ou après un rafraîchissement manuel (↻). Trois nouveaux
 événements sur le canal SSE `/stream` couvrent tout le cycle de vie d'un
-fichier déposé — **backend seul à ce stade** : le code actuel de l'onglet
-Résultats ignore les événements qu'il ne connaît pas, aucun changement visible
-tant que la fusion de l'onglet « Résultats inbox » dans Résultats (étape 9b)
-n'est pas faite. Même famille que `/notifier-fin-issue`/`/notifier-debut-issue`
-(`app/fin_issue.py`, §17.3) : appel POST **best-effort** (timeout court,
-échec silencieux si `new_issue.py` n'est pas lancé), pas de `login_requis`
-(appelées par un script local, pas par un navigateur).
+fichier déposé — **backend seul à l'origine (#631)** : `fichier_recu` et
+`fichier_refuse` restent ignorés par l'onglet Résultats (préparation de la
+fusion de l'onglet « Résultats inbox » dans Résultats, étape 9b, toujours pas
+faite) ; **`creation_issue` est consommé côté navigateur depuis #627** (voir
+§17.3, « Côté navigateur ») et **enrichi depuis #634** (labels + données de
+temps, voir ci-dessous). Même famille que
+`/notifier-fin-issue`/`/notifier-debut-issue` (`app/fin_issue.py`, §17.3) :
+appel POST **best-effort** (timeout court, échec silencieux si
+`new_issue.py` n'est pas lancé), pas de `login_requis` (appelées par un
+script local, pas par un navigateur).
 
 - **`fichier_recu`** — `POST /notifier-fichier-recu`, émis par
   `scripts/watcher_issues_inbox.py::traiter_fichier()` dès la prise en charge
@@ -622,9 +625,22 @@ n'est pas faite. Même famille que `/notifier-fin-issue`/`/notifier-debut-issue`
   - `app.issues.envoyer()` (formulaire web, MÊME process que `new_issue.py`)
     → appel direct à `app.fin_issue.emettre_creation_issue()`, sans HTTP,
     même principe que l'ajout à la liste surveillée du poller (issue #624).
-  Événement : `{"projet", "numero", "titre", "fichier"}` — `fichier` est le
-  nom du fichier d'origine dans `issues_inbox/`, absent (`null`) pour une
-  création via le formulaire.
+  Événement : `{"projet", "numero", "titre", "fichier", "labels", "timing"}` —
+  `fichier` est le nom du fichier d'origine dans `issues_inbox/`, absent
+  (`null`) pour une création via le formulaire. `labels`/`timing` (**issue
+  #634**) : tout ce qui est déjà connu localement au moment de la création,
+  SANS appel GitHub supplémentaire — `labels` est la liste des labels
+  effectivement posés par `gh issue create` ; `timing` a exactement la même
+  forme que ce que `/issues-en-attente` calcule pour cette issue (`timeout`,
+  `max_essais`, `backoff`, `priorite`, `sans_limite`, `estimation`), à la
+  seule différence que `debut` y vaut toujours `null` (l'issue est « en
+  file », jamais encore prise en charge). Les deux chemins de création
+  calculent ce `timing` via la même fonction `app.issues.donnees_temps_creation()`
+  — source UNIQUE, réutilisée par `issues_en_attente()` elle-même
+  (`app/issues.py`, route `/issues-en-attente`) pour ne jamais diverger entre
+  les deux. `scripts/watcher_issues_inbox.py` le calcule dans
+  `_traiter_bloc()` juste après un `gh issue create` réussi et le transmet à
+  `_notifier_creation_issue()`.
 - **`fichier_refuse`** — `POST /notifier-fichier-refuse`, émis pour **chaque
   bloc refusé** (fichier mono-issue entier, ou un bloc d'un lot multi-issues,
   §3.13) : un événement par bloc, dans l'ordre de traitement — jamais groupé
@@ -3379,9 +3395,10 @@ déclencheur et un canal SSE dédié comme transport :
   `scripts/watcher_issues_inbox.py` ET, en appel direct sans HTTP,
   `app.issues.envoyer()`), `fichier_refuse` (par bloc refusé). Détail complet
   du contenu de chaque événement et de l'ordre pour un fichier multi-blocs :
-  §3.15. **Backend seul** : `/stream` les diffuse déjà, mais aucun code
-  navigateur ne les consomme encore (préparation de la fusion de l'onglet
-  « Résultats inbox » dans Résultats, étape 9b).
+  §3.15. `fichier_recu`/`fichier_refuse` restent **backend seul** (préparation
+  de la fusion de l'onglet « Résultats inbox » dans Résultats, étape 9b) ;
+  `creation_issue` est consommé côté navigateur depuis #627, enrichi depuis
+  #634 (voir « Côté navigateur » ci-dessous).
 - **`GET /stream`** (`app/fin_issue.py`, protégé par `login_requis` comme
   `/events`) : générateur Flask SSE dédié, séparé de `/events` (cycle de vie)
   et de `/journal/<projet>` (log watcher). Mécanisme de diffusion : une
@@ -3406,18 +3423,40 @@ déclencheur et un canal SSE dédié comme transport :
       « dépassement déjà vérifié »).
     - `fin_issue` : met à jour la ligne (état final, arrêt du décompte) via un
       unique fetch `/issue/<projet>/<numero>`.
-    - `creation_issue` (contrat de l'étape 9a : `projet`, `numero`, `titre`, et
-      `fichier` d'origine si créée via `issues_inbox`) : fait apparaître la ligne
-      avec son estimation et « en file », puis l'enrichit via un fetch ciblé.
-      Traité même si l'événement n'est pas encore émis.
+    - `creation_issue` (contrat de l'étape 9a, **enrichi issue #634** :
+      `projet`, `numero`, `titre`, `labels`, `timing`, et `fichier` d'origine
+      si créée via `issues_inbox` — détail du contenu de `labels`/`timing` :
+      §3.15) : fait apparaître la ligne avec ses **vrais labels** et son
+      estimation/« en file » **directement depuis l'événement**, SANS AUCUN
+      fetch réseau supplémentaire. Avant #634, un fetch ciblé
+      (`chargerTimingProjet()`) suivait immédiatement l'apparition de la
+      ligne pour enrichir labels/estimation/timeout — mais juste après un
+      `gh issue create`, la réponse de `/issues-en-attente` pouvait ne pas
+      encore contenir la toute nouvelle issue (décalage d'indexation
+      GitHub) : `chargerTimingProjet()` purgeait alors INCONDITIONNELLEMENT
+      les entrées de timing du projet avant de les réinjecter, effaçant le
+      badge « ⏳ en file » déjà affiché — qui restait absent jusqu'à
+      `debut_issue`, seul appelant suivant de `chargerTimingProjet()`.
+  **Robustesse générale de `chargerTimingProjet()` (issue #634, fonction pure
+  `fusionnerTimingProjet()`)** : une réponse `/issues-en-attente` qui ne
+  contient pas encore une issue OUVERTE et RÉCENTE (< 30 s,
+  `FENETRE_RECENTE_TIMING_MS`) que le navigateur connaît déjà ne l'efface
+  **plus** — que ce fetch soit déclenché par `debut_issue` ou par ↻. Passé
+  cette fenêtre, une absence prolongée signale une vraie fin d'issue (clôture,
+  `needs-human` — celui-ci n'est jamais renvoyé par `/issues-en-attente`,
+  issue #523) et l'entrée est retirée normalement. Le retrait explicite reste
+  déclenché par ce qui établit RÉELLEMENT la fin d'une issue : `fin_issue`,
+  la vérification post-dépassement de #334, ou ↻ une fois la fenêtre de
+  récence écoulée — jamais par une simple absence côté liste. Testé sous
+  Node (`fusionnerTimingProjet`, voir plus bas).
   Le **fetch unique post-dépassement de #334** est conservé, réservé au décompte
   tombé à zéro. Un projet dont le chargement échoue **reste affiché** (données
   précédentes conservées) et l'échec est signalé par un **toast**. L'activation
   de l'onglet ne déclenche **plus aucun** rechargement réseau : un chargement
   initial unique + les mises à jour SSE ciblées + le ↻ explicite suffisent. La
-  logique pure (application d'un événement à l'état, calcul des badges de temps)
-  est testée sous Node — `node --test static/js/tests/`. La reconnexion après
-  coupure reste native à `EventSource`.
+  logique pure (application d'un événement à l'état, calcul des badges de temps,
+  fusion du timing) est testée sous Node — `node --test static/js/tests/`. La
+  reconnexion après coupure reste native à `EventSource`.
 
 **Configuration héritée** : la clé `.conf` reste `SCRIPT_BIP` (voir §17.1
 ci-dessus et §10) — Alain doit mettre à jour manuellement le chemin dans ses

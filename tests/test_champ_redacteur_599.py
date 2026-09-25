@@ -31,7 +31,8 @@ import app.watchers as watchers_mod  # noqa: E402
 
 def _cfg_projet(depot="AlainDelree/Bridge_Agent", nom="bridge_agent"):
     return SimpleNamespace(depot=depot, nom=nom, timeout_claude=300, timeout_chef=1200,
-                            rep_travail=Path(tempfile.gettempdir()), perimetre_dynamique=False)
+                            max_essais=3, rep_travail=Path(tempfile.gettempdir()),
+                            perimetre_dynamique=False)
 
 
 def _preparer_config_bidon(tmp_dir: Path, projet="bridge_agent"):

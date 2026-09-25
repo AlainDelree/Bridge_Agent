@@ -167,6 +167,51 @@ export function fusionnerChargement(anciennes, nomsFetch, chargements) {
     .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
 }
 
+// Délai de convergence laissé à `gh issue list` (issue #634) : une issue tout
+// juste créée peut manquer quelques secondes de la réponse de
+// /issues-en-attente (indexation GitHub pas encore à jour côté API). En
+// dessous de ce délai, son ABSENCE de la réponse ne prouve rien — on la
+// CONSERVE. Au-delà, une absence prolongée signale une vraie fin d'issue
+// (clôture, needs-human — voir #523) — on la retire.
+export const FENETRE_RECENTE_TIMING_MS = 30000;
+
+// Fusionne une réponse /issues-en-attente(nom) dans le timing existant, SANS
+// jamais effacer l'entrée d'une issue OUVERTE et récente que le navigateur
+// connaît déjà mais que cette réponse ne contient pas encore (issue #634,
+// décalage d'indexation de `gh issue list` juste après `gh issue create`) —
+// avant ce correctif, chargerTimingProjet() purgeait INCONDITIONNELLEMENT
+// toutes les entrées du projet puis réinjectait celles de la réponse : le
+// badge « en file » d'une issue tout juste créée disparaissait alors le temps
+// que GitHub la fasse apparaître dans `gh issue list`. Le retrait d'une
+// entrée reste déclenché par ce qui établit RÉELLEMENT la fin d'une issue —
+// fin_issue/verifierApresDepassement (supprimerTiming), ou ↻ après que la
+// fenêtre de récence s'est écoulée (needs-human, issue #523 : jamais renvoyée
+// par /issues-en-attente, donc retirée dès que sa création n'est plus
+// « récente »).
+// `issuesConnues` : store.get('issues') (dictionnaire indexé par cleIssue),
+// pour lire le createdAt d'une issue absente de `liste`. `maintenant` :
+// timestamp (ms) injecté par l'appelant, pour des tests déterministes.
+export function fusionnerTimingProjet(ancienTiming, nom, liste, issuesConnues, maintenant) {
+  const timing = Object.assign({}, ancienTiming);
+  const presentes = new Set((liste || []).map(it => cleIssue(nom, it.number)));
+  for (const cle of Object.keys(timing)) {
+    if (!cle.startsWith(nom + '#') || presentes.has(cle)) continue;
+    const connue = issuesConnues && issuesConnues[cle];
+    const age = connue && connue.createdAt
+      ? maintenant - new Date(connue.createdAt).getTime() : Infinity;
+    if (age < FENETRE_RECENTE_TIMING_MS) continue;   // trop récente : conservée
+    delete timing[cle];
+  }
+  for (const it of (liste || [])) {
+    const cle = cleIssue(nom, it.number);
+    timing[cle] = {
+      timeout: it.timeout, max_essais: it.max_essais, backoff: it.backoff,
+      debut: it.debut, sans_limite: it.sans_limite, estimation: it.estimation,
+    };
+  }
+  return timing;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // 2. ORCHESTRATION NAVIGATEUR (DOM + réseau + store)
 //    Rien de ce qui suit ne s'exécute à l'import ; tout part d'initialiser().
@@ -285,35 +330,27 @@ async function chargerListe(nomsAFetcher) {
 }
 
 // ─── Données de temps (décompte + estimation) ────────────────────────────────
-// Met à jour le timing d'UN projet à partir de sa liste /issues-en-attente :
-// purge les entrées de ce projet puis réinjecte les issues ouvertes. Profite
+// Met à jour le timing d'UN projet à partir de sa liste /issues-en-attente, en
+// fusionnant via fusionnerTimingProjet() (issue #634) : une issue OUVERTE et
+// RÉCENTE que le navigateur connaît déjà mais que cette réponse ne contient
+// pas encore (décalage d'indexation `gh issue list` juste après sa création)
+// n'est JAMAIS effacée — voir la docstring de fusionnerTimingProjet. Profite
 // du même fetch pour rafraîchir les labels/titre des issues DÉJÀ connues du
 // store (correctif anomalie #4, issue #633) : /issues-en-attente renvoie les
-// labels GitHub réels (tous, pas seulement for-linux/for-windows), alors
-// qu'une issue tout juste apparue via creation_issue n'a encore que labels:[]
-// (placeholder, voir surCreationIssue) — sans ce raccord, ce placeholder
-// restait figé indéfiniment (labels jamais vrais, y compris après debut_issue)
-// et les cases de notification du panneau latéral ne reflétaient jamais les
-// labels réels (ex. notif_pc) pour ce chemin. Une issue pas encore connue
-// n'est PAS créée ici : ses appelants (surDebutIssue, surCreationIssue) le
-// font déjà avec le reste des champs nécessaires (state, createdAt…). Renvoie
-// la liste brute reçue (ou null en cas d'échec — badges conservés).
+// labels GitHub réels (tous, pas seulement for-linux/for-windows). Une issue
+// pas encore connue n'est PAS créée ici : ses appelants (surDebutIssue,
+// surCreationIssue) le font déjà avec le reste des champs nécessaires (state,
+// createdAt…). Renvoie la liste brute reçue (ou null en cas d'échec — badges
+// conservés).
 async function chargerTimingProjet(nom) {
   let liste;
   try {
     liste = await api.get('/issues-en-attente/' + encodeURIComponent(nom), { silencieux: true });
   } catch (e) { return null; }
   if (!Array.isArray(liste)) return null;
-  const timing = Object.assign({}, timingCourant());
-  for (const cle of Object.keys(timing)) {
-    if (cle.startsWith(nom + '#')) delete timing[cle];
-  }
+  const timing = fusionnerTimingProjet(timingCourant(), nom, liste, store.get('issues'), maintenant());
   for (const it of liste) {
     const cle = cleIssue(nom, it.number);
-    timing[cle] = {
-      timeout: it.timeout, max_essais: it.max_essais, backoff: it.backoff,
-      debut: it.debut, sans_limite: it.sans_limite, estimation: it.estimation,
-    };
     const ancienne = store.get('issues')[cle];
     if (ancienne) {
       store.ecrireIssue(Object.assign({}, ancienne,
@@ -397,7 +434,8 @@ function traiterNotif(notif) {
   const plan = planifierEvenementSse(store.get(), notif);
   if (plan.action === 'debut')       surDebutIssue(notif.projet, notif.numero);
   else if (plan.action === 'fin')    surFinIssue(notif.projet, notif.numero);
-  else if (plan.action === 'creer')  surCreationIssue(notif.projet, notif.numero, notif.titre);
+  else if (plan.action === 'creer')  surCreationIssue(notif.projet, notif.numero, notif.titre,
+                                                        notif.labels, notif.timing);
   // Le panneau latéral (issue #375) s'abonne lui-même à 'derniereNotifIssue'
   // (voir panneau_lateral.js) — plus de communication de module à module par
   // le pont ici (issue #632).
@@ -442,25 +480,34 @@ async function surFinIssue(projet, numero) {
   else rendreListeComplete();
 }
 
-// creation_issue (contrat #9a : projet, numero, titre, fichier?) : fait
-// apparaître la ligne avec « en file », puis l'enrichit (labels + estimation)
-// via un fetch CIBLÉ sur le projet. Codé même si l'événement n'est pas encore
-// émis.
-async function surCreationIssue(projet, numero, titre) {
+// creation_issue (contrat #9a, enrichi issue #634 : projet, numero, titre,
+// labels, timing, fichier?) : fait apparaître la ligne avec ses VRAIS labels
+// et son estimation/« en file » directement depuis l'événement — labels et
+// timing sont déjà calculés côté serveur (app.issues.donnees_temps_creation,
+// même source que /issues-en-attente), donc AUCUN fetch réseau supplémentaire
+// ici. Avant #634, un chargerTimingProjet() était déclenché juste après :
+// tant que `gh issue list` n'avait pas encore indexé la nouvelle issue, sa
+// réponse ne la contenait pas et purgeait le placeholder « en file » déjà
+// affiché — c'est ce décalage qui faisait disparaître le badge.
+function surCreationIssue(projet, numero, titre, labels, timing) {
   const cle = cleIssue(projet, numero);
   if (!store.get('issues')[cle]) {
     store.ecrireIssue({ projet, number: Number(numero), title: titre || ('#' + numero),
-                        state: 'OPEN', labels: [], createdAt: nowIso() });
+                        state: 'OPEN', labels: labels || [], createdAt: nowIso() });
   }
-  const timing = Object.assign({}, timingCourant());
-  if (!timing[cle]) {
-    // Placeholder « en file » (debut null) → badge « ⏳ en file » immédiat.
-    timing[cle] = { timeout: null, max_essais: null, backoff: 0,
-                    debut: null, sans_limite: false, estimation: null };
+  if (!timingCourant()[cle]) {
+    const nouveauTiming = Object.assign({}, timingCourant());
+    // `timing` (issue #634) porte déjà timeout/max_essais/backoff/sans_limite/
+    // estimation réels ; `debut` reste toujours null ici (issue « en file »,
+    // jamais encore prise en charge) — repli sur le placeholder historique si
+    // l'événement ne le fournit pas (émetteur non encore mis à jour).
+    nouveauTiming[cle] = (timing && Object.keys(timing).length)
+      ? { timeout: timing.timeout, max_essais: timing.max_essais, backoff: timing.backoff,
+          debut: null, sans_limite: !!timing.sans_limite, estimation: timing.estimation }
+      : { timeout: null, max_essais: null, backoff: 0,
+          debut: null, sans_limite: false, estimation: null };
+    store.set('timing', nouveauTiming);
   }
-  store.set('timing', timing);
-  rendreListeComplete();
-  await chargerTimingProjet(projet);   // enrichit labels/estimation/timeout réels
   rendreListeComplete();
 }
 

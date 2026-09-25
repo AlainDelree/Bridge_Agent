@@ -111,16 +111,29 @@ def notifier_debut_issue():
 # fichier_recu, puis une suite de creation_issue/fichier_refuse (un par
 # bloc, dans l'ordre) — jamais groupés.
 
-def emettre_creation_issue(projet: str, numero: int, titre: str, fichier: str | None = None) -> None:
+def emettre_creation_issue(projet: str, numero: int, titre: str, fichier: str | None = None,
+                            labels: list | None = None, timing: dict | None = None) -> None:
     """Diffuse l'événement SSE `creation_issue`. Appelée EN DIRECT (même
     process, pas de HTTP) par `app.issues.envoyer()` juste après une création
     réussie via le formulaire web ; `notifier_creation_issue()` ci-dessous
     l'appelle aussi, depuis la route POST utilisée par
     `scripts/watcher_issues_inbox.py` (process séparé). `fichier` est le nom
     du fichier d'origine dans issues_inbox/, absent (None) pour une création
-    par formulaire."""
+    par formulaire.
+
+    `labels`/`timing` (issue #634) : tout ce qui est déjà connu localement au
+    moment de la création — labels posés, et données de temps (timeout,
+    max_essais, backoff, priorite, sans_limite, debut=None, estimation), même
+    forme que `app.issues.donnees_temps_creation()`/`/issues-en-attente` —
+    pour que le navigateur affiche la ligne avec ses vrais labels et son
+    estimation/« en file » dès l'événement, sans aucun appel GitHub
+    supplémentaire. Absents (None) → diffusés comme `[]`/`{}` (les deux
+    émetteurs actuels les fournissent toujours, mais un futur appelant qui les
+    omettrait ne casse pas la sérialisation JSON)."""
     _diffuser("creation_issue", {
         "projet": projet, "numero": numero, "titre": titre, "fichier": fichier,
+        "labels": labels if labels is not None else [],
+        "timing": timing if timing is not None else {},
     })
 
 
@@ -142,15 +155,18 @@ def notifier_creation_issue():
     """POST /notifier-creation-issue (issue #631) — appelé par
     scripts/watcher_issues_inbox.py après chaque création réussie d'une issue
     depuis un fichier d'issues_inbox/ (jamais pour un bloc RELANCE). Corps
-    JSON {"projet", "numero", "titre", "fichier"} (fichier = nom du fichier
-    d'origine). Pas d'authentification, même raison que notifier_fin_issue."""
+    JSON {"projet", "numero", "titre", "fichier", "labels", "timing"} (fichier
+    = nom du fichier d'origine ; labels/timing = enrichissement de l'issue
+    #634, voir emettre_creation_issue). Pas d'authentification, même raison
+    que notifier_fin_issue."""
     corps = request.get_json(silent=True) or {}
     projet = corps.get("projet")
     numero = corps.get("numero")
     titre = corps.get("titre")
     if not projet or numero is None or not titre:
         return jsonify(ok=False, erreur="projet, numero et titre requis"), 400
-    emettre_creation_issue(projet, numero, titre, fichier=corps.get("fichier"))
+    emettre_creation_issue(projet, numero, titre, fichier=corps.get("fichier"),
+                            labels=corps.get("labels"), timing=corps.get("timing"))
     return jsonify(ok=True)
 
 

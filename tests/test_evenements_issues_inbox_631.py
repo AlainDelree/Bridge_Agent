@@ -94,11 +94,13 @@ def test_notifier_creation_issue_diffuse_evenement_avec_fichier():
     with APP_FLASK.test_request_context(
             "/notifier-creation-issue", method="POST",
             json={"projet": "bridge_agent", "numero": 42, "titre": "Une tâche",
-                  "fichier": "lot.txt"}):
+                  "fichier": "lot.txt", "labels": ["bridge", "for-linux"],
+                  "timing": {"timeout": 300, "max_essais": 3}}):
         rep = fi.notifier_creation_issue()
     assert rep.get_json()["ok"] is True
     assert _payload(q.get_nowait()) == {
         "projet": "bridge_agent", "numero": 42, "titre": "Une tâche", "fichier": "lot.txt",
+        "labels": ["bridge", "for-linux"], "timing": {"timeout": 300, "max_essais": 3},
     }
     return {}
 
@@ -120,6 +122,7 @@ def test_emettre_creation_issue_appel_direct_sans_fichier():
         fi.emettre_creation_issue("bridge_agent", 7, "Titre formulaire")
     assert _payload(q.get_nowait()) == {
         "projet": "bridge_agent", "numero": 7, "titre": "Titre formulaire", "fichier": None,
+        "labels": [], "timing": {},
     }
     return {}
 
@@ -193,7 +196,8 @@ def test_ordre_evenements_mono_bloc_succes():
         w._poster_best_effort = lambda url, payload: appels.append((url, payload))
         w._traiter_bloc = lambda cfg_i, bloc: (
             True, "Une tâche", "bridge_agent", "",
-            "https://github.com/AlainDelree/Bridge_Agent/issues/42")
+            "https://github.com/AlainDelree/Bridge_Agent/issues/42",
+            ["bridge", "for-linux"], {"timeout": 300, "max_essais": 3})
 
         chemin = cfg.inbox_dir / "issue.txt"
         _deposer(chemin, "| PROJET | bridge_agent |\n\n#Titre: Une tâche.\nCorps.\n")
@@ -205,6 +209,7 @@ def test_ordre_evenements_mono_bloc_succes():
         assert appels[0][1] == {"fichier": "issue.txt"}
         assert appels[1][1] == {
             "projet": "bridge_agent", "numero": 42, "titre": "Une tâche", "fichier": "issue.txt",
+            "labels": ["bridge", "for-linux"], "timing": {"timeout": 300, "max_essais": 3},
         }
     return {"ordre": _types(appels)}
 
@@ -218,7 +223,7 @@ def test_ordre_evenements_mono_bloc_rejete():
         appels = []
         w._poster_best_effort = lambda url, payload: appels.append((url, payload))
         w._traiter_bloc = lambda cfg_i, bloc: (
-            False, "Une tâche", "bridge_agent", "projet inconnu : « x »", "")
+            False, "Une tâche", "bridge_agent", "projet inconnu : « x »", "", None, None)
 
         chemin = cfg.inbox_dir / "issue.txt"
         _deposer(chemin, "| PROJET | x |\n\n#Titre: Une tâche.\nCorps.\n")
@@ -248,16 +253,18 @@ def test_ordre_evenements_lot_multi_blocs():
         def _traiter_bloc_fake(cfg_i, bloc):
             if "Bloc1" in bloc:
                 return (True, "Bloc1", "bridge_agent", "",
-                        "https://github.com/AlainDelree/Bridge_Agent/issues/10")
+                        "https://github.com/AlainDelree/Bridge_Agent/issues/10",
+                        ["bridge", "for-linux"], {"timeout": 300})
             if "Bloc2" in bloc:
-                return (False, "Bloc2", "bridge_agent", "titre manquant", "")
+                return (False, "Bloc2", "bridge_agent", "titre manquant", "", None, None)
             if "Bloc3" in bloc:
                 # Chemin RELANCE (#516) : succès mais resultat_gh vide, aucune
                 # issue n'est créée — voir _traiter_relance.
-                return (True, "Bloc3", "bridge_agent", " — relance de #9", "")
+                return (True, "Bloc3", "bridge_agent", " — relance de #9", "", None, None)
             if "Bloc4" in bloc:
                 return (True, "Bloc4", "bridge_agent", "",
-                        "https://github.com/AlainDelree/Bridge_Agent/issues/13")
+                        "https://github.com/AlainDelree/Bridge_Agent/issues/13",
+                        ["bridge", "for-linux"], {"timeout": 300})
             raise AssertionError(f"bloc inattendu : {bloc!r}")
 
         w._traiter_bloc = _traiter_bloc_fake
@@ -290,7 +297,7 @@ def test_lot_tous_blocs_rejetes_pas_de_doublon():
         cfg = _preparer_cfg(Path(tmp))
         appels = []
         w._poster_best_effort = lambda url, payload: appels.append((url, payload))
-        w._traiter_bloc = lambda cfg_i, bloc: (False, "Bloc", "bridge_agent", "motif", "")
+        w._traiter_bloc = lambda cfg_i, bloc: (False, "Bloc", "bridge_agent", "motif", "", None, None)
 
         chemin = cfg.inbox_dir / "lot.txt"
         _deposer(chemin, "#Titre: Bloc1\nCorps1.\n#Titre: Bloc2\nCorps2.\n")

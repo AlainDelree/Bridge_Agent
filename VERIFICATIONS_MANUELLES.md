@@ -56,6 +56,16 @@
       le PREMIER affichage, le bouton ↻ et les événements SSE font des appels.
 - [ ] L'issue créée ci-dessus **apparaît dans Résultats** après traitement,
       **sans ↻** (événement SSE).
+- [ ] **Badge « en file » stable dès la création** (issue #634) : déposer une
+      issue via `issues_inbox/` (ou le formulaire) — la ligne apparaît avec
+      « ⏳ en file » **immédiatement**, avec ses **vrais labels** (pas de case
+      décochée le temps d'une clôture — voir aussi le panneau latéral,
+      ci-dessous) et son **estimation** (si l'historique en fournit une) dès
+      l'apparition. Le badge **ne doit JAMAIS disparaître** entre la création
+      et la prise en charge par le watcher (`debut_issue`), même en observant
+      plusieurs secondes — onglet Réseau (F12) : **aucun** appel
+      `/issues-en-attente` déclenché par cette apparition (seuls le premier
+      affichage, ↻, `debut_issue` et `fin_issue` en déclenchent).
 - [ ] **Décompte TIMEOUT** : dès qu'une issue CCL est prise en charge par le
       watcher (ACK), son badge passe de « ⏳ en file » au décompte, **sans ↻**
       (événement `debut_issue` — vérifier qu'il ne reste PAS bloqué « en file »
@@ -142,12 +152,15 @@
       notif_pc/gsm/tous, **Interrompre / Interrompre et relancer / Retirer
       needs-human / Fermer l'issue** — ces 4 actions n'existent plus que dans
       cette zone (issue #628, retirées du détail qui faisait double emploi).
-- [ ] **Cases de notification conformes aux labels réels** (issue #633) : pour
-      une issue portant `notif_pc` (et/ou `notif_gsm`/`notif_tous`), la case
-      correspondante est **cochée** dès la sélection — y compris pour une
-      issue apparue par `creation_issue` (issues_inbox) puis prise en charge
-      par `debut_issue`, pas seulement au chargement initial/↻. Décocher/cocher
-      depuis le panneau modifie bien le label GitHub réel.
+- [ ] **Cases de notification conformes aux labels réels** (issues #633,
+      #634) : pour une issue portant `notif_pc` (et/ou `notif_gsm`/
+      `notif_tous`), la case correspondante est **cochée dès l'apparition de
+      la ligne** — y compris pour une issue apparue par `creation_issue`
+      (issues_inbox), **avant même** sa prise en charge par `debut_issue`
+      (issue #634 : les labels réels arrivent dans l'événement de création
+      lui-même, plus de fenêtre où la case serait décochée à tort), pas
+      seulement au chargement initial/↻. Décocher/cocher depuis le panneau
+      modifie bien le label GitHub réel.
 - [ ] **Lien « Vérifier le service CCW de ce projet »** : n'apparaît **que**
       pour une issue portant le label `for-windows` — absent pour une issue
       for-linux (issue #633).
