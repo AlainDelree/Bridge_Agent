@@ -44,6 +44,7 @@ import sys
 from datetime import date
 from pathlib import Path
 
+from palette import couleur_affichee
 from watcher import lire_conf
 
 RACINE = Path(__file__).resolve().parent
@@ -64,16 +65,11 @@ def lire_projets(dossier_configs: Path = DOSSIER_CONFIGS) -> list[dict]:
     depot/rep_travail/perimetre/couleur), triés par nom. Fichiers sans champ
     NOM ignorés (ex. ccw_ssh.conf).
 
-    Import local de `nouveau_projet` (plutôt qu'en tête de fichier) : ce
-    module importe déjà `regenerer_tableaux_projets` à son chargement (issue
-    #571) — un `from nouveau_projet import couleur_affichee` en tête de CE
-    fichier créerait un cycle qui échoue selon l'ordre d'import (ex. via
-    `app/nouveau_projet.py`, qui importe `nouveau_projet` avant que ce module
-    ait fini de se charger). Différer l'import à l'appel évite le problème :
-    les deux modules sont toujours complètement chargés au moment où cette
-    fonction s'exécute réellement (issue #608)."""
-    import nouveau_projet
-
+    couleur_affichee vient de palette.py (issue #620) — avant l'extraction,
+    elle vivait dans nouveau_projet.py, qui importe déjà ce module (issue
+    #571) : un `from nouveau_projet import couleur_affichee` en tête de CE
+    fichier créait un cycle, d'où un import local différé (issue #608).
+    palette.py n'a aucune dépendance vers ce module, le cycle n'existe plus."""
     projets = []
     for chemin in sorted(dossier_configs.glob("*.conf")):
         brut = lire_conf(chemin)
@@ -85,7 +81,7 @@ def lire_projets(dossier_configs: Path = DOSSIER_CONFIGS) -> list[dict]:
             "depot": brut.get("DEPOT", ""),
             "rep_travail": brut.get("REP_TRAVAIL", ""),
             "perimetre": brut.get("PERIMETRE") or brut.get("REP_TRAVAIL", ""),
-            "couleur": nouveau_projet.couleur_affichee(nom, brut.get("COULEUR", "")),
+            "couleur": couleur_affichee(nom, brut.get("COULEUR", "")),
         })
     projets.sort(key=lambda p: p["nom"])
     return projets
