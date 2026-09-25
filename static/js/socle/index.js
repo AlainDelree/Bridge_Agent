@@ -31,8 +31,12 @@ import { installerPont } from './pont.js';
 import { initialiserOnglets } from '../onglets.js';
 // Module par fonctionnalité — onglet Résultats (refonte étape 3, issue #627).
 import { resultats } from '../resultats.js';
+// Module par fonctionnalité — panneau latéral (refonte étape 4, issue #628).
+import { initPanneauLateral } from '../panneau_lateral.js';
 
-// Délégation : inerte tant qu'aucune règle n'est enregistrée (étapes suivantes).
+// Délégation : inerte tant qu'aucune règle n'est enregistrée par le socle lui-
+// même (les modules par fonctionnalité, ex. panneau_lateral.js, enregistrent
+// les leurs).
 dom.installerDelegation();
 
 // Pont de transition : unique point de contact avec l'ancien code, à retirer à
@@ -49,7 +53,13 @@ resultats.initialiser();
 // fonctionnalité sorti d'app.js, voir ARCHITECTURE.md §6.7.
 initialiserOnglets();
 
+// Panneau latéral de l'onglet Résultats (issue #628, refonte web étape 4) —
+// premier module par fonctionnalité à piloter réellement une zone de l'écran
+// (voir ARCHITECTURE.md §6.7).
+initPanneauLateral();
+
 // Trace discrète en console — aucun effet visible dans l'interface.
 console.debug('[socle] briques chargées (issue #625, étape 1).');
 console.debug('[socle] onglets initialisés (issue #626, étape 2).');
 console.debug('[socle] Résultats piloté par le store (issue #627).');
+console.debug('[socle] panneau latéral actif (issue #628).');

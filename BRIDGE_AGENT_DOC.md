@@ -379,10 +379,11 @@ le watcher spool expose un bouton « ⏹ Arrêter » explicite dans le panneau :
 son comportement par défaut étant « Indéfiniment », il doit pouvoir être
 coupé manuellement à tout moment.
 
-**Interface — zone `#pl-zone-extras`.** Cette zone du panneau flottant
-« Infrastructure » (onglet Résultats), réservée aux futurs boutons depuis
-l'issue #380 et restée vide jusqu'ici, est occupée par
-`rendrePanneauLateralExtras()` (`static/js/app.js`) : une ligne d'état
+**Interface — zone `#pl-zone-extras`.** Cette zone du panneau latéral
+« Infrastructure » (onglet Résultats, colonne à côté de la liste depuis
+l'issue #628 — auparavant un overlay flottant), réservée aux futurs boutons
+depuis l'issue #380 et restée vide jusqu'ici, est occupée par
+`rendrePanneauLateralExtras()` (`static/js/panneau_lateral.js`) : une ligne d'état
 🟢/⚫ « Watcher spool (issues_inbox) », alimentée par le même
 `GET /issues-inbox/etat` que l'onglet « Résultats inbox » (étendu avec
 `watcher_actif`/`watcher_pid`/`watcher_restant_s`). Watcher actif : temps
@@ -1692,9 +1693,9 @@ label `needs-human` sur l'issue et cesse de la reprendre — jusqu'ici, la
 seule façon de débloquer le circuit était de retirer ce label à la main sur
 GitHub, un aller-retour répété en pratique à chaque échec.
 
-**Ce que fait le bouton.** Dans le panneau flottant Infrastructure, la zone
+**Ce que fait le bouton.** Dans le panneau latéral Infrastructure, la zone
 d'actions contextuelles `#pl-zone-actions` (`rendrePanneauLateralActions()`,
-issue #375) affiche un bouton « 🔄 Relancer » dès que l'issue actuellement
+`static/js/panneau_lateral.js`, issue #375) affiche un bouton « 🔄 Relancer » dès que l'issue actuellement
 sélectionnée (`projetCourant`/`numeroCourant`) porte le label `needs-human`
 et est encore ouverte — sans fetch réseau, à partir des données déjà en
 mémoire (`listeIssuesResultats`). Un clic (après confirmation) appelle
@@ -3182,9 +3183,11 @@ new_issue.py (ThinkPad) → polling gh → détecte la transition → bip/bulle/
   garde-fou §11 ne s'y applique pas.
 - **Interrupteur plat/cloche accessible depuis l'interface (issue #527).**
   Avant cette issue, changer de son imposait d'éditer `son_actif.txt` à la
-  main. `new_issue.py` expose désormais ce choix dans le panneau flottant
-  Infrastructure de l'onglet Résultats (`#pl-zone-son`, `templates/index.html`
-  + `static/js/app.js::initZoneSon`/`choisirSonActif`/`testerSonActif`) : un
+  main. `new_issue.py` expose désormais ce choix dans le panneau latéral
+  Infrastructure de l'onglet Résultats (`#pl-zone-son`,
+  `templates/fragments/panneau_lateral.html` +
+  `static/js/panneau_lateral.js::initZoneSon`/`choisirSonActif`/`testerSonActif`,
+  issue #628) : un
   sélecteur à deux positions « Plat »/« Cloche », toujours visible, et un
   bouton **« Tester le son »**. Deux routes dédiées (`app/son.py`,
   **GLOBALES, sans `<nom_projet>`** — contrairement à `/tester-bip/<projet>`

@@ -1,67 +1,68 @@
   <!-- ─── Onglet Résultats : visualisation des issues ──────────────────── -->
   <div id="panneau-resultats" class="panneau actif">
 
-    <!-- Bouton toggle du panneau flottant de monitoring (issue #380) : fixe,
-         toujours visible dans l'onglet Résultats (scope via .panneau.actif
-         sur l'ancêtre, pas besoin de le masquer explicitement) — ouvre/ferme
-         #panneau-lateral-resultats (basculerPanneauLateral, static/js/app.js). -->
-    <button id="pl-toggle" class="pl-toggle" onclick="basculerPanneauLateral()">📊 Infrastructure</button>
+    <!-- Mise en page en colonnes (issue #628) : le corps (liste + détail) et
+         le panneau latéral Infrastructure sont des colonnes flex côte à côte
+         — le panneau ne recouvre plus jamais la liste (l'ancien panneau
+         flottant, position:fixed, masquait la fin des lignes). Sur écran
+         étroit, la colonne panneau passe sous le corps (flex-direction:column,
+         voir static/css/resultats.css). -->
+    <div class="resultats-layout">
+      <div class="resultats-corps">
 
-    <!-- Liste + détail, pleine largeur depuis #380 (l'ancien layout flex
-         .resultats-layout / .resultats-liste-col à 280px est retiré : le
-         panneau de monitoring est maintenant un overlay flottant, voir plus
-         bas). -->
+        <!-- Boutons toggle : un par projet + « Tous ». Générés dynamiquement. -->
+        <div id="filtres-projets" class="filtres-projets"></div>
 
-    <!-- Boutons toggle : un par projet + « Tous ». Générés dynamiquement. -->
-    <div id="filtres-projets" class="filtres-projets"></div>
+        <!-- Recherche par titre (issue #321) : bloc STATIQUE (pas régénéré à
+             chaque bascule de filtre, contrairement à #filtres-projets), pour ne
+             jamais perdre la saisie en cours. La PORTÉE (nombre d'issues ratissées
+             PAR PROJET sélectionné ci-dessus) est un réglage DISTINCT de la limite
+             d'affichage de l'onglet (« par projet : ») — la recherche re-interroge
+             toujours GitHub, elle ne filtre jamais ce qui est déjà en mémoire.
+             Déclenchée uniquement au clic sur « Rechercher » (ou Entrée dans le
+             champ texte), jamais à la frappe (cohérent avec #270). -->
+        <div class="barre-recherche-titre">
+          <input type="text" id="recherche-titre-texte"
+                 placeholder="Rechercher un titre déjà traité…" autocomplete="off"
+                 onkeydown="if(event.key==='Enter'){event.preventDefault();lancerRechercheTitre();}">
+          <label class="limite-issues-label"
+                 title="Nombre d'issues ratissées PAR PROJET sélectionné ci-dessus (pas un total). Réglage distinct de la limite d'affichage de l'onglet.">
+            portée :
+            <input type="number" id="recherche-titre-portee" class="limite-issues-projet"
+                   min="1" max="50" step="1" value="15">
+          </label>
+          <button id="btn-recherche-titre" onclick="lancerRechercheTitre()">🔍 Rechercher</button>
+          <span id="recherche-titre-indicateur" class="maj-indicateur" style="display:none">Recherche…</span>
+        </div>
+        <div id="recherche-titre-erreurs" class="message" style="display:none"></div>
 
-    <!-- Recherche par titre (issue #321) : bloc STATIQUE (pas régénéré à
-         chaque bascule de filtre, contrairement à #filtres-projets), pour ne
-         jamais perdre la saisie en cours. La PORTÉE (nombre d'issues ratissées
-         PAR PROJET sélectionné ci-dessus) est un réglage DISTINCT de la limite
-         d'affichage de l'onglet (« par projet : ») — la recherche re-interroge
-         toujours GitHub, elle ne filtre jamais ce qui est déjà en mémoire.
-         Déclenchée uniquement au clic sur « Rechercher » (ou Entrée dans le
-         champ texte), jamais à la frappe (cohérent avec #270). -->
-    <div class="barre-recherche-titre">
-      <input type="text" id="recherche-titre-texte"
-             placeholder="Rechercher un titre déjà traité…" autocomplete="off"
-             onkeydown="if(event.key==='Enter'){event.preventDefault();lancerRechercheTitre();}">
-      <label class="limite-issues-label"
-             title="Nombre d'issues ratissées PAR PROJET sélectionné ci-dessus (pas un total). Réglage distinct de la limite d'affichage de l'onglet.">
-        portée :
-        <input type="number" id="recherche-titre-portee" class="limite-issues-projet"
-               min="1" max="50" step="1" value="15">
-      </label>
-      <button id="btn-recherche-titre" onclick="lancerRechercheTitre()">🔍 Rechercher</button>
-      <span id="recherche-titre-indicateur" class="maj-indicateur" style="display:none">Recherche…</span>
+        <!-- Liste HTML cliquable des issues récentes (tous projets). Remplace la
+             combobox : chaque ligne est coloriée à la couleur de son projet, ce que
+             Firefox refuse de faire sur les <option>. Navigation par clic direct. -->
+        <div id="liste-issues" class="liste-issues"></div>
+
+        <!-- Barre : indicateur discret affiché pendant le fetch d'arrière-plan
+             quand la liste est déjà rendue depuis le cache localStorage (issue #52).
+             Le bouton rafraîchir (issue #56) a été déplacé dans la ligne de filtres,
+             juste après « Tous » (issue #57). -->
+        <div class="barre-maj">
+          <div id="maj-indicateur" class="maj-indicateur" style="display:none">Mise à jour…</div>
+        </div>
+
+        <div class="legende-resultats">
+          <span>✅ Traitée avec succès (label done)</span>
+          <span>✏️ Lancée en mode écriture (label mode_write)</span>
+          <span>⚠️ Échec — intervention humaine requise (label needs-human)</span>
+          <span>○ Aucun de ces labels</span>
+        </div>
+
+        <div id="zone-issue" class="zone-issue">
+          <div class="issue-vide">Aucune issue à afficher</div>
+        </div>
+
+      </div>
+
+      {% include "fragments/panneau_lateral.html" %}
+
     </div>
-    <div id="recherche-titre-erreurs" class="message" style="display:none"></div>
-
-    <!-- Liste HTML cliquable des issues récentes (tous projets). Remplace la
-         combobox : chaque ligne est coloriée à la couleur de son projet, ce que
-         Firefox refuse de faire sur les <option>. Navigation par clic direct. -->
-    <div id="liste-issues" class="liste-issues"></div>
-
-    <!-- Barre : indicateur discret affiché pendant le fetch d'arrière-plan
-         quand la liste est déjà rendue depuis le cache localStorage (issue #52).
-         Le bouton rafraîchir (issue #56) a été déplacé dans la ligne de filtres,
-         juste après « Tous » (issue #57). -->
-    <div class="barre-maj">
-      <div id="maj-indicateur" class="maj-indicateur" style="display:none">Mise à jour…</div>
-    </div>
-
-    <div class="legende-resultats">
-      <span>✅ Traitée avec succès (label done)</span>
-      <span>✏️ Lancée en mode écriture (label mode_write)</span>
-      <span>⚠️ Échec — intervention humaine requise (label needs-human)</span>
-      <span>○ Aucun de ces labels</span>
-    </div>
-
-    <div id="zone-issue" class="zone-issue">
-      <div class="issue-vide">Aucune issue à afficher</div>
-    </div>
-
-  {% include "fragments/panneau_lateral.html" %}
-
   </div>

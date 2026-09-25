@@ -196,27 +196,38 @@
 .legende-resultats{font-size:12px;color:#888;background:#f8f8f5;
   border:1px solid #e0dfda;border-radius:6px;padding:8px 12px;
   margin-bottom:16px;display:flex;flex-direction:column;gap:2px;line-height:1.55}
-/* Panneau flottant de monitoring de l'onglet Résultats (issue #375→#377,
-   refonte overlay lisible #380) : liste des issues pleine largeur (l'ancien
-   layout flex .resultats-layout / .resultats-liste-col à 280px est retiré),
-   panneau en position:fixed haut-droite basculé par #pl-toggle — monitoring
-   passif des watchers (une ligne par watcher) sans issue sélectionnée,
-   actions contextuelles une fois une ligne sélectionnée (voir
-   rafraichirPanneauLateralResultats dans app.js). Ouvert par défaut à
-   l'entrée dans l'onglet (ouvrirPanneauLateralParDefaut), sauf écran étroit
-   où il reste fermé par défaut (même seuil 900px que le media query CSS). */
-.pl-toggle{position:fixed;top:18px;right:18px;z-index:1001;
-  padding:9px 14px;border:1px solid #ccc;border-radius:8px;background:#fff;
-  font-size:13px;font-weight:600;color:#1a1a18;cursor:pointer;
-  box-shadow:0 2px 8px rgba(0,0,0,.12)}
+/* Mise en page en colonnes de l'onglet Résultats (issue #628) : le corps
+   (liste + détail, .resultats-corps) et le panneau latéral Infrastructure
+   (.panneau-lateral-col) sont deux colonnes flex côte à côte — le panneau ne
+   recouvre PLUS JAMAIS la liste (l'ancien panneau en position:fixed masquait
+   la fin des lignes, badges de temps compris, cf. issue #628). Sur écran
+   étroit, la colonne panneau passe SOUS le corps (flex-direction:column) au
+   lieu de le recouvrir. */
+.resultats-layout{display:flex;align-items:flex-start;gap:16px}
+.resultats-corps{flex:1;min-width:0}
+.panneau-lateral-col{flex-shrink:0;display:flex;flex-direction:column;gap:10px}
+@media (max-width:900px){
+  .resultats-layout{flex-direction:column}
+  .panneau-lateral-col{width:100%}
+}
+/* Panneau latéral de monitoring de l'onglet Résultats (issue #375→#377,
+   refonte overlay lisible #380, colonne non recouvrante #628) : colonne
+   basculée par #pl-toggle — monitoring passif des watchers (une ligne par
+   watcher) sans issue sélectionnée, actions contextuelles une fois une ligne
+   sélectionnée (voir rafraichirPanneauLateralResultats,
+   static/js/panneau_lateral.js). Ouvert par défaut, état mémorisé
+   (localStorage) et conservé d'un onglet à l'autre depuis #628 (avant : réinitialisé à
+   chaque entrée dans l'onglet). */
+.pl-toggle{align-self:flex-start;padding:9px 14px;border:1px solid #ccc;
+  border-radius:8px;background:#fff;font-size:13px;font-weight:600;
+  color:#1a1a18;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.12)}
 .pl-toggle.actif{border-color:#185FA5;color:#185FA5}
-.panneau-lateral{position:fixed;top:64px;right:18px;z-index:1000;
-  width:360px;max-height:calc(100vh - 80px);overflow-y:auto;
+.panneau-lateral{width:340px;max-height:calc(100vh - 120px);overflow-y:auto;
   border:1px solid #e0dfda;border-radius:10px;background:#fff;padding:16px;
-  box-shadow:0 6px 24px rgba(0,0,0,.18)}
+  box-shadow:0 2px 10px rgba(0,0,0,.08)}
 .panneau-lateral.ferme{display:none}
 @media (max-width:900px){
-  .panneau-lateral{width:auto;left:18px;right:18px}
+  .panneau-lateral{width:auto}
 }
 .pl-sous{font-size:11px;color:#999;margin:-4px 0 12px}
 .pl-lien{font-size:12px;color:#185FA5;cursor:pointer;user-select:none;margin-top:8px;display:inline-block}
