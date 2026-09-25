@@ -18,7 +18,6 @@ app.interruption.interrompre_linux).
 """
 
 import logging
-import os
 import subprocess
 import threading
 import time
@@ -30,7 +29,7 @@ from flask import jsonify, request
 # « from watcher import ») ; on l'importe donc avant watcher.
 from app.projets import lister_projets, projet_par_nom
 from app.auth import login_requis  # noqa: F401 (exporté pour l'enregistrement des routes)
-from watcher import Config, taches_en_cours as _taches_en_cours_watcher
+from watcher import Config, _pid_vivant, taches_en_cours as _taches_en_cours_watcher
 
 log = logging.getLogger(__name__)
 
@@ -63,16 +62,18 @@ def chemin_pid(cfg: Config) -> Path:
 
 def watcher_actif(cfg: Config) -> tuple[bool, int | None]:
     """Retourne (actif, pid). Consulte le fichier PID et vérifie que le
-    processus existe encore (os.kill(pid, 0) ne tue pas, il sonde)."""
+    processus existe encore via `_pid_vivant` (watcher.py, sonde
+    cross-plateforme POSIX/Windows, issue #584) plutôt qu'un `os.kill(pid, 0)`
+    inline (issue #617) — même sonde que watcher.py utilise pour ses propres
+    verrous."""
     pid_file = chemin_pid(cfg)
     if not pid_file.exists():
         return False, None
     try:
         pid = int(pid_file.read_text().strip())
-        os.kill(pid, 0)   # lève OSError si le processus est mort
-        return True, pid
-    except (OSError, ProcessLookupError, ValueError):
+    except (OSError, ValueError):
         return False, None
+    return (True, pid) if _pid_vivant(pid) else (False, None)
 
 
 def tache_en_cours(cfg: Config) -> list[dict]:

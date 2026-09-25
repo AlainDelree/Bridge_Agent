@@ -48,6 +48,8 @@ from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 
+from utils import ecrire_json_atomique as _ecrire_json_atomique
+
 DOSSIER_SCRIPT = Path(__file__).resolve().parent
 DOSSIER_LOGS = DOSSIER_SCRIPT.parent / "logs"
 FICHIER_HISTORIQUE_DEFAUT = DOSSIER_LOGS / "historique_durees.json"
@@ -114,13 +116,6 @@ def _seuil_anciennete(mois: int) -> datetime:
 
 def _categorie(entree: dict) -> tuple:
     return (entree.get("projet"), entree.get("type"), entree.get("mode"))
-
-
-def _ecrire_json_atomique(chemin: Path, donnees):
-    chemin.parent.mkdir(parents=True, exist_ok=True)
-    tmp = chemin.with_name(chemin.name + f".tmp{os.getpid()}")
-    tmp.write_text(json.dumps(donnees, ensure_ascii=False, indent=2), encoding="utf-8")
-    os.replace(tmp, chemin)
 
 
 def archiver(fichier_historique: Path, seuil_mois: int, n_min: int, dry_run: bool) -> dict:

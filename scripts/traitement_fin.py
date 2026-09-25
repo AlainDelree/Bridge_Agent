@@ -49,6 +49,7 @@ import json
 import math
 import os
 import struct
+import subprocess
 import tempfile
 import urllib.request
 import wave
@@ -88,7 +89,7 @@ def bip_plat(demitons: int = 0):
     w.writeframes(data)
     w.close()
 
-    os.system(f'aplay {tmp} 2>/dev/null')
+    subprocess.run(["aplay", tmp], capture_output=True)
     os.remove(tmp)
 
 
@@ -110,7 +111,7 @@ def bip(demitons: int = 0):
     w.writeframes(data)
     w.close()
 
-    os.system(f'aplay {tmp} 2>/dev/null')
+    subprocess.run(["aplay", tmp], capture_output=True)
     os.remove(tmp)
 
 

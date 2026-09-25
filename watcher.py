@@ -90,6 +90,7 @@ TIMEOUT_CREATION_FINALISE = 60   # finaliser_projet_ccw_auto.ps1 : pas de résea
 # scripts/ n'est pas un package : on l'ajoute au sys.path.
 sys.path.insert(0, str(DOSSIER_SCRIPT / "scripts"))
 import traitement_fin
+from utils import ecrire_json_atomique as _ecrire_json_atomique
 
 # Consignes injectées dans le PROMPT donné à CCL (architecture à trois couches,
 # issues #209 puis #211). Vivent à côté du watcher (racine du dépôt), PAS dans le
@@ -1275,13 +1276,6 @@ def _lire_json_best_effort(chemin: Path) -> dict:
         return json.loads(chemin.read_text(encoding="utf-8")) or {}
     except (json.JSONDecodeError, OSError):
         return {}   # fichier absent/corrompu : on repart d'un état vide
-
-
-def _ecrire_json_atomique(chemin: Path, donnees: dict):
-    chemin.parent.mkdir(parents=True, exist_ok=True)
-    tmp = chemin.with_name(chemin.name + f".tmp{os.getpid()}")
-    tmp.write_text(json.dumps(donnees, ensure_ascii=False, indent=2), encoding="utf-8")
-    os.replace(tmp, chemin)   # atomique sur un même système de fichiers (POSIX et Windows)
 
 
 def _maj_etat_json(chemin: Path, fonction_maj, *, date_iso: str | None = None):
