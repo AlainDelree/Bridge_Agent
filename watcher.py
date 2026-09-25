@@ -4104,28 +4104,15 @@ def _restaurer_rep_travail_modifie(numero: int, cwd: Path,
     return list(nouveaux.keys())
 
 
-def _traiter_issue_synchrone(issue: dict, dry_run: bool, chemin_worktree: Path | None = None,
-                              echec_worktree_deja_pris: str | None = None):
-    """Corps du traitement d'une issue — inchangé depuis avant #337, à
-    l'exception du paramètre `chemin_worktree` (issue #337) : chemin du
-    worktree git isolé où cette tâche mode_write doit tourner, ou None pour le
-    traitement classique dans REP_TRAVAIL. Appelée soit directement (issues
-    lecture/lecture active, ou mode_write hors parallélisation), soit depuis un
-    thread dédié via `traiter_issue` (point d'entrée public, voir plus bas).
-
-    `echec_worktree_deja_pris` (issue #589) : renseigné par l'appelant quand
-    `chemin_worktree` vaut None PARCE QUE `_creer_worktree` a échoué pour
-    cause de chemin ou branche déjà pris (repli volontaire sur REP_TRAVAIL,
-    cf. BRIDGE_AGENT_DOC.md) — distinct d'un appel normal sans worktree
-    (mode lecture, parallélisation désactivée, etc.). Rend ce repli visible
-    dans le compte-rendu de clôture, en plus du log.warning déjà émis par
-    `_creer_worktree` au moment de l'échec."""
-    numero = issue["number"]
-    titre  = issue["title"]
-    body   = issue.get("body") or ""
-
+def _guards_precoces_et_bootstrap(issue: dict, numero: int, titre: str, body: str,
+                                   dry_run: bool) -> list[str] | None:
+    """Guards en tête de `_traiter_issue_synchrone` (déjà en cours, déjà en
+    échec définitif needs-human, déjà traitée) puis bootstrap CCW (issue
+    #556, 2/3). Retourne la liste des labels si le traitement doit continuer,
+    ou None si l'appelant doit retourner immédiatement — guard déclenché ou
+    bootstrap CCW déjà entièrement géré ici (side effects déjà appliqués)."""
     if _issues_en_cours_contient(numero):
-        return
+        return None
 
     labels = [l.get("name", "") for l in issue.get("labels", [])]
 
@@ -4141,7 +4128,7 @@ def _traiter_issue_synchrone(issue: dict, dry_run: bool, chemin_worktree: Path |
         _issues_en_cours_ajouter(numero)
         if _deduire_mode(labels) == MODE_ECRITURE:
             _issue_write_bloquee_ajouter(numero)
-        return
+        return None
 
     # Garde d'idempotence (issue #195). Une issue peut revenir ici OUVERTE alors
     # que son travail est déjà fait : un cycle précédent avait réussi le
@@ -4153,7 +4140,7 @@ def _traiter_issue_synchrone(issue: dict, dry_run: bool, chemin_worktree: Path |
         log.info(f"  Issue #{numero} déjà traitée (résultat commenté) — finalisation de la fermeture, pas de retraitement.")
         if not fermer_issue(numero):
             log.warning(f"  Finalisation de la fermeture #{numero} toujours incomplète — nouvelle tentative au prochain cycle.")
-        return
+        return None
 
     _issues_en_cours_ajouter(numero)
 
@@ -4163,8 +4150,17 @@ def _traiter_issue_synchrone(issue: dict, dry_run: bool, chemin_worktree: Path |
     # si le champ CREATION est absent/désactivé : dispatch normal inchangé.
     if creation_demandee(body):
         _traiter_creation_projet_ccw(numero, body, labels, dry_run)
-        return
+        return None
 
+    return labels
+
+
+def _deduire_mode_et_logguer(numero: int, titre: str, body: str, labels: list[str],
+                              chemin_worktree: Path | None) -> tuple[str, str, str, bool, int, str]:
+    """Déduit priorité/critique/timeout/modèle/mode pour cette issue et
+    journalise les avertissements associés (mode écriture ou lecture active
+    armé, mention configs/*.conf dans le corps). Retourne
+    (mode, mode_txt, priorite, critique, timeout, modele)."""
     priorite = extraire_priorite(body)
     critique = priorite in PRIORITES_CRITIQUES
     timeout  = extraire_timeout(body, titre)
@@ -4196,12 +4192,31 @@ def _traiter_issue_synchrone(issue: dict, dry_run: bool, chemin_worktree: Path |
             f"rappel : CCL/CCW ne doit JAMAIS modifier ces fichiers (consignes/globales.md, "
             f"issue #318), même si l'issue le demande explicitement. Garde-fou technique actif."
         )
+    return mode, mode_txt, priorite, critique, timeout, modele
 
-    # Périmètre effectif de cette exécution (issue #125). Par défaut : celui du
-    # .conf. Pour un projet à périmètre dynamique, il vient du champ REPO_CIBLE de
-    # l'issue et devient à la fois le périmètre de la clause de prompt ET le cwd
-    # réel du subprocess. Toute erreur de config/issue ici est définitive (pas de
-    # retry) : commentaire explicite + label 'needs-human' pour stopper la reprise.
+
+@dataclass
+class ContexteExecution:
+    """Périmètre et cwd effectifs résolus pour une exécution de
+    `_traiter_issue_synchrone` (issue #619), avec les avertissements à
+    reporter dans le compte-rendu de clôture."""
+    perimetre_effectif: str
+    cwd_effectif: Path
+    avertissement_conflit: str
+    avertissement_worktree_deja_pris: str
+
+
+def _resoudre_contexte_execution(numero: int, body: str, mode: str,
+                                  chemin_worktree: Path | None,
+                                  echec_worktree_deja_pris: str | None) -> ContexteExecution | None:
+    """Périmètre effectif de cette exécution (issue #125). Par défaut : celui
+    du .conf. Pour un projet à périmètre dynamique, il vient du champ
+    REPO_CIBLE de l'issue et devient à la fois le périmètre de la clause de
+    prompt ET le cwd réel du subprocess — sinon du worktree isolé (#337) ou
+    de SOUS_DOSSIER (#550), même ordre de priorité qu'historiquement. Toute
+    erreur de config/issue ici est définitive (pas de retry) : commentaire
+    explicite + label 'needs-human' pour stopper la reprise, DÉJÀ posés avant
+    de retourner None — l'appelant n'a plus qu'à retourner immédiatement."""
     perimetre_effectif = CFG.perimetre
     cwd_effectif       = CFG.rep_travail
     avertissement_conflit = ""
@@ -4247,7 +4262,7 @@ def _traiter_issue_synchrone(issue: dict, dry_run: bool, chemin_worktree: Path |
             ajouter_label(numero, LABEL_ECHEC)
             # PAS de retrait de issues_en_cours (issue #576) : `needs-human`
             # posé, l'issue reste suivie tant que le label n'est pas retiré.
-            return
+            return None
 
         valide, raison = valider_repo_cible(repo_cible)
         if not valide:
@@ -4262,7 +4277,7 @@ def _traiter_issue_synchrone(issue: dict, dry_run: bool, chemin_worktree: Path |
             ajouter_label(numero, LABEL_ECHEC)
             # PAS de retrait de issues_en_cours (issue #576) : `needs-human`
             # posé, l'issue reste suivie tant que le label n'est pas retiré.
-            return
+            return None
 
         repo_cible_resolu  = Path(repo_cible).resolve()
         perimetre_effectif = str(repo_cible_resolu)
@@ -4312,19 +4327,25 @@ def _traiter_issue_synchrone(issue: dict, dry_run: bool, chemin_worktree: Path |
                 # de MAX_WRITE_PARALLELE (voir _issue_write_bloquee_ajouter).
                 if mode == MODE_ECRITURE:
                     _issue_write_bloquee_ajouter(numero)
-                return
+                return None
             cwd_effectif       = chemin_resolu
             perimetre_effectif = str(chemin_resolu)
             log.info(f"  SOUS_DOSSIER : cwd de cette exécution = {chemin_resolu} (issue #550).")
 
-    # Garde-fou anti-collision inter-process (issue #189) : AVANT l'ACK et tout
-    # lancement de claude, on pose un verrou exclusif sur le répertoire de travail
-    # effectif. Si un AUTRE process (autre instance/relance de watcher, ou un
-    # doublon d'issue traité en parallèle) détient déjà ce verrou, on NE lance PAS
-    # un second claude sur le même dossier : on relâche l'issue (retirée de
-    # issues_en_cours, sans ACK) pour qu'elle soit reprise au prochain cycle, une
-    # fois le verrou libéré. issues_en_cours ne protège que dans CE process ; le
-    # verrou fichier étend la protection entre process.
+    return ContexteExecution(perimetre_effectif, cwd_effectif, avertissement_conflit, avertissement_worktree_deja_pris)
+
+
+def _acquerir_verrou_pour_issue(numero: int, cwd_effectif: Path, timeout: int, mode: str):
+    """Garde-fou anti-collision inter-process (issue #189) : AVANT l'ACK et
+    tout lancement de claude, pose un verrou exclusif sur le répertoire de
+    travail effectif. Si un AUTRE process (autre instance/relance de watcher,
+    ou un doublon d'issue traité en parallèle) détient déjà ce verrou, on NE
+    lance PAS un second claude sur le même dossier : on relâche l'issue
+    (retirée de issues_en_cours, sans ACK) pour qu'elle soit reprise au
+    prochain cycle, une fois le verrou libéré. issues_en_cours ne protège que
+    dans CE process ; le verrou fichier étend la protection entre process.
+    Retourne None si le verrou n'a pas pu être acquis (issue déjà retirée de
+    issues_en_cours par cette fonction)."""
     verrou = acquerir_verrou(cwd_effectif, timeout, mode)
     if verrou is None:
         log.warning(
@@ -4332,387 +4353,519 @@ def _traiter_issue_synchrone(issue: dict, dry_run: bool, chemin_worktree: Path |
             f"sur {cwd_effectif} — collision évitée, reprise au prochain cycle."
         )
         _issues_en_cours_retirer(numero)
+    return verrou
+
+
+def _preparer_lecture_active(numero: int, mode: str, dry_run: bool,
+                              cwd_effectif: Path) -> tuple[Path | None, dict | None, bool]:
+    """Lecture active (issue #327) : dossier scratch créé AVANT tout
+    lancement de claude (niveau 1), et empreinte de REP_TRAVAIL prise AVANT
+    la première tentative (niveau 2 — voir _restaurer_rep_travail_modifie).
+    Appelée avant l'ACK pour ne rien engager (ACK, chrono) si la préparation
+    échoue. Retourne (chemin_scratch, statut_rep_travail_avant, ok). Si
+    ok=False, l'abandon (commentaire + label needs-human) est déjà géré ici —
+    `chemin_scratch` peut néanmoins être non-None (résolu mais `mkdir` en
+    échec) et DOIT alors quand même être passé au nettoyage de l'appelant."""
+    chemin_scratch = None
+    statut_rep_travail_avant = None
+    if mode == MODE_LECTURE_ACTIVE and not dry_run:
+        try:
+            chemin_scratch = _chemin_scratch(CFG.nom)
+            chemin_scratch.mkdir(parents=True, exist_ok=True)
+        except (ValueError, OSError) as e:
+            log.error(f"  Issue #{numero} : préparation du dossier scratch impossible ({e}) — abandon.")
+            commenter_issue(
+                numero,
+                f"❌ Échec de préparation du dossier scratch (lecture active) : {e}. "
+                f"Aucun lancement de CCL (erreur de configuration, pas un échec transitoire). "
+                f"Corrigez puis retirez le label `{LABEL_ECHEC}` pour relancer."
+            )
+            ajouter_label(numero, LABEL_ECHEC)
+            # PAS de retrait de issues_en_cours (issue #576) : `needs-human`
+            # posé, l'issue reste suivie tant que le label n'est pas retiré.
+            return (chemin_scratch, statut_rep_travail_avant, False)
+        statut_rep_travail_avant = _statut_git_rep_travail(cwd_effectif)
+    return (chemin_scratch, statut_rep_travail_avant, True)
+
+
+def _demarrer_traitement(numero: int, mode: str, mode_txt: str, dry_run: bool,
+                          cwd_effectif: Path) -> tuple[bool, float, int, dict | None]:
+    """Tout ce qui précède la première tentative `lancer_claude` : détection
+    RELANCE, ACK, rafraîchissement SSE, départ du chrono, sonde pre-flight
+    token et empreinte configs/*.conf. Retourne (est_relance, debut_traitement,
+    nb_projets_actifs_debut, empreinte_configs_avant)."""
+    # Détection RELANCE (champ RELANCE, issue #516) AVANT l'ACK courante
+    # (issue #592) : un commentaire d'échec définitif déjà présent dans
+    # l'historique de l'issue signale que le worktree peut contenir du
+    # travail déjà fait par une tentative précédente — la durée mesurée
+    # ci-dessous (ACK → clôture) serait alors artificiellement courte.
+    # Réutilisé côté succès, plus bas, pour exclure cette durée de la
+    # calibration TIMEOUT (maj_calibration_timeout).
+    est_relance = _issue_est_relance(_lister_commentaires(numero))
+
+    commenter_issue(
+        numero,
+        f"✅ ACK — Issue #{numero} reçue par watcher.py ({CFG.libelle_agent_effectif}, projet {CFG.nom}). "
+        f"Mode : **{mode_txt}**. Traitement en cours..."
+    )
+    # Rafraîchissement SSE de l'onglet Résultats dès le DÉBUT réel du
+    # traitement (issue #515), pas seulement à sa fin — couvre le cas d'une
+    # issue encore inconnue du navigateur (ex. créée via issues_inbox
+    # pendant une absence).
+    notifier_debut_sse(numero)
+    # Départ du chrono de durée réelle (ACK → fermeture), pour l'historique des
+    # durées (issue #108). monotonic() pour la mesure d'écoulement (insensible aux
+    # changements d'heure système).
+    debut_traitement = time.monotonic()
+    # Nombre de watchers actifs au lancement DE CETTE ISSUE (issue #220, champ
+    # nb_projets_actifs_au_lancement) — figé une fois pour toute la durée du
+    # traitement (succès ou timeouts successifs), pas recalculé à chaque tentative.
+    nb_projets_actifs_debut = _compter_watchers_actifs()
+
+    # Pre-flight token (issue #309) : une seule sonde avant la première
+    # tentative, pas à chaque tentative — voir verifier_preflight_token.
+    # Sautée en dry-run (aucun appel claude réel dans ce mode).
+    if not dry_run:
+        verifier_preflight_token(cwd=cwd_effectif)
+
+    # Garde-fou technique configs/*.conf (issue #318, étendu à la lecture
+    # active par #327 : mode_scratch arme aussi --dangerously-skip-permissions,
+    # donc mérite la même protection) : instantané pris une seule fois avant
+    # la première tentative — chaque tentative est comparée à CE MÊME
+    # instantané (l'état légitime d'origine), pas à celui de la tentative
+    # précédente, pour rester la référence même après une éventuelle
+    # restauration intermédiaire.
+    empreinte_configs_avant = (
+        _empreinte_configs() if (mode != MODE_LECTURE and not dry_run) else None
+    )
+
+    return est_relance, debut_traitement, nb_projets_actifs_debut, empreinte_configs_avant
+
+
+def _executer_une_tentative(numero: int, titre: str, body: str, dry_run: bool, mode: str,
+                             timeout: int, modele: str, perimetre_effectif: str,
+                             cwd_effectif: Path, verrou, chemin_scratch: Path | None,
+                             chemin_worktree: Path | None, empreinte_configs_avant: dict | None,
+                             tentative: int) -> tuple[bool, str]:
+    """Une tentative `lancer_claude`, garde-fou de format de clôture (#581) et
+    restauration best-effort des configs/*.conf modifiés (#318/#327).
+    Retourne (succes, sortie)."""
+    succes, sortie = lancer_claude(numero, titre, body, dry_run, mode,
+                                   timeout, modele,
+                                   perimetre=perimetre_effectif, cwd=cwd_effectif,
+                                   verrou=verrou, chemin_scratch=chemin_scratch,
+                                   chemin_worktree=chemin_worktree)
+
+    # Garde-fou de format (issue #581) : le prompt standard impose un
+    # rapport de clôture marqué par ✅ ou ❌ (« Réponds avec ce format
+    # exact »). Cause racine #581 : un sous-agent d'exploration lancé
+    # en arrière-plan par claude (Task/Agent tool) peut terminer APRÈS
+    # que claude ait déjà produit ce rapport final conforme —
+    # `claude --print` reste alors vivant le temps de traiter cette
+    # notification tardive et émet un tour supplémentaire (simple note
+    # de suivi, hors format), qui ÉCRASE le rapport conforme dans le
+    # stdout capturé ci-dessus : exit code 0, donc `succes=True`, mais
+    # contenu hors-sujet/hors-format — cas vécu sur #580, rapport réel
+    # jamais posté nulle part. Détection volontairement large (marqueur
+    # présent N'IMPORTE OÙ dans le texte, pas seulement en tête) : en
+    # pratique claude fait fréquemment précéder le rapport d'une courte
+    # phrase d'intro ("Commit créé avec succès. Le rapport final :"),
+    # anodin et déjà toléré historiquement — seule l'ABSENCE totale du
+    # marqueur (cas #580) doit déclencher ce garde-fou, pas sa position.
+    # dry_run exclu : sa sortie fixe ("[DRY-RUN] ...") ne respecte
+    # jamais ce format et ne passe de toute façon jamais par
+    # `commenter_resultat_avec_retry`.
+    if succes and not dry_run and not ("✅" in sortie or "❌" in sortie):
+        log.warning(
+            f"  ✗ Tentative {tentative} : sortie de claude sans aucun "
+            f"marqueur ✅/❌ de clôture — probablement une réponse "
+            f"tardive (sous-agent en arrière-plan terminé après le "
+            f"rapport final, issue #581) ayant écrasé le vrai rapport. "
+            f"Traitée comme un échec de cette tentative."
+        )
+        succes = False
+        sortie = (
+            "Sortie de claude sans aucun marqueur ✅/❌ de clôture "
+            "attendu — probablement une réponse tardive émise après la "
+            "fin réelle du traitement (ex. notification d'un sous-agent "
+            "en arrière-plan terminé après le rapport final), qui a "
+            "écrasé la vraie réponse dans la sortie capturée (issue "
+            f"#581). Sortie obtenue : {sortie.strip()[:500]}"
+        )
+
+    if empreinte_configs_avant is not None:
+        _restaurer_configs_modifies(numero, empreinte_configs_avant)
+
+    return succes, sortie
+
+
+def _verifier_violation_scratch(numero: int, titre: str, labels: list[str],
+                                 cwd_effectif: Path, statut_rep_travail_avant: dict | None) -> bool:
+    """Garde-fou technique niveau 2 (issue #327) : après une tentative en
+    lecture active, vérifie qu'aucune écriture n'a eu lieu dans le projet hors
+    scratch. Détecté ⇒ échec DÉFINITIF immédiat (pas de nouvelle tentative —
+    contrairement aux autres échecs, retenter risquerait de répéter la même
+    violation), needs-human, sur le même modèle que l'abandon REPO_CIBLE
+    invalide de `_resoudre_contexte_execution`. Retourne True si une violation
+    a été détectée et traitée (l'appelant doit alors retourner immédiatement),
+    False sinon — y compris hors lecture active, où `statut_rep_travail_avant`
+    vaut None."""
+    if statut_rep_travail_avant is None:
+        return False
+
+    chemins_restaures = _restaurer_rep_travail_modifie(numero, cwd_effectif, statut_rep_travail_avant)
+    if not chemins_restaures:
+        return False
+
+    log.error(
+        f"  ✗ Issue #{numero} : lecture active — écriture détectée dans le "
+        f"projet hors scratch ({', '.join(chemins_restaures)}) — restaurée, "
+        f"échec définitif (garde-fou niveau 2, issue #327)."
+    )
+    commenter_issue(
+        numero,
+        f"❌ Lecture active : écriture détectée dans le projet hors scratch — restaurée.\n\n"
+        f"Fichier(s) concerné(s) : `{', '.join(chemins_restaures)}`\n\n"
+        f"Garde-fou niveau 2 (empreinte REP_TRAVAIL avant/après, issue #327) déclenché : "
+        f"la consigne de confinement au dossier scratch n'a pas été respectée malgré le "
+        f"garde-fou de prompt (niveau 1). Le projet a été restauré à son état d'avant "
+        f"traitement. Intervention humaine requise. Label `{LABEL_ECHEC}` posé : cette "
+        f"issue ne sera plus retraitée automatiquement tant que le label n'est pas retiré "
+        f"manuellement."
+    )
+    ajouter_label(numero, LABEL_ECHEC)
+    notifier(
+        labels,
+        titre=f"❌ {CFG.nom} #{numero} — lecture active : écriture hors scratch",
+        message=f"'{titre}' : écriture détectée hors scratch en lecture active, projet restauré.",
+        urgence_bureau="critical",
+        priorite_ntfy="high",
+        numero=numero,
+    )
+    notifier_fin_sse(numero)
+    # PAS de retrait de issues_en_cours (issue #576) : `needs-human`
+    # posé, l'issue reste suivie tant que le label n'est pas
+    # retiré. Mode lecture active (jamais MODE_ECRITURE ici,
+    # cf. `statut_rep_travail_avant` posé uniquement pour ce
+    # mode) : n'occupe donc jamais de place MAX_WRITE_PARALLELE.
+    return True
+
+
+def _finaliser_succes(numero: int, titre: str, body: str, labels: list[str], mode: str,
+                       timeout: int, avertissement_conflit: str,
+                       avertissement_worktree_deja_pris: str, sortie: str,
+                       debut_traitement: float, nb_projets_actifs_debut: int,
+                       est_relance: bool) -> None:
+    """Traitement d'une tentative réussie : commentaire de résultat (avec
+    retry), fermeture de l'issue, historique des durées, calibration
+    automatique du TIMEOUT et notification. Termine toujours le traitement de
+    l'issue — l'appelant doit retourner immédiatement après l'appel."""
+    log.info(f"  ✓ Issue #{numero} traitée avec succès.")
+    message_resultat = f"{MARQUEUR_RESULTAT}\n## Résultat\n\n{avertissement_conflit}{avertissement_worktree_deja_pris}{sortie}"
+    # Le commentaire de résultat est critique (issue #195) : on le
+    # poste avec retry/backoff et on ne ferme l'issue QUE s'il a réussi.
+    if not commenter_resultat_avec_retry(numero, message_resultat):
+        # Échec réseau persistant : fermer l'issue effacerait
+        # silencieusement le travail. On la laisse OUVERTE (ni `close`
+        # ni label `done`) pour reprise au prochain cycle. La garde
+        # d'idempotence en tête de traiter_issue évitera de relancer
+        # claude à tort si un cycle ultérieur finit par poster le
+        # commentaire mais échoue encore la fermeture.
+        log.error(
+            f"  ✗ Commentaire de résultat #{numero} impossible après retries — "
+            f"issue laissée OUVERTE pour reprise (non fermée)."
+        )
+        notifier(
+            labels,
+            titre=f"⚠️ {CFG.nom} #{numero} — résultat non posté",
+            message=(f"'{titre}' traitée, mais le commentaire de résultat a échoué "
+                     f"(réseau). Issue laissée ouverte pour reprise au prochain cycle."),
+            urgence_bureau="critical",
+            priorite_ntfy="high",
+            numero=numero,
+        )
+        _issues_en_cours_retirer(numero)
+        return
+    if not fermer_issue(numero):
+        log.warning(f"  Fermeture de l'issue #{numero} incomplète (close/label) — sera retentée au prochain cycle via la garde d'idempotence.")
+    _issues_en_cours_retirer(numero)
+    # Historique des durées (issue #108) : durée réelle ACK → fermeture,
+    # catégorisée par projet/type/mode, pour l'estimation prédictive.
+    type_issue_close = deduire_type_issue(titre, body)
+    mode_close        = _etiquette_calibration(mode)
+    complexite_close  = extraire_complexite(body)
+    duree_reelle      = time.monotonic() - debut_traitement
+    date_iso_close    = datetime.now().isoformat(timespec="seconds")
+    enregistrer_duree(
+        CFG.nom,
+        type_issue_close,
+        mode_close,
+        duree_reelle,
+        date_iso_close,
+        body=body,
+        nb_projets_actifs=nb_projets_actifs_debut,
+    )
+    # Calibration automatique du TIMEOUT (issue #221) : met à jour les
+    # EWMA duree_typique/variabilite/backoff (par combinaison) et F
+    # (global), puis journalise le TIMEOUT_suggéré — sans effet sur le
+    # TIMEOUT réellement appliqué (extraire_timeout reste seul décisif).
+    suggere = maj_calibration_timeout(
+        projet=CFG.nom,
+        type_issue=type_issue_close,
+        mode=mode_close,
+        complexite=complexite_close,
+        duree_s=duree_reelle,
+        expiree=False,
+        body=body,
+        date_iso=date_iso_close,
+        relance=est_relance,
+    )
+    # Exposition du TIMEOUT_suggéré dans le commentaire de clôture
+    # GitHub (issue #222) : seul canal fiable pour transmettre cette
+    # info calculée localement à Claude Chat (pas d'accès direct aux
+    # fichiers d'état gitignorés du ThinkPad). Connue seulement APRÈS
+    # la fermeture (dépend de duree_reelle) : on édite le commentaire
+    # de résultat déjà posté (gh --edit-last) plutôt que d'en poster
+    # un second. Best-effort — n'affecte pas la clôture déjà faite.
+    if not editer_dernier_commentaire(
+            numero, message_resultat + formater_bloc_calibration(duree_reelle, timeout, suggere)):
+        log.warning(f"  Ajout du bloc calibration au commentaire #{numero} échoué (best-effort, non bloquant).")
+    notifier(
+        labels,
+        titre=f"✅ {CFG.nom} #{numero} — traitée",
+        message=f"'{titre}' traitée avec succès.",
+        urgence_bureau="normal",
+        priorite_ntfy="default",
+        numero=numero,
+    )
+    notifier_fin_sse(numero)
+
+
+def _tracer_tentative_expiree(numero: int, titre: str, body: str, mode: str,
+                               debut_traitement: float, nb_projets_actifs_debut: int) -> None:
+    """Trace du timeout dans l'historique des durées (issue #220) : avant ce
+    correctif, une tentative expirée (subprocess.TimeoutExpired dans
+    lancer_claude, message "Timeout après <N>s") ne laissait AUCUNE trace
+    dans historique_durees.json — seulement dans le log texte du watcher.
+    Un enregistrement minimal (expiree=True) est ajouté ICI, PAR TENTATIVE
+    expirée (pas seulement à l'abandon définitif), pour permettre de
+    compter la fréquence réelle des timeouts dans une future issue — y
+    compris pour les issues critiques en retry infini, qui n'atteignent
+    jamais la branche d'abandon."""
+    type_issue_expire = deduire_type_issue(titre, body)
+    mode_expire        = _etiquette_calibration(mode)
+    complexite_expire  = extraire_complexite(body)
+    duree_expiree      = time.monotonic() - debut_traitement
+    date_iso_expire    = datetime.now().isoformat(timespec="seconds")
+    enregistrer_duree(
+        CFG.nom,
+        type_issue_expire,
+        mode_expire,
+        duree_expiree,
+        date_iso_expire,
+        body=body,
+        nb_projets_actifs=nb_projets_actifs_debut,
+        expiree=True,
+    )
+    # Calibration automatique du TIMEOUT (issue #221) : sur timeout,
+    # multiplicateur_backoff *= FACTEUR_BACKOFF immédiatement pour cette
+    # combinaison (par tentative expirée, même logique que ci-dessus).
+    maj_calibration_timeout(
+        projet=CFG.nom,
+        type_issue=type_issue_expire,
+        mode=mode_expire,
+        complexite=complexite_expire,
+        duree_s=duree_expiree,
+        expiree=True,
+        body=body,
+        date_iso=date_iso_expire,
+    )
+
+
+def _gerer_abandon_max_essais(numero: int, titre: str, body: str, labels: list[str],
+                               mode: str, critique: bool, tentative: int, sortie: str,
+                               timeout: int, avertissement_worktree_deja_pris: str,
+                               perimetre_effectif: str, cwd_effectif: Path,
+                               debut_traitement: float) -> None:
+    """Nombre maximal de tentatives atteint (`CFG.max_essais`) : issue
+    critique ⇒ nouvelle tentative au prochain cycle (retry infini, jamais de
+    needs-human) ; sinon abandon définitif (passe diagnostique, label
+    needs-human, notification). Termine toujours le traitement de l'issue —
+    l'appelant doit retourner immédiatement après l'appel."""
+    if critique:
+        alerte_critique(numero, titre, tentative, labels)
+        log.warning(f"  Issue critique #{numero} — nouvelle tentative au prochain cycle.")
+        _issues_en_cours_retirer(numero)  # sera reprise au prochain poll
         return
 
+    log.error(f"  Issue #{numero} abandonnée après {CFG.max_essais} tentatives.")
+    # Passe diagnostique courte, en lecture seule, avant l'abandon
+    # définitif (issue #124) : quelques pistes concrètes pour éviter à
+    # Alain d'ouvrir lui-même une session juste pour comprendre le
+    # timeout. Best-effort — n'ajoute rien si elle échoue/timeout.
+    log.info(f"  Passe diagnostique courte (lecture seule, {CFG.timeout_diagnostic}s) pour #{numero}...")
+    diagnostic = diagnostiquer_echec(numero, titre, body, sortie,
+                                     perimetre=perimetre_effectif,
+                                     cwd=cwd_effectif)
+    message_echec = (
+        f"❌ Échec après {CFG.max_essais} tentatives.\n\n"
+        f"{avertissement_worktree_deja_pris}"
+        f"Dernière erreur : `{sortie}`\n\n"
+    )
+    if diagnostic:
+        message_echec += (
+            f"🔍 Pistes probables (diagnostic automatique) :\n\n"
+            f"{diagnostic}\n\n"
+        )
+    message_echec += (
+        f"Intervention humaine requise. Label `{LABEL_ECHEC}` posé : "
+        f"cette issue ne sera plus retraitée automatiquement tant que le "
+        f"label n'est pas retiré (ou l'issue fermée) manuellement."
+    )
+    # Exposition du TIMEOUT_suggéré dans le commentaire de clôture
+    # GitHub, ici aussi côté échec (issue #222). Simple LECTURE de
+    # l'état (lire_timeout_suggere), pas un nouvel appel à
+    # maj_calibration_timeout : chaque tentative expirée l'a déjà
+    # mis à jour ci-dessus — le rappeler ici compterait deux fois la
+    # même observation dans l'EWMA.
+    type_issue_echec = deduire_type_issue(titre, body)
+    mode_echec        = _etiquette_calibration(mode)
+    complexite_echec  = extraire_complexite(body)
+    duree_echec       = time.monotonic() - debut_traitement
+    suggere_echec     = lire_timeout_suggere(CFG.nom, type_issue_echec, mode_echec, complexite_echec, body)
+    message_echec += formater_bloc_calibration(duree_echec, timeout, suggere_echec)
+    commenter_issue(numero, message_echec)
+    ajouter_label(numero, LABEL_ECHEC)
+    notifier(
+        labels,
+        titre=f"❌ {CFG.nom} #{numero} — échec définitif",
+        message=f"'{titre}' abandonnée après {CFG.max_essais} tentatives.\nDernière erreur : {sortie[:200]}",
+        urgence_bureau="critical",
+        priorite_ntfy="high",
+        numero=numero,
+    )
+    notifier_fin_sse(numero)
+    # PAS de retrait de issues_en_cours (issue #576) : `needs-human`
+    # posé, l'issue reste suivie tant que le label n'est pas
+    # retiré (ou l'issue fermée) manuellement. En mode
+    # écriture, elle continue en plus d'occuper une place de
+    # MAX_WRITE_PARALLELE (voir _issue_write_bloquee_ajouter).
+    if mode == MODE_ECRITURE:
+        _issue_write_bloquee_ajouter(numero)
+
+
+def _nettoyer_apres_traitement(verrou, chemin_scratch: Path | None,
+                                chemin_worktree: Path | None, numero: int) -> None:
+    """Libération garantie du verrou (succès, échec définitif, exception,
+    reprise critique) — sans elle, un crash laisserait un verrou orphelin,
+    d'où aussi la péremption côté acquerir_verrou. Nettoyage garanti du
+    dossier scratch de lecture active (issue #327), succès/échec/timeout/
+    exception confondus — même esprit que _nettoyer_arbre_claude pour les
+    process. Fin de tâche en worktree (issue #337) : PAS de `git worktree
+    remove` ni de suppression de branche automatique — Alain merge et pousse
+    manuellement, on se contente ici de journaliser clairement l'état final
+    (numéro, chemin, branche) pour qu'il sache quoi retrouver."""
+    liberer_verrou(verrou)
+    if chemin_scratch is not None:
+        _nettoyer_scratch(numero, chemin_scratch)
+    if chemin_worktree is not None:
+        log.info(
+            f"  Issue #{numero} : fin de traitement en worktree {chemin_worktree} "
+            f"(branche {_branche_worktree(numero)}) — worktree CONSERVÉ (aucune "
+            f"suppression automatique), fusion/push manuels par Alain."
+        )
+
+
+def _traiter_issue_synchrone(issue: dict, dry_run: bool, chemin_worktree: Path | None = None,
+                              echec_worktree_deja_pris: str | None = None):
+    """Corps du traitement d'une issue — inchangé depuis avant #337, à
+    l'exception du paramètre `chemin_worktree` (issue #337) : chemin du
+    worktree git isolé où cette tâche mode_write doit tourner, ou None pour le
+    traitement classique dans REP_TRAVAIL. Appelée soit directement (issues
+    lecture/lecture active, ou mode_write hors parallélisation), soit depuis un
+    thread dédié via `traiter_issue` (point d'entrée public, voir plus bas).
+
+    `echec_worktree_deja_pris` (issue #589) : renseigné par l'appelant quand
+    `chemin_worktree` vaut None PARCE QUE `_creer_worktree` a échoué pour
+    cause de chemin ou branche déjà pris (repli volontaire sur REP_TRAVAIL,
+    cf. BRIDGE_AGENT_DOC.md) — distinct d'un appel normal sans worktree
+    (mode lecture, parallélisation désactivée, etc.). Rend ce repli visible
+    dans le compte-rendu de clôture, en plus du log.warning déjà émis par
+    `_creer_worktree` au moment de l'échec.
+
+    Orchestrateur (issue #619) : chaque étape est déléguée à une sous-fonction
+    privée ci-dessus (guards + bootstrap CCW, déduction du mode, résolution du
+    périmètre, acquisition du verrou, préparation lecture active, démarrage,
+    boucle de tentatives, succès/échec/nettoyage) — comportement inchangé."""
+    numero = issue["number"]
+    titre  = issue["title"]
+    body   = issue.get("body") or ""
+
+    labels = _guards_precoces_et_bootstrap(issue, numero, titre, body, dry_run)
+    if labels is None:
+        return
+
+    mode, mode_txt, _priorite, critique, timeout, modele = _deduire_mode_et_logguer(
+        numero, titre, body, labels, chemin_worktree)
+
+    contexte = _resoudre_contexte_execution(numero, body, mode, chemin_worktree, echec_worktree_deja_pris)
+    if contexte is None:
+        return
+    perimetre_effectif = contexte.perimetre_effectif
+    cwd_effectif        = contexte.cwd_effectif
+    avertissement_conflit = contexte.avertissement_conflit
+    avertissement_worktree_deja_pris = contexte.avertissement_worktree_deja_pris
+
+    verrou = _acquerir_verrou_pour_issue(numero, cwd_effectif, timeout, mode)
+    if verrou is None:
+        return
+
+    # `chemin_scratch` est référencé dans le `finally` ci-dessous (nettoyage) :
+    # il DOIT rester défini (None si non applicable) même sur un retour
+    # anticipé depuis le `try`.
+    chemin_scratch = None
     try:
-        # Lecture active (issue #327) : dossier scratch créé AVANT tout lancement
-        # de claude (niveau 1), et empreinte de REP_TRAVAIL prise AVANT la
-        # première tentative (niveau 2 — voir _restaurer_rep_travail_modifie).
-        # Préparés avant l'ACK pour ne rien engager (ACK, chrono) si la
-        # préparation échoue — même logique que la validation REPO_CIBLE
-        # ci-dessus : erreur de configuration ⇒ abandon net, needs-human, aucun
-        # retry. `chemin_scratch` est référencé dans le `finally` ci-dessous
-        # (nettoyage) : il DOIT rester défini (None si non applicable) même sur
-        # un retour anticipé de cette branche.
-        chemin_scratch = None
-        statut_rep_travail_avant = None
-        if mode == MODE_LECTURE_ACTIVE and not dry_run:
-            try:
-                chemin_scratch = _chemin_scratch(CFG.nom)
-                chemin_scratch.mkdir(parents=True, exist_ok=True)
-            except (ValueError, OSError) as e:
-                log.error(f"  Issue #{numero} : préparation du dossier scratch impossible ({e}) — abandon.")
-                commenter_issue(
-                    numero,
-                    f"❌ Échec de préparation du dossier scratch (lecture active) : {e}. "
-                    f"Aucun lancement de CCL (erreur de configuration, pas un échec transitoire). "
-                    f"Corrigez puis retirez le label `{LABEL_ECHEC}` pour relancer."
-                )
-                ajouter_label(numero, LABEL_ECHEC)
-                # PAS de retrait de issues_en_cours (issue #576) : `needs-human`
-                # posé, l'issue reste suivie tant que le label n'est pas retiré.
-                return
-            statut_rep_travail_avant = _statut_git_rep_travail(cwd_effectif)
+        chemin_scratch, statut_rep_travail_avant, ok = _preparer_lecture_active(numero, mode, dry_run, cwd_effectif)
+        if not ok:
+            return
 
-        # Détection RELANCE (champ RELANCE, issue #516) AVANT l'ACK courante
-        # (issue #592) : un commentaire d'échec définitif déjà présent dans
-        # l'historique de l'issue signale que le worktree peut contenir du
-        # travail déjà fait par une tentative précédente — la durée mesurée
-        # ci-dessous (ACK → clôture) serait alors artificiellement courte.
-        # Réutilisé côté succès, plus bas, pour exclure cette durée de la
-        # calibration TIMEOUT (maj_calibration_timeout).
-        est_relance = _issue_est_relance(_lister_commentaires(numero))
-
-        commenter_issue(
-            numero,
-            f"✅ ACK — Issue #{numero} reçue par watcher.py ({CFG.libelle_agent_effectif}, projet {CFG.nom}). "
-            f"Mode : **{mode_txt}**. Traitement en cours..."
-        )
-        # Rafraîchissement SSE de l'onglet Résultats dès le DÉBUT réel du
-        # traitement (issue #515), pas seulement à sa fin — couvre le cas d'une
-        # issue encore inconnue du navigateur (ex. créée via issues_inbox
-        # pendant une absence).
-        notifier_debut_sse(numero)
-        # Départ du chrono de durée réelle (ACK → fermeture), pour l'historique des
-        # durées (issue #108). monotonic() pour la mesure d'écoulement (insensible aux
-        # changements d'heure système).
-        debut_traitement = time.monotonic()
-        # Nombre de watchers actifs au lancement DE CETTE ISSUE (issue #220, champ
-        # nb_projets_actifs_au_lancement) — figé une fois pour toute la durée du
-        # traitement (succès ou timeouts successifs), pas recalculé à chaque tentative.
-        nb_projets_actifs_debut = _compter_watchers_actifs()
-
-        # Pre-flight token (issue #309) : une seule sonde avant la première
-        # tentative, pas à chaque tentative — voir verifier_preflight_token.
-        # Sautée en dry-run (aucun appel claude réel dans ce mode).
-        if not dry_run:
-            verifier_preflight_token(cwd=cwd_effectif)
-
-        # Garde-fou technique configs/*.conf (issue #318, étendu à la lecture
-        # active par #327 : mode_scratch arme aussi --dangerously-skip-permissions,
-        # donc mérite la même protection) : instantané pris une seule fois avant
-        # la première tentative — chaque tentative est comparée à CE MÊME
-        # instantané (l'état légitime d'origine), pas à celui de la tentative
-        # précédente, pour rester la référence même après une éventuelle
-        # restauration intermédiaire.
-        empreinte_configs_avant = (
-            _empreinte_configs() if (mode != MODE_LECTURE and not dry_run) else None
-        )
+        est_relance, debut_traitement, nb_projets_actifs_debut, empreinte_configs_avant = \
+            _demarrer_traitement(numero, mode, mode_txt, dry_run, cwd_effectif)
 
         tentative = 0
         while True:
             tentative += 1
             log.info(f"  Tentative {tentative}/{CFG.max_essais if not critique else '∞'}...")
 
-            succes, sortie = lancer_claude(numero, titre, body, dry_run, mode,
-                                           timeout, modele,
-                                           perimetre=perimetre_effectif, cwd=cwd_effectif,
-                                           verrou=verrou, chemin_scratch=chemin_scratch,
-                                           chemin_worktree=chemin_worktree)
+            succes, sortie = _executer_une_tentative(
+                numero, titre, body, dry_run, mode, timeout, modele,
+                perimetre_effectif, cwd_effectif, verrou, chemin_scratch,
+                chemin_worktree, empreinte_configs_avant, tentative)
 
-            # Garde-fou de format (issue #581) : le prompt standard impose un
-            # rapport de clôture marqué par ✅ ou ❌ (« Réponds avec ce format
-            # exact »). Cause racine #581 : un sous-agent d'exploration lancé
-            # en arrière-plan par claude (Task/Agent tool) peut terminer APRÈS
-            # que claude ait déjà produit ce rapport final conforme —
-            # `claude --print` reste alors vivant le temps de traiter cette
-            # notification tardive et émet un tour supplémentaire (simple note
-            # de suivi, hors format), qui ÉCRASE le rapport conforme dans le
-            # stdout capturé ci-dessus : exit code 0, donc `succes=True`, mais
-            # contenu hors-sujet/hors-format — cas vécu sur #580, rapport réel
-            # jamais posté nulle part. Détection volontairement large (marqueur
-            # présent N'IMPORTE OÙ dans le texte, pas seulement en tête) : en
-            # pratique claude fait fréquemment précéder le rapport d'une courte
-            # phrase d'intro ("Commit créé avec succès. Le rapport final :"),
-            # anodin et déjà toléré historiquement — seule l'ABSENCE totale du
-            # marqueur (cas #580) doit déclencher ce garde-fou, pas sa position.
-            # dry_run exclu : sa sortie fixe ("[DRY-RUN] ...") ne respecte
-            # jamais ce format et ne passe de toute façon jamais par
-            # `commenter_resultat_avec_retry`.
-            if succes and not dry_run and not ("✅" in sortie or "❌" in sortie):
-                log.warning(
-                    f"  ✗ Tentative {tentative} : sortie de claude sans aucun "
-                    f"marqueur ✅/❌ de clôture — probablement une réponse "
-                    f"tardive (sous-agent en arrière-plan terminé après le "
-                    f"rapport final, issue #581) ayant écrasé le vrai rapport. "
-                    f"Traitée comme un échec de cette tentative."
-                )
-                succes = False
-                sortie = (
-                    "Sortie de claude sans aucun marqueur ✅/❌ de clôture "
-                    "attendu — probablement une réponse tardive émise après la "
-                    "fin réelle du traitement (ex. notification d'un sous-agent "
-                    "en arrière-plan terminé après le rapport final), qui a "
-                    "écrasé la vraie réponse dans la sortie capturée (issue "
-                    f"#581). Sortie obtenue : {sortie.strip()[:500]}"
-                )
-
-            if empreinte_configs_avant is not None:
-                _restaurer_configs_modifies(numero, empreinte_configs_avant)
-
-            # Garde-fou technique niveau 2 (issue #327) : détecté ⇒ échec
-            # DÉFINITIF immédiat (pas de nouvelle tentative — contrairement aux
-            # autres échecs ci-dessous, retenter risquerait de répéter la même
-            # violation), needs-human, sur le même modèle que l'abandon
-            # REPO_CIBLE invalide plus haut dans cette fonction.
-            if statut_rep_travail_avant is not None:
-                chemins_restaures = _restaurer_rep_travail_modifie(numero, cwd_effectif, statut_rep_travail_avant)
-                if chemins_restaures:
-                    log.error(
-                        f"  ✗ Issue #{numero} : lecture active — écriture détectée dans le "
-                        f"projet hors scratch ({', '.join(chemins_restaures)}) — restaurée, "
-                        f"échec définitif (garde-fou niveau 2, issue #327)."
-                    )
-                    commenter_issue(
-                        numero,
-                        f"❌ Lecture active : écriture détectée dans le projet hors scratch — restaurée.\n\n"
-                        f"Fichier(s) concerné(s) : `{', '.join(chemins_restaures)}`\n\n"
-                        f"Garde-fou niveau 2 (empreinte REP_TRAVAIL avant/après, issue #327) déclenché : "
-                        f"la consigne de confinement au dossier scratch n'a pas été respectée malgré le "
-                        f"garde-fou de prompt (niveau 1). Le projet a été restauré à son état d'avant "
-                        f"traitement. Intervention humaine requise. Label `{LABEL_ECHEC}` posé : cette "
-                        f"issue ne sera plus retraitée automatiquement tant que le label n'est pas retiré "
-                        f"manuellement."
-                    )
-                    ajouter_label(numero, LABEL_ECHEC)
-                    notifier(
-                        labels,
-                        titre=f"❌ {CFG.nom} #{numero} — lecture active : écriture hors scratch",
-                        message=f"'{titre}' : écriture détectée hors scratch en lecture active, projet restauré.",
-                        urgence_bureau="critical",
-                        priorite_ntfy="high",
-                        numero=numero,
-                    )
-                    notifier_fin_sse(numero)
-                    # PAS de retrait de issues_en_cours (issue #576) : `needs-human`
-                    # posé, l'issue reste suivie tant que le label n'est pas
-                    # retiré. Mode lecture active (jamais MODE_ECRITURE ici,
-                    # cf. `statut_rep_travail_avant` posé uniquement pour ce
-                    # mode) : n'occupe donc jamais de place MAX_WRITE_PARALLELE.
-                    return
+            if _verifier_violation_scratch(numero, titre, labels, cwd_effectif, statut_rep_travail_avant):
+                return
 
             if succes:
-                log.info(f"  ✓ Issue #{numero} traitée avec succès.")
-                message_resultat = f"{MARQUEUR_RESULTAT}\n## Résultat\n\n{avertissement_conflit}{avertissement_worktree_deja_pris}{sortie}"
-                # Le commentaire de résultat est critique (issue #195) : on le
-                # poste avec retry/backoff et on ne ferme l'issue QUE s'il a réussi.
-                if not commenter_resultat_avec_retry(numero, message_resultat):
-                    # Échec réseau persistant : fermer l'issue effacerait
-                    # silencieusement le travail. On la laisse OUVERTE (ni `close`
-                    # ni label `done`) pour reprise au prochain cycle. La garde
-                    # d'idempotence en tête de traiter_issue évitera de relancer
-                    # claude à tort si un cycle ultérieur finit par poster le
-                    # commentaire mais échoue encore la fermeture.
-                    log.error(
-                        f"  ✗ Commentaire de résultat #{numero} impossible après retries — "
-                        f"issue laissée OUVERTE pour reprise (non fermée)."
-                    )
-                    notifier(
-                        labels,
-                        titre=f"⚠️ {CFG.nom} #{numero} — résultat non posté",
-                        message=(f"'{titre}' traitée, mais le commentaire de résultat a échoué "
-                                 f"(réseau). Issue laissée ouverte pour reprise au prochain cycle."),
-                        urgence_bureau="critical",
-                        priorite_ntfy="high",
-                        numero=numero,
-                    )
-                    _issues_en_cours_retirer(numero)
-                    return
-                if not fermer_issue(numero):
-                    log.warning(f"  Fermeture de l'issue #{numero} incomplète (close/label) — sera retentée au prochain cycle via la garde d'idempotence.")
-                _issues_en_cours_retirer(numero)
-                # Historique des durées (issue #108) : durée réelle ACK → fermeture,
-                # catégorisée par projet/type/mode, pour l'estimation prédictive.
-                type_issue_close = deduire_type_issue(titre, body)
-                mode_close        = _etiquette_calibration(mode)
-                complexite_close  = extraire_complexite(body)
-                duree_reelle      = time.monotonic() - debut_traitement
-                date_iso_close    = datetime.now().isoformat(timespec="seconds")
-                enregistrer_duree(
-                    CFG.nom,
-                    type_issue_close,
-                    mode_close,
-                    duree_reelle,
-                    date_iso_close,
-                    body=body,
-                    nb_projets_actifs=nb_projets_actifs_debut,
-                )
-                # Calibration automatique du TIMEOUT (issue #221) : met à jour les
-                # EWMA duree_typique/variabilite/backoff (par combinaison) et F
-                # (global), puis journalise le TIMEOUT_suggéré — sans effet sur le
-                # TIMEOUT réellement appliqué (extraire_timeout reste seul décisif).
-                suggere = maj_calibration_timeout(
-                    projet=CFG.nom,
-                    type_issue=type_issue_close,
-                    mode=mode_close,
-                    complexite=complexite_close,
-                    duree_s=duree_reelle,
-                    expiree=False,
-                    body=body,
-                    date_iso=date_iso_close,
-                    relance=est_relance,
-                )
-                # Exposition du TIMEOUT_suggéré dans le commentaire de clôture
-                # GitHub (issue #222) : seul canal fiable pour transmettre cette
-                # info calculée localement à Claude Chat (pas d'accès direct aux
-                # fichiers d'état gitignorés du ThinkPad). Connue seulement APRÈS
-                # la fermeture (dépend de duree_reelle) : on édite le commentaire
-                # de résultat déjà posté (gh --edit-last) plutôt que d'en poster
-                # un second. Best-effort — n'affecte pas la clôture déjà faite.
-                if not editer_dernier_commentaire(
-                        numero, message_resultat + formater_bloc_calibration(duree_reelle, timeout, suggere)):
-                    log.warning(f"  Ajout du bloc calibration au commentaire #{numero} échoué (best-effort, non bloquant).")
-                notifier(
-                    labels,
-                    titre=f"✅ {CFG.nom} #{numero} — traitée",
-                    message=f"'{titre}' traitée avec succès.",
-                    urgence_bureau="normal",
-                    priorite_ntfy="default",
-                    numero=numero,
-                )
-                notifier_fin_sse(numero)
+                _finaliser_succes(numero, titre, body, labels, mode, timeout,
+                                   avertissement_conflit, avertissement_worktree_deja_pris,
+                                   sortie, debut_traitement, nb_projets_actifs_debut, est_relance)
                 return
 
             # Échec
             log.warning(f"  ✗ Tentative {tentative} échouée : {sortie}")
 
-            # Trace du timeout dans l'historique des durées (issue #220) : avant ce
-            # correctif, une tentative expirée (subprocess.TimeoutExpired dans
-            # lancer_claude, message "Timeout après <N>s") ne laissait AUCUNE trace
-            # dans historique_durees.json — seulement dans le log texte du watcher.
-            # Un enregistrement minimal (expiree=True) est ajouté ICI, PAR TENTATIVE
-            # expirée (pas seulement à l'abandon définitif), pour permettre de
-            # compter la fréquence réelle des timeouts dans une future issue — y
-            # compris pour les issues critiques en retry infini, qui n'atteignent
-            # jamais la branche d'abandon ci-dessous.
             if sortie.startswith("Timeout après"):
-                type_issue_expire = deduire_type_issue(titre, body)
-                mode_expire        = _etiquette_calibration(mode)
-                complexite_expire  = extraire_complexite(body)
-                duree_expiree      = time.monotonic() - debut_traitement
-                date_iso_expire    = datetime.now().isoformat(timespec="seconds")
-                enregistrer_duree(
-                    CFG.nom,
-                    type_issue_expire,
-                    mode_expire,
-                    duree_expiree,
-                    date_iso_expire,
-                    body=body,
-                    nb_projets_actifs=nb_projets_actifs_debut,
-                    expiree=True,
-                )
-                # Calibration automatique du TIMEOUT (issue #221) : sur timeout,
-                # multiplicateur_backoff *= FACTEUR_BACKOFF immédiatement pour cette
-                # combinaison (par tentative expirée, même logique que ci-dessus).
-                maj_calibration_timeout(
-                    projet=CFG.nom,
-                    type_issue=type_issue_expire,
-                    mode=mode_expire,
-                    complexite=complexite_expire,
-                    duree_s=duree_expiree,
-                    expiree=True,
-                    body=body,
-                    date_iso=date_iso_expire,
-                )
+                _tracer_tentative_expiree(numero, titre, body, mode, debut_traitement, nb_projets_actifs_debut)
 
             if tentative >= CFG.max_essais:
-                if critique:
-                    alerte_critique(numero, titre, tentative, labels)
-                    log.warning(f"  Issue critique #{numero} — nouvelle tentative au prochain cycle.")
-                    _issues_en_cours_retirer(numero)  # sera reprise au prochain poll
-                    return
-                else:
-                    log.error(f"  Issue #{numero} abandonnée après {CFG.max_essais} tentatives.")
-                    # Passe diagnostique courte, en lecture seule, avant l'abandon
-                    # définitif (issue #124) : quelques pistes concrètes pour éviter à
-                    # Alain d'ouvrir lui-même une session juste pour comprendre le
-                    # timeout. Best-effort — n'ajoute rien si elle échoue/timeout.
-                    log.info(f"  Passe diagnostique courte (lecture seule, {CFG.timeout_diagnostic}s) pour #{numero}...")
-                    diagnostic = diagnostiquer_echec(numero, titre, body, sortie,
-                                                     perimetre=perimetre_effectif,
-                                                     cwd=cwd_effectif)
-                    message_echec = (
-                        f"❌ Échec après {CFG.max_essais} tentatives.\n\n"
-                        f"{avertissement_worktree_deja_pris}"
-                        f"Dernière erreur : `{sortie}`\n\n"
-                    )
-                    if diagnostic:
-                        message_echec += (
-                            f"🔍 Pistes probables (diagnostic automatique) :\n\n"
-                            f"{diagnostic}\n\n"
-                        )
-                    message_echec += (
-                        f"Intervention humaine requise. Label `{LABEL_ECHEC}` posé : "
-                        f"cette issue ne sera plus retraitée automatiquement tant que le "
-                        f"label n'est pas retiré (ou l'issue fermée) manuellement."
-                    )
-                    # Exposition du TIMEOUT_suggéré dans le commentaire de clôture
-                    # GitHub, ici aussi côté échec (issue #222). Simple LECTURE de
-                    # l'état (lire_timeout_suggere), pas un nouvel appel à
-                    # maj_calibration_timeout : chaque tentative expirée l'a déjà
-                    # mis à jour ci-dessus — le rappeler ici compterait deux fois la
-                    # même observation dans l'EWMA.
-                    type_issue_echec = deduire_type_issue(titre, body)
-                    mode_echec        = _etiquette_calibration(mode)
-                    complexite_echec  = extraire_complexite(body)
-                    duree_echec       = time.monotonic() - debut_traitement
-                    suggere_echec     = lire_timeout_suggere(CFG.nom, type_issue_echec, mode_echec, complexite_echec, body)
-                    message_echec += formater_bloc_calibration(duree_echec, timeout, suggere_echec)
-                    commenter_issue(numero, message_echec)
-                    ajouter_label(numero, LABEL_ECHEC)
-                    notifier(
-                        labels,
-                        titre=f"❌ {CFG.nom} #{numero} — échec définitif",
-                        message=f"'{titre}' abandonnée après {CFG.max_essais} tentatives.\nDernière erreur : {sortie[:200]}",
-                        urgence_bureau="critical",
-                        priorite_ntfy="high",
-                        numero=numero,
-                    )
-                    notifier_fin_sse(numero)
-                    # PAS de retrait de issues_en_cours (issue #576) : `needs-human`
-                    # posé, l'issue reste suivie tant que le label n'est pas
-                    # retiré (ou l'issue fermée) manuellement. En mode
-                    # écriture, elle continue en plus d'occuper une place de
-                    # MAX_WRITE_PARALLELE (voir _issue_write_bloquee_ajouter).
-                    if mode == MODE_ECRITURE:
-                        _issue_write_bloquee_ajouter(numero)
-                    return
+                _gerer_abandon_max_essais(numero, titre, body, labels, mode, critique, tentative,
+                                           sortie, timeout, avertissement_worktree_deja_pris,
+                                           perimetre_effectif, cwd_effectif, debut_traitement)
+                return
 
             time.sleep(PAUSE_ENTRE_TENTATIVES)  # backoff entre tentatives
     finally:
-        # Libération garantie du verrou (succès, échec définitif, exception,
-        # reprise critique). Sans ce finally, un crash laisserait un verrou
-        # orphelin — d'où aussi la péremption côté acquerir_verrou.
-        liberer_verrou(verrou)
-        # Nettoyage garanti du dossier scratch de lecture active (issue #327),
-        # succès/échec/timeout/exception confondus — même esprit que
-        # _nettoyer_arbre_claude pour les process. `chemin_scratch` est toujours
-        # défini (None si non applicable) : c'est la première affectation du
-        # `try` ci-dessus.
-        if chemin_scratch is not None:
-            _nettoyer_scratch(numero, chemin_scratch)
-        # Fin de tâche en worktree (issue #337) : PAS de `git worktree remove`
-        # ni de suppression de branche automatique — Alain merge et pousse
-        # manuellement. On se contente de journaliser clairement l'état final
-        # (numéro, chemin, branche) pour qu'il sache quoi retrouver ; le
-        # statut succès/échec de CETTE tentative est visible sur la ligne de
-        # log immédiatement précédente (même numéro d'issue).
-        if chemin_worktree is not None:
-            log.info(
-                f"  Issue #{numero} : fin de traitement en worktree {chemin_worktree} "
-                f"(branche {_branche_worktree(numero)}) — worktree CONSERVÉ (aucune "
-                f"suppression automatique), fusion/push manuels par Alain."
-            )
+        _nettoyer_apres_traitement(verrou, chemin_scratch, chemin_worktree, numero)
 
 # ─── Point d'entrée public : dispatch séquentiel / parallèle (issue #337) ──────
 
