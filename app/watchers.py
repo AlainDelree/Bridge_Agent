@@ -37,13 +37,18 @@ log = logging.getLogger(__name__)
 # ─── Redémarrages différés (issue #609) ──────────────────────────────────────
 # Un redémarrage FORCÉ (bouton « Enregistrer et relancer », relances manuelles
 # du panneau latéral/onglet Watchers) d'un watcher qui a une tâche en cours ne
-# doit JAMAIS la couper : vécu sur relecture_bridge #73 — redémarrage pendant
-# une issue mode_write, reprise sur un worktree « déjà pris » par la première
-# tentative, repli sur REP_TRAVAIL (#589), travail non isolé embarqué dans un
-# commit automatique d'un autre outil puis poussé par erreur. Au lieu d'agir
-# immédiatement, demarrer_watcher_ou_differer() mémorise ici le nom du projet ;
-# surveiller_redemarrages_differes (thread démon démarré par new_issue.py)
-# exécute le redémarrage dès que la tâche qui le bloquait se termine.
+# doit JAMAIS la couper : vécu sur relecture_bridge #73 (diagnostic confirmé
+# le 24/09/2026) — MAX_WRITE_PARALLELE changé de 1 à 2 puis watcher relancé
+# pendant que #73 tournait déjà dans son worktree dédié ; `systemctl --user
+# restart` a tué tout le cgroup, y compris le process CCL en cours (pas un
+# simple SIGTERM propre) ; au redémarrage, le watcher a repris #73 comme
+# premier slot et l'a relancée directement dans REP_TRAVAIL — l'ancien
+# comportement du premier slot, supprimé depuis par #611 — travail non isolé
+# embarqué dans un commit automatique d'un autre outil puis poussé par
+# erreur. Au lieu d'agir immédiatement, demarrer_watcher_ou_differer()
+# mémorise ici le nom du projet ; surveiller_redemarrages_differes (thread
+# démon démarré par new_issue.py) exécute le redémarrage dès que la tâche qui
+# le bloquait se termine.
 INTERVALLE_SURVEILLANCE_DIFFERE = 15  # secondes
 
 _verrou_differes = threading.Lock()
@@ -89,13 +94,16 @@ def repli_rep_travail(cfg: Config, taches: list[dict] | None = None) -> bool:
     dédié (`_creer_worktree_avec_retries`, tentatives `-bis`/`-ter`). Cet
     indicateur ne s'active donc plus que pour le repli en tout DERNIER
     recours (issue #589/#611) : `_creer_worktree_avec_retries` a épuisé ses 3
-    tentatives (chemin/branche « déjà pris », erreur git) — celui qui a coûté
-    le travail perdu de relecture_bridge #73 (redémarrage du watcher pendant
-    la tâche, reprise sur un worktree déjà pris, repli silencieux sur
-    REP_TRAVAIL, travail non isolé embarqué dans un commit d'un autre outil).
-    Ce repli est désormais aussi signalé activement côté watcher (notify-send
-    immédiat, issue #611) — cet indicateur d'interface reste un second canal,
-    pas le seul."""
+    tentatives (chemin/branche « déjà pris », erreur git) — DISTINCT de
+    l'incident relecture_bridge #73 (diagnostic confirmé le 24/09/2026) : #73
+    tournait dans son propre worktree quand `systemctl --user restart` (lancé
+    pour appliquer un changement de MAX_WRITE_PARALLELE) a tué tout le cgroup,
+    dont le process CCL en cours ; au redémarrage, le watcher a repris #73
+    comme premier slot et l'a relancée directement dans REP_TRAVAIL — l'ancien
+    comportement du premier slot, supprimé depuis par #611, pas ce repli
+    #589. Ce repli est désormais aussi signalé activement côté watcher
+    (notify-send immédiat, issue #611) — cet indicateur d'interface reste un
+    second canal, pas le seul."""
     if taches is None:
         taches = tache_en_cours(cfg)
     rep_travail = str(cfg.rep_travail)
@@ -140,11 +148,14 @@ def demarrer_watcher_ou_differer(cfg: Config, forcer: bool) -> tuple[str, int | 
     #609) : un redémarrage FORCÉ (forcer=True) d'un watcher qui a une tâche en
     cours (verrou fichier actif, cf. tache_en_cours ci-dessus) n'est jamais
     exécuté immédiatement, il COUPERAIT cette tâche. Vécu sur relecture_bridge
-    #73 : configuration enregistrée puis watcher relancé pendant une issue
-    mode_write déjà lancée par CCL — au redémarrage, l'issue a été reprise,
-    son worktree était « déjà pris » par la première tentative, repli sur
-    REP_TRAVAIL (#589) ; le travail, non isolé, a été embarqué dans un commit
-    automatique d'un autre outil puis poussé par erreur.
+    #73 (diagnostic confirmé le 24/09/2026) : MAX_WRITE_PARALLELE changé de 1
+    à 2 puis watcher relancé pendant que #73 tournait déjà dans son worktree
+    dédié — `systemctl --user restart` a tué tout le cgroup, dont le process
+    CCL en cours ; au redémarrage, le watcher a repris #73 comme premier slot
+    et l'a relancée directement dans REP_TRAVAIL (ancien comportement du
+    premier slot, supprimé depuis par #611, PAS le repli #589) ; le travail,
+    non isolé, a été embarqué dans un commit automatique d'un autre outil
+    puis poussé par erreur.
 
     Le redémarrage est mémorisé dans _redemarrages_differes plutôt qu'exécuté :
     surveiller_redemarrages_differes (thread démon démarré par new_issue.py)
