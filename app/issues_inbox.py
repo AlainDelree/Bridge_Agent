@@ -29,7 +29,8 @@ from flask import jsonify, request
 DOSSIER_SCRIPT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(DOSSIER_SCRIPT / "scripts"))
 
-from watcher_issues_inbox import charger_config_inbox, DEFAUT_CHEMIN_CONFIG  # noqa: E402
+from watcher_issues_inbox import (charger_config_inbox, DEFAUT_CHEMIN_CONFIG,  # noqa: E402
+                                  DOSSIER_MOTIFS, SUFFIXE_MOTIF)
 
 # Nombre de lignes d'historique renvoyées à l'onglet (le fichier lui-même est
 # déjà borné à MAX_LOG_LINES par le watcher — cf. ConfigInbox.max_log_lines).
@@ -125,10 +126,28 @@ def _config():
     return charger_config_inbox(DEFAUT_CHEMIN_CONFIG)
 
 
+def _motif_rejet(cfg, nom_fichier: str) -> str | None:
+    """Motif de refus complet, lu depuis le sidecar
+    `rejected/.motifs/<nom_fichier>.motif` écrit par
+    watcher_issues_inbox.py::_ecrire_motif_rejet (issue #631) au moment du
+    déplacement vers rejected/. Simple lecture disque : reste consultable
+    après coup, y compris après un redémarrage de new_issue.py. None si
+    absent (sidecar non écrit ou illisible) — le nom tronqué du fichier
+    (slug du motif, cf. _slug côté watcher) reste alors l'unique indice,
+    comme avant #631."""
+    try:
+        chemin_motif = cfg.rejected_dir / DOSSIER_MOTIFS / f"{nom_fichier}{SUFFIXE_MOTIF}"
+        return chemin_motif.read_text(encoding="utf-8").strip() or None
+    except OSError:
+        return None
+
+
 def etat_inbox():
     """Retourne :
       - alarme     : True si issues_inbox/rejected/ contient au moins un fichier
-      - rejetes    : [{nom, date}] triés du plus récent au plus ancien
+      - rejetes    : [{nom, date, motif}] triés du plus récent au plus ancien —
+                     motif (issue #631) est le détail de refus en texte
+                     intégral (sidecar <nom>.motif), None si indisponible
       - historique : dernières lignes de logs/issues_inbox.log (plus récente
                      en premier), purement informatif
       - watcher_actif, watcher_pid, watcher_restant_s : état du processus
@@ -140,13 +159,19 @@ def etat_inbox():
     rejetes = []
     if cfg.rejected_dir.is_dir():
         for chemin in cfg.rejected_dir.iterdir():
+            # Les sidecars de motif (issue #631) vivent dans le sous-dossier
+            # DOSSIER_MOTIFS (rejected/.motifs/), jamais directement dans
+            # rejected/ — .is_file() les exclut donc déjà naturellement de
+            # cette liste (un dossier n'est pas un fichier), sans logique de
+            # filtrage supplémentaire à maintenir ici.
             if not chemin.is_file():
                 continue
             try:
                 horodatage = chemin.stat().st_mtime
             except OSError:
                 continue
-            rejetes.append({"nom": chemin.name, "date": horodatage})
+            rejetes.append({"nom": chemin.name, "date": horodatage,
+                             "motif": _motif_rejet(cfg, chemin.name)})
     rejetes.sort(key=lambda r: r["date"], reverse=True)
 
     historique = []

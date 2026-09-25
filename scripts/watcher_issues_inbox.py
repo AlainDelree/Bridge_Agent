@@ -80,10 +80,31 @@ from app.interruption import relancer_issue  # noqa: E402 (issue #516)
 
 # Ce script tourne dans un process SÉPARÉ de new_issue.py : il ne peut pas
 # muter directement app.notifications_poller._ISSUES_SURVEILLEES (issue #624)
-# — POST best-effort vers la route dédiée, même famille que
+# ni pousser lui-même sur le canal SSE /stream (issue #631, app.fin_issue) —
+# POST best-effort vers les routes dédiées, même famille que
 # scripts/traitement_fin.py (timeout court, échec silencieux si new_issue.py
-# n'est pas lancé — rattrapé au prochain démarrage par _balayage_initial()).
-URL_SURVEILLER_ISSUE = "http://localhost:5100/notifier-issue-a-surveiller"
+# n'est pas lancé — rattrapé au prochain démarrage par _balayage_initial()
+# pour la liste surveillée ; aucun rattrapage pour le SSE, purement UI).
+URL_SURVEILLER_ISSUE       = "http://localhost:5100/notifier-issue-a-surveiller"
+URL_NOTIFIER_FICHIER_RECU   = "http://localhost:5100/notifier-fichier-recu"
+URL_NOTIFIER_CREATION_ISSUE = "http://localhost:5100/notifier-creation-issue"
+URL_NOTIFIER_FICHIER_REFUSE = "http://localhost:5100/notifier-fichier-refuse"
+
+
+def _poster_best_effort(url: str, payload: dict) -> None:
+    """POST JSON best-effort vers new_issue.py — timeout court, échec
+    silencieux si le serveur n'est pas lancé. Factorise le mécanisme partagé
+    par _notifier_issue_a_surveiller (issue #624) et les trois émetteurs SSE
+    issues_inbox ci-dessous (issue #631)."""
+    try:
+        corps = json.dumps(payload).encode("utf-8")
+        requete = urllib.request.Request(
+            url, data=corps,
+            headers={"Content-Type": "application/json"}, method="POST",
+        )
+        urllib.request.urlopen(requete, timeout=1).close()
+    except Exception:
+        pass
 
 
 def _notifier_issue_a_surveiller(depot: str, numero: int, labels: str) -> None:
@@ -91,18 +112,36 @@ def _notifier_issue_a_surveiller(depot: str, numero: int, labels: str) -> None:
     relancée à la liste surveillée par app.notifications_poller (issue #624),
     sans attendre le prochain démarrage de new_issue.py. `labels` : chaîne
     séparée par des virgules (même format que construire_labels)."""
-    try:
-        corps = json.dumps({
-            "depot": depot, "numero": int(numero),
-            "labels": [lab.strip() for lab in labels.split(",") if lab.strip()],
-        }).encode("utf-8")
-        requete = urllib.request.Request(
-            URL_SURVEILLER_ISSUE, data=corps,
-            headers={"Content-Type": "application/json"}, method="POST",
-        )
-        urllib.request.urlopen(requete, timeout=1).close()
-    except Exception:
-        pass
+    _poster_best_effort(URL_SURVEILLER_ISSUE, {
+        "depot": depot, "numero": int(numero),
+        "labels": [lab.strip() for lab in labels.split(",") if lab.strip()],
+    })
+
+
+def _notifier_fichier_recu(nom_fichier: str) -> None:
+    """SSE `fichier_recu` (issue #631) — dès que ce watcher prend en charge un
+    fichier déposé dans issues_inbox/, avant tout parsing/validation. Voir
+    app.fin_issue.notifier_fichier_recu."""
+    _poster_best_effort(URL_NOTIFIER_FICHIER_RECU, {"fichier": nom_fichier})
+
+
+def _notifier_creation_issue(projet: str, numero: int, titre: str,
+                              fichier: str | None = None) -> None:
+    """SSE `creation_issue` (issue #631) — après chaque création RÉUSSIE
+    d'une issue (jamais pour un bloc RELANCE, qui n'en crée aucune). Voir
+    app.fin_issue.notifier_creation_issue/emettre_creation_issue."""
+    _poster_best_effort(URL_NOTIFIER_CREATION_ISSUE, {
+        "projet": projet, "numero": int(numero), "titre": titre, "fichier": fichier,
+    })
+
+
+def _notifier_fichier_refuse(nom_fichier: str, titre: str | None, motif: str) -> None:
+    """SSE `fichier_refuse` (issue #631) — pour chaque bloc refusé (fichier
+    mono-issue entier, ou un bloc d'un lot multi-issues, §3.13). Voir
+    app.fin_issue.notifier_fichier_refuse."""
+    _poster_best_effort(URL_NOTIFIER_FICHIER_REFUSE, {
+        "fichier": nom_fichier, "titre": titre or None, "motif": motif,
+    })
 
 log = logging.getLogger("watcher_issues_inbox")
 
@@ -747,6 +786,34 @@ def _slug(texte: str, longueur_max: int = 40) -> str:
     return slug[:longueur_max] or "erreur"
 
 
+# Sidecar conservant le motif de refus EN TEXTE INTÉGRAL (issue #631) — le nom
+# du fichier déplacé lui-même ne porte qu'un slug tronqué (_slug, 40 car.
+# max, sans accents, voir nom_cible ci-dessous). Permet à `/issues-inbox/etat`
+# (app/issues_inbox.py::_motif_rejet) d'exposer le motif complet, y compris
+# après un redémarrage de new_issue.py (simple lecture disque, aucune
+# dépendance au log qui tourne en rotation et n'est pas indexé par fichier).
+# Rangé dans un SOUS-DOSSIER dédié rejected/.motifs/ (jamais directement dans
+# rejected/) : un nom `<fichier>__REJETE-....motif` matcherait aussi tout code
+# (existant ou futur) qui énumère rejected/ par motif de nom (ex. glob
+# `*REJETE*`) — le sous-dossier isole complètement les sidecars de la liste
+# des VRAIS fichiers rejetés.
+DOSSIER_MOTIFS = ".motifs"
+SUFFIXE_MOTIF = ".motif"
+
+
+def _ecrire_motif_rejet(cible: Path, detail: str) -> None:
+    """Écrit le sidecar `rejected/.motifs/<cible.name>.motif` best-effort —
+    une panne d'écriture ne doit jamais faire échouer le rejet lui-même (déjà
+    effectif, le fichier est déjà déplacé) : au pire `/issues-inbox/etat`
+    retombe sur le nom tronqué comme avant #631."""
+    try:
+        dossier_motifs = cible.parent / DOSSIER_MOTIFS
+        dossier_motifs.mkdir(parents=True, exist_ok=True)
+        (dossier_motifs / (cible.name + SUFFIXE_MOTIF)).write_text(detail, encoding="utf-8")
+    except OSError as e:
+        log.warning(f"Sidecar de motif non écrit pour {cible.name} : {e}")
+
+
 def _deplacer_vers_rejected(cfg: ConfigInbox, chemin: Path, detail: str) -> Path | None:
     """Déplace seul, sans journaliser (issue #508) : un lot dont TOUS les blocs
     ont échoué a déjà journalisé chaque motif individuellement (une ligne par
@@ -765,16 +832,19 @@ def _deplacer_vers_rejected(cfg: ConfigInbox, chemin: Path, detail: str) -> Path
     except OSError as e:
         log.error(f"Impossible de déplacer {chemin.name} vers rejected/ : {e}")
         return None
+    _ecrire_motif_rejet(cible, detail)
     log.warning(f"Rejeté : {chemin.name} → {cible.name} ({detail})")
     return cible
 
 
 def _rejeter(cfg: ConfigInbox, chemin: Path, titre: str, projet: str, detail: str) -> None:
+    nom_avant_deplacement = chemin.name
     cible = _deplacer_vers_rejected(cfg, chemin, detail)
     if cible is None:
         return
     texte = f"{titre} — {detail}" if titre else detail
     _ecrire_ligne_log(cfg, projet or "(unknown)", "REJECTED", texte)
+    _notifier_fichier_refuse(nom_avant_deplacement, titre or None, detail)
 
 
 # ─── Création de l'issue via gh (miroir de app/issues.py::envoyer) ─────────
@@ -905,11 +975,18 @@ def _traiter_lot(cfg: ConfigInbox, chemin: Path, blocs: list) -> None:
             nb_ok += 1
             _ecrire_ligne_log(cfg, projet, "OK", titre + texte)
             log.info(f"Lot {chemin.name} [{i}/{nb_total}] créée : {titre} → {resultat_gh}")
+            # SSE creation_issue (issue #631) : jamais pour un bloc RELANCE
+            # (resultat_gh vide dans ce cas, cf. _traiter_relance — aucune
+            # issue n'est créée), voir numero_depuis_url.
+            numero = numero_depuis_url(resultat_gh)
+            if numero is not None:
+                _notifier_creation_issue(projet, numero, titre, fichier=chemin.name)
         else:
             _ecrire_ligne_log(cfg, projet or "(unknown)", "REJECTED",
                                f"{titre} — {texte}" if titre else texte)
             log.warning(f"Lot {chemin.name} [{i}/{nb_total}] rejeté : "
                         f"{titre or '(sans titre)'} — {texte}")
+            _notifier_fichier_refuse(chemin.name, titre or None, texte)
 
     if nb_ok == 0:
         _deplacer_vers_rejected(cfg, chemin, f"lot : {nb_total} bloc(s) échoué(s)")
@@ -925,6 +1002,11 @@ def _traiter_lot(cfg: ConfigInbox, chemin: Path, blocs: list) -> None:
 
 
 def traiter_fichier(cfg: ConfigInbox, chemin: Path) -> None:
+    # SSE fichier_recu (issue #631) : émis dès la prise en charge, AVANT tout
+    # parsing/validation — le fichier peut malgré tout finir refusé, mais son
+    # apparition dans l'interface doit être immédiate.
+    _notifier_fichier_recu(chemin.name)
+
     if chemin.suffix.lower() != ".txt":
         _rejeter(cfg, chemin, "", "", "extension invalide : attendu .txt")
         return
@@ -957,6 +1039,11 @@ def traiter_fichier(cfg: ConfigInbox, chemin: Path) -> None:
 
     _ecrire_ligne_log(cfg, projet, "OK", titre + texte)
     log.info(f"Créée : {chemin.name} → {resultat_gh}")
+    # SSE creation_issue (issue #631) : jamais pour un bloc RELANCE
+    # (resultat_gh vide dans ce cas, cf. _traiter_relance).
+    numero = numero_depuis_url(resultat_gh)
+    if numero is not None:
+        _notifier_creation_issue(projet, numero, titre, fichier=chemin.name)
 
 
 def traiter_dossier(cfg: ConfigInbox) -> None:
