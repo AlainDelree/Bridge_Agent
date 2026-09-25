@@ -15,33 +15,43 @@ directement par watcher.py::notifier_debut_sse (pas via ce script, pas de bip
 associé à un démarrage), il partage seulement l'infrastructure `_notifier` de
 ce module.
 
-Choix du son (issue #498) : `main()` lit `scripts/son_actif.txt` (une seule
-ligne, `plat` ou `cloche`) pour décider quelle implémentation appeler —
-`bip_plat()` (440 Hz, sinusoïde plate) ou `bip()` (880 Hz, cloche à enveloppe
-exponentielle décroissante ; voir #437 et sa révocation). Ce seul fichier
-pilote le son pour TOUS les projets utilisant ce script partagé (via
-`SCRIPT_BIP`), sans avoir à toucher aux `configs/*.conf` individuels. Fichier
-absent, illisible, ou contenant une valeur non reconnue → défaut inchangé
-(`plat`), pour ne rien casser silencieusement. Depuis l'issue #527, ce fichier
-n'a plus besoin d'être édité à la main : un interrupteur GLOBAL dans le
-panneau flottant Infrastructure de `new_issue.py` (`#pl-zone-son`, routes
-GET/POST `/son-actif` dans `app/son.py`) l'écrit directement, effectif au bip
-suivant sans redémarrage d'aucun processus.
+Choix du son (issue #498, affiné #630) : `main()` décide entre `bip_plat()`
+(440 Hz, sinusoïde plate) et `bip()` (880 Hz, cloche à enveloppe exponentielle
+décroissante ; voir #437 et sa révocation) selon DEUX niveaux, dans cet
+ordre :
+  1. **choix PAR ISSUE** (`--projet` + `--numero` fournis) : lu dans
+     `logs/son_issues.json` via `etat_son_issue.son_choisi()` — voir
+     `app/son_issue.py` pour les routes GET/POST qui l'alimentent (issue
+     #630, backend seul pour l'instant, pas encore de bouton dans
+     l'interface) ;
+  2. sinon, **interrupteur GLOBAL** `scripts/son_actif.txt` (une seule ligne,
+     `plat` ou `cloche`, issue #498) — pilote le son pour TOUTES les issues
+     sans choix propre. Fichier absent, illisible, ou valeur non reconnue →
+     défaut inchangé (`plat`), pour ne rien casser silencieusement. Depuis
+     l'issue #527, ce fichier n'a plus besoin d'être édité à la main : un
+     interrupteur dans le panneau flottant Infrastructure de `new_issue.py`
+     (`#pl-zone-son`, routes GET/POST `/son-actif` dans `app/son.py`) l'écrit
+     directement, effectif au bip suivant sans redémarrage d'aucun processus.
+Les DEUX niveaux sont best-effort (`etat_son_issue` comme `son_actif()`
+tolèrent fichier absent/corrompu sans jamais lever) : un bip ne doit jamais
+échouer pour une raison de résolution du son.
 
-Tonalité par projet (issue #526) : `--tonalite <demi-tons>` décale la
-fréquence de synthèse (`f_effective = f_base × 2^(demi-tons/12)`), appliqué
-aux DEUX sons (`bip_plat()` et `bip()`) quel que soit le choix ci-dessus —
-la tonalité (par projet, via `TONALITE_BIP` dans le `.conf`) et le son actif
-(global, `son_actif.txt`) sont deux réglages orthogonaux. Comme le son est
-synthétisé en Python (pas de fichier à transformer), aucun outil externe
-supplémentaire n'est requis ici — contrairement à `scripts/bip_Cloche.py`
-qui, lui, pitch-shifte un fichier son existant via `sox`. `--tonalite`
-absent ou `0` → fréquence de base inchangée (comportement historique).
+Tonalité (issue #526, abandonnée comme réglage PAR PROJET en #630) :
+`--tonalite <demi-tons>` décale la fréquence de synthèse
+(`f_effective = f_base × 2^(demi-tons/12)`), appliqué aux DEUX sons quel que
+soit le choix ci-dessus. Depuis #630, le chemin RÉEL du bip (watcher.py,
+app/notifications_poller.py) n'appelle plus jamais ce script avec une
+tonalité autre que neutre (0) — les clés `.conf` `TONALITE_BIP`/`SCRIPT_BIP`
+ne sont plus lues sur ce chemin. `--tonalite` reste utilisé par les boutons
+de TEST de l'onglet Configuration (`/tester-bip/<projet>`, `/tester-son`),
+volontairement non touchés par #630 (retrait prévu à l'étape 8, en même
+temps que l'onglet lui-même). `--tonalite` absent ou `0` → fréquence de base
+inchangée (comportement historique).
 
 Usage :
-    python3 traitement_fin.py                                   # un bip seul
-    python3 traitement_fin.py --projet bridge_agent --numero 350 # bip + POST
-    python3 traitement_fin.py --tonalite -4                      # bip décalé de -4 demi-tons
+    python3 traitement_fin.py                                   # un bip seul (interrupteur global)
+    python3 traitement_fin.py --projet bridge_agent --numero 350 # bip (choix de l'issue si défini) + POST
+    python3 traitement_fin.py --tonalite -4                      # bip décalé de -4 demi-tons (tests uniquement)
 """
 
 import argparse
@@ -50,9 +60,18 @@ import math
 import os
 import struct
 import subprocess
+import sys
 import tempfile
 import urllib.request
 import wave
+from pathlib import Path
+
+# etat_son_issue.py vit à la racine du dépôt (parent de scripts/) — ajouté au
+# sys.path pour fonctionner quel que soit le cwd depuis lequel ce script est
+# lancé (toujours invoqué via `subprocess.run(["python3", <chemin absolu>])`,
+# voir notifications.py::bip()).
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+import etat_son_issue  # noqa: E402
 
 F     = 880     # fréquence Hz
 DUR   = 1.5     # durée secondes
@@ -116,8 +135,10 @@ def bip(demitons: int = 0):
 
 
 def son_actif() -> str:
-    """Lit `FICHIER_SON_ACTIF` ('plat' ou 'cloche'). Absent, illisible, ou valeur
-    non reconnue → 'plat' (défaut inchangé, ne casse rien silencieusement)."""
+    """Lit `FICHIER_SON_ACTIF` ('plat' ou 'cloche') — interrupteur GLOBAL
+    (issue #498), appliqué à toute issue sans choix propre (issue #630, voir
+    `son_a_jouer()`). Absent, illisible, ou valeur non reconnue → 'plat'
+    (défaut inchangé, ne casse rien silencieusement)."""
     try:
         with open(FICHIER_SON_ACTIF, "r", encoding="utf-8") as f:
             valeur = f.read().strip().lower()
@@ -126,6 +147,23 @@ def son_actif() -> str:
     except OSError:
         pass
     return "plat"
+
+
+def son_a_jouer(projet: str | None, numero) -> str:
+    """Son effectivement joué (issue #630) : le choix PAR ISSUE s'il existe
+    (`projet`+`numero` fournis ET une entrée enregistrée dans
+    `logs/son_issues.json`), sinon l'interrupteur GLOBAL (`son_actif()`).
+    Best-effort — `etat_son_issue.son_choisi()` ne lève jamais, mais un
+    import/appel imprévisible ne doit quand même jamais faire échouer le
+    bip lui-même."""
+    if projet and numero is not None:
+        try:
+            choix = etat_son_issue.son_choisi(projet, int(numero))
+        except Exception:
+            choix = None
+        if choix is not None:
+            return choix
+    return son_actif()
 
 
 def _notifier(url: str, projet: str, numero: str):
@@ -168,7 +206,7 @@ def main():
                         help="Décalage de tonalité en demi-tons (issue #526), 0 = neutre")
     args = parser.parse_args()
 
-    if son_actif() == "cloche":
+    if son_a_jouer(args.projet, args.numero) == "cloche":
         bip(args.tonalite)
     else:
         bip_plat(args.tonalite)

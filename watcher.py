@@ -54,6 +54,11 @@ import etat_rate_limit
 DOSSIER_SCRIPT = Path(__file__).resolve().parent
 DOSSIER_LOGS   = DOSSIER_SCRIPT / "logs"
 
+# Script bip PARTAGÉ (issue #630) : chemin utilisé par bip()/notifier()
+# ci-dessous QUEL QUE SOIT `SCRIPT_BIP` du `.conf` — réglage par projet
+# abandonné au profit du choix par issue (voir traitement_fin.py::son_a_jouer).
+SCRIPT_BIP_PARTAGE = DOSSIER_SCRIPT / "scripts" / "traitement_fin.py"
+
 # Code de sortie dédié à l'auto-extinction pour inactivité (issues #199/#200,
 # service systemd #596). Distinct de 0 (arrêt normal/interruption manuelle,
 # `sys.exit(0)` sur `KeyboardInterrupt`) pour que `systemd/watcher@.service`
@@ -607,11 +612,15 @@ def configurer_logs(cfg: Config):
 # d'appel existants (succès/échec/alerte critique) restent inchangés.
 
 def bip(fois=1, numero=None):
-    """Bip sonore via le script partagé (Bridge_Agent/scripts/traitement_fin.py,
-    anciennement bip.py). Tonalité du projet (issue #526) transmise depuis
-    CFG.tonalite_bip."""
-    notifications.bip(CFG.script_bip, fois, projet=CFG.nom, numero=numero,
-                       tonalite=CFG.tonalite_bip)
+    """Bip sonore via le script PARTAGÉ (scripts/traitement_fin.py) — depuis
+    l'issue #630, toujours ce script et une tonalité neutre, quels que soient
+    `SCRIPT_BIP`/`TONALITE_BIP` du `.conf` (réglage par projet abandonné au
+    profit du choix par issue, résolu par `traitement_fin.py::son_a_jouer()`
+    à partir de `--projet`/`--numero` transmis ci-dessous). `CFG.script_bip`/
+    `CFG.tonalite_bip` restent lus et exposés à l'onglet Configuration
+    (`/config`, `/tester-bip`, non touchés par #630) mais n'influencent plus
+    ce chemin."""
+    notifications.bip(SCRIPT_BIP_PARTAGE, fois, projet=CFG.nom, numero=numero)
 
 def notifier_fin_sse(numero):
     """POST direct vers /notifier-fin-issue (issue #352), appelé à CHAQUE fin
@@ -654,14 +663,17 @@ def notifier(labels: list[str], titre: str, message: str,
     comportement historique préservé (notamment CCL, déjà fonctionnel).
 
     `numero`, si fourni, permet au bip de notifier new_issue.py de la fin de
-    CETTE issue précise pour un rafraîchissement SSE instantané (issue #350)."""
+    CETTE issue précise pour un rafraîchissement SSE instantané (issue #350).
+    Script bip et tonalité : voir bip() ci-dessus (issue #630, toujours le
+    script partagé, tonalité neutre — `CFG.script_bip`/`CFG.tonalite_bip` ne
+    sont plus utilisés sur ce chemin)."""
     if not CFG.notifier_local:
         return
     notifications.notifier(
-        labels, CFG.nom, CFG.url_ntfy, CFG.script_bip,
+        labels, CFG.nom, CFG.url_ntfy, SCRIPT_BIP_PARTAGE,
         titre, message,
         urgence_bureau=urgence_bureau, priorite_ntfy=priorite_ntfy,
-        fois_bip=fois_bip, numero=numero, tonalite=CFG.tonalite_bip, log=log,
+        fois_bip=fois_bip, numero=numero, log=log,
     )
 
 def alerte_critique(numero, titre, tentative, labels: list[str]):

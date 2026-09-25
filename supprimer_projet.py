@@ -29,6 +29,7 @@ import shutil
 import sys
 from pathlib import Path
 
+import etat_son_issue
 import regenerer_tableaux_projets
 from nouveau_projet import DOSSIER_CONFIGS
 from watcher import lire_conf
@@ -201,6 +202,12 @@ def supprimer_projet(nom: str, dry_run: bool = False) -> dict:
                 "depot": infos["depot"], "etapes": etapes,
                 "erreur": "Échec à l'étape « Fichier .conf » — arrêt : "
                           "BRIDGE_AGENT_DOC.md non régénéré."}
+
+    # Choix de son par issue (issue #630) : purge best-effort de toutes les
+    # entrées de ce projet dans logs/son_issues.json — pas une « étape »
+    # visible (comme les cases cochées côté navigateur, purement internes),
+    # ne peut pas faire échouer la suppression.
+    etat_son_issue.nettoyer_projet(nom)
 
     # 3. Documentation (§2/§7) — en dernier, une fois le .conf réellement
     #    retiré du disque (sans quoi le projet réapparaîtrait dans §2/§7).
