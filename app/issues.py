@@ -27,6 +27,9 @@ from watcher import (est_titre_chef, deduire_type_issue, PAUSE_ENTRE_TENTATIVES,
                      _est_depot_git, LABEL_ECRITURE, LABEL_SCRATCH,
                      LABEL_NOTIF_PC, LABEL_NOTIF_GSM, LABEL_NOTIF_TOUS,
                      LABEL_ECHEC, extraire_complexite)
+# État partagé du quota GraphQL (issue #615) : rafraîchi après chaque appel gh
+# SIGNIFICATIF de ce module (création/fermeture d'issue).
+from etat_rate_limit import maj_rate_limit
 
 # Racine du projet (dossier parent du package app/).
 DOSSIER_SCRIPT = Path(__file__).resolve().parent.parent
@@ -375,6 +378,7 @@ def envoyer():
             if "for-linux" in labels.split(","):
                 from app.watchers import redemarrer_si_eteint
                 watcher_demarre, _pid, _trace = redemarrer_si_eteint(cfg)
+            maj_rate_limit("app.issues.envoyer")
             return jsonify(succes=True, url=res.stdout.strip(),
                            watcher_demarre=watcher_demarre)
         else:
@@ -1190,6 +1194,7 @@ def annuler_issue(nom_projet, numero):
             capture_output=True, text=True, timeout=30
         )
         if res.returncode == 0:
+            maj_rate_limit("app.issues.annuler_issue")
             return jsonify(succes=True, message=f"Issue #{numero} annulée.")
         return jsonify(succes=False,
                        message=res.stderr.strip() or "Erreur inconnue de gh.")
@@ -1271,6 +1276,7 @@ def fermer_issue(nom_projet, numero):
             capture_output=True, text=True, timeout=30
         )
         if res.returncode == 0:
+            maj_rate_limit("app.issues.fermer_issue")
             return jsonify(succes=True, message=f"Issue #{numero} fermée définitivement.")
         return jsonify(succes=False,
                        message=res.stderr.strip() or "Erreur inconnue de gh.")

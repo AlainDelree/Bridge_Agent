@@ -44,6 +44,9 @@ from datetime import datetime
 # l'import direct fonctionne. Les enveloppes bip()/notifier*() ci-dessous
 # délèguent à ce module en passant les valeurs du CFG courant.
 import notifications
+# État partagé du quota GraphQL (issue #615) : rafraîchi après chaque appel gh
+# SIGNIFICATIF (fermer_issue ci-dessous), lu par la route Flask /rate-limit.
+import etat_rate_limit
 
 # ─── Emplacements fixes (relatifs au script, PAS au cwd du projet) ─────────────
 # Les journaux vivent à côté du watcher, quel que soit le projet piloté. Ils ne
@@ -2518,6 +2521,12 @@ def fermer_issue(numero: int) -> bool:
             log.error(f"  État incohérent issue #{numero} : FERMÉE mais SANS le label '{LABEL_FAIT}' (pas de compensation automatique).")
         elif label_ok and not close_ok:
             log.error(f"  État incohérent issue #{numero} : label '{LABEL_FAIT}' posé mais issue NON fermée (pas de compensation automatique).")
+
+        # Checkpoint de fin de traitement (issue #615) : rafraîchit le quota
+        # GraphQL partagé pour que le widget /rate-limit reflète l'activité de
+        # CE watcher dans les secondes qui suivent, sans attendre le prochain
+        # polling à intervalle fixe du widget.
+        etat_rate_limit.maj_rate_limit("watcher.fermer_issue")
 
         return close_ok and label_ok
     except Exception as e:

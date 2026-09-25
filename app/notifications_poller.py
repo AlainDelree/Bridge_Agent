@@ -68,6 +68,7 @@ import time
 from datetime import datetime, timezone
 
 import notifications
+import etat_rate_limit  # état partagé du quota GraphQL (issue #615)
 from app.projets import lister_projets
 
 # ─── Réglages (surchargeable par variable d'environnement) ─────────────────────
@@ -293,6 +294,12 @@ def surveiller_transitions():
                 # de sleep après le dernier projet (inutile — le sleep de cycle suit).
                 if ESPACEMENT_S > 0 and i < len(projets) - 1:
                     time.sleep(ESPACEMENT_S)
+            # Une seule fois par cycle complet (pas par projet, issue #615) :
+            # ce poller vise justement à ALLÉGER la charge gh cumulée (#188,
+            # #614) — un appel rate_limit supplémentaire par projet irait à
+            # rebours de cet objectif pour un gain de fraîcheur négligeable.
+            if projets:
+                etat_rate_limit.maj_rate_limit("app.notifications_poller.surveiller_transitions")
             premier_passage = False
         except Exception as e:
             # Filet de sécurité : une erreur inattendue ne doit jamais tuer le
