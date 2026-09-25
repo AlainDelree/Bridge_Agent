@@ -1478,15 +1478,20 @@ réglage est exposé par projet dans l'onglet « Configuration » (issue #201) e
 dans le `.conf` du projet.
 
 **4. Redémarrage forcé différé pendant une tâche en cours** (issue #609).
-`systemctl --user restart` coupe le process watcher — et toute tâche `claude`
-qu'il a en cours — sans distinction. Vécu sur `relecture_bridge` (issue #73) :
-juste après le lancement d'une issue `mode_write`, une configuration
-enregistrée via l'onglet « Configuration » (bouton « Enregistrer et
-relancer ») a redémarré le watcher pendant que la tâche tournait ; au
-redémarrage, l'issue a été reprise, son worktree dédié était « déjà pris » par
-la première tentative (repli #589 ci-dessous), et le travail — non isolé — a
-été embarqué dans un commit automatique d'un autre outil puis poussé par
-erreur. Depuis #609, un redémarrage **forcé** (`demarrer_watcher_ou_differer`,
+`systemctl --user restart` tue tout le cgroup du service — donc le process
+watcher ET toute tâche `claude` qu'il a en cours, sans distinction (pas un
+simple SIGTERM propre sur le seul watcher). Vécu sur `relecture_bridge`
+(issue #73, diagnostic confirmé le 24/09/2026) : #73 tournait dans son
+worktree dédié avec `MAX_WRITE_PARALLELE=1` ; Alain a changé la valeur à 2
+et relancé le watcher via l'onglet « Configuration » (bouton « Enregistrer
+et relancer ») pendant que la tâche tournait encore ; `systemctl --user
+restart` a tué tout le cgroup, dont le process CCL en cours ; au
+redémarrage, le watcher a repris #73 comme **premier slot** et l'a relancée
+directement dans `REP_TRAVAIL` — l'ancien comportement du premier slot
+(issues #577/#337), supprimé depuis par #611, PAS le repli #589 ci-dessous
+(aucune ligne « déjà pris » dans les logs) — et le travail, non isolé, a été
+embarqué dans un commit automatique d'un autre outil puis poussé par erreur.
+Depuis #609, un redémarrage **forcé** (`demarrer_watcher_ou_differer`,
 `app/watchers.py`) d'un watcher qui a une tâche en cours — détectée via les
 verrous fichier de `watcher.py` (`logs/verrous/*.lock`, cf. §"Verrous
 anti-collision inter-process, issue #189" plus bas — champ `projet=`,
@@ -1494,12 +1499,29 @@ sondé vivant), seul canal visible depuis `new_issue.py` puisque
 `issues_en_cours` reste en mémoire du process watcher — n'est **jamais**
 exécuté immédiatement. Il est mémorisé, et un thread démon de `new_issue.py`
 (`surveiller_redemarrages_differes`) l'exécute automatiquement dès la fin de
-la tâche. L'onglet Configuration et l'onglet Watchers l'indiquent clairement
-(« redémarrage différé, appliqué à la fin de la tâche en cours »). Un
-redémarrage `forcer=False` (`redemarrer_si_eteint`, watcher éteint relancé à
-la création d'une issue — point 2 ci-dessus) n'est par construction jamais
-concerné : il ne redémarre qu'un watcher **inactif**, qui ne peut pas avoir de
-tâche en cours.
+la tâche. Ce point d'entrée unique couvre les **trois** déclencheurs de
+relance manuelle : bouton « Enregistrer et relancer » de l'onglet
+Configuration, bouton « Relancer » de l'onglet Watchers, et bouton
+« ↺ Relancer » du panneau latéral Infrastructure — les trois passent par la
+même route `/lancer-watcher` → `demarrer_watcher_ou_differer`. L'onglet
+Configuration et l'onglet Watchers l'indiquent clairement (« redémarrage
+différé, appliqué à la fin de la tâche en cours »). Un redémarrage
+`forcer=False` (`redemarrer_si_eteint`, watcher éteint relancé à la création
+d'une issue — point 2 ci-dessus) n'est par construction jamais concerné : il
+ne redémarre qu'un watcher **inactif**, qui ne peut pas avoir de tâche en
+cours.
+
+> **Limite connue : `Restart=on-failure` de systemd échappe à ce mécanisme.**
+> #609/#611 protègent les redémarrages déclenchés **depuis l'interface**
+> (`demarrer_watcher_ou_differer`, ci-dessus). Un crash du watcher lui-même
+> (exception non rattrapée, OOM, etc.) déclenche `Restart=on-failure` — et
+> comme lors de l'incident #73, `systemctl` tue **tout le cgroup** du
+> service avant de le relancer, y compris le process `claude` d'une tâche
+> `mode_write` en cours. Ce cas ne peut PAS être intercepté côté Python :
+> le process est tué avant d'avoir eu la main pour différer quoi que ce
+> soit. Aucun mécanisme de ce dépôt ne couvre ce scénario à ce jour — voir
+> aussi l'encart « Watchers supervisés par systemd --user » (§16) pour le
+> détail de `Restart=on-failure`.
 
 **Cycle complet.** Watcher éteint pour inactivité → on crée une issue for-linux
 → le watcher est rallumé automatiquement (#202) → il traite la tâche → après
@@ -1735,6 +1757,12 @@ a été remplacée par les deux seuls droits que documente Microsoft pour
 >   abandonner la première tentative (#119, `Restart=always`) : elle
 >   relançait systématiquement tout watcher éteint pour inactivité, en
 >   boucle sans fin.
+>   **Limite (issue #612)** : ce redémarrage sur crash tue tout le cgroup du
+>   service, y compris une tâche `claude` `mode_write` en cours — sans
+>   avertissement, et sans que ce soit interceptable côté Python (le process
+>   est tué avant d'avoir la main). Le mécanisme de report #609/#611 ne
+>   couvre que les redémarrages déclenchés depuis l'interface ; celui-ci en
+>   est hors de portée par construction.
 > - **Installation dynamique** (`installer_services.sh`) : une unité par
 >   `configs/*.conf` valide, listés via `app.projets.lister_projets()` —
 >   plus de liste de projets codée en dur.
@@ -1910,18 +1938,21 @@ séquentiellement dans `REP_TRAVAIL` (hors périmètre de cette issue).
   aussi côté thread parallélisé via `_lancer_thread_ecriture`). Ce repli
   reste, comme avant, en tâche de fond (thread), pas un appel bloquant : la
   boucle principale demeure libre même dans ce cas de dernier recours.
-- **Signal d'interface (issue #609)** : `new_issue.py` ne peut pas distinguer
-  le repli en `MAX_WRITE_PARALLELE ≤ 1` (échec de création, #589) du repli en
-  dernier recours à `MAX_WRITE_PARALLELE > 1` (#611) — les deux laissent une
-  tâche `mode_write` tourner directement dans `REP_TRAVAIL`, même risque dans
-  les deux cas si Alain touche (merge, push) le dossier principal avant la
-  fin. `app.watchers.repli_rep_travail` (via le verrou fichier de
-  `watcher.py`, champ `mode=`, cf. §"Redémarrage forcé différé..." plus haut)
-  ne cherche donc pas à les différencier : dès qu'une tâche `mode_write` est
-  en cours dans `REP_TRAVAIL`, qu'importe la raison, l'onglet Watchers
-  l'affiche (colonne Statut) et un bandeau global (visible sur tous les
-  onglets) le signale — en plus, désormais, du `notify-send` immédiat émis
-  au moment du repli (issue #611, ci-dessus).
+- **Signal d'interface (issue #609, mis à jour #611/#612)** : depuis #611,
+  toute tâche `mode_write` obtient d'abord un worktree dédié, quel que soit
+  `MAX_WRITE_PARALLELE` — il n'existe donc plus qu'**un seul** cas où une
+  tâche `mode_write` tourne directement dans `REP_TRAVAIL` : le repli en
+  tout dernier recours, quand `_creer_worktree_avec_retries` a épuisé ses 3
+  tentatives (#589). `app.watchers.repli_rep_travail` (via le verrou fichier
+  de `watcher.py`, champ `mode=`, cf. §"Redémarrage forcé différé..." plus
+  haut) ne signale donc plus qu'un cas d'anomalie, plus un cas normal et
+  fréquent comme avant #611 : dès qu'une tâche `mode_write` est en cours
+  dans `REP_TRAVAIL`, l'onglet Watchers l'affiche (colonne Statut) et un
+  bandeau global (visible sur tous les onglets) le signale — en plus,
+  désormais, du `notify-send` immédiat émis au moment du repli (issue #611,
+  ci-dessus). Le bandeau ne s'allume donc plus à chaque tâche `mode_write`
+  normale (toutes isolées dans un worktree désormais), seulement dans ce cas
+  d'anomalie rare.
 - **CHANGELOG** : dans un worktree, CCL reçoit une consigne de prompt dédiée
   lui demandant d'écrire son entrée dans `CHANGELOG-<N>.md` à la racine du
   worktree plutôt que dans `CHANGELOG.md` directement, pour éviter un

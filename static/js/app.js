@@ -4683,8 +4683,12 @@ async function envoyerIssue() {
 // n'est plus jamais un cas normal (toute tâche mode_write obtient d'abord un
 // worktree dédié, tentatives -bis/-ter incluses) : ce n'est plus que le repli
 // en tout dernier recours après échec des 3 tentatives de création de
-// worktree (issue #589, celui qui a coûté le travail perdu de
-// relecture_bridge #73), aussi signalé activement côté watcher (notify-send).
+// worktree (issue #589), aussi signalé activement côté watcher (notify-send).
+// DISTINCT de l'incident relecture_bridge #73 (diagnostic confirmé le
+// 24/09/2026) : #73 tournait dans son propre worktree quand un redémarrage du
+// watcher (systemctl --user restart, qui tue tout le cgroup) l'a fait
+// reprendre comme premier slot directement dans REP_TRAVAIL — l'ancien
+// comportement du premier slot, supprimé depuis par #611, pas ce repli #589.
 // Le dossier principal ne doit pas être touché (merge, push) avant la fin.
 function statutWatcher(w) {
   if (w.repli_rep_travail) {
@@ -5488,12 +5492,15 @@ setInterval(rafraichirRateLimit, 30000);
 // ne signale plus qu'un cas anormal — voir app.watchers.repli_rep_travail :
 // toute tâche mode_write obtient d'abord un worktree dédié (tentatives
 // -bis/-ter incluses), donc ce n'est plus que le repli en tout dernier
-// recours après échec des 3 tentatives (issue #589 — celui qui a coûté le
-// travail perdu de relecture_bridge #73, redémarrage du watcher pendant la
-// tâche, reprise sur worktree déjà pris, travail non isolé embarqué dans un
-// commit puis poussé par erreur), aussi signalé activement côté watcher
-// (notify-send). Le dossier principal du projet est alors en cours
-// d'écriture et ne doit PAS être touché (merge, push) avant la fin.
+// recours après échec des 3 tentatives (issue #589), aussi signalé
+// activement côté watcher (notify-send). DISTINCT de l'incident
+// relecture_bridge #73 (diagnostic confirmé le 24/09/2026) : #73 tournait
+// dans son propre worktree quand un redémarrage du watcher (systemctl --user
+// restart, qui tue tout le cgroup) l'a fait reprendre comme premier slot
+// directement dans REP_TRAVAIL — l'ancien comportement du premier slot,
+// supprimé depuis par #611, pas ce repli #589. Le dossier principal du
+// projet est alors en cours d'écriture et ne doit PAS être touché (merge,
+// push) avant la fin.
 // Réutilise /watchers (déjà interrogé par l'onglet Watchers), à la même
 // cadence que le rate limit ci-dessus plutôt qu'un polling dédié de plus.
 async function rafraichirReplisRepTravail() {
