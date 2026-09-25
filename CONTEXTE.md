@@ -42,20 +42,21 @@ Bridge_Agent se développe lui-même par ses propres issues (dogfooding).
   création, sinon PowerShell 5.1 plante sur les accents.
 
 ## État d'avancement (récent, cf. changelog en bas du DOC)
-- #625 (refonte interface web, étape 1/n) : socle de modules ES natifs sans build
-  dans `static/js/socle/` (store/api/sse/toasts/dom/persistance + pont de
-  transition), `index.html` et `style.css` découpés en fragments/feuilles,
-  versionnage `?v=<mtime>` des statiques + import map. INERTE : ne remplace rien
-  encore (app.js reste seul aux commandes). Détail : `ARCHITECTURE.md`.
+- #625 (refonte web, étape 1) : socle de modules ES sans build dans
+  `static/js/socle/` (store/api/sse/toasts/dom/persistance + pont), HTML/CSS en
+  fragments/feuilles, `?v=` + import map. Détail : `ARCHITECTURE.md §6`.
+- #627 (refonte web, étape 3) : `static/js/resultats.js` sort d'app.js le moteur
+  Résultats (chargement, `/stream`, badges) ; store = vérité unique ; app.js garde
+  le rendu DOM + hors-périmètre via un miroir.
 - #221 (calibration TIMEOUT, 2/3) : `watcher.py` maintient `logs/etat_timeout.json`
   (EWMA par projet+TYPE+mode) et `logs/etat_ambiance.json` (F_reseau/F_local) ;
-  `TIMEOUT_suggéré` journalisé à chaque clôture — n'affecte PAS encore le TIMEOUT
-  appliqué (en-tête seul décisif ; exposition à venir).
+  `TIMEOUT_suggéré` journalisé à la clôture — n'affecte PAS encore le TIMEOUT
+  appliqué (en-tête seul décisif).
 - §12.1 (#209/#211) : dossier `consignes/` (globales/type/projet) injecté dans le
-  PROMPT CCL par `watcher.py`, point de passage UNIQUE de tous les chemins de
-  création. `globales.md` non-optionnel, `type_*`/`projet_*` facultatifs.
+  PROMPT CCL par `watcher.py` (point de passage UNIQUE). `globales.md` obligatoire,
+  `type_*`/`projet_*` facultatifs.
 - §18 (#191/#192) : pièces jointes image → `issue-attachments/` + URL raw.
-- §17 (#187) : notifications centralisées via `new_issue.py` (tous projets, CCW inclus).
+- §17 (#187) : notifications centralisées via `new_issue.py` (tous projets, CCW).
 - §16 (#174…) : onglet « CCW » — pilotage du PC Windows physique depuis Linux.
 
 ## Maintenance de ce fichier

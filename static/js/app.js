@@ -12,10 +12,34 @@ let sourceSSE = null;
 let ccwProjetsConnus = [];
 let intervalPanneauLateral = null;
 
-// Connexion SSE dédiée au rafraîchissement instantané des résultats (issues
-// #350, #515) — ouverte UNE FOIS au chargement de la page, tourne en
-// permanence indépendamment de l'onglet actif (voir demarrerStreamFinIssue).
-let sourceFinIssue = null;
+// Connexion SSE dédiée au rafraîchissement instantané des résultats : depuis la
+// refonte étape 3 (issue #627), le canal /stream est ouvert et géré par
+// static/js/resultats.js (via la brique sse). L'ancien demarrerStreamFinIssue()
+// d'app.js a été retiré — jamais deux connexions /stream.
+
+// ─── Pont refonte Résultats (issue #627) — miroir store → ancien code ─────────
+// static/js/resultats.js détient la SOURCE DE VÉRITÉ (store.issues / store.timing)
+// et pilote le chargement, le SSE et les badges. app.js garde le rendu DOM d'une
+// ligne et les fonctionnalités hors périmètre #627 (filtres, pastilles, case à
+// cocher, badges ✅/Diff/All, détail, recherche, panneau latéral), qui lisent
+// encore listeIssuesResultats / timingIssues. Ces quelques hooks, appelés PAR
+// resultats.js via le pont, tiennent ce miroir à jour et déclenchent le rendu.
+if (typeof window !== 'undefined') {
+  window.__resultatsMiroirListe = function(liste) { listeIssuesResultats = liste; };
+  window.__resultatsSetTiming   = function(map)   { timingIssues = map; };
+  window.__resultatsListeVide   = function() {
+    const zone = document.getElementById('liste-issues');
+    if (zone) zone.innerHTML = '<div class="issue-vide">Aucun projet</div>';
+  };
+  // Remplace la SEULE ligne d'une issue déjà affichée (préserve la sélection),
+  // à partir du miroir listeIssuesResultats déjà synchronisé.
+  window.__resultatsRemplacerLigne = function(projet, numero) {
+    const it = listeIssuesResultats.find(
+      x => x.projet === projet && String(x.number) === String(numero));
+    const ligne = trouverLigneIssue(projet, numero);
+    if (it && ligne) remplacerLigneIssue(ligne, it);
+  };
+}
 
 // SOURCE UNIQUE DE VÉRITÉ pour la couleur de chaque projet (issue #120,
 // refondue #535). Utilisée à la fois pour l'accent du formulaire
@@ -807,10 +831,6 @@ function nomsProjetsDisponibles() {
 let listeIssuesResultats = [];
 let projetsFiltresActifs = new Set();
 
-// Clé localStorage du cache de la liste d'issues (issue #52). Affichage
-// instantané depuis le cache, rafraîchi ensuite par un fetch d'arrière-plan.
-const CLE_CACHE_ISSUES = 'bridge_cache_issues';
-
 // ── Limite d'issues chargées PAR PROJET (issue #271) ──────────────────────
 // Transmise en paramètre de requête à /issues-liste/<projet> : c'est ce qui
 // est TÉLÉCHARGÉ depuis GitHub, pas ce qui est affiché — le quota adaptatif
@@ -821,10 +841,8 @@ const CLE_CACHE_ISSUES = 'bridge_cache_issues';
 // circonstance. Défaut 5 (besoin courant réel dans 70% des cas d'après
 // l'issue) et non 30 : l'ancienne valeur reste atteignable en remontant le
 // champ. Changer la valeur ne déclenche PAS de rechargement automatique
-// (cohérent avec #270) : seul le bouton rafraîchir applique la nouvelle
-// limite. Le cache liste est néanmoins invalidé tout de suite (point 6),
-// sinon un cache constitué à une profondeur différente resterait affiché
-// avec une profondeur d'historique qui ne correspond plus au réglage visible.
+// (cohérent avec #270) : seul le bouton rafraîchir applique la nouvelle limite
+// (depuis l'issue #627 il n'y a plus de cache de liste à invalider).
 const CLE_LIMITE_ISSUES = 'bridge_limite_issues_projet';
 const LIMITE_ISSUES_DEFAUT = 5;
 const LIMITE_ISSUES_MIN = 1;
@@ -838,15 +856,16 @@ function limiteIssuesProjet() {
     ? n : LIMITE_ISSUES_DEFAUT;
 }
 
-// Applique une nouvelle valeur saisie : bornée, persistée, cache liste
-// invalidé — mais AUCUN rechargement déclenché ici (voir commentaire ci-dessus).
+// Applique une nouvelle valeur saisie : bornée, persistée — mais AUCUN
+// rechargement déclenché ici (cohérent avec #270 : seul ↻ applique la limite).
+// Plus de cache de liste à invalider depuis l'issue #627 (le store est la seule
+// source de vérité).
 function changerLimiteIssuesProjet(valeur) {
   const n = parseInt(valeur, 10);
   const bornee = Number.isFinite(n)
     ? Math.min(LIMITE_ISSUES_MAX, Math.max(LIMITE_ISSUES_MIN, n))
     : LIMITE_ISSUES_DEFAUT;
   try { localStorage.setItem(CLE_LIMITE_ISSUES, String(bornee)); } catch(e) {}
-  try { localStorage.removeItem(CLE_CACHE_ISSUES); } catch(e) {}
   return bornee;
 }
 
@@ -865,85 +884,16 @@ function appliquerListeIssues(liste, noms) {
   rendreListeIssues(true);
 }
 
-async function chargerListeIssues(nomsAFetcher) {
-  const zone = document.getElementById('liste-issues');
-  const noms = nomsProjetsDisponibles();
-  if (!noms.length) {
-    zone.innerHTML = '<div class="issue-vide">Aucun projet</div>';
-    return;
+// Refonte étape 3 (issue #627) : le chargement de la liste vit désormais dans
+// static/js/resultats.js (store = source de vérité, plus de cache localStorage,
+// un projet en échec conserve ses issues + toast). On garde ce mince relais pour
+// les appelants hérités (annuler / interrompre / relancer une issue), qui
+// rechargent la liste après leur action puis réaffichent l'issue concernée.
+function chargerListeIssues(nomsAFetcher) {
+  if (window.Bridge && window.Bridge.resultats) {
+    return window.Bridge.resultats.chargerListe(nomsAFetcher);
   }
-
-  // Restriction optionnelle des projets réellement fetchés (issue #428) :
-  // seul rafraichirResultats() passe ce paramètre (liste des projets actifs
-  // dans le filtre), pour éviter un fetch par projet disponible quand
-  // l'utilisateur n'en regarde qu'un seul. Tous les autres appelants
-  // (chargement initial, SSE fin d'issue…) laissent nomsAFetcher indéfini →
-  // comportement inchangé (tous les projets disponibles).
-  const nomsFetch = Array.isArray(nomsAFetcher)
-    ? nomsAFetcher.filter(nom => noms.includes(nom))
-    : noms;
-  const nomsFetchSet = new Set(nomsFetch);
-
-  // 1) Affichage immédiat depuis le cache localStorage, s'il existe.
-  let cache = null;
-  try { cache = JSON.parse(localStorage.getItem(CLE_CACHE_ISSUES) || 'null'); } catch(e) {}
-  const cacheAffiche = Array.isArray(cache) && cache.length > 0;
-  if (cacheAffiche) {
-    appliquerListeIssues(cache, noms);
-  } else {
-    zone.innerHTML = '<div class="issue-vide">Chargement…</div>';
-  }
-
-  // 2) Fetch d'arrière-plan des issues de chaque projet à recharger (jusqu'à
-  //    la limite par projet réglée par l'utilisateur côté backend, issue #271
-  //    — 5 par défaut). Le nombre réellement affiché par projet est ensuite
-  //    plafonné par un quota adaptatif dans appliquerFiltresListe() (issue
-  //    #136), selon le nombre de projets actifs dans le filtre — plus de
-  //    troncature ici.
-  const limite = limiteIssuesProjet();
-  majIndicateurListe(true);
-  try {
-    const listes = await Promise.all(nomsFetch.map(async nom => {
-      try {
-        const rep = await fetch('/issues-liste/' + encodeURIComponent(nom)
-          + '?limite=' + encodeURIComponent(limite));
-        const liste = await rep.json();
-        if (!Array.isArray(liste)) return [];
-        // Toute la liste reçue (déjà plafonnée côté backend à la limite par
-        // projet), triée par date de création décroissante (plus récentes en
-        // premier).
-        return liste
-          .slice()
-          .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
-          .map(it => Object.assign({}, it, {projet: nom}));
-      } catch(e) {
-        return [];
-      }
-    }));
-    // Fusion avec les issues des projets NON refetchés cette fois (fetch
-    // restreint, issue #428) : conservées telles quelles depuis l'état le
-    // plus à jour déjà connu (cache tout juste lu, sinon liste en mémoire),
-    // pour ne pas les faire disparaître de l'onglet Résultats. Puis tri
-    // global par date de création décroissante (plus récentes en premier).
-    const anterieures = (cacheAffiche ? cache : listeIssuesResultats)
-      .filter(it => !nomsFetchSet.has(it.projet));
-    const nouvelle = anterieures.concat(listes.flat())
-      .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
-
-    // Ne re-render que si la liste a réellement changé : évite de perdre la
-    // sélection courante quand le cache était déjà à jour.
-    const inchangee = cacheAffiche && JSON.stringify(nouvelle) === JSON.stringify(cache);
-    if (!inchangee) {
-      appliquerListeIssues(nouvelle, noms);
-    } else {
-      listeIssuesResultats = nouvelle;
-    }
-    try { localStorage.setItem(CLE_CACHE_ISSUES, JSON.stringify(nouvelle)); } catch(e) {}
-  } catch(e) {
-    if (!cacheAffiche) zone.innerHTML = '<div class="issue-vide">Erreur de chargement</div>';
-  } finally {
-    majIndicateurListe(false);
-  }
+  return Promise.resolve();
 }
 
 // Clé localStorage mémorisant l'état des boutons de filtre projet.
@@ -1423,7 +1373,8 @@ function construireLigneIssueDOM(it) {
     // Badge d'estimation prédictive (issue #108) PUIS badge de temps restant
     // (issues #91/#106) : l'estimation (durée médiane historique du même
     // projet+type+mode) s'affiche JUSTE AVANT le décompte, qui reste inchangé.
-    // Les deux sont remplis/actualisés par majBadgesTempsRestant().
+    // Ces deux spans vides sont remplis/actualisés par le moteur Résultats
+    // (window.Bridge.resultats.majBadges, static/js/resultats.js, issue #627).
     + (etat === 'ouvert'
         ? '<span class="ligne-estimation" style="display:none"></span>'
           + '<span class="ligne-tempsrestant" style="display:none"></span>'
@@ -1480,7 +1431,7 @@ function rendreListeIssues(reset) {
   appliquerFiltresListe();
   appliquerLargeurTitre();
   restaurerCasesCocheesResultats();
-  majBadgesTempsRestant();
+  if (window.Bridge && window.Bridge.resultats) window.Bridge.resultats.majBadges();
   majPastillesFiltres();
   if (reset) selectionnerPremiereVisible();
 }
@@ -1610,283 +1561,16 @@ function appliquerFiltresListe() {
   });
 }
 
-// ─── Temps restant estimé des issues ouvertes (issue #91) ─────────────────
-// L'heure de début de traitement n'est persistée nulle part par le watcher :
-// la route /issues-en-attente la retrouve via l'horodatage du commentaire ACK
-// (champ `debut`). Le compte à rebours est ensuite PUREMENT client : une fois
-// debut+timeout connus, un intervalle JS recalcule le restant chaque seconde
-// sans re-solliciter le serveur.
-// Mise à jour des données elles-mêmes (issue #270, suite #269) : PLUS de
-// re-fetch périodique — l'interface web laissée ouverte avec plusieurs
-// projets configurés interrogeait GitHub en continu (~3840 pts/h mesurés,
-// premier poste de consommation du quota GraphQL, cf. issue #263) pour un
-// gain (voir apparaître un badge 15s plus tôt) jugé insuffisant par Alain.
-// chargerTimingIssues() n'est donc plus appelée qu'à la demande : au
-// chargement initial de l'onglet Résultats (demarrerTempsRestant) et par le
-// bouton rafraîchir (rafraichirResultats), qui met à jour liste ET badges
-// d'un même geste. Conséquence assumée : une issue qui se termine pendant
-// que l'onglet reste ouvert garde son décompte affiché jusqu'au prochain
-// rafraîchissement manuel. Décompte figé à zéro une fois le budget épuisé
-// (cf. formaterBadgeTempsRestant) : jamais de valeur négative, jamais de
-// message spéculatif du type « terminé ? » — sans re-fetch, cette
-// information n'est pas connue côté client. Cohérent avec le fait que la
-// LISTE elle-même (chargerListeIssues) suit déjà ce même modèle « à la
-// demande » et ne se rafraîchit pas non plus toute seule.
-let timingIssues = {};              // clé "projet#numero" → {timeout, max_essais, backoff, debut, sans_limite}
-let intervalTempsRestant = null;    // recalcul 1 s du compte à rebours (client seul, aucun appel réseau)
-
-// ─── Fetch unique au dépassement du TIMEOUT (issue #334) ──────────────────
-// Clés (cleTiming) des issues pour lesquelles le fetch unique de vérification
-// a déjà été programmé — évite qu'un re-rendu (rendreListeIssues) ou le tick
-// de majBadgesTempsRestant (chaque seconde) ne reprogramme un second setTimeout
-// pour la même issue tant que la page reste ouverte.
-let issuesFetchDepassementProgrammees = new Set();
-// Clés des issues dont le fetch unique a confirmé qu'elles sont toujours
-// ouvertes (cas marginal de timing) : affiche « rafraîchir ↻ » à la place du
-// message générique « budget épuisé » et empêche formaterBadgeTempsRestant de
-// reprogrammer un nouveau fetch automatique (un seul essai, jamais de polling).
-let issuesDepassementVerifie = new Set();
+// ─── Miroir des données de temps (issue #627) ─────────────────────────────
+// Le moteur de décompte/estimation (chargement des temps, calcul et application
+// des badges, fetch unique post-dépassement #334, tick 1 s, canal /stream) vit
+// désormais dans static/js/resultats.js, avec le store pour source de vérité.
+// app.js n'en garde qu'un MIROIR (timingIssues), tenu à jour par resultats.js via
+// __resultatsSetTiming, pour les fonctionnalités hors périmètre #627 encore ici
+// (panneau latéral : resumeProjetMonitoring). cleTiming reste la clé partagée.
+let timingIssues = {};   // MIROIR "projet#numero" → {timeout, max_essais, backoff, debut, sans_limite, estimation}
 
 function cleTiming(projet, numero) { return projet + '#' + numero; }
-
-// Formate une durée en secondes → "45s" / "3min 20s" (compact, lisible).
-function formaterDuree(s) {
-  s = Math.max(0, Math.floor(s));
-  if (s < 60) return s + 's';
-  const m = Math.floor(s / 60), r = s % 60;
-  return m + 'min' + (r ? ' ' + r + 's' : '');
-}
-
-// Récupère, pour tous les projets, les débuts de traitement + timeouts des
-// issues ouvertes, puis rafraîchit immédiatement les badges.
-async function chargerTimingIssues() {
-  const noms = nomsProjetsDisponibles();
-  // On repart de l'état COURANT, pas d'un map vide (issue #190). Avant, chaque
-  // appel reconstruisait le map à partir de zéro : dès qu'un fetch
-  // /issues-en-attente échouait ou expirait — typiquement pendant une contention
-  // réseau provoquée par un cycle du poller de notifications (12 appels gh
-  // groupés, cf. notifications_poller.py) — le projet concerné disparaissait du
-  // map et TOUS ses badges (décompte + estimation) s'effaçaient jusqu'au prochain
-  // fetch réussi. C'est la « perte intermittente des badges » constatée par
-  // Alain. Désormais, seul un fetch RÉUSSI remplace les entrées de son projet ;
-  // un échec laisse les badges existants intacts.
-  const map = Object.assign({}, timingIssues);
-  await Promise.all(noms.map(async nom => {
-    try {
-      const rep = await fetch('/issues-en-attente/' + encodeURIComponent(nom));
-      const liste = await rep.json();
-      // Erreur/timeout (réponse non-tableau : {erreur:…} en 5xx) → on NE touche
-      // pas aux entrées du projet, on garde les badges actuels.
-      if (!Array.isArray(liste)) return;
-      // Succès : on purge d'abord les anciennes entrées de CE projet (pour retirer
-      // les issues désormais fermées) puis on réinjecte la liste fraîche. Le
-      // séparateur '#' évite qu'un nom soit préfixe d'un autre (ex. « ecole »).
-      for (const cle of Object.keys(map)) {
-        if (cle.startsWith(nom + '#')) delete map[cle];
-      }
-      for (const it of liste) {
-        map[cleTiming(nom, it.number)] = {
-          timeout:     it.timeout,
-          max_essais:  it.max_essais,
-          backoff:     it.backoff,
-          debut:       it.debut,
-          sans_limite: it.sans_limite,
-          estimation:  it.estimation,   // estimation prédictive de durée (issue #108)
-        };
-      }
-    } catch(e) {}
-  }));
-  timingIssues = map;
-  majBadgesTempsRestant();
-}
-
-// Applique l'estimation prédictive de durée à un badge (issue #108), affiché
-// JUSTE AVANT le décompte. La donnée `estimation` vient de la route
-// /issues-en-attente : médiane des durées historiques du même projet+type+mode
-// + niveau de fiabilité (nombre d'échantillons). Code couleur : rouge = peu sûr
-// (< 5 échantillons), noir = correct (5-15), vert = sûr (> 15). Sans historique
-// pour la catégorie : « pas encore de données ». N'affecte JAMAIS le décompte.
-//
-// Décompte live (issue #112) : une fois l'issue prise en charge (ACK connu),
-// le badge devient un compte à rebours recalculé chaque seconde par
-// majBadgesTempsRestant() : restant_estime = médiane − (maintenant − heure ACK).
-// Contrairement au décompte réel (temps restant sur le TIMEOUT), le dépassement
-// de la médiane n'est PAS une alerte de blocage : l'estimation reste indicative,
-// affichée « estimation dépassée » en ton neutre (jamais l'alerte rouge ⌛).
-function formaterBadgeEstimation(badge, t) {
-  badge.className = 'ligne-estimation';
-  const est = t && t.estimation;
-  if (!est) { badge.style.display = 'none'; badge.textContent = ''; return; }
-  badge.style.display = '';
-  // Catégorie inédite (projet+type+mode jamais fermé) : on le dit clairement,
-  // sans masquer le décompte qui suit (issue #108, cas 4). Rien à décompter
-  // sans médiane.
-  if (est.fiabilite === 'aucune' || est.mediane == null) {
-    badge.textContent = '◦ pas encore de données';
-    badge.classList.add('est-aucune');
-    badge.title = 'Aucune issue fermée pour cette catégorie (projet + type + mode). '
-                + "L'estimation apparaîtra dès qu'au moins une issue similaire aura "
-                + 'été traitée. Le décompte à droite reste affiché normalement.';
-    return;
-  }
-  // Classe de fiabilité (code couleur rouge/noir/vert selon le nombre
-  // d'échantillons), commune à l'estimation figée et au décompte live.
-  const cls = est.fiabilite === 'sur'     ? 'est-sur'       // vert  (> 15 échant.)
-            : est.fiabilite === 'correct' ? 'est-correct'   // noir  (5-15 échant.)
-            :                               'est-incertain';// rouge (< 5 échant.)
-  const libFiab = est.fiabilite === 'sur'     ? 'fiable'
-                : est.fiabilite === 'correct' ? 'correcte'
-                :                               'incertaine (peu de données)';
-  // Rappel commun : ne jamais confondre avec le décompte réel à droite, seule
-  // vraie alerte de blocage (basée sur le TIMEOUT configuré).
-  const rappel = ' À ne pas confondre avec le décompte à droite, qui est le temps '
-               + 'restant réel sur le TIMEOUT configuré (seule vraie alerte de blocage).';
-
-  // Pas encore prise en charge (aucun ACK) : impossible de décompter, on
-  // affiche l'estimation figée (médiane) comme repère de départ.
-  if (!t.debut) {
-    badge.textContent = '≈ ' + formaterDuree(est.mediane);
-    badge.classList.add(cls);
-    badge.title = 'Durée médiane observée sur ' + est.n + ' issue(s) fermée(s) du même '
-                + 'projet + type + mode — estimation ' + libFiab + '. Le décompte '
-                + 'estimé démarrera dès la prise en charge par le watcher.' + rappel;
-    return;
-  }
-
-  // Décompte live (issue #112) : restant estimé = médiane − temps écoulé depuis
-  // l'ACK. Recalculé chaque seconde comme le badge de décompte réel (issue #91).
-  const ecoule  = (Date.now() - new Date(t.debut).getTime()) / 1000;
-  const restant = Math.round(est.mediane - ecoule);
-
-  if (restant > 0) {                     // encore sous la médiane : compte à rebours
-    badge.textContent = '≈ ' + formaterDuree(restant);
-    badge.classList.add(cls);
-    badge.title = 'Temps restant ESTIMÉ avant la durée médiane ('
-                + formaterDuree(est.mediane) + ' sur ' + est.n + ' issue(s) similaires, '
-                + 'estimation ' + libFiab + '). Simple repère prédictif, '
-                + 'pas une limite dure.' + rappel;
-  } else {                               // médiane franchie mais issue non fermée
-    // Estimation dépassée (issue #112, cas 3) : ce n'est qu'une estimation, PAS
-    // un blocage. Ton neutre, visuellement distinct de l'alerte rouge « ⌛
-    // dépassement » du décompte réel (qui, elle, signale un vrai budget épuisé).
-    badge.textContent = '≈ estimation dépassée';
-    badge.classList.add('est-depasse');
-    badge.title = 'La durée médiane estimée (' + formaterDuree(est.mediane)
-                + ') est dépassée de ' + formaterDuree(-restant) + ", mais ce n'est "
-                + "qu'une estimation indicative, pas une limite dure : l'issue peut "
-                + 'légitimement durer plus longtemps.' + rappel;
-  }
-}
-
-// Applique l'état de temps restant à un badge, selon les données de timing.
-// projet/numero (issue #334) : nécessaires pour programmer, au moment où le
-// budget tombe à zéro, le fetch unique de vérification 15s plus tard.
-function formaterBadgeTempsRestant(badge, t, projet, numero) {
-  badge.className = 'ligne-tempsrestant';
-  if (!t) { badge.style.display = 'none'; badge.textContent = ''; return; }
-  badge.style.display = '';
-  if (!t.debut) {                       // ouverte mais pas encore prise en charge
-    badge.textContent = '⏳ en file';
-    badge.classList.add('tr-attente');
-    badge.title = 'En attente de prise en charge par le watcher';
-    return;
-  }
-  if (t.sans_limite) {                   // priorité haute/critique → retry infini
-    badge.textContent = '⏳ en cours (pas de limite)';
-    badge.classList.add('tr-illimite');
-    badge.title = 'Priorité haute/critique : réessais illimités, pas de deadline';
-    return;
-  }
-  // Budget de retry conscient (issue #106) : le watcher dispose de max_essais
-  // tentatives de `timeout` secondes, séparées par un backoff. On raisonne donc
-  // sur le budget TOTAL (timeout × essais + backoffs), et non sur un seul cycle.
-  const essais   = Math.max(1, t.max_essais || 1);
-  const backoff  = t.backoff || 0;
-  const cycle    = t.timeout + backoff;                 // durée d'un cycle (tentative + backoff)
-  const budget   = t.timeout * essais + backoff * (essais - 1);
-  const ecoule   = (Date.now() - new Date(t.debut).getTime()) / 1000;
-  const restant  = Math.round(budget - ecoule);
-  // Tentative estimée en cours (1-based), plafonnée au nombre max.
-  const tentative = Math.min(essais, Math.floor(ecoule / cycle) + 1);
-
-  if (restant > 0 && tentative <= 1) {   // 1er cycle : compte à rebours classique
-    badge.textContent = '⏳ ' + formaterDuree(restant);
-    badge.classList.add(restant <= 30 ? 'tr-bientot' : 'tr-ok');
-    badge.title = 'Temps restant estimé sur le budget total ('
-                + essais + ' tentative(s) × ' + t.timeout + 's'
-                + (backoff ? ' + backoffs' : '') + ') avant dépassement réel.';
-  } else if (restant > 0) {              // au-delà du 1er cycle : retry en cours, PAS un échec
-    badge.textContent = '🔄 tentative ' + tentative + '/' + essais
-                      + ' — ' + formaterDuree(restant);
-    badge.classList.add('tr-retry');
-    badge.title = 'Le 1er cycle TIMEOUT (' + t.timeout + 's) a été dépassé, mais '
-                + 'le watcher dispose de ' + essais + ' tentatives. Reste ~'
-                + formaterDuree(restant) + ' sur le budget total ; pas encore un échec.';
-  } else if (issuesDepassementVerifie.has(cleTiming(projet, numero))) {
-    // Fetch unique déjà effectué (issue #334) et l'issue était encore ouverte
-    // à ce moment (cas marginal de timing) : on le dit clairement plutôt que
-    // de réafficher indéfiniment le message générique « budget épuisé », et on
-    // NE reprogramme AUCUN autre fetch automatique — seul un ↻ (ligne ou
-    // global) ira revérifier.
-    badge.textContent = '⌛ dépassement — rafraîchir ↻';
-    badge.classList.add('tr-depasse');
-    badge.title = 'Budget total épuisé (' + essais + ' tentatives × ' + t.timeout
-                + 's' + (backoff ? ' + backoffs' : '') + ') ; la vérification '
-                + 'automatique 15s après le dépassement montre l\'issue toujours '
-                + 'ouverte. Cliquez sur ↻ pour revérifier — aucune autre '
-                + 'vérification automatique ne sera programmée.';
-  } else {
-    // Budget total (toutes tentatives) épuisé : décompte figé à zéro (issue
-    // #270), jamais de valeur négative ni de compteur de dépassement qui
-    // grossirait indéfiniment. Le watcher a encore besoin de quelques
-    // secondes pour poster son diagnostic et fermer l'issue une fois son
-    // TIMEOUT écoulé : un unique fetch de vérification est donc programmé
-    // 15s après ce dépassement (issue #334, voir programmerFetchDepassement),
-    // sans aucun polling — un seul appel réseau, une seule fois par issue.
-    badge.textContent = '⌛ 0s — budget épuisé';
-    badge.classList.add('tr-depasse');
-    badge.title = 'Budget total épuisé (' + essais + ' tentatives × ' + t.timeout
-                + 's' + (backoff ? ' + backoffs' : '') + ') ; intervention '
-                + 'humaine probable (label needs-human). Vérification automatique '
-                + 'programmée dans 15s ; en cas de doute, ↻ revérifie immédiatement.';
-    programmerFetchDepassement(projet, numero);
-  }
-}
-
-// Actualise tous les badges de temps restant des lignes ouvertes (recalcul pur,
-// aucun appel réseau). Appelée chaque seconde et après chaque rendu de liste.
-// Ne resynchronise PAS les cases cochées (issue #463) : cette fonction ne
-// reconstruit jamais les nœuds DOM des cases, donc rien à restaurer ici — cet
-// appel superflu, exécuté chaque seconde via setInterval, créait une fenêtre
-// de course avec le clic utilisateur (annulait parfois la coche AVANT que le
-// onchange ne déclenche la copie résultat+diff, régression Windows-only
-// introduite par #462). La restauration reste faite là où le DOM est
-// effectivement reconstruit : rendreListeIssues, remplacerLigneIssue,
-// rendreResultatsRecherche.
-function majBadgesTempsRestant() {
-  document.querySelectorAll('#liste-issues .ligne-issue').forEach(ligne => {
-    const t = timingIssues[cleTiming(ligne.dataset.projet, ligne.dataset.numero)];
-    // Estimation prédictive (issue #108) : affichée JUSTE AVANT le décompte.
-    const badgeEst = ligne.querySelector('.ligne-estimation');
-    if (badgeEst) formaterBadgeEstimation(badgeEst, t);
-    const badge = ligne.querySelector('.ligne-tempsrestant');
-    if (!badge) return;
-    formaterBadgeTempsRestant(badge, t, ligne.dataset.projet, ligne.dataset.numero);
-  });
-}
-
-const DELAI_FETCH_DEPASSEMENT_MS = 15000;   // marge laissée au watcher (issue #334)
-
-// Programme le fetch unique de vérification (issue #334), 15s après que le
-// décompte TIMEOUT d'une issue soit tombé à zéro — le Set garde-fou garantit
-// qu'un seul setTimeout est posé par issue, même si formaterBadgeTempsRestant
-// repasse par cette branche à chaque tick (1/s) tant que la page reste ouverte.
-function programmerFetchDepassement(projet, numero) {
-  const cle = cleTiming(projet, numero);
-  if (issuesFetchDepassementProgrammees.has(cle)) return;
-  issuesFetchDepassementProgrammees.add(cle);
-  setTimeout(() => verifierIssueApresDepassement(projet, numero), DELAI_FETCH_DEPASSEMENT_MS);
-}
 
 // Retrouve la ligne DOM d'une issue par projet+numéro (pas de sélecteur CSS
 // construit à partir de valeurs externes, pour rester robuste à un nom de
@@ -1907,110 +1591,9 @@ function remplacerLigneIssue(ligneAncienne, it) {
   ligneAncienne.replaceWith(nouvelle);
   appliquerFiltresListe();
   restaurerCasesCocheesResultats();
-  majBadgesTempsRestant();
+  if (window.Bridge && window.Bridge.resultats) window.Bridge.resultats.majBadges();
   majPastillesFiltres();
 }
-
-// Exécute le fetch unique programmé par programmerFetchDepassement, 15s après
-// le dépassement du TIMEOUT. Issue fermée (done/needs-human) → met à jour la
-// ligne normalement (badge terminal, retrait du décompte), comme un ↻ manuel
-// restreint à cette seule issue. Issue encore ouverte (cas marginal de
-// timing) → le badge devient « rafraîchir ↻ » (géré par formaterBadgeTempsRestant
-// via issuesDepassementVerifie) et AUCUN autre fetch automatique n'est
-// programmé — zéro polling, un seul appel réseau par issue.
-async function verifierIssueApresDepassement(projet, numero) {
-  const cle = cleTiming(projet, numero);
-  let it;
-  try {
-    const rep = await fetch('/issue/' + encodeURIComponent(projet) + '/' + encodeURIComponent(numero));
-    it = await rep.json();
-  } catch(e) {
-    return;   // échec réseau : pas de nouvelle tentative auto (cohérent avec #270)
-  }
-  if (!it || it.erreur) return;
-  // needs-human est un état terminal côté décompte au même titre que la
-  // fermeture GitHub (state === 'CLOSED') : le label ne ferme jamais l'issue
-  // (relance possible sans recréer, cf. #460), mais plus aucun retraitement
-  // auto n'aura lieu — le badge doit donc s'arrêter immédiatement (issue #523).
-  const nomsLabels = (it.labels || []).map(l => ((l && l.name) || l || '').toLowerCase());
-  if ((it.state || '').toUpperCase() === 'CLOSED' || nomsLabels.includes('needs-human')) {
-    const itListe = {
-      number: it.number, title: it.title, state: it.state,
-      labels: it.labels, createdAt: it.createdAt, projet: projet,
-    };
-    const idx = listeIssuesResultats.findIndex(
-      x => x.projet === projet && String(x.number) === String(numero));
-    if (idx !== -1) listeIssuesResultats[idx] = Object.assign({}, listeIssuesResultats[idx], itListe);
-    delete timingIssues[cle];
-    const ligne = trouverLigneIssue(projet, numero);
-    if (ligne) remplacerLigneIssue(ligne, itListe);
-  } else {
-    issuesDepassementVerifie.add(cle);
-    majBadgesTempsRestant();
-  }
-}
-
-// Démarre le suivi du temps restant (à l'ouverture de l'onglet Résultats) :
-// fetch initial des débuts/timeouts puis recalcul chaque seconde (client
-// seul). Plus de re-fetch périodique (issue #270) : les données ne sont
-// ensuite rafraîchies qu'explicitement, via rafraichirResultats().
-function demarrerTempsRestant() {
-  chargerTimingIssues();
-  arreterTempsRestant();
-  intervalTempsRestant = setInterval(majBadgesTempsRestant, 1000);
-}
-
-// Stoppe l'intervalle de temps restant (en quittant l'onglet Résultats).
-function arreterTempsRestant() {
-  if (intervalTempsRestant) { clearInterval(intervalTempsRestant); intervalTempsRestant = null; }
-}
-
-// Traite un événement `fin_issue` ou `debut_issue` reçu du canal SSE
-// (voir demarrerStreamFinIssue juste en dessous). Issue déjà affichée dans
-// listeIssuesResultats : réutilise EXACTEMENT le traitement du fetch de
-// vérification de #334 (verifierIssueApresDepassement) — même fetch, même
-// remplacement de ligne — plutôt que de dupliquer cette logique. Issue
-// INCONNUE du navigateur (typiquement créée via issues_inbox pendant une
-// absence, puis démarrée/terminée — issue #515) : `fin_issue`/`debut_issue`
-// ne portent qu'un projet+numéro, pas la ligne complète, donc un
-// rechargement complet (chargerListeIssues) est nécessaire pour la faire
-// apparaître — déclenché ici indépendamment de l'onglet actuellement actif,
-// puisque le canal est désormais permanent (voir plus bas).
-function gererEvenementIssue(projet, numero) {
-  const dansLaListe = listeIssuesResultats.some(
-    it => it.projet === projet && String(it.number) === String(numero));
-  if (dansLaListe) {
-    verifierIssueApresDepassement(projet, numero);
-  } else {
-    chargerListeIssues();
-  }
-  // Panneau latéral (issue #375) : une transition change potentiellement
-  // l'état « ouvert/fermé » de l'issue sélectionnée (bouton Interrompre) et
-  // peut coïncider avec un arrêt de watcher — rafraîchi à chaque événement,
-  // sans coût supplémentaire (le fetch /watchers est local, pas d'appel
-  // GitHub, cf. issue #375).
-  rafraichirPanneauLateralResultats();
-}
-
-// Ouvre le canal SSE de début/fin d'issue (issues #350, #515) — appelé UNE
-// SEULE FOIS au chargement de la page (voir tout en bas de ce fichier), et
-// non plus à l'entrée/sortie de l'onglet Résultats : la liste doit rester à
-// jour même quand Alain regarde un autre onglet, sur le même principe que le
-// polling permanent du badge « Résultats inbox » (§3.8). La reconnexion en
-// cas de coupure est gérée nativement par EventSource, aucun code
-// supplémentaire n'est nécessaire ici.
-function demarrerStreamFinIssue() {
-  if (sourceFinIssue) return;   // déjà ouverte
-  sourceFinIssue = new EventSource('/stream');
-  const gerer = function(e) {
-    let donnees;
-    try { donnees = JSON.parse(e.data); } catch (err) { return; }
-    gererEvenementIssue(donnees.projet, donnees.numero);
-  };
-  sourceFinIssue.addEventListener('fin_issue', gerer);
-  sourceFinIssue.addEventListener('debut_issue', gerer);
-}
-
 // ─── Panneau latéral droit de l'onglet Résultats (issue #375, #377, #380) ──
 // Panneau FLOTTANT (position:fixed, voir .panneau-lateral dans style.css),
 // basculé par #pl-toggle, zones EMPILÉES, non exclusives, pilotées par
@@ -2105,12 +1688,11 @@ async function sidebarChargerCcw() {
 // supplémentaire ici : le monitoring se rafraîchit déjà tout seul toutes les
 // 30s (rendrePanneauLateralMonitoring), un appel gh par projet à ce rythme
 // reproduirait la surconsommation de quota GraphQL déjà corrigée par
-// l'issue #270 (cf. commentaire de chargerTimingIssues). « en cours » = issue
-// ouverte for-linux/for-windows (ni done ni needs-human) dont l'ACK watcher
-// est déjà connu (timingIssues[...].debut renseigné, alimenté à la demande
-// par chargerTimingIssues/rafraichirResultats) ; « en file » = même filtre
-// mais sans ACK connu — soit réellement en attente, soit parce que
-// timingIssues n'a simplement pas encore été chargé pour ce projet.
+// l'issue #270. « en cours » = issue ouverte for-linux/for-windows (ni done ni
+// needs-human) dont l'ACK watcher est déjà connu (timingIssues[...].debut
+// renseigné — ce MIROIR est alimenté par static/js/resultats.js, issue #627) ;
+// « en file » = même filtre mais sans ACK connu — soit réellement en attente,
+// soit parce que le timing n'a simplement pas encore été chargé pour ce projet.
 function resumeProjetMonitoring(nom) {
   let enCours = 0, enFile = 0;
   listeIssuesResultats.forEach(it => {
@@ -3182,12 +2764,12 @@ async function lancerRechercheTitre() {
 // détails) puis recharge tout depuis GitHub. Contourne le TTL du cache détail,
 // qui peut montrer une issue « ouverte » alors que le watcher l'a fermée.
 async function rafraichirResultats() {
-  // Mémorise l'issue affichée AVANT le rechargement : chargerListeIssues()
-  // réécrit projetCourant/numeroCourant en auto-sélectionnant la première ligne
-  // (sans charger son détail, voir selectionnerLigne). On mémorise aussi si ce
-  // détail avait été explicitement chargé (double-clic/Ctrl+clic) — sélection
-  // automatique et clic simple ne comptent pas (issue #261) : sans ça, on
-  // rechargerait de force un détail que personne n'a demandé.
+  // Mémorise l'issue affichée AVANT le rechargement : la liste est réécrite par
+  // resultats.js en auto-sélectionnant la première ligne (sans charger son
+  // détail, voir selectionnerLigne). On mémorise aussi si ce détail avait été
+  // explicitement chargé (double-clic/Ctrl+clic) — sélection automatique et clic
+  // simple ne comptent pas (issue #261) : sans ça, on rechargerait de force un
+  // détail que personne n'a demandé.
   const projet = projetCourant;
   const numero = numeroCourant;
   const etaitCharge = detailCourantCharge;
@@ -3200,15 +2782,9 @@ async function rafraichirResultats() {
   const nomsActifs = projetsActifsDansFiltreResultats();
   const rechargeTout = nomsActifs.length === nomsDisponibles.length;
 
-  // 1) Cache de la liste : purge globale seulement si on recharge tout —
-  //    sinon la fusion de chargerListeIssues() préserve les projets non
-  //    refetchés depuis ce même cache, donc pas besoin (ni souhaitable) de
-  //    le vider ici.
-  if (rechargeTout) {
-    try { localStorage.removeItem(CLE_CACHE_ISSUES); } catch(e) {}
-  }
-  // 2) Clés de cache détail « bridge_cache_detail_<projet>_* » — toutes si on
-  //    recharge tout, sinon seulement celles des projets actifs du filtre.
+  // Cache détail « bridge_cache_detail_<projet>_* » — toutes les clés si on
+  // recharge tout, sinon seulement celles des projets actifs du filtre. (Le
+  // cache de LISTE a disparu avec l'issue #627 : le store est la seule vérité.)
   try {
     const aSupprimer = [];
     for (let i = 0; i < localStorage.length; i++) {
@@ -3220,16 +2796,14 @@ async function rafraichirResultats() {
     }
     aSupprimer.forEach(cle => localStorage.removeItem(cle));
   } catch(e) {}
-  // 3) Recharge la liste depuis GitHub — restreinte aux projets filtrés,
-  //    sauf si « Tous » est actif (undefined → comportement par défaut).
-  await chargerListeIssues(rechargeTout ? undefined : nomsActifs);
-  // 3bis) Recharge aussi les badges de temps restant (issue #270) : depuis la
-  // suppression du re-fetch périodique, c'est le SEUL geste qui les remet à
-  // jour — sans cet appel, le bouton actualiserait les états d'issues en
-  // laissant les badges figés, une incohérence pire que l'ancien comportement.
-  await chargerTimingIssues();
-  // 4) Ne recharge l'issue affichée que si son détail avait été explicitement
-  //    chargé — pas seulement sélectionnée (issue #261).
+  // Recharge liste ET badges de temps restant d'un même geste, via le moteur
+  // Résultats (issue #627) — restreinte aux projets filtrés, sauf si « Tous »
+  // est actif (undefined → tous les projets).
+  if (window.Bridge && window.Bridge.resultats) {
+    await window.Bridge.resultats.rafraichir(rechargeTout ? undefined : nomsActifs);
+  }
+  // Ne recharge l'issue affichée que si son détail avait été explicitement
+  // chargé — pas seulement sélectionnée (issue #261).
   if (etaitCharge && projet && numero) {
     await afficherIssue(projet, numero);
   }
@@ -5358,15 +4932,13 @@ async function rafraichirReplisRepTravail() {
 rafraichirReplisRepTravail();
 setInterval(rafraichirReplisRepTravail, 30000);
 
-// ─── Canal SSE de début/fin d'issue (issues #350, #515) ───────────────────
-// Ouvert une seule fois ici, au chargement de la page — indépendamment de
-// l'onglet actif — sur le même principe que le polling permanent du badge
-// « Résultats inbox » ci-dessus : la liste de l'onglet Résultats
-// (listeIssuesResultats, tenue à jour en mémoire même hors de cet onglet)
-// doit refléter les issues démarrées/terminées pendant qu'Alain regardait
-// autre chose, sans clic sur Rafraîchir au retour. Voir demarrerStreamFinIssue
-// et gererEvenementIssue plus haut dans ce fichier.
-demarrerStreamFinIssue();
+// ─── Canal SSE de début/fin d'issue (issues #350, #515, refonte #627) ──────
+// Le canal /stream (debut_issue / fin_issue / creation_issue) est désormais
+// ouvert et géré par static/js/resultats.js (via la brique sse), au chargement
+// de la page, en permanence — indépendamment de l'onglet actif, comme avant.
+// L'ancien demarrerStreamFinIssue() d'app.js a été retiré pour garantir une
+// UNIQUE connexion /stream (jamais deux). Le traitement des événements y est
+// CIBLÉ sur le projet+issue concernés et alimente le store, source de vérité.
 
 // ─── Cycle de vie : onglet ↔ serveur ──────────────────────────────────────
 // Deux liens : (1) heartbeat navigateur → serveur, qui laisse le serveur se

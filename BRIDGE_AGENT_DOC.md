@@ -3388,14 +3388,33 @@ déclencheur et un canal SSE dédié comme transport :
   de broadcast global, car new_issue.py est mono-utilisateur mais plusieurs
   onglets peuvent être ouverts en même temps. Ping `: ping\n\n` toutes les 30 s
   pour maintenir la connexion (proxys, navigateur).
-- **Côté navigateur** (`static/js/app.js`) : `demarrerStreamFinIssue()` ouvre
-  l'`EventSource('/stream')` à l'entrée dans l'onglet Résultats
-  (`basculerOnglet`), `arreterStreamFinIssue()` la ferme en le quittant. Sur
-  réception d'un événement `fin_issue` dont le numéro figure dans
-  `listeIssuesResultats`, appelle directement `verifierIssueApresDepassement()`
-  (§ issue #334 dans `app.js`) — même fetch de vérification, même
-  `remplacerLigneIssue()`, aucune logique dupliquée. La reconnexion après
-  coupure est native à `EventSource`, sans code supplémentaire.
+- **Côté navigateur** (refonte étape 3, issue #627) : le canal `/stream` est
+  désormais ouvert et géré par **`static/js/resultats.js`** (via la brique
+  `sse` du socle, `sse.stream.connecter()`), **une seule fois** au chargement de
+  la page — plus par `app.js` (l'ancien `demarrerStreamFinIssue()` a été retiré,
+  garantissant une **UNIQUE** connexion `/stream`). Le traitement est **toujours
+  CIBLÉ** sur le projet+issue concernés (jamais un rechargement de tous les
+  projets) et alimente le **store** (source de vérité unique — plus de cache de
+  liste en `localStorage`) :
+    - `debut_issue` : recharge les **données de temps de cette issue** (le
+      décompte TIMEOUT démarre) et l'ajoute à la liste si absente. Ne passe
+      **JAMAIS** par la vérification post-dépassement de #334 (correctif du bug
+      où le badge restait « ⏳ en file » et où l'issue était marquée à tort
+      « dépassement déjà vérifié »).
+    - `fin_issue` : met à jour la ligne (état final, arrêt du décompte) via un
+      unique fetch `/issue/<projet>/<numero>`.
+    - `creation_issue` (contrat de l'étape 9a : `projet`, `numero`, `titre`, et
+      `fichier` d'origine si créée via `issues_inbox`) : fait apparaître la ligne
+      avec son estimation et « en file », puis l'enrichit via un fetch ciblé.
+      Traité même si l'événement n'est pas encore émis.
+  Le **fetch unique post-dépassement de #334** est conservé, réservé au décompte
+  tombé à zéro. Un projet dont le chargement échoue **reste affiché** (données
+  précédentes conservées) et l'échec est signalé par un **toast**. L'activation
+  de l'onglet ne déclenche **plus aucun** rechargement réseau : un chargement
+  initial unique + les mises à jour SSE ciblées + le ↻ explicite suffisent. La
+  logique pure (application d'un événement à l'état, calcul des badges de temps)
+  est testée sous Node — `node --test static/js/tests/`. La reconnexion après
+  coupure reste native à `EventSource`.
 
 **Configuration héritée** : la clé `.conf` reste `SCRIPT_BIP` (voir §17.1
 ci-dessus et §10) — Alain doit mettre à jour manuellement le chemin dans ses

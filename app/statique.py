@@ -48,24 +48,27 @@ def url_statique(chemin_relatif: str) -> str:
 
 
 def importmap_socle() -> str:
-    """Import map JSON versionnant chaque module du socle ET chaque module de
-    fonctionnalité déjà sorti d'app.js (ex. ``js/onglets.js``, issue #626).
+    """Import map JSON versionnant chaque module ES chargé par le socle.
 
     Clé = URL résolue du module (``/static/js/socle/store.js``), valeur = même
     URL + ``?v=<mtime>``. Le navigateur remappe ainsi les imports relatifs vers
     leur version courante. Le point d'entrée index.js est inclus pour homogénéité
-    (son ``src`` porte déjà son propre ``?v=`` via url_statique). ``app.js``
-    reste exclu : script CLASSIQUE (pas un module ES), déjà versionné via son
-    propre ``<script src>`` dans scripts.html."""
+    (son ``src`` porte déjà son propre ``?v=`` via url_statique).
+
+    Deux familles de modules sont couvertes :
+      - ``js/socle/*.js`` : les briques partagées (store/api/sse/… — issue #625) ;
+      - ``js/*.js`` (hors ``app.js``) : les MODULES PAR FONCTIONNALITÉ importés par
+        index.js (ex. ``resultats.js`` — refonte étape 3, issue #627). ``app.js``
+        est exclu : c'est un script CLASSIQUE (jamais importé), déjà versionné via
+        ``url_statique`` dans scripts.html. Sans cette famille, un changement de
+        ``resultats.js`` seul ne serait pas cache-busté (son URL n'a pas de ``?v=``
+        propre, il n'est chargé que par un ``import`` relatif d'index.js)."""
     imports = {}
     try:
-        for fichier in sorted(DOSSIER_STATIC.glob("js/*.js")):
-            if fichier.name == "app.js":
-                continue
-            rel = f"js/{fichier.name}"
-            imports[url_for("static", filename=rel)] = url_statique(rel)
-        for fichier in sorted((DOSSIER_STATIC / "js" / "socle").glob("*.js")):
-            rel = f"js/socle/{fichier.name}"
+        cibles = list((DOSSIER_STATIC / "js" / "socle").glob("*.js"))
+        cibles += [f for f in (DOSSIER_STATIC / "js").glob("*.js") if f.name != "app.js"]
+        for fichier in cibles:
+            rel = fichier.relative_to(DOSSIER_STATIC).as_posix()
             imports[url_for("static", filename=rel)] = url_statique(rel)
     except OSError:
         pass

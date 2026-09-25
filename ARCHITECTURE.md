@@ -402,8 +402,9 @@ concaténation byte-identique à l'ancien `style.css`, vérifiée) :
 
 **Modules JS par fonctionnalité** : un module par zone, dans `static/js/`,
 importé par `index.js` (voir §6.7). Chaque module utilise les briques du socle.
-Déjà sorti : `onglets.js` (bascule entre onglets, issue #626, étape 2). Futurs
-modules (ex. `creation.js`, `resultats.js`, `config.js`, `ccw.js`, `journal.js`,
+Déjà sortis : `onglets.js` (bascule entre onglets, issue #626, étape 2) et
+`resultats.js` (moteur de l'onglet Résultats, issue #627, étape 3). Futurs
+modules (ex. `creation.js`, `config.js`, `ccw.js`, `journal.js`,
 `inbox.js`, `nouveau_projet.js`) suivent le même patron.
 
 **Onglet Watchers supprimé (issue #626, étape 2)** : le tableau des watchers
@@ -414,6 +415,20 @@ projet individuel — pas de sélection multiple). Ordre actuel de la barre
 d'onglets (`onglets.html`) : Résultats, Résultats inbox, Journal watcher,
 Configuration, CCW, Nouvelle issue — Résultats est l'onglet actif au
 chargement de la page (avant l'issue #626, c'était Nouvelle issue).
+
+> **Étape 3 réalisée — `static/js/resultats.js` (issue #627)** : premier module
+> par fonctionnalité. Il sort d'`app.js` le **moteur** de l'onglet Résultats —
+> chargement de la liste (initial unique + ↻, sans cache localStorage), canal
+> `/stream` (via la brique `sse`, UNIQUE connexion), traitement CIBLÉ des
+> événements `debut_issue`/`fin_issue`/`creation_issue`, fetch unique
+> post-dépassement #334, et calcul + application des badges de décompte/estimation
+> — avec le **store** (tranches `issues` + `timing`) pour source de vérité unique.
+> `app.js` conserve, pendant la transition, le rendu DOM d'une ligne et les
+> fonctionnalités hors périmètre (filtres, case à cocher, badges ✅/Diff/All,
+> détail, recherche, panneau latéral), qui lisent un MIROIR du store via quelques
+> hooks `window.__resultats*` posés dans `app.js` et appelés par `resultats.js`.
+> Tests de logique pure : `static/js/tests/resultats.test.js`. L'import map
+> (§6.6) couvre désormais aussi ces modules de `static/js/` (hors `app.js`).
 
 > **Note parallélisme** : HTML et JS se découpent proprement par zone. Le CSS
 > est plus contraint : la cascade impose de garder l'ordre source, donc quelques

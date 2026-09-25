@@ -29,18 +29,27 @@ import { sse } from './sse.js';
 import * as persistance from './persistance.js';
 import { installerPont } from './pont.js';
 import { initialiserOnglets } from '../onglets.js';
+// Module par fonctionnalité — onglet Résultats (refonte étape 3, issue #627).
+import { resultats } from '../resultats.js';
 
 // Délégation : inerte tant qu'aucune règle n'est enregistrée (étapes suivantes).
 dom.installerDelegation();
 
 // Pont de transition : unique point de contact avec l'ancien code, à retirer à
-// la dernière étape de la refonte.
-installerPont({ store, api, toasts, dom, sse, persistance });
+// la dernière étape de la refonte. `resultats` y est publié pour qu'app.js pilote
+// l'onglet Résultats (activation, ↻, badges) pendant la transition (issue #627).
+installerPont({ store, api, toasts, dom, sse, persistance, resultats });
+
+// Onglet Résultats (issue #627) : ouvre l'UNIQUE connexion /stream et s'abonne
+// aux transitions d'issue. Le chargement initial de la liste, lui, reste
+// paresseux (première activation de l'onglet) — voir resultats.onActiverOnglet.
+resultats.initialiser();
 
 // Mécanique des onglets (issue #626, étape 2) : premier module de
 // fonctionnalité sorti d'app.js, voir ARCHITECTURE.md §6.7.
 initialiserOnglets();
 
 // Trace discrète en console — aucun effet visible dans l'interface.
-console.debug('[socle] briques chargées et inertes (issue #625, étape 1).');
+console.debug('[socle] briques chargées (issue #625, étape 1).');
 console.debug('[socle] onglets initialisés (issue #626, étape 2).');
+console.debug('[socle] Résultats piloté par le store (issue #627).');

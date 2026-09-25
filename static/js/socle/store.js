@@ -96,6 +96,7 @@ export function creerStore(etatInitial = {}) {
 
 const socle = creerStore({
   issues: {},            // { "projet#numero": {…issueGitHub, projet} }
+  timing: {},            // { "projet#numero": {timeout, max_essais, backoff, debut, sans_limite, estimation} } — décompte TIMEOUT + estimation (issue #627)
   selection: { projet: null, numero: null },
   filtres: { projetsActifs: [], ouvriers: false },
   projets: [],           // [{nom, depot, couleur, …}]
