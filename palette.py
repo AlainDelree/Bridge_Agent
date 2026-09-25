@@ -1,19 +1,18 @@
 #!/usr/bin/env python3
-"""palette.py — Science des couleurs des projets Bridge_Agent.
+"""palette.py — Science des couleurs des projets Bridge_Agent (issue #620).
 
-Extrait de nouveau_projet.py (issue #620, diagnostic #579 point 2) : ce bloc
-(génération algorithmique de palette, garanties WCAG/Lab, couleur des
-projets) est autonome, sans dépendance vers le reste de nouveau_projet.py —
-d'où son extraction dans un module dédié. Bénéfice secondaire : permet à
-regenerer_tableaux_projets.py d'importer couleur_affichee() en tête de
-fichier plutôt que via un import différé (l'import différé existait
-uniquement pour éviter un cycle avec nouveau_projet.py, qui n'a plus lieu
-d'être une fois la fonction sortie de ce module).
+Extrait de nouveau_projet.py (l.53-462), qui était devenu un fourre-tout
+mélangeant plusieurs responsabilités (diagnostic #579, point 2). Ce module
+est autonome — aucune dépendance vers le reste du dépôt — et regroupe tout
+ce qui touche à la GÉNÉRATION et à l'AFFICHAGE des couleurs de projet :
+algorithmes WCAG/Lab, génération de palette (generer_palette),
+couleur_affichee, couleur_hash_projet.
 
-nouveau_projet.py garde ses propres fonctions couleurs_utilisees() /
-couleurs_disponibles() (dépendantes de configs/*.conf) et importe
-COULEURS_PROJETS_EXISTANTS / PALETTE_COULEURS depuis ce module.
-"""
+nouveau_projet.py reste l'appelant principal (couleurs_utilisees/
+couleurs_disponibles y restent, car elles combinent ces couleurs avec la
+lecture de configs/*.conf) ; regenerer_tableaux_projets.py importe
+couleur_affichee directement d'ici, sans plus passer par un import différé
+de nouveau_projet (qui créait un cycle, voir issue #571/#608)."""
 
 import colorsys
 import math

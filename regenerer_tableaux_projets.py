@@ -65,11 +65,11 @@ def lire_projets(dossier_configs: Path = DOSSIER_CONFIGS) -> list[dict]:
     depot/rep_travail/perimetre/couleur), triés par nom. Fichiers sans champ
     NOM ignorés (ex. ccw_ssh.conf).
 
-    couleur_affichee() vient de palette.py (issue #620) plutôt que de
-    nouveau_projet.py : l'ancien import local différé n'existait que pour
-    éviter un cycle avec nouveau_projet.py (qui importe lui-même ce module,
-    issue #571) — palette.py n'a aucune dépendance vers nouveau_projet.py, un
-    import en tête de fichier est donc sans risque de cycle."""
+    couleur_affichee vient de palette.py (issue #620) — avant l'extraction,
+    elle vivait dans nouveau_projet.py, qui importe déjà ce module (issue
+    #571) : un `from nouveau_projet import couleur_affichee` en tête de CE
+    fichier créait un cycle, d'où un import local différé (issue #608).
+    palette.py n'a aucune dépendance vers ce module, le cycle n'existe plus."""
     projets = []
     for chemin in sorted(dossier_configs.glob("*.conf")):
         brut = lire_conf(chemin)

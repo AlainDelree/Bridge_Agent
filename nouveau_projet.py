@@ -26,9 +26,6 @@ import unicodedata
 from pathlib import Path
 
 import regenerer_tableaux_projets
-# Science des couleurs (WCAG/Lab, génération de palette) extraite dans
-# palette.py (issue #620) : couleurs_utilisees()/couleurs_disponibles()
-# plus bas n'ont besoin que de ces deux constantes.
 from palette import COULEURS_PROJETS_EXISTANTS, PALETTE_COULEURS
 
 # Racine du dépôt Bridge_Agent : ce script vit à la racine, à côté de watcher.py
@@ -51,6 +48,14 @@ LABELS = [
     ("notif_gsm",   "fbca04", "Ajoute une notification push (ntfy)"),
     ("notif_tous",  "fbca04", "notify-send + ntfy"),
 ]
+
+# ─── Système de couleur des projets ──────────────────────────────────────────
+# Extrait vers palette.py (issue #620) : algorithmes WCAG/Lab, génération de
+# palette, couleur_affichee, couleur_hash_projet, et les constantes/
+# dictionnaires associés (COULEURS_PROJETS_EXISTANTS, PALETTE_COULEURS, etc.)
+# — voir palette.py pour l'historique des issues #535/#539/#540. Ce module ne
+# garde que ce qui combine ces couleurs avec configs/*.conf (couleurs_utilisees/
+# couleurs_disponibles ci-dessous).
 
 # Topic ntfy partagé par tous les projets existants (voir configs/*.conf).
 # Proposé par défaut ; l'utilisateur peut le changer pour un topic dédié.
