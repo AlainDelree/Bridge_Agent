@@ -17,8 +17,11 @@
 - [ ] La page s'ouvre sur l'onglet **Résultats** (issue #626, étape 2) ; ordre
       des onglets : Résultats, Résultats inbox, Journal watcher, Configuration,
       CCW, Nouvelle issue.
-- [ ] **Console du navigateur** (F12) : aucune erreur rouge au chargement. On doit
-      voir la trace discrète `[socle] briques chargées et inertes`.
+- [ ] **Console du navigateur** (F12) : aucune erreur rouge au chargement, et
+      **aucun** avertissement `[pont] fonction ancienne introuvable`. On doit
+      voir les traces discrètes `[socle] briques chargées (issue #625, étape 1).`
+      puis onglets/Résultats/panneau/#632 (le socle n'est plus inerte depuis
+      l'issue #626 : `[socle] briques chargées et inertes` est obsolète).
 - [ ] Recharger avec le cache vidé (Ctrl+Maj+R) une fois, puis normalement :
       la page se comporte identiquement.
 - [ ] Onglet Réseau (F12) : les CSS et JS sont chargés avec un suffixe `?v=…`,
@@ -101,9 +104,9 @@
       la première fois (pas de fermeture automatique sur écran étroit : c'est la
       mise en page, pas l'état, qui s'adapte).
 - [ ] **État conservé d'un onglet à l'autre** : fermer le panneau, changer
-      d'onglet (ex. Watchers), revenir sur Résultats → le panneau reste fermé
-      (persistance localStorage). Idem ouvert → ouvert. Vérifier aussi après un
-      rechargement complet de la page (Ctrl+Maj+R).
+      d'onglet (ex. Configuration), revenir sur Résultats → le panneau reste
+      fermé (persistance localStorage). Idem ouvert → ouvert. Vérifier aussi
+      après un rechargement complet de la page (Ctrl+Maj+R).
 - [ ] Panneau ouvert, écran large : la colonne panneau est **entièrement
       distincte** de la liste (jamais superposée), quel que soit le contenu de
       la liste.
@@ -122,7 +125,7 @@
       cette zone (issue #628, retirées du détail qui faisait double emploi).
 - [ ] Onglet Réseau (F12) : une seule requête `/watchers` toutes les ~30s au
       total (mutualisée entre le panneau et le bandeau orange « écriture
-      directe dans REP_TRAVAIL », visible via l'onglet Watchers en cas de
+      directe dans REP_TRAVAIL », affiché sur tous les onglets en cas de
       repli — issue #628), pas deux pollings indépendants.
 
 ## Onglet « Résultats inbox »

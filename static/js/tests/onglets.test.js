@@ -1,44 +1,37 @@
-// Tests de la logique pure de onglets.js (issue #626, étape 2).
-// activerOnglet()/initialiserOnglets() touchent le DOM (querySelectorAll,
-// classList) et sont vérifiés manuellement dans le navigateur (voir
-// VERIFICATIONS_MANUELLES.md) : Node n'a pas de document. On ne teste ici que
-// initialisationsPour(), pure et indépendante du DOM.
+// Tests de la logique pure de onglets.js (issue #626, étape 2 ; mis à jour
+// issue #632). activerOnglet()/initialiserOnglets() touchent le DOM
+// (querySelectorAll, classList) et sont vérifiés manuellement dans le
+// navigateur (voir VERIFICATIONS_MANUELLES.md) : Node n'a pas de document. On
+// ne teste ici que initialisationsPour(), pure et indépendante du DOM.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { initialisationsPour } from '../onglets.js';
 
-test('resultats : initialisation identique à celle du clic actuel', () => {
-  assert.deepEqual(initialisationsPour('resultats'),
-    ['chargerListeIssues', 'demarrerTempsRestant', 'demarrerPanneauLateral']);
+test('resultats : plus aucun appel pont — le module réagit lui-même au store (issue #632)', () => {
+  assert.deepEqual(initialisationsPour('resultats'), []);
 });
 
-test('un onglet non-resultats arrête le temps restant et le panneau latéral', () => {
-  assert.deepEqual(initialisationsPour('creation'),
-    ['arreterTempsRestant', 'arreterPanneauLateral']);
+test('un onglet non listé (ex. creation) ne déclenche aucun appel pont', () => {
+  assert.deepEqual(initialisationsPour('creation'), []);
 });
 
-test('journal : arrêt resultats + démarrage du journal', () => {
-  assert.deepEqual(initialisationsPour('journal'),
-    ['arreterTempsRestant', 'arreterPanneauLateral', 'demarrerJournal']);
+test('journal : démarrage du journal', () => {
+  assert.deepEqual(initialisationsPour('journal'), ['demarrerJournal']);
 });
 
-test('config : arrêt resultats + chargement de la config', () => {
-  assert.deepEqual(initialisationsPour('config'),
-    ['arreterTempsRestant', 'arreterPanneauLateral', 'chargerConfig']);
+test('config : chargement de la config', () => {
+  assert.deepEqual(initialisationsPour('config'), ['chargerConfig']);
 });
 
-test('ccw : arrêt resultats + ouverture de l\'onglet CCW', () => {
-  assert.deepEqual(initialisationsPour('ccw'),
-    ['arreterTempsRestant', 'arreterPanneauLateral', 'ccwOuvrirOnglet']);
+test('ccw : ouverture de l\'onglet CCW', () => {
+  assert.deepEqual(initialisationsPour('ccw'), ['ccwOuvrirOnglet']);
 });
 
-test('inbox : arrêt resultats + rafraîchissement de l\'inbox', () => {
-  assert.deepEqual(initialisationsPour('inbox'),
-    ['arreterTempsRestant', 'arreterPanneauLateral', 'rafraichirInbox']);
+test('inbox : rafraîchissement de l\'inbox', () => {
+  assert.deepEqual(initialisationsPour('inbox'), ['rafraichirInbox']);
 });
 
 test('aucune trace de l\'onglet Watchers, supprimé (issue #626)', () => {
-  assert.deepEqual(initialisationsPour('watchers'),
-    ['arreterTempsRestant', 'arreterPanneauLateral']);
+  assert.deepEqual(initialisationsPour('watchers'), []);
 });

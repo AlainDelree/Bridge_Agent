@@ -8,6 +8,13 @@
 //   pendant la transition — les initialisations existantes de chaque onglet
 //   dans l'ancien app.js (voir initialisationsPour ci-dessous).
 //
+// RÉSULTATS / PANNEAU LATÉRAL (issue #632) : ces deux zones ne passent PLUS
+// par le pont ici — elles s'abonnent elles-mêmes à store.ongletActif (voir
+// resultats.js#initialiser et panneau_lateral.js#initPanneauLateral). Avant
+// #632, ce fichier appelait via le pont des fonctions d'app.js déjà retirées
+// par #626/#627 (chargerListeIssues/demarrerTempsRestant/demarrerPanneauLateral
+// notamment) : la liste ne se chargeait donc jamais au premier affichage.
+//
 // ASSOCIATION ONGLET <-> PANNEAU
 //   Par IDENTIFIANT (attribut data-onglet porté par chaque .onglet, comparé à
 //   l'id "panneau-<nom>" de chaque .panneau), PAS par position dans le DOM :
@@ -15,12 +22,12 @@
 //   l'ordre des éléments), réordonner les onglets ne casse plus l'association.
 //
 // ONGLET PAR DÉFAUT
-//   Résultats est l'onglet actif au chargement de la page (issue #626) :
-//   initialiserOnglets() active 'resultats' dès son appel, avec exactement
-//   l'initialisation qu'il reçoit aujourd'hui quand on clique dessus.
-//
-// NE PAS MODIFIER ICI ce que fait l'activation de Résultats (rechargement de
-// la liste, badges, panneau latéral) : périmètre de l'étape 3 de la refonte.
+//   Résultats est l'onglet actif au chargement de la page (issue #626).
+//   L'activation elle-même est séparée de l'installation de la délégation de
+//   clic (voir activerOngletParDefaut ci-dessous) : index.js ne l'appelle
+//   qu'une fois TOUS les modules de fonctionnalité initialisés (leurs
+//   abonnements à store.ongletActif doivent déjà exister), quel que soit
+//   l'ordre des autres appels d'initialisation.
 
 import { store } from './socle/store.js';
 import { appelerAncien } from './socle/pont.js';
@@ -30,16 +37,12 @@ const ONGLET_PAR_DEFAUT = 'resultats';
 
 /**
  * Liste (pure, testable) des noms de fonctions de l'ancien app.js à appeler
- * — via le pont — pour initialiser l'onglet `nom`. Reprend exactement la
- * logique de l'ancien basculerOnglet().
+ * — via le pont — pour initialiser l'onglet `nom`. Résultats n'y figure plus
+ * (issue #632) : le module Résultats et le panneau latéral réagissent
+ * directement à store.ongletActif, sans passer par ici ni par le pont.
  */
 export function initialisationsPour(nom) {
   const appels = [];
-  if (nom === 'resultats') {
-    appels.push('chargerListeIssues', 'demarrerTempsRestant', 'demarrerPanneauLateral');
-  } else {
-    appels.push('arreterTempsRestant', 'arreterPanneauLateral');
-  }
   if (nom === 'journal') appels.push('demarrerJournal');
   if (nom === 'config') appels.push('chargerConfig');
   if (nom === 'ccw') appels.push('ccwOuvrirOnglet');
@@ -59,9 +62,16 @@ export function activerOnglet(nom) {
   for (const fonction of initialisationsPour(nom)) appelerAncien(fonction);
 }
 
-/** Branche la délégation de clic sur la barre d'onglets et active l'onglet par
- *  défaut — appelé une seule fois par index.js au chargement de la page. */
+/** Branche la délégation de clic sur la barre d'onglets — appelé une seule
+ *  fois par index.js au chargement de la page. */
 export function initialiserOnglets() {
   surAction('.onglet', 'click', (evenement, element) => activerOnglet(element.dataset.onglet));
+}
+
+/** Active l'onglet par défaut (Résultats). À appeler par index.js APRÈS avoir
+ *  initialisé tous les modules de fonctionnalité (resultats.js,
+ *  panneau_lateral.js…) pour que leurs abonnements à store.ongletActif soient
+ *  déjà en place quand cette activation initiale les déclenche (issue #632). */
+export function activerOngletParDefaut() {
   activerOnglet(ONGLET_PAR_DEFAUT);
 }

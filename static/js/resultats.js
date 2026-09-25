@@ -381,11 +381,9 @@ function traiterNotif(notif) {
   if (plan.action === 'debut')       surDebutIssue(notif.projet, notif.numero);
   else if (plan.action === 'fin')    surFinIssue(notif.projet, notif.numero);
   else if (plan.action === 'creer')  surCreationIssue(notif.projet, notif.numero, notif.titre);
-  else return;
-  // Panneau latéral (issue #375, hors périmètre #627) : rafraîchi à chaque
-  // transition comme avant, via l'ancien code — état déjà miroité par les
-  // handlers ci-dessus.
-  appelerAncien('rafraichirPanneauLateralResultats');
+  // Le panneau latéral (issue #375) s'abonne lui-même à 'derniereNotifIssue'
+  // (voir panneau_lateral.js) — plus de communication de module à module par
+  // le pont ici (issue #632).
 }
 
 // debut_issue : recharge le timing CIBLÉ de cette issue (le décompte démarre) et
@@ -490,12 +488,25 @@ async function rafraichir(nomsAFetcher) {
 function initialiser() {
   // Abonnement aux notifications /stream (déposées dans le store par sse.js).
   store.abonnerCle('derniereNotifIssue', (notif) => traiterNotif(notif));
+  // Activation/désactivation de l'onglet Résultats : abonnement direct au
+  // store (issue #632), plus d'appel via le pont depuis onglets.js — cet
+  // abonnement doit être posé AVANT que index.js n'active l'onglet par défaut
+  // (voir onglets.js#activerOngletParDefaut) pour recevoir la notification
+  // initiale, store.set() notifiant toujours ses abonnés même à valeur
+  // inchangée.
+  store.abonnerCle('ongletActif', (nom) => {
+    if (nom === 'resultats') onActiverOnglet(); else onDesactiverOnglet();
+  });
   // UNIQUE connexion /stream (permanente, comme l'ancien code depuis #515).
   sse.stream.connecter();
 }
 
 // Objet publié sous window.Bridge.resultats (via installerPont dans index.js) :
-// c'est l'API consommée par l'ancien app.js pendant la transition.
+// rafraichir/chargerListe/majBadges sont l'API consommée par l'ancien app.js
+// pendant la transition ; onActiverOnglet/onDesactiverOnglet ne sont plus
+// appelées que par l'abonnement à store.ongletActif ci-dessus (issue #632),
+// exposées ici surtout pour rester testables directement (voir
+// static/js/tests/resultats.test.js).
 export const resultats = {
   initialiser,
   onActiverOnglet,

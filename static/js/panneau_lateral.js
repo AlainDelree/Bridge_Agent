@@ -18,8 +18,11 @@
 // (ccwChargerProjets, ccwRedemarrerProjet, ccwNettoyerVerrous). Ce module les
 // appelle via le pont (appelerAncien) — voir socle/pont.js — sans y référer en
 // dur, et expose en retour les points d'entrée qu'app.js appelle encore
-// (demarrerPanneauLateral, arreterPanneauLateral, rafraichirPanneauLateralResultats,
-// majBoutonTesterSonActif, sidebarRelancerWatcherCCL) comme globales `window.*`.
+// (rafraichirPanneauLateralResultats, majBoutonTesterSonActif,
+// sidebarRelancerWatcherCCL) comme globales `window.*`. démarrerPanneauLateral/
+// arreterPanneauLateral, eux, ne sont plus exposés : depuis #632, ce module
+// s'abonne lui-même à store.ongletActif (voir initPanneauLateral) — personne
+// d'autre n'a jamais besoin de les appeler par leur nom.
 //
 // MONITORING VM SUPPRIMÉ (issue #628) : l'ancien appel à /ccw/vm-statut (route
 // disparue côté serveur depuis #447, VirtualBox retiré) et le bouton
@@ -60,7 +63,7 @@ function basculerPanneauLateral() {
   appliquerEtatPanneau(ouvert);
 }
 
-// ─── Cycle de vie (appelé par app.js à chaque entrée/sortie de l'onglet) ───
+// ─── Cycle de vie (piloté par store.ongletActif, voir initPanneauLateral) ──
 function demarrerPanneauLateral() {
   appliquerEtatPanneau(panneauEstOuvert());
   rafraichirPanneauLateralResultats();
@@ -402,8 +405,6 @@ async function sidebarRelancerWatcherCCL(nom, btn) {
   try {
     await api.post('/lancer-watcher', { projet: nom, relancer: true });
   } catch (e) { /* déjà signalé par api.post (toast) */ }
-  const panneauWatchers = dom.$('#panneau-watchers');
-  if (panneauWatchers && panneauWatchers.classList.contains('actif')) await appelerAncien('chargerWatchers');
   if (btn) { btn.disabled = false; if (label !== null) btn.textContent = label; }
   await rafraichirPanneauLateralResultats();
 }
@@ -424,8 +425,6 @@ async function sidebarRelancerTousEteints(btn) {
   } catch (e) {
     toasts.erreur('Erreur réseau : ' + e.message);
   }
-  const panneauWatchers = dom.$('#panneau-watchers');
-  if (panneauWatchers && panneauWatchers.classList.contains('actif')) await appelerAncien('chargerWatchers');
   if (btn) { btn.disabled = false; btn.textContent = '▶ Lancer les éteints'; }
   await rafraichirPanneauLateralResultats();
 }
@@ -442,8 +441,6 @@ async function sidebarRelancerTousCCL(btn) {
   } catch (e) {
     toasts.erreur('Erreur réseau : ' + e.message);
   }
-  const panneauWatchers = dom.$('#panneau-watchers');
-  if (panneauWatchers && panneauWatchers.classList.contains('actif')) await appelerAncien('chargerWatchers');
   if (btn) { btn.disabled = false; btn.textContent = '↺ Relancer tous les CCL'; }
   await rafraichirPanneauLateralResultats();
 }
@@ -496,11 +493,23 @@ export function initPanneauLateral() {
   rafraichirWatchersPartages();
   setInterval(rafraichirWatchersPartages, 30000);
 
+  // Démarrage/arrêt du panneau : abonnement direct au store (issue #632), à
+  // la place de l'ancien appel via le pont depuis onglets.js (qui visait des
+  // globales demarrerPanneauLateral/arreterPanneauLateral jamais publiées par
+  // app.js — cf. rapport de clôture). Cet abonnement doit être posé AVANT que
+  // index.js n'active l'onglet par défaut (voir onglets.js#activerOngletParDefaut).
+  store.abonnerCle('ongletActif', (nom) => {
+    if (nom === 'resultats') demarrerPanneauLateral(); else arreterPanneauLateral();
+  });
+  // Rafraîchissement à chaque transition d'issue /stream (issue #375) :
+  // abonnement direct au store, remplace l'appel `appelerAncien` fait
+  // auparavant par resultats.js (communication de module à module par le pont
+  // — issue #632).
+  store.abonnerCle('derniereNotifIssue', () => rafraichirPanneauLateralResultats());
+
   // Points d'entrée encore appelés par app.js (classique, ne peut pas
   // importer ce module) — exposés en globales, voir socle/pont.js §6.4 pour
   // le principe (ici dans le sens inverse : socle exposé à l'ancien).
-  window.demarrerPanneauLateral = demarrerPanneauLateral;
-  window.arreterPanneauLateral = arreterPanneauLateral;
   window.rafraichirPanneauLateralResultats = rafraichirPanneauLateralResultats;
   window.majBoutonTesterSonActif = majBoutonTesterSonActif;
   // Appelée par interrompreEtRelancer() (static/js/app.js) côté CCL.
