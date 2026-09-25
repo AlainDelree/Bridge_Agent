@@ -9,6 +9,140 @@ milliers de caractères sur une seule ligne logique, coûteux à relire et
 
 Convention d'ajout : voir §10 de `BRIDGE_AGENT_DOC.md`.
 
+## 25 septembre 2026 — issue #631
+
+Refonte de l'interface web, **étape 9a/n : événements `issues_inbox` et
+création d'issue (backend seul)**. Prépare la fusion de l'onglet « Résultats
+inbox » dans Résultats (étape 9b, décision d'Alain) : un fichier déposé dans
+`issues_inbox/` doit y apparaître aussitôt comme une ligne « fichier reçu »,
+qui se transforme au fil du traitement en ligne d'issue (succès) ou ligne
+rouge avec motif (bloc refusé). **Aucun changement visible tant que l'étape
+9b n'est pas faite** — le code actuel de l'onglet Résultats ignore les
+événements qu'il ne connaît pas.
+
+### 1. Trois nouveaux événements SSE sur `/stream`
+
+Même famille que `/notifier-fin-issue`/`/notifier-debut-issue` (`app/fin_issue.py`,
+issue #350/#515) : POST best-effort, timeout court, échec silencieux si
+`new_issue.py` n'est pas lancé, pas de `login_requis` (appelées par un script
+local).
+
+- **`fichier_recu`** (`POST /notifier-fichier-recu`) — émis par
+  `scripts/watcher_issues_inbox.py::traiter_fichier()` dès la prise en charge
+  d'un fichier, avant tout parsing. `{"fichier": <nom>}`.
+- **`creation_issue`** (`POST /notifier-creation-issue`) — émis après chaque
+  création RÉUSSIE d'une issue (jamais pour un bloc `RELANCE`, qui n'en crée
+  aucune) : par `watcher_issues_inbox.py` (POST, process séparé) et par
+  `app.issues.envoyer()` (formulaire web, appel direct à la nouvelle
+  `app.fin_issue.emettre_creation_issue()`, même process → pas de HTTP).
+  `{"projet", "numero", "titre", "fichier"}` — `fichier` absent (`null`) pour
+  une création via le formulaire.
+- **`fichier_refuse`** (`POST /notifier-fichier-refuse`) — émis pour chaque
+  bloc refusé (fichier mono-issue entier, ou un bloc d'un lot multi-issues,
+  §3.13) : un événement par bloc, dans l'ordre de traitement, jamais groupé.
+  `{"fichier", "titre", "motif"}`.
+
+`app/fin_issue.py` factorise la diffusion SSE elle-même (`_diffuser()`),
+désormais partagée entre les événements historiques (`fin_issue`/`debut_issue`)
+et les trois nouveaux.
+
+### 2. Motif de refus exposé dans `/issues-inbox/etat`
+
+`_deplacer_vers_rejected()` (`scripts/watcher_issues_inbox.py`) écrit
+désormais, en plus du renommage habituel du fichier, un sidecar
+`issues_inbox/rejected/.motifs/<nom-du-fichier-rejeté>.motif` contenant le
+motif de refus **en texte intégral** (le nom du fichier lui-même ne porte
+qu'un slug tronqué à 40 caractères, sans accents). `GET /issues-inbox/etat`
+(`app/issues_inbox.py`) lit ce sidecar et ajoute un champ `motif` à chaque
+entrée de `rejetes` — simple lecture disque, donc consultable après coup, y
+compris après un redémarrage de `new_issue.py` ; `None` pour un rejet
+antérieur à cette fonctionnalité (rétrocompatibilité). Sous-dossier `.motifs/`
+dédié (plutôt qu'un `<nom>.motif` posé directement dans `rejected/`) : un tel
+nom aurait aussi matché tout code énumérant `rejected/` par motif de nom (ex.
+un glob `*REJETE*`, comme dans `tests/test_champ_redacteur_599.py` — bug
+attrapé en cours de développement et corrigé par l'isolation dans ce
+sous-dossier).
+
+### 3. Tests et documentation
+
+`tests/test_evenements_issues_inbox_631.py` (15 scénarios pytest, collectés
+par `pytest tests/`) : construction et validation des trois routes POST,
+appel direct de `emettre_creation_issue()`, ORDRE des événements best-effort
+pour un fichier mono-bloc (succès/rejet) et pour un lot de 4 blocs (succès,
+rejet, RELANCE-sans-événement, succès), absence de doublon quand tous les
+blocs d'un lot échouent, exposition/rétrocompatibilité du motif dans
+`etat_inbox()`. Aucun appel réseau ni `gh` réel (`_poster_best_effort` et
+`_traiter_bloc` substitués). Suite complète (29 tests pytest + 22 scripts
+autonomes) vérifiée verte après ce changement.
+
+Documentation : nouveau §3.15 (contenu et ordre des trois événements) et
+mise à jour de §3.2 (sidecar `.motifs/`) et §17.3 (mention des trois
+nouvelles routes) dans `BRIDGE_AGENT_DOC.md`.
+
+### Fichiers touchés
+
+`app/fin_issue.py`, `app/__init__.py`, `app/issues.py`, `app/issues_inbox.py`,
+`scripts/watcher_issues_inbox.py`, `tests/test_evenements_issues_inbox_631.py`
+(nouveau), `BRIDGE_AGENT_DOC.md`.
+
+## 25 septembre 2026 — issue #630
+
+Refonte de l'interface web, **étape 7a/n : son plat/cloche par issue
+(backend seul)**. Décision d'Alain : l'interrupteur GLOBAL plat/cloche
+(`scripts/son_actif.txt`, #498/#527) reste la règle par défaut ; en plus,
+n'importe quelle issue peut désormais être basculée en plat ou en cloche pour
+elle-même. Le réglage PAR PROJET envisagé un temps (tonalité `TONALITE_BIP`,
+script `SCRIPT_BIP`) est abandonné au profit de ce choix plus fin, par issue.
+Interface prévue aux étapes 7b/8 — cette étape-ci ne touche à rien de visible.
+
+### Stockage et routes
+
+- `etat_son_issue.py` (racine du dépôt, sans dépendance Flask, sur le modèle
+  de `notifications.py`/`etat_rate_limit.py`) : `logs/son_issues.json`
+  (`{projet: {numéro: "plat"|"cloche"}}`), écriture atomique + verrou
+  anti-collision — même mécanisme que `etat_rate_limit.json` (#615).
+  `son_choisi`/`definir_son`/`nettoyer_projet`/`nettoyer_entrees_perimees`.
+- `app/son_issue.py` : `GET`/`POST /son-issue/<nom_projet>/<numero>`, même
+  famille que les routes `/son-actif` existantes (`app/son.py`).
+
+### Nettoyage
+
+Même règle que les cases cochées côté navigateur : au démarrage de
+`new_issue.py`, purge PAR PROJET des entrées dont le numéro est ≤ (plus grand
+numéro connu de ce projet dans `son_issues.json` − 50) ; purge TOTALE d'un
+projet à sa suppression (`supprimer_projet.py`, best-effort, non bloquant).
+
+### Résolution au moment du bip
+
+`scripts/traitement_fin.py::son_a_jouer(projet, numéro)` : le choix de
+l'issue s'il existe, sinon l'interrupteur global (`son_actif()`) — valable
+pour les issues CCL (`watcher.py::bip()`/`notifier()`) comme pour les issues
+CCW (`app/notifications_poller.py::_notifier_transition()`), qui transmettent
+toutes deux `--projet`/`--numero` au script.
+
+### TONALITE_BIP / SCRIPT_BIP retirés du chemin réel du bip
+
+`watcher.py` et `app/notifications_poller.py` appellent désormais toujours
+`scripts/traitement_fin.py` (script partagé) avec une tonalité neutre (`0`),
+quel que soit le `.conf` du projet. `scripts/bip_Cloche.py` (legacy,
+pitch-shift via `sox`) est **supprimé**. Le code tolère la présence
+résiduelle de `SCRIPT_BIP`/`TONALITE_BIP` dans les `configs/*.conf`
+existants (jamais modifiés directement par CCL) : ces deux clés restent
+lues/exposées par l'onglet Configuration (`/config`, `/tester-bip/<projet>`,
+`app/projets.py`) et écrites par `nouveau_projet.py` pour les nouveaux
+projets — **volontairement non touchés** par cette étape, retrait prévu à
+l'étape 8 avec l'onglet lui-même.
+
+### Tests
+
+`tests/test_son_issue_630.py` (13 scénarios pytest) : résolution du son
+(choix par issue, repli sur l'interrupteur global, absence de projet/numéro),
+stockage (écriture/lecture isolées par projet+numéro, valeur invalide
+refusée, remise à zéro), nettoyage (purge par projet, conservation des 50
+dernières issues connues par projet), routes Flask.
+
+Mise à jour de `BRIDGE_AGENT_DOC.md` §17 (nouveau modèle de son).
+
 ## 25 septembre 2026 — issue #629
 
 Refonte de l'interface web, étape 5a (§6 d'`ARCHITECTURE.md`) : bascule côté serveur de l'état des cases « traité/lu » de l'onglet Résultats, jusqu'ici 100% localStorage (issue #154) — état perdu après un plantage du PC, différent selon l'adresse d'accès (localhost/LAN), clés accumulées sans fin. Backend seul cette fois, aucun front ne l'utilise encore. Nouveau module `etat_cases_cochees.py` (racine) : fichier JSON `logs/etat_cases_cochees.json`, écriture atomique + verrou anti-collision, même modèle que `etat_rate_limit.py` (issue #615). Routes Flask `app/cases_cochees.py`, protégées par `login_requis` : `GET /cases-cochees/<projet>` (lire), `POST`/`DELETE /cases-cochees/<projet>/<numero>` (cocher/décocher), `POST /cases-cochees/importer` (import en masse idempotent, servira à la reprise du localStorage existant à l'étape 5b). Nettoyage sans aucun appel GitHub : au démarrage de `new_issue.py`, pour chaque projet, retire les coches dont le numéro est ≤ (plus grand numéro connu du projet − 50, le plafond de `app/issues.py::LIMITE_ISSUES_MAX`) ; à la suppression d'un projet (flux #587, `supprimer_projet.py`), retire toutes ses coches (nouvelle étape 4, best-effort). Tests : `tests/test_cases_cochees_629.py` (17 scénarios) + mise à jour de `tests/test_supprimer_projet_587.py` pour la nouvelle étape. Documenté dans `BRIDGE_AGENT_DOC.md` (nouvelle section après « Suppression de projet »).
