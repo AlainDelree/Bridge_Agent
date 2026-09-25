@@ -40,7 +40,8 @@ Bridge_Agent/
 │   │                       du body markdown + labels, routes apercu/envoyer/
 │   │                       issues_liste/issue_detail/issues_en_attente/annuler.
 │   ├── watchers.py         Cycle de vie des processus watcher (démarrage, arrêt,
-│   │                       détection PID) + routes de l'onglet « Watchers ».
+│   │                       détection PID) + routes utilisées par le panneau
+│   │                       latéral Infrastructure et l'onglet Configuration.
 │   ├── journal.py          Route SSE : streame le fichier de log d'un watcher en
 │   │                       temps réel (tail + suivi + détection de rotation).
 │   ├── cycle_vie.py        Cycle de vie serveur ↔ onglet : heartbeat, SSE /events
@@ -381,7 +382,6 @@ variable/DOM ancien), retiré avec le reste.
 | Onglet Résultats (+ inclut le panneau latéral) | `onglet_resultats.html` |
 | Panneau latéral Infrastructure | `panneau_lateral.html` |
 | Onglet Résultats inbox | `onglet_inbox.html` |
-| Onglet Watchers | `onglet_watchers.html` |
 | Onglet Configuration | `onglet_config.html` |
 | Onglet Journal | `onglet_journal.html` |
 | Onglet CCW | `onglet_ccw.html` |
@@ -400,10 +400,20 @@ concaténation byte-identique à l'ancien `style.css`, vérifiée) :
 | 5 | `recherche-interruption.css` | recherche par titre + interruption (zone Résultats) — **DOIT rester après `modales.css`** (`.modal-recherche-titre` surcharge `.modal-carte` à specificité égale) |
 | 6 | `inbox.css` | onglet Résultats inbox |
 
-**Futurs modules JS par fonctionnalité** : un module par zone, à créer dans
-`static/js/` (ex. `static/js/creation.js`, `resultats.js`, `watchers.js`,
-`config.js`, `ccw.js`, `journal.js`, `inbox.js`, `nouveau_projet.js`), importé
-par `index.js`. Chaque module utilise les briques du socle.
+**Modules JS par fonctionnalité** : un module par zone, dans `static/js/`,
+importé par `index.js` (voir §6.7). Chaque module utilise les briques du socle.
+Déjà sorti : `onglets.js` (bascule entre onglets, issue #626, étape 2). Futurs
+modules (ex. `creation.js`, `resultats.js`, `config.js`, `ccw.js`, `journal.js`,
+`inbox.js`, `nouveau_projet.js`) suivent le même patron.
+
+**Onglet Watchers supprimé (issue #626, étape 2)** : le tableau des watchers
++ cases à cocher + actions Lancer/Relancer/Éteindre par lot n'existent plus.
+La surveillance des watchers (un par ligne, statut actif/inactif) reste dans
+le **panneau latéral Infrastructure** (`panneau_lateral.html`, actions par
+projet individuel — pas de sélection multiple). Ordre actuel de la barre
+d'onglets (`onglets.html`) : Résultats, Résultats inbox, Journal watcher,
+Configuration, CCW, Nouvelle issue — Résultats est l'onglet actif au
+chargement de la page (avant l'issue #626, c'était Nouvelle issue).
 
 > **Note parallélisme** : HTML et JS se découpent proprement par zone. Le CSS
 > est plus contraint : la cascade impose de garder l'ordre source, donc quelques

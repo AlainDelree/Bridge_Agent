@@ -6,12 +6,17 @@
 > de poursuivre.
 >
 > Rappel : les tests automatiques de logique pure sont séparés —
-> `node --test static/js/socle/tests/` (voir `static/js/socle/tests/README.md`).
-> Cette liste couvre ce que les tests ne peuvent pas voir (DOM, réseau, rendu).
+> `node --test static/js/socle/tests/` (voir `static/js/socle/tests/README.md`)
+> et `node --test static/js/tests/` (modules de fonctionnalité sortis d'app.js,
+> ex. `onglets.js`, issue #626). Cette liste couvre ce que les tests ne peuvent
+> pas voir (DOM, réseau, rendu).
 
 ## Préparation
 
 - [ ] `python3 new_issue.py` démarre sans erreur, le navigateur s'ouvre.
+- [ ] La page s'ouvre sur l'onglet **Résultats** (issue #626, étape 2) ; ordre
+      des onglets : Résultats, Résultats inbox, Journal watcher, Configuration,
+      CCW, Nouvelle issue.
 - [ ] **Console du navigateur** (F12) : aucune erreur rouge au chargement. On doit
       voir la trace discrète `[socle] briques chargées et inertes`.
 - [ ] Recharger avec le cache vidé (Ctrl+Maj+R) une fois, puis normalement :
@@ -90,11 +95,6 @@
 - [ ] « Enregistrer » et « Enregistrer et relancer » fonctionnent.
 - [ ] Zone dangereuse : « Supprimer ce projet… » ouvre la modale (checklist +
       confirmation par saisie du nom).
-
-## Onglet « Watchers »
-
-- [ ] Tableau des watchers ; cases à cocher + « tout cocher ».
-- [ ] Actions Lancer / Relancer / Éteindre ; compteur de sélection.
 
 ## Onglet « CCW »
 
