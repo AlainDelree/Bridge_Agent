@@ -3170,12 +3170,36 @@ new_issue.py (ThinkPad) → polling gh → détecte la transition → bip/bulle/
   enveloppes minces qui délèguent à ce module — ses sites d'appel sont inchangés.
 - **Poller `app/notifications_poller.py`** : thread démon lancé par
   `new_issue.py` (à côté du heartbeat). Toutes les `BRIDGE_NOTIF_INTERVALLE`
-  secondes (défaut **20 s**), pour **chaque projet actif** (tous, `for-linux` ET
-  `for-windows` confondus, via `lister_projets()`), il interroge GitHub pour deux
+  secondes (défaut **20 s**), pour **chaque projet dans la portée** (filtré
+  depuis `lister_projets()` selon `BRIDGE_NOTIF_SCOPE` **avant** tout appel gh
+  — voir « Filtrage par SCOPE » ci-dessous), il interroge GitHub pour deux
   transitions **terminales** :
   - **succès** : issue **fermée** portant le label `done` (`closedAt` récent) ;
   - **échec définitif** : label `needs-human` posé, issue restée **ouverte**
     (`updatedAt` récent).
+
+  **Filtrage par SCOPE (issue #614).** Avant #614, `surveiller_transitions()`
+  interrogeait gh pour **les 14 projets configurés à chaque cycle**, quel que
+  soit `BRIDGE_NOTIF_SCOPE` — le filtre `_dans_la_portee()` n'intervenait
+  qu'**après** les appels réseau, sur les transitions déjà récupérées. Avec le
+  défaut `for-windows`, cela faisait 2 appels `gh issue list` × 14 projets =
+  28 appels GraphQL par cycle, pour ne retenir en pratique que les quelques
+  projets CCW. `_projets_dans_la_portee()` filtre désormais `lister_projets()`
+  **avant** la boucle principale, sur le champ `LABEL` du `.conf` de chaque
+  projet (`cfg.label`) :
+  - `SCOPE=for-windows` → ne garde que les projets `LABEL=for-windows` ;
+  - `SCOPE=for-linux` → ne garde que les projets `LABEL=for-linux` ;
+  - `SCOPE=all` → tous les projets (comportement inchangé) ;
+  - `SCOPE=off` → déjà court-circuité plus haut (`surveiller_transitions()`
+    retourne avant même d'appeler `lister_projets()`).
+  `_dans_la_portee()` (filtre sur les labels de l'ISSUE elle-même) reste en
+  place en aval, inchangé — c'est une sécurité complémentaire, pas redondante :
+  elle filtre les *transitions*, `_projets_dans_la_portee()` filtre les
+  *projets interrogés*. Chaque appel `gh issue list` est en outre journalisé
+  par `_gh_list()` (`[notif HH:MM:SS] gh issue list <dépôt> label=<label>
+  state=<état>`, dans les logs de `new_issue.py`) — permet de recompter
+  précisément les appels gh du poller lors d'un futur épisode d'épuisement de
+  quota GraphQL (cf. #613).
 - **Script bip partagé `scripts/traitement_fin.py`** (anciennement
   `scripts/bip.py`, renommé issue #350) : le bip vivait dans `~/NicLink/bip.py`
   (dépôt AlChess) alors que c'est de l'infrastructure commune à tous les projets.

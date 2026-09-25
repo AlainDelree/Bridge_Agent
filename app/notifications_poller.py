@@ -103,6 +103,7 @@ def _gh_list(depot: str, label: str, state: str, champs: str) -> list:
     mais il était superflu : on ne dépend que du filtre de récence `_recent()`,
     appliqué issue par issue quel que soit l'ordre. Best-effort : aucune
     exception ne remonte, le poller ne doit jamais mourir sur un hoquet gh."""
+    _log(f"gh issue list {depot} label={label} state={state}")
     try:
         res = subprocess.run(
             ["gh", "issue", "list",
@@ -151,6 +152,21 @@ def _dans_la_portee(labels: list[str]) -> bool:
     if SCOPE == "for-linux":
         return "for-linux" in labels
     return False
+
+
+def _projets_dans_la_portee(projets: list) -> list:
+    """Filtre les projets SELON SCOPE avant tout appel gh (issue #614).
+
+    `_dans_la_portee()` ci-dessus filtre les TRANSITIONS (labels de l'issue,
+    après coup) ; celle-ci filtre les PROJETS eux-mêmes (champ LABEL de leur
+    .conf, avant coup) — c'est elle qui évite d'interroger gh sur des projets
+    hors de portée à chaque cycle. Avec SCOPE=for-windows (défaut), seuls les
+    projets CCW (LABEL=for-windows) sont donc réellement appelés."""
+    if SCOPE == "all":
+        return projets
+    if SCOPE in ("for-windows", "for-linux"):
+        return [p for p in projets if p.label == SCOPE]
+    return []  # SCOPE=off déjà court-circuité plus haut ; valeur inconnue → prudence
 
 
 # Pourquoi ce poller ne mutualise PAS ses appels gh avec issues_en_attente()
@@ -253,7 +269,7 @@ def surveiller_transitions():
 
     while True:
         try:
-            projets = lister_projets()
+            projets = _projets_dans_la_portee(lister_projets())
             for i, cfg in enumerate(projets):
                 for tr in _transitions_projet(cfg):
                     if not _dans_la_portee(tr["labels"]):
