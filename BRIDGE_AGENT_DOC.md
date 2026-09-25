@@ -3056,21 +3056,23 @@ new_issue.py (ThinkPad) → polling gh → détecte la transition → bip/bulle/
   de fin d'issue — voir §17.3) ; le **défaut** de `SCRIPT_BIP` pointe désormais
   vers lui. **La clé de config reste `SCRIPT_BIP`** (renommer impliquerait de
   modifier les `configs/*.conf` gitignorés, hors périmètre agent — voir §17.3
-  pour la marche à suivre manuelle).
-- **Choix du son : `scripts/son_actif.txt` (#498).** Le script contient deux
-  implémentations de bip — `bip_plat()` (440 Hz, sinusoïde plate) et `bip()`
-  (880 Hz, cloche à enveloppe exponentielle décroissante ; voir #437 et sa
-  révocation). Historiquement un projet isolé (ex. ff_galerie) pouvait obtenir
-  la cloche en pointant `SCRIPT_BIP` vers un script dédié
-  (`scripts/bip_Cloche.py`) — lourd, et il aurait fallu éditer `SCRIPT_BIP`
-  dans chaque `.conf` pour changer le son de tous les projets à la fois.
-  `main()` lit désormais un fichier unique `scripts/son_actif.txt` (une seule
-  ligne : `plat` ou `cloche`) au démarrage, **avant** d'appeler `bip_plat()`
-  ou `bip()` — un seul endroit pilote donc le son pour **tous** les projets
-  utilisant le script partagé. Fichier absent, illisible, ou valeur non
-  reconnue → défaut inchangé (`plat`), pour ne rien casser silencieusement.
-  Ce fichier n'est **pas** un `configs/*.conf` : le garde-fou §11 ne s'y
-  applique pas.
+  pour la marche à suivre manuelle). **Depuis l'issue #630, c'est le SEUL
+  script utilisé pour le bip réel de fin d'issue** (CCL comme CCW) — `SCRIPT_BIP`
+  n'est plus lu sur ce chemin, voir plus bas.
+- **Choix du son : `scripts/son_actif.txt` (#498), interrupteur GLOBAL.** Le
+  script contient deux implémentations de bip — `bip_plat()` (440 Hz,
+  sinusoïde plate) et `bip()` (880 Hz, cloche à enveloppe exponentielle
+  décroissante ; voir #437 et sa révocation). Historiquement un projet isolé
+  (ex. ff_galerie) pouvait obtenir la cloche en pointant `SCRIPT_BIP` vers un
+  script dédié (`scripts/bip_Cloche.py`, **supprimé en #630**) — lourd, et il
+  aurait fallu éditer `SCRIPT_BIP` dans chaque `.conf` pour changer le son de
+  tous les projets à la fois. `son_actif()` lit un fichier unique
+  `scripts/son_actif.txt` (une seule ligne : `plat` ou `cloche`) — un seul
+  endroit pilote donc le son par défaut pour **toutes** les issues sans choix
+  propre (voir « Choix du son PAR ISSUE » ci-dessous). Fichier absent,
+  illisible, ou valeur non reconnue → défaut inchangé (`plat`), pour ne rien
+  casser silencieusement. Ce fichier n'est **pas** un `configs/*.conf` : le
+  garde-fou §11 ne s'y applique pas.
 - **Interrupteur plat/cloche accessible depuis l'interface (issue #527).**
   Avant cette issue, changer de son imposait d'éditer `son_actif.txt` à la
   main. `new_issue.py` expose désormais ce choix dans le panneau flottant
@@ -3087,36 +3089,50 @@ new_issue.py (ThinkPad) → polling gh → détecte la transition → bip/bulle/
   - `POST /tester-son` : joue le bip avec le timbre actuellement enregistré
     dans `son_actif.txt` (tonalité neutre, `0` — ce réglage n'est pas
     rattaché à un projet).
-- **Tonalité du bip par projet (issue #526), clé `.conf` `TONALITE_BIP`.**
-  `son_actif.txt` (ci-dessus) choisit le son pour **tous** les projets à la
-  fois ; `TONALITE_BIP` (optionnelle, entier en **demi-tons**, défaut `0` =
-  tonalité normale) permet en plus de distinguer **à l'oreille** quel projet
-  vient de terminer une issue, sans gérer de bibliothèque de fichiers son.
-  `notifications.py::bip()`/`notifier()` acceptent désormais un paramètre
-  `tonalite`, transmis en CLI (`--tonalite <demi-tons>`) au script bip
-  configuré — `watcher.py` (enveloppes `bip()`/`notifier()`) et
-  `app/notifications_poller.py` le lisent depuis `CFG.tonalite_bip` /
-  `cfg.tonalite_bip` (`Config.tonalite_bip`, `charger_config`). Deux
-  implémentations :
-  - **`scripts/traitement_fin.py`** (script partagé par défaut, voir plus
-    haut) : le son est synthétisé en Python, donc la tonalité se traduit
-    simplement en décalant la fréquence de synthèse
-    (`f_effective = f_base × 2^(demi-tons/12)`), sans dépendance externe —
-    orthogonal au choix `plat`/`cloche` de `son_actif.txt`.
-  - **`scripts/bip_Cloche.py`** (legacy, conservé pour compatibilité —
-    ex. `chesscoach.conf` y pointe encore explicitement) : le son est un
-    fichier système fixe (`SONS_CANDIDATS`), donc la tonalité est appliquée
-    en pitch-shiftant ce fichier via l'effet `pitch` de **`sox`** (en
-    centièmes de demi-ton). `sox` absent, `TONALITE_BIP = 0`, ou tout échec
-    de la transformation → repli silencieux sur le son d'origine, inchangé
-    (même philosophie que le reste du script : un bip qui échoue ne casse
-    jamais l'appelant).
-  - **Onglet Configuration de `new_issue.py`** : curseur `-12`…`+12`
-    demi-tons (`conf-TONALITE_BIP`) à côté du champ « Script bip », avec un
-    bouton **« Tester le son »** qui POSTe sur `/tester-bip/<projet>`
-    (`app/projets.py::tester_bip`) — joue le bip avec la tonalité
-    actuellement réglée dans le curseur, **sans** l'enregistrer dans le
-    `.conf`, pour ajuster à l'oreille avant de cliquer sur Enregistrer.
+- **Choix du son PAR ISSUE (issue #630), backend seul — interface aux étapes
+  7b/8.** Réglage PAR PROJET envisagé (`TONALITE_BIP`) abandonné au profit
+  d'un choix plus fin : n'importe quelle issue peut être basculée en plat ou
+  en cloche pour ELLE-MÊME, en plus de l'interrupteur global ci-dessus.
+  - **Stockage** : `logs/son_issues.json` (`{projet: {numéro: "plat"|
+    "cloche"}}`), écriture atomique + verrou anti-collision — même mécanisme
+    que `etat_rate_limit.json` (issue #615). Module `etat_son_issue.py`
+    (racine du dépôt, sans dépendance Flask, comme `notifications.py`/
+    `etat_rate_limit.py`) : `son_choisi(projet, numéro)`,
+    `definir_son(projet, numéro, son)` (`son=None` retire le choix propre —
+    l'issue retombe sur l'interrupteur global), `nettoyer_projet(projet)`,
+    `nettoyer_entrees_perimees()`.
+  - **Routes** `GET`/`POST /son-issue/<nom_projet>/<numero>` (`app/son_issue.py`,
+    même famille que `/son-actif` ci-dessus) : lisent/écrivent le choix
+    propre à UNE issue. Pas encore de bouton dans l'interface (#630 =
+    backend seul).
+  - **Résolution au moment du bip** (`scripts/traitement_fin.py::son_a_jouer(
+    projet, numéro)`) : le choix de l'issue s'il existe, sinon
+    `son_actif()` (interrupteur global) — dans cet ordre, pour **les deux**
+    chemins de bip réel : `watcher.py` (issues CCL, `bip()`/`notifier()`
+    transmettent toujours `--projet`/`--numero`) et
+    `app/notifications_poller.py` (issues CCW, `_notifier_transition()`,
+    même transmission).
+  - **Nettoyage**, même règle que les cases cochées côté navigateur
+    (`resultat-coche:`, `static/js/app.js`/`persistance.js`) : au démarrage
+    de `new_issue.py` (`etat_son_issue.nettoyer_entrees_perimees()`), purge
+    PAR PROJET des entrées dont le numéro est ≤ (plus grand numéro connu de
+    ce projet dans `son_issues.json` − 50) ; et purge TOTALE d'un projet
+    (`nettoyer_projet()`) à sa suppression (`supprimer_projet.py`, entre le
+    retrait du `.conf` et la régénération de la doc).
+  - **Le chemin réel du bip n'utilise plus `TONALITE_BIP` ni `SCRIPT_BIP`**
+    (issue #630) : `watcher.py::bip()`/`notifier()` et
+    `app/notifications_poller.py::_notifier_transition()` appellent
+    toujours `scripts/traitement_fin.py` avec une tonalité neutre (`0`),
+    quel que soit le `.conf` du projet. Ces deux clés `.conf` restent
+    **tolérées** (résiduelles dans certains `configs/*.conf` existants,
+    ex. l'ancien `chesscoach.conf` pointant vers `scripts/bip_Cloche.py`
+    — code jamais modifié directement, retrait manuel laissé à Alain) et
+    restent lues/exposées par `/config` et `/tester-bip/<projet>`
+    (`app/projets.py`, onglet Configuration) — ces routes et
+    `nouveau_projet.py` (qui écrit encore `SCRIPT_BIP`/`TONALITE_BIP` dans
+    les nouveaux `.conf`) sont **volontairement non touchés** par #630 ;
+    leur retrait est prévu à l'étape 8, en même temps que l'onglet lui-même,
+    pour que l'interface reste cohérente entre-temps.
 
 **Éviter le spam de vieilles issues au démarrage.** Deux garde-fous combinés :
 - **filtre de récence** : seules les transitions horodatées dans les

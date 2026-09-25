@@ -29,6 +29,7 @@ from threading import Thread, Timer
 
 # Fabrique de l'application (routes incluses) et accesseurs à l'état partagé.
 from app import create_app, etat
+import etat_son_issue
 from app.tunnel import demarrer_tunnel, arreter_tunnel
 from app.cycle_vie import surveiller_heartbeat
 from app.notifications_poller import surveiller_transitions
@@ -88,6 +89,13 @@ def main():
     # chargement de l'état initial.
     app = create_app()
     app.config["MOT_DE_PASSE"] = etat.charger_mot_de_passe()
+
+    # Nettoyage du choix de son par issue (issue #630) : même règle que les
+    # cases cochées côté navigateur — purge, projet par projet, des entrées
+    # dont le numéro est ≤ (plus grand numéro connu du projet − 50). Best-
+    # effort (etat_son_issue ne lève jamais), ne doit jamais empêcher le
+    # démarrage du serveur.
+    etat_son_issue.nettoyer_entrees_perimees()
 
     # Trois modes de fonctionnement :
     #   • local (défaut)      : host 127.0.0.1, HTTP simple, sans SSL. Destiné à

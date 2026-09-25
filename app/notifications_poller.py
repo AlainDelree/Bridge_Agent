@@ -116,6 +116,12 @@ DOSSIER_SCRIPT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(DOSSIER_SCRIPT / "scripts"))
 import traitement_fin  # noqa: E402 — POST /notifier-debut-issue et /notifier-fin-issue (SSE /stream, issue #624)
 
+# Script bip PARTAGÉ (issue #630) : utilisé pour TOUTE transition CCW, quel
+# que soit `SCRIPT_BIP` du `.conf` du projet — réglage par projet abandonné
+# au profit du choix par issue (`traitement_fin.py::son_a_jouer()`, résolu à
+# partir de `--projet`/`--numero` transmis par `notifications.bip()`).
+SCRIPT_BIP_PARTAGE = DOSSIER_SCRIPT / "scripts" / "traitement_fin.py"
+
 # ─── Réglages (surchargeable par variable d'environnement) ─────────────────────
 INTERVALLE_S = int(os.environ.get("BRIDGE_NOTIF_INTERVALLE", "60"))   # période de polling (issue #188 : 20→60 s pour alléger la charge gh cumulée)
 RECENCE_MIN  = int(os.environ.get("BRIDGE_NOTIF_RECENCE_MIN", "30"))  # fenêtre de récence
@@ -316,22 +322,27 @@ def _notifier_transition(cfg, numero: int, titre: str, labels: list[str],
     labels notif_*) pour la transition détectée. `labels` : labels COURANTS de
     l'issue, lus par l'appelant au moment de la détection — pas figés à l'ajout
     à la liste surveillée (issue #187, point 5 : notif_* ajouté en cours de
-    route est bien pris en compte)."""
+    route est bien pris en compte).
+
+    Script bip et tonalité (issue #630) : toujours `SCRIPT_BIP_PARTAGE` et une
+    tonalité neutre — `cfg.script_bip`/`cfg.tonalite_bip` (réglage par projet)
+    ne sont plus utilisés sur ce chemin, remplacés par le choix par issue que
+    `traitement_fin.py::son_a_jouer()` résout à partir de `numero` ci-dessous."""
     if type_transition == LABEL_DONE:
         notifications.notifier(
-            labels, cfg.nom, cfg.url_ntfy, cfg.script_bip,
+            labels, cfg.nom, cfg.url_ntfy, SCRIPT_BIP_PARTAGE,
             titre=f"✅ {cfg.nom} #{numero} — traitée",
             message=f"'{titre}' traitée avec succès.",
             urgence_bureau="normal", priorite_ntfy="default",
-            numero=numero, tonalite=cfg.tonalite_bip,
+            numero=numero,
         )
     else:  # needs-human
         notifications.notifier(
-            labels, cfg.nom, cfg.url_ntfy, cfg.script_bip,
+            labels, cfg.nom, cfg.url_ntfy, SCRIPT_BIP_PARTAGE,
             titre=f"❌ {cfg.nom} #{numero} — échec définitif",
             message=f"'{titre}' — intervention humaine requise.",
             urgence_bureau="critical", priorite_ntfy="high",
-            numero=numero, tonalite=cfg.tonalite_bip,
+            numero=numero,
         )
 
 
