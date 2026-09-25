@@ -531,5 +531,18 @@ def route_relancer():
         watcher_demarre, watcher_pid, trace_watcher = redemarrer_si_eteint(cfg, tracer=True)
 
     statut_global, etapes = relancer_issue(depot, numero, commentaire=COMMENTAIRE_RELANCE + trace_watcher)
+
+    # Ré-ajout à la liste surveillée par le poller de notifications (issue
+    # #624) : une issue for-windows relancée avait été RETIRÉE de la liste au
+    # moment de son échec définitif (needs-human) — sans ce ré-ajout, ni sa
+    # future prise en charge (ACK) ni sa clôture ne seraient plus détectées.
+    # Seulement si le retrait du label a bien réussi (statut_global == "ok") :
+    # sinon needs-human reste posé et ré-ajouter l'issue ferait redétecter la
+    # MÊME transition needs-human au prochain cycle. Même process → appel
+    # direct, pas de HTTP.
+    if statut_global == "ok" and "for-windows" in labels:
+        from app.notifications_poller import ajouter_issue_surveillee
+        ajouter_issue_surveillee(depot, numero, labels)
+
     return jsonify(succes=True, statut_global=statut_global, etapes=etapes,
                    watcher_demarre=watcher_demarre, watcher_pid=watcher_pid)

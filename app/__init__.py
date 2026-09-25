@@ -81,6 +81,7 @@ def _enregistrer_routes(app: Flask) -> None:
     from app.interruption import route_interrompre, route_relancer
     from app.cycle_vie import heartbeat, events, quitter
     from app.fin_issue import notifier_fin_issue, notifier_debut_issue, stream_fin_issue
+    from app.notifications_poller import route_surveiller_issue
     from app.issues_inbox import (etat_inbox, demarrer_watcher_inbox_route,
                                   arreter_watcher_inbox_route)
     from app.son import get_son_actif, post_son_actif, tester_son
@@ -148,6 +149,12 @@ def _enregistrer_routes(app: Flask) -> None:
     app.add_url_rule("/notifier-fin-issue", "notifier_fin_issue", notifier_fin_issue, methods=["POST"])
     app.add_url_rule("/notifier-debut-issue", "notifier_debut_issue", notifier_debut_issue, methods=["POST"])
     app.add_url_rule("/stream", "stream_fin_issue", login_requis(stream_fin_issue))
+    # ─── Liste des issues surveillées par le poller de notifications (issue
+    # #624) : ajout en direct depuis scripts/watcher_issues_inbox.py (process
+    # séparé, ne peut pas muter app.notifications_poller._ISSUES_SURVEILLEES
+    # directement) — même famille que les deux routes ci-dessus (script local,
+    # pas de login_requis).
+    app.add_url_rule("/notifier-issue-a-surveiller", "route_surveiller_issue", route_surveiller_issue, methods=["POST"])
     # ─── Onglet « Résultats inbox » (issue #483) : état du watcher_issues_inbox ─
     app.add_url_rule("/issues-inbox/etat", "etat_inbox", login_requis(etat_inbox))
     # ─── Pilotage du watcher spool depuis #pl-zone-extras (issue #485) ────────

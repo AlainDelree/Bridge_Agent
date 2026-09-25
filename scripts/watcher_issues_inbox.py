@@ -62,6 +62,7 @@ import sys
 import tempfile
 import time
 import unicodedata
+import urllib.request
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -73,8 +74,35 @@ from watcher import (charger_config, lire_conf, est_titre_chef,  # noqa: E402
                      LABEL_NOTIF_PC, LABEL_NOTIF_GSM, LABEL_NOTIF_TOUS,
                      valider_sous_dossier, valider_repo_cible)  # noqa: E402 (issue #567)
 from app.watchers import redemarrer_si_eteint  # noqa: E402 (issue #486, #600)
-from app.issues import _issue_ouverte_meme_titre, formater_entete  # noqa: E402 (issues #491, #601)
+from app.issues import (_issue_ouverte_meme_titre, formater_entete,  # noqa: E402 (issues #491, #601, #624)
+                        numero_depuis_url)
 from app.interruption import relancer_issue  # noqa: E402 (issue #516)
+
+# Ce script tourne dans un process SÉPARÉ de new_issue.py : il ne peut pas
+# muter directement app.notifications_poller._ISSUES_SURVEILLEES (issue #624)
+# — POST best-effort vers la route dédiée, même famille que
+# scripts/traitement_fin.py (timeout court, échec silencieux si new_issue.py
+# n'est pas lancé — rattrapé au prochain démarrage par _balayage_initial()).
+URL_SURVEILLER_ISSUE = "http://localhost:5100/notifier-issue-a-surveiller"
+
+
+def _notifier_issue_a_surveiller(depot: str, numero: int, labels: str) -> None:
+    """Ajoute IMMÉDIATEMENT une issue for-windows fraîchement créée ou
+    relancée à la liste surveillée par app.notifications_poller (issue #624),
+    sans attendre le prochain démarrage de new_issue.py. `labels` : chaîne
+    séparée par des virgules (même format que construire_labels)."""
+    try:
+        corps = json.dumps({
+            "depot": depot, "numero": int(numero),
+            "labels": [lab.strip() for lab in labels.split(",") if lab.strip()],
+        }).encode("utf-8")
+        requete = urllib.request.Request(
+            URL_SURVEILLER_ISSUE, data=corps,
+            headers={"Content-Type": "application/json"}, method="POST",
+        )
+        urllib.request.urlopen(requete, timeout=1).close()
+    except Exception:
+        pass
 
 log = logging.getLogger("watcher_issues_inbox")
 
@@ -492,7 +520,7 @@ def _recuperer_issue(depot: str, numero: int):
     try:
         res = subprocess.run(
             ["gh", "issue", "view", str(numero), "--repo", depot,
-             "--json", "number,state,body,title"],
+             "--json", "number,state,body,title,labels"],
             capture_output=True, text=True, timeout=30,
         )
         if res.returncode != 0:
@@ -632,6 +660,14 @@ def _traiter_relance(cfg: ConfigInbox, champs: dict):
         detail_erreurs = "; ".join(e["message"] for e in etapes if e["statut"] == "echec")
         return (False, issue.get("title") or f"#{numero}", champs["projet"],
                 f"relance de #{numero} incomplète : {detail_erreurs}", "")
+
+    # Ré-ajout à la liste surveillée par le poller de notifications (issue
+    # #624) : l'issue avait été RETIRÉE de la liste à son échec définitif
+    # (needs-human) — sans ce POST, ni sa future prise en charge (ACK) ni sa
+    # clôture ne seraient plus détectées.
+    labels_issue = [(l.get("name") or "") for l in (issue.get("labels") or [])]
+    if "for-windows" in labels_issue:
+        _notifier_issue_a_surveiller(depot, numero, ",".join(labels_issue))
 
     suffixe = f" — relance de #{numero}" + (f" ({', '.join(modifies)})" if modifies else "")
     if watcher_demarre:
@@ -827,6 +863,14 @@ def _traiter_bloc(cfg: ConfigInbox, contenu_bloc: str):
     if not succes:
         return (False, champs["titre"], champs["projet"],
                 f"gh issue create a échoué : {resultat}", "")
+
+    # Ajout immédiat à la liste surveillée par le poller de notifications
+    # (issue #624), pour les issues for-windows : sans ce POST, l'issue ne
+    # serait détectée qu'au prochain démarrage de new_issue.py.
+    if "for-windows" in labels.split(","):
+        numero_cree = numero_depuis_url(resultat)
+        if numero_cree is not None:
+            _notifier_issue_a_surveiller(cfg_projet.depot, numero_cree, labels)
 
     # Démarrage auto du watcher CCL du projet concerné (issue #486) — sans quoi
     # l'issue fraîchement créée resterait en attente indéfiniment si Alain

@@ -2994,36 +2994,60 @@ new_issue.py (ThinkPad) → polling gh → détecte la transition → bip/bulle/
   enveloppes minces qui délèguent à ce module — ses sites d'appel sont inchangés.
 - **Poller `app/notifications_poller.py`** : thread démon lancé par
   `new_issue.py` (à côté du heartbeat). Toutes les `BRIDGE_NOTIF_INTERVALLE`
-  secondes (défaut **20 s**), pour **chaque projet dans la portée** (filtré
-  depuis `lister_projets()` selon `BRIDGE_NOTIF_SCOPE` **avant** tout appel gh
-  — voir « Filtrage par SCOPE » ci-dessous), il interroge GitHub pour deux
-  transitions **terminales** :
+  secondes (défaut **60 s**), il vérifie une **liste d'issues surveillées**
+  (`depot`, `numéro`) — voir « Une liste d'issues, pas de projets (issue
+  #624) » ci-dessous — et détecte pour chacune :
+  - la **prise en charge** (commentaire ACK), en réutilisant la logique de
+    repérage de `/issues-en-attente` (`app.issues._debut_traitement`/
+    `_commentaires_issue`) plutôt que de la dupliquer → SSE `debut_issue` (§17.3) ;
   - **succès** : issue **fermée** portant le label `done` (`closedAt` récent) ;
   - **échec définitif** : label `needs-human` posé, issue restée **ouverte**
     (`updatedAt` récent).
+  Une transition terminale (succès ou échec définitif) **retire** l'issue de
+  la liste surveillée : son cycle de vie pour ce poller est terminé.
 
-  **Filtrage par SCOPE (issue #614).** Avant #614, `surveiller_transitions()`
-  interrogeait gh pour **les 14 projets configurés à chaque cycle**, quel que
-  soit `BRIDGE_NOTIF_SCOPE` — le filtre `_dans_la_portee()` n'intervenait
-  qu'**après** les appels réseau, sur les transitions déjà récupérées. Avec le
-  défaut `for-windows`, cela faisait 2 appels `gh issue list` × 14 projets =
-  28 appels GraphQL par cycle, pour ne retenir en pratique que les quelques
-  projets CCW. `_projets_dans_la_portee()` filtre désormais `lister_projets()`
-  **avant** la boucle principale, sur le champ `LABEL` du `.conf` de chaque
-  projet (`cfg.label`) :
-  - `SCOPE=for-windows` → ne garde que les projets `LABEL=for-windows` ;
-  - `SCOPE=for-linux` → ne garde que les projets `LABEL=for-linux` ;
-  - `SCOPE=all` → tous les projets (comportement inchangé) ;
-  - `SCOPE=off` → déjà court-circuité plus haut (`surveiller_transitions()`
-    retourne avant même d'appeler `lister_projets()`).
-  `_dans_la_portee()` (filtre sur les labels de l'ISSUE elle-même) reste en
-  place en aval, inchangé — c'est une sécurité complémentaire, pas redondante :
-  elle filtre les *transitions*, `_projets_dans_la_portee()` filtre les
-  *projets interrogés*. Chaque appel `gh issue list` est en outre journalisé
-  par `_gh_list()` (`[notif HH:MM:SS] gh issue list <dépôt> label=<label>
-  state=<état>`, dans les logs de `new_issue.py`) — permet de recompter
-  précisément les appels gh du poller lors d'un futur épisode d'épuisement de
-  quota GraphQL (cf. #613).
+  **Une liste d'issues, pas de projets (issue #624, remplace #623, diagnostic
+  #621).** Avant #624, chaque cycle balayait, pour **chaque projet dans la
+  portée**, deux `gh issue list` (done fermées + needs-human ouvertes) — la
+  portée étant décidée par `_projets_dans_la_portee()` (#614) en filtrant
+  `lister_projets()` sur le champ `LABEL` du `.conf` de chaque projet
+  (`cfg.label`), **avant** tout appel gh. Bug découvert en #621 : `LABEL` est
+  un **défaut** de projet, pas la vérité — c'est le label `for-windows`/
+  `for-linux` posé sur **chaque issue** (exclusifs, voir §16) qui dit si elle
+  concerne CCW, pas le projet qui l'héberge. Aucun `.conf` CCL ne portant
+  `LABEL=for-windows`, `_projets_dans_la_portee()` ne retenait plus aucun
+  projet : le poller n'interrogeait plus rien et ne détectait plus aucune
+  transition CCW, silencieusement, depuis #614.
+
+  Le poller connaît désormais `_ISSUES_SURVEILLEES` : un dict `{(depot,
+  numéro): état}` en mémoire process (comme l'ancien `deja_vu`), rempli par :
+  1. **`_balayage_initial()`**, appelé **une seule fois** au démarrage de
+     `surveiller_transitions()` : liste, pour **tous les projets configurés**
+     (plus de filtrage par `.conf`), les issues **ouvertes** dont le label
+     entre dans `BRIDGE_NOTIF_SCOPE` ;
+  2. **`ajouter_issue_surveillee(depot, numero, labels)`**, appelée en direct
+     (même process Flask) à chaque création d'issue depuis le formulaire web
+     (`app.issues.envoyer`) et à chaque relance réussie depuis l'onglet
+     Résultats (`app.interruption.route_relancer`) ;
+  3. la route **`POST /notifier-issue-a-surveiller`** (sans `login_requis`,
+     même famille que `/notifier-fin-issue` ci-dessous), appelée par
+     `scripts/watcher_issues_inbox.py` — qui tourne dans un **process
+     séparé** et ne peut donc pas muter directement `_ISSUES_SURVEILLEES` —
+     à chaque création ou relance (champ `RELANCE`) d'une issue for-windows.
+  Dans tous les cas, `ajouter_issue_surveillee()` filtre par
+  `_dans_la_portee(labels)` (labels de l'ISSUE, inchangé depuis #187) : une
+  issue hors de `BRIDGE_NOTIF_SCOPE` n'est jamais ajoutée.
+
+  **Liste vide → AUCUN appel gh** à ce cycle : le cas courant, CCW n'étant
+  utilisé qu'une ou deux fois par semaine. Chaque appel gh reste journalisé
+  (`_gh_list()`/`_gh_view_issue()`, `[notif HH:MM:SS] gh issue …`, dans les
+  logs de `new_issue.py`) pour recompter précisément la charge du poller lors
+  d'un futur épisode d'épuisement de quota GraphQL (cf. #613).
+
+  **Limite connue, documentée et non traitée.** Une issue for-windows créée
+  **directement sur GitHub** ou par un chef (`gh issue create` hors des trois
+  chemins ci-dessus) n'est ajoutée à la liste surveillée qu'au **prochain
+  démarrage** de `new_issue.py` (rattrapée par `_balayage_initial()`).
 - **Script bip partagé `scripts/traitement_fin.py`** (anciennement
   `scripts/bip.py`, renommé issue #350) : le bip vivait dans `~/NicLink/bip.py`
   (dépôt AlChess) alors que c'est de l'infrastructure commune à tous les projets.
@@ -3175,7 +3199,7 @@ NOTIFIER_LOCAL = false
 | `BRIDGE_NOTIF_SCOPE` | `for-windows` | Portée : `for-windows` \| `for-linux` \| `all` \| `off` (désactive). |
 | `BRIDGE_NOTIF_INTERVALLE` | `60` | Période de polling (secondes) — 20→60 s en #188 pour alléger la charge gh cumulée. |
 | `BRIDGE_NOTIF_RECENCE_MIN` | `30` | Fenêtre de récence des transitions (minutes). |
-| `BRIDGE_NOTIF_ESPACEMENT` | `2` | Délai (secondes) entre le traitement de deux projets (issue #190) : étale les appels gh du poller au lieu d'une rafale groupée qui rendait le bouton Rafraîchir lent et faisait « sursauter » les badges. `0` = rafale immédiate (ancien comportement). |
+| `BRIDGE_NOTIF_ESPACEMENT` | `2` | Délai (secondes) entre le traitement de deux issues de la liste surveillée (issue #190, adapté #624) : étale les appels gh du poller au lieu d'une rafale groupée qui rendait le bouton Rafraîchir lent et faisait « sursauter » les badges. Sans effet la plupart du temps (liste vide ou à un seul élément). `0` = rafale immédiate (ancien comportement). |
 
 ### 17.3 SSE de fin d'issue — rafraîchissement instantané de l'onglet Résultats (issue #350)
 
@@ -3193,15 +3217,34 @@ déclencheur et un canal SSE dédié comme transport :
   `{"projet": ..., "numero": ...}`. `notifications.bip()` transmet ces deux
   arguments dès que `notifications.notifier()` les reçoit — ce qui remonte
   jusqu'aux enveloppes `bip()`/`notifier()` de `watcher.py` (paramètre
-  `numero` ajouté) et jusqu'à `app/notifications_poller.py` (transitions
-  détectées côté CCW). Comme le bip lui-même, ce POST reste **opt-in via les
-  labels `notif_*`** (§4) : `notifications.notifier()` n'appelle `bip()` que si
-  l'issue en porte un — sans label, la ligne reste soumise au ↻ manuel / au
-  fetch post-TIMEOUT de #334, exactement comme avant #350.
+  `numero` ajouté). Comme le bip lui-même, **ce chemin-là** reste **opt-in via
+  les labels `notif_*`** (§4) : `notifications.notifier()` n'appelle `bip()`
+  que si l'issue en porte un.
+- **`watcher.py::notifier_fin_sse`/`notifier_debut_sse`** (CCL) et
+  **`app/notifications_poller.py`** (CCW, issue #624) appellent en plus
+  `traitement_fin.notifier_fin_issue`/`notifier_debut_issue` **directement**,
+  **décorrélé des labels `notif_*`** — le rafraîchissement de l'onglet
+  Résultats doit être universel, contrairement au bip/bulle/ntfy (opt-in).
+  Pour CCW, c'est `_traiter_transition()`/`_verifier_issue_surveillee()` qui
+  appellent ces deux fonctions à chaque transition détectée sur une issue de
+  la liste surveillée (§17, garde-fous d'amorçage/récence conservés — pas de
+  SSE pour une transition/ACK déjà présente au démarrage). Sans label
+  `notif_*`, la ligne reste malgré tout rafraîchie quasi instantanément ; sans
+  ce mécanisme (avant #350/#624), elle resterait soumise au ↻ manuel / au
+  fetch post-TIMEOUT de #334.
 - **`POST /notifier-fin-issue`** (`app/fin_issue.py`, sans `login_requis` —
   appelé par un script local, pas par un navigateur, comme `/heartbeat`) :
   pousse un événement SSE `event: fin_issue\ndata: {"projet": ..., "numero": ...}`
-  à tous les onglets Résultats actuellement ouverts.
+  à tous les onglets Résultats actuellement ouverts. `POST /notifier-debut-issue`
+  (même module) est le pendant côté début de traitement, événement `debut_issue`.
+- **`POST /notifier-issue-a-surveiller`** (`app/notifications_poller.py`,
+  issue #624, sans `login_requis` — même famille que les deux routes
+  ci-dessus) : ajoute immédiatement une issue `{"depot", "numero", "labels"}`
+  à `_ISSUES_SURVEILLEES`, filtrée par `BRIDGE_NOTIF_SCOPE`. Appelée par
+  `scripts/watcher_issues_inbox.py` (process séparé, cf. « Une liste
+  d'issues, pas de projets » ci-dessus) — sans effet sur le SSE `/stream`
+  lui-même, qui n'est poussé qu'à la détection effective de l'ACK/de la
+  transition, au cycle suivant.
 - **`GET /stream`** (`app/fin_issue.py`, protégé par `login_requis` comme
   `/events`) : générateur Flask SSE dédié, séparé de `/events` (cycle de vie)
   et de `/journal/<projet>` (log watcher). Mécanisme de diffusion : une

@@ -136,6 +136,20 @@ def formats_image_acceptes() -> dict:
 # pour éviter toute divergence de regex.
 LABELS_ENTETE_RE = re.compile(r"^\s*\|\s*LABELS\s*\|([^|]*)\|", re.IGNORECASE | re.MULTILINE)
 
+# Numéro extrait de l'URL retournée par `gh issue create`
+# (https://github.com/<owner>/<repo>/issues/<numero>) — partagé avec
+# scripts/watcher_issues_inbox.py (issue #624 : ajout immédiat d'une issue
+# for-windows fraîchement créée à la liste surveillée par
+# app.notifications_poller).
+NUMERO_ISSUE_URL_RE = re.compile(r"/issues/(\d+)\s*$")
+
+
+def numero_depuis_url(url: str) -> int | None:
+    """Numéro d'issue extrait de l'URL de `gh issue create`/`gh issue view`,
+    ou None si le format est inattendu (défensif — ne doit jamais lever)."""
+    m = NUMERO_ISSUE_URL_RE.search((url or "").strip())
+    return int(m.group(1)) if m else None
+
 
 def _parser_labels_entete(corps: str) -> list:
     """Labels supplémentaires lus dans le champ d'en-tête optionnel
@@ -375,9 +389,20 @@ def envoyer():
             # tracé par redemarrer_si_eteint via log.warning, issue #600), None = non
             # applicable (for-windows).
             watcher_demarre = None
-            if "for-linux" in labels.split(","):
+            labels_liste = labels.split(",")
+            if "for-linux" in labels_liste:
                 from app.watchers import redemarrer_si_eteint
                 watcher_demarre, _pid, _trace = redemarrer_si_eteint(cfg)
+            # Ajout immédiat à la liste surveillée par le poller de
+            # notifications (issue #624) : sans ça, une issue for-windows
+            # créée depuis le formulaire web n'aurait été détectée qu'au
+            # prochain démarrage de new_issue.py (_balayage_initial). Même
+            # process → appel direct, pas de HTTP (à la différence de
+            # scripts/watcher_issues_inbox.py, qui tourne à part).
+            numero = numero_depuis_url(res.stdout)
+            if numero is not None:
+                from app.notifications_poller import ajouter_issue_surveillee
+                ajouter_issue_surveillee(cfg.depot, numero, labels_liste)
             maj_rate_limit("app.issues.envoyer")
             return jsonify(succes=True, url=res.stdout.strip(),
                            watcher_demarre=watcher_demarre)
