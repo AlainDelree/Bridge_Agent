@@ -54,21 +54,50 @@
 - [ ] Redimensionnement de la colonne titre : largeur mémorisée.
 - [ ] Recherche par titre : la fenêtre de résultats s'ouvre, double-clic affiche
       le détail dans sa propre zone.
-- [ ] Actions sur une issue ouverte : annuler / fermer / interrompre / relancer
-      (modale d'interruption : étapes détaillées + rappel de relance watcher).
-- [ ] Badges de temps restant / estimation présents et cohérents.
+- [ ] Actions sur une issue ouverte, dans le **détail** : annuler / interrompre
+      et fermer (modale d'interruption : étapes détaillées + rappel de relance
+      watcher). Depuis l'issue #628, Interrompre / Retirer needs-human / Fermer
+      définitivement ne sont **plus** dans le détail (déplacés dans le panneau
+      latéral, voir ci-dessous — ne doivent apparaître **qu'une seule fois**).
+- [ ] Badges de temps restant / estimation présents et cohérents, **entièrement
+      visibles à zoom 100 %** (y compris le badge de la dernière colonne d'une
+      ligne, à côté du panneau latéral ouvert — issue #628, non-régression du
+      panneau flottant qui les recouvrait).
 
 ## Panneau latéral (Infrastructure)
 
-- [ ] Bouton « 📊 Infrastructure » ouvre/ferme le panneau ; ouvert par défaut à
-      l'entrée dans l'onglet (sauf écran étroit).
-- [ ] Zone monitoring : une ligne par watcher CCL / service CCW.
+> Sorti d'`app.js` vers `static/js/panneau_lateral.js` par l'issue #628
+> (refonte web étape 4) : colonne à côté de la liste (plus un overlay flottant),
+> ne recouvre plus jamais la liste — y compris sur écran étroit, où elle passe
+> sous la liste plutôt que de la recouvrir.
+
+- [ ] Bouton « 📊 Infrastructure » ouvre/ferme le panneau ; **ouvert par défaut**
+      la première fois (pas de fermeture automatique sur écran étroit : c'est la
+      mise en page, pas l'état, qui s'adapte).
+- [ ] **État conservé d'un onglet à l'autre** : fermer le panneau, changer
+      d'onglet (ex. Watchers), revenir sur Résultats → le panneau reste fermé
+      (persistance localStorage). Idem ouvert → ouvert. Vérifier aussi après un
+      rechargement complet de la page (Ctrl+Maj+R).
+- [ ] Panneau ouvert, écran large : la colonne panneau est **entièrement
+      distincte** de la liste (jamais superposée), quel que soit le contenu de
+      la liste.
+- [ ] Écran étroit (< 900px, ou réduire la fenêtre) : la colonne panneau
+      apparaît **sous** la liste (empilement vertical), jamais par-dessus.
+- [ ] Zone monitoring : une ligne par watcher CCL / service CCW. **Plus aucune
+      ligne « VM » et plus aucune requête `/ccw/vm-statut`** (onglet Réseau,
+      F12) — route disparue côté serveur depuis #447 (issue #628).
 - [ ] Interrupteur son (Plat / Cloche) : bascule ; « Tester le son » actif
       seulement quand une ligne est sélectionnée ; joue la tonalité du projet.
 - [ ] Zone extras : contrôle du watcher spool (issues_inbox) — démarrer/arrêter
       avec la modale de durée.
-- [ ] Zone actions contextuelles : toggles notif_pc/gsm/tous sur l'issue
-      sélectionnée.
+- [ ] Zone actions contextuelles sur l'issue sélectionnée : toggles
+      notif_pc/gsm/tous, **Interrompre / Interrompre et relancer / Retirer
+      needs-human / Fermer l'issue** — ces 4 actions n'existent plus que dans
+      cette zone (issue #628, retirées du détail qui faisait double emploi).
+- [ ] Onglet Réseau (F12) : une seule requête `/watchers` toutes les ~30s au
+      total (mutualisée entre le panneau et le bandeau orange « écriture
+      directe dans REP_TRAVAIL », visible via l'onglet Watchers en cas de
+      repli — issue #628), pas deux pollings indépendants.
 
 ## Onglet « Résultats inbox »
 

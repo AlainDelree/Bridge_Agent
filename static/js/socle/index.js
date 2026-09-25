@@ -24,13 +24,21 @@ import * as dom from './dom.js';
 import { sse } from './sse.js';
 import * as persistance from './persistance.js';
 import { installerPont } from './pont.js';
+import { initPanneauLateral } from '../panneau_lateral.js';
 
-// Délégation : inerte tant qu'aucune règle n'est enregistrée (étapes suivantes).
+// Délégation : inerte tant qu'aucune règle n'est enregistrée par le socle lui-
+// même (les modules par fonctionnalité, ex. panneau_lateral.js, enregistrent
+// les leurs).
 dom.installerDelegation();
 
 // Pont de transition : unique point de contact avec l'ancien code, à retirer à
 // la dernière étape de la refonte.
 installerPont({ store, api, toasts, dom, sse, persistance });
 
+// Panneau latéral de l'onglet Résultats (issue #628, refonte web étape 4) —
+// premier module par fonctionnalité à piloter réellement une zone de l'écran
+// (voir ARCHITECTURE.md §6.7).
+initPanneauLateral();
+
 // Trace discrète en console — aucun effet visible dans l'interface.
-console.debug('[socle] briques chargées et inertes (issue #625, étape 1).');
+console.debug('[socle] briques chargées (issue #625) + panneau latéral actif (issue #628).');

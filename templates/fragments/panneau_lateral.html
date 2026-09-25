@@ -1,46 +1,57 @@
-    <!-- Panneau flottant de monitoring (issue #375, #376, #377, refonte
-         overlay lisible #380) : position:fixed (voir .panneau-lateral,
-         style.css), basculé par #pl-toggle, ouvert par défaut à l'entrée dans
-         l'onglet (ouvrirPanneauLateralParDefaut). Zones empilées, peuplées
-         par rafraichirPanneauLateralResultats() (static/js/app.js) — jamais
-         remplies côté serveur, à l'exception de #pl-zone-son ci-dessous.
+    <!-- Panneau latéral de monitoring (issue #375, #376, #377, refonte overlay
+         lisible #380, refonte colonne non recouvrante + module dédié #628) :
+         colonne à côté de la liste (.panneau-lateral-col, .panneau-lateral,
+         static/css/resultats.css) — ne recouvre plus jamais la liste, y
+         compris sur écran étroit (passe sous la liste, voir la media query).
+         Basculé par #pl-toggle, état ouvert/fermé mémorisé (localStorage) et
+         conservé d'un onglet à l'autre, ouvert par défaut. Piloté par
+         static/js/panneau_lateral.js (délégation d'événements, pas d'onclick
+         inline — voir data-action ci-dessous), zones empilées, peuplées par
+         rafraichirPanneauLateralResultats() — jamais remplies côté serveur, à
+         l'exception de #pl-zone-son ci-dessous.
          - #pl-zone-monitoring : monitoring de l'infrastructure, TOUJOURS
-           visible, une ligne par watcher CCL/service CCW (VM CCW, watchers
-           CCL, services CCW).
+           visible, une ligne par watcher CCL + une ligne par service CCW
+           connu (plus de ligne VM — VirtualBox retiré depuis #447, l'appel
+           mort à /ccw/vm-statut a été supprimé par #628).
          - #pl-zone-son (issue #527) : interrupteur global plat/cloche du bip
            + test immédiat. GLOBAL (pas par projet, contrairement à la
            tonalité de l'onglet Configuration, issue #526) — TOUJOURS visible,
-           initialisé une seule fois au chargement (initZoneSon(),
-           static/js/app.js) et mis à jour par ses propres handlers au clic,
-           PAS reconstruit à chaque cycle de rafraichirPanneauLateralResultats
-           (contrairement aux autres zones ci-dessous) : rien ne le ferait
-           diverger de l'état réel puisque cette zone est la seule à écrire
-           dans son_actif.txt depuis l'interface. Le bouton #pl-btn-tester-son
-           joue la tonalité du projet actif (projetCourant, issue #532) : il
-           est disabled par défaut (attribut posé dans ce HTML) et
-           réactivé/regrisé par majBoutonTesterSonActif() (static/js/app.js)
+           initialisé une seule fois au chargement (initZoneSon()) et mis à
+           jour par ses propres handlers au clic, PAS reconstruit à chaque
+           cycle de rafraichirPanneauLateralResultats (contrairement aux
+           autres zones ci-dessous) : rien ne le ferait diverger de l'état
+           réel puisque cette zone est la seule à écrire dans son_actif.txt
+           depuis l'interface. Le bouton #pl-btn-tester-son joue la tonalité
+           du projet actif (issue #532) : il est disabled par défaut (attribut
+           posé dans ce HTML) et réactivé/regrisé par majBoutonTesterSonActif()
            à chaque changement de sélection, tant qu'aucune ligne n'est
            sélectionnée (issue #533) — un son neutre ne correspondrait à
            aucune notification réelle.
-         - #pl-zone-extras : zone réservée aux futurs boutons (issue #380),
-           occupée depuis l'issue #485 par le contrôle du watcher spool
-           (issues_inbox) — rendrePanneauLateralExtras() (static/js/app.js).
-         - #pl-zone-actions : actions contextuelles sur l'issue sélectionnée,
+         - #pl-zone-extras : contrôle du watcher spool (issues_inbox, issue
+           #485) — rendrePanneauLateralExtras().
+         - #pl-zone-actions : actions contextuelles sur l'issue sélectionnée
+           (Interrompre / Relancer / Fermer — SEUL emplacement de ces actions
+           depuis #628, retirées du détail d'issue qui faisait double emploi),
            vide (donc invisible) tant qu'aucune ligne n'est sélectionnée. -->
-    <div id="panneau-lateral-resultats" class="panneau-lateral">
-      <div id="pl-zone-monitoring"></div>
-      <div id="pl-zone-son" class="pl-zone-son">
-        <div class="pl-resume-titre">Son du bip</div>
-        <div class="pl-ligne">
-          <span class="pl-ligne-libelle">Timbre</span>
-          <span class="pl-son-segmente" id="pl-son-segmente">
-            <button type="button" class="pl-son-opt" id="pl-son-opt-plat" onclick="choisirSonActif('plat')">Plat</button>
-            <button type="button" class="pl-son-opt" id="pl-son-opt-cloche" onclick="choisirSonActif('cloche')">Cloche</button>
-          </span>
-          <button type="button" class="pl-btn-mini" id="pl-btn-tester-son" onclick="testerSonActif()" disabled title="Aucune ligne sélectionnée">Tester le son</button>
+    <div id="panneau-lateral-col" class="panneau-lateral-col">
+      <button id="pl-toggle" class="pl-toggle" data-action="pl-toggle">📊 Infrastructure</button>
+      <div id="panneau-lateral-resultats" class="panneau-lateral">
+        <div id="pl-zone-monitoring"></div>
+        <div id="pl-zone-son" class="pl-zone-son">
+          <div class="pl-resume-titre">Son du bip</div>
+          <div class="pl-ligne">
+            <span class="pl-ligne-libelle">Timbre</span>
+            <span class="pl-son-segmente" id="pl-son-segmente">
+              <button type="button" class="pl-son-opt" id="pl-son-opt-plat" data-action="pl-son-plat">Plat</button>
+              <button type="button" class="pl-son-opt" id="pl-son-opt-cloche" data-action="pl-son-cloche">Cloche</button>
+            </span>
+            <button type="button" class="pl-btn-mini" id="pl-btn-tester-son" data-action="pl-tester-son" disabled title="Aucune ligne sélectionnée">Tester le son</button>
+          </div>
         </div>
+        <!-- Zone réservée aux futurs boutons (issue #380) : occupée par le
+             watcher spool (rendrePanneauLateralExtras) — voir commentaire
+             d'en-tête. -->
+        <div id="pl-zone-extras" class="pl-zone-extras"></div>
+        <div id="pl-zone-actions"></div>
       </div>
-      <!-- Zone réservée aux futurs boutons (issue #380) : vide intentionnellement. -->
-      <div id="pl-zone-extras" class="pl-zone-extras"></div>
-      <div id="pl-zone-actions"></div>
     </div>

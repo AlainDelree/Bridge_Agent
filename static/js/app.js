@@ -2,17 +2,22 @@ let sourceSSE = null;
 
 let intervalWatchers = null;
 
-// ─── Panneau latéral droit de l'onglet Résultats (issue #375) ─────────────
-// Rafraîchi toutes les 30s (intervalPanneauLateral) + sur chaque événement SSE
-// fin_issue (#350) + sur chaque changement de sélection de ligne. Dernière
-// liste connue des services CCW (projet/service/etat), alimentée par
-// ccwChargerProjets() — jamais interrogée directement depuis ce panneau, pour
-// ne pas ajouter un second polling des appels SSH coûteux de l'onglet
-// CCW (voir ccwOuvrirOnglet) : seul un clic sur le lien « Vérifier les
-// services CCW » du panneau (sidebarChargerCcw) ou une action déjà existante
-// de l'onglet CCW la met à jour.
+// ─── Services CCW connus (lus par le panneau latéral, static/js/panneau_lateral.js) ──
+// Dernière liste connue des services CCW (projet/service/etat), alimentée par
+// ccwChargerProjets() — jamais interrogée directement depuis le panneau latéral
+// (issue #375), pour ne pas ajouter un second polling des appels SSH coûteux de
+// l'onglet CCW (voir ccwOuvrirOnglet) : seul un clic sur le lien « Vérifier les
+// services CCW » du panneau (sidebarChargerCcw) ou une action déjà existante de
+// l'onglet CCW la met à jour.
 let ccwProjetsConnus = [];
-let intervalPanneauLateral = null;
+
+// Glue de transition (issue #628, pont socle→ancien, voir socle/pont.js) :
+// ccwProjetsConnus est un `let` de script classique, invisible depuis le
+// module panneau_lateral.js (portée isolée des modules ES) — ce getter est le
+// seul moyen pour le panneau latéral d'y accéder, via appelerAncien(...).
+function obtenirCcwProjetsConnus() {
+  return ccwProjetsConnus;
+}
 
 // Connexion SSE dédiée au rafraîchissement instantané des résultats (issues
 // #350, #515) — ouverte UNE FOIS au chargement de la page, tourne en
@@ -2038,106 +2043,25 @@ function demarrerStreamFinIssue() {
   sourceFinIssue.addEventListener('debut_issue', gerer);
 }
 
-// ─── Panneau latéral droit de l'onglet Résultats (issue #375, #377, #380) ──
-// Panneau FLOTTANT (position:fixed, voir .panneau-lateral dans style.css),
-// basculé par #pl-toggle, zones EMPILÉES, non exclusives, pilotées par
-// projetCourant/numeroCourant (mêmes variables que la sélection de ligne,
-// voir selectionnerLigne) :
-//  - zone haute (#pl-zone-monitoring) : monitoring passif des watchers CCL+CCW
-//    de tous les projets actifs (rendrePanneauLateralMonitoring), TOUJOURS
-//    rendue, sélection ou non — pour garder l'infra sous les yeux en
-//    travaillant sur une issue (issue #377), une ligne par watcher, noir et
-//    blanc, bouton individuel Lancer/Relancer (issue #380) ;
-//  - #pl-zone-son (issue #527) : interrupteur global plat/cloche du bip, voir
-//    initZoneSon()/choisirSonActif()/testerSonActif() ci-dessous — seule zone
-//    de ce panneau NON reconstruite à chaque cycle de
-//    rafraichirPanneauLateralResultats (initialisée une fois, se met à jour
-//    elle-même au clic) ;
-//  - zone médiane (#pl-zone-extras) : réservée aux futurs boutons (issue
-//    #380), occupée depuis l'issue #485 par le contrôle du watcher spool
-//    (issues_inbox) — rendrePanneauLateralExtras(), fetch /issues-inbox/etat ;
-//  - zone basse (#pl-zone-actions) : actions contextuelles pour le projet/
-//    l'issue sélectionnés (rendrePanneauLateralActions), sans fetch réseau
-//    (données déjà en mémoire : listeIssuesResultats + ccwProjetsConnus) —
-//    vidée (donc invisible) quand aucune ligne n'est sélectionnée.
-
-// Ouvre le panneau flottant par défaut à chaque entrée dans l'onglet
-// Résultats (issue #380) — sauf sur écran étroit, où il reste fermé par
-// défaut pour ne pas masquer la liste (même seuil que le media query CSS
-// associé, 900px). Un panneau déjà ouvert/fermé manuellement par l'utilisateur
-// est donc réinitialisé à chaque changement d'onglet, comportement voulu.
-function ouvrirPanneauLateralParDefaut() {
-  const panneau = document.getElementById('panneau-lateral-resultats');
-  if (!panneau) return;
-  panneau.classList.toggle('ferme', window.innerWidth < 900);
-  mettreAJourToggleLateral();
-}
-
-// Bascule manuel du panneau flottant (clic sur #pl-toggle).
-function basculerPanneauLateral() {
-  const panneau = document.getElementById('panneau-lateral-resultats');
-  if (!panneau) return;
-  panneau.classList.toggle('ferme');
-  mettreAJourToggleLateral();
-}
-
-// Reflète l'état ouvert/fermé du panneau sur le bouton toggle (accent visuel
-// seulement — le bouton reste cliquable et visible dans les deux états).
-function mettreAJourToggleLateral() {
-  const panneau = document.getElementById('panneau-lateral-resultats');
-  const toggle  = document.getElementById('pl-toggle');
-  if (!panneau || !toggle) return;
-  toggle.classList.toggle('actif', !panneau.classList.contains('ferme'));
-}
-
-function demarrerPanneauLateral() {
-  ouvrirPanneauLateralParDefaut();
-  rafraichirPanneauLateralResultats();
-  initZoneSon();
-  arreterPanneauLateral();
-  intervalPanneauLateral = setInterval(rafraichirPanneauLateralResultats, 30000);
-}
-
-function arreterPanneauLateral() {
-  if (intervalPanneauLateral) { clearInterval(intervalPanneauLateral); intervalPanneauLateral = null; }
-}
-
-async function rafraichirPanneauLateralResultats() {
-  const panneau = document.getElementById('panneau-resultats');
-  if (!panneau || !panneau.classList.contains('actif')) return;
-  // Les deux zones sont indépendantes (issue #377) : le monitoring se
-  // rafraîchit toujours, les actions contextuelles se (re)rendent — ou se
-  // vident — selon la sélection courante, sans attendre le fetch du monitoring.
-  await rendrePanneauLateralMonitoring();
-  await rendrePanneauLateralExtras();
-  rendrePanneauLateralActions();
-}
-
-// Service CCW connu pour ce projet (ou null), depuis la dernière liste chargée
-// (ccwProjetsConnus) — jamais un fetch direct, voir le commentaire sur cette
-// variable en tête de fichier.
-function serviceCcwProjet(nom) {
-  return ccwProjetsConnus.find(p => (p.projet || '').toLowerCase() === nom.toLowerCase()) || null;
-}
-
-// Déclenche (à la demande, sur clic) le seul fetch de l'état des services CCW
-// utilisé par ce panneau : ccwChargerProjets(), qui alimente ccwProjetsConnus
-// et re-rend elle-même ce panneau une fois la réponse reçue.
-async function sidebarChargerCcw() {
-  await ccwChargerProjets();
-}
+// ─── Panneau latéral de l'onglet Résultats — glue de transition (issue #628) ──
+// Le panneau lui-même (rendu, événements, cycle de vie) a été sorti vers
+// static/js/panneau_lateral.js (refonte web étape 4, ARCHITECTURE.md §6.7).
+// ll ne reste ici que ce qui dépend d'un état encore propriété d'app.js
+// (listeIssuesResultats/timingIssues/projetCourant/numeroCourant : liste des
+// issues, ccwProjetsConnus : onglet CCW — autres étapes de la refonte), exposé
+// au module via le pont (appelerAncien, voir socle/pont.js).
 
 // Résumé « X en cours, Y en file » d'un projet (issue #381), calculé
 // UNIQUEMENT à partir de données déjà en mémoire — jamais de fetch réseau
-// supplémentaire ici : le monitoring se rafraîchit déjà tout seul toutes les
-// 30s (rendrePanneauLateralMonitoring), un appel gh par projet à ce rythme
-// reproduirait la surconsommation de quota GraphQL déjà corrigée par
-// l'issue #270 (cf. commentaire de chargerTimingIssues). « en cours » = issue
-// ouverte for-linux/for-windows (ni done ni needs-human) dont l'ACK watcher
-// est déjà connu (timingIssues[...].debut renseigné, alimenté à la demande
-// par chargerTimingIssues/rafraichirResultats) ; « en file » = même filtre
-// mais sans ACK connu — soit réellement en attente, soit parce que
-// timingIssues n'a simplement pas encore été chargé pour ce projet.
+// supplémentaire ici : le monitoring du panneau se rafraîchit déjà tout seul
+// toutes les 30s, un appel gh par projet à ce rythme reproduirait la
+// surconsommation de quota GraphQL déjà corrigée par l'issue #270 (cf.
+// commentaire de chargerTimingIssues). « en cours » = issue ouverte
+// for-linux/for-windows (ni done ni needs-human) dont l'ACK watcher est déjà
+// connu (timingIssues[...].debut renseigné, alimenté à la demande par
+// chargerTimingIssues/rafraichirResultats) ; « en file » = même filtre mais
+// sans ACK connu — soit réellement en attente, soit parce que timingIssues
+// n'a simplement pas encore été chargé pour ce projet.
 function resumeProjetMonitoring(nom) {
   let enCours = 0, enFile = 0;
   listeIssuesResultats.forEach(it => {
@@ -2152,543 +2076,33 @@ function resumeProjetMonitoring(nom) {
   return {enCours: enCours, enFile: enFile};
 }
 
-// Monitoring de l'infrastructure, TOUJOURS visible en zone haute du panneau
-// (issue #375/#376/#377, refonte lisibilité #380), qu'une issue soit
-// sélectionnée ou non : état de la VM CCW + bouton de démarrage si éteinte,
-// UNE LIGNE PAR WATCHER CCL (point vert/gris foncé, sans couleur projet —
-// lisible en noir et blanc, issue #380) avec bouton individuel Lancer/
-// Relancer, son résumé « en cours/en file » (issue #381) + boutons de
-// relance groupée (éteints seuls, ou tous les CCL), une ligne par service CCW
-// (ou lien de vérification si aucun service encore connu), puis l'horodatage
-// du dernier rafraîchissement. Cible #pl-zone-monitoring, indépendante de la
-// zone d'actions contextuelles (#pl-zone-actions) — voir le commentaire
-// d'en-tête.
-async function rendrePanneauLateralMonitoring() {
-  const zone = document.getElementById('pl-zone-monitoring');
-  if (!zone) return;
-  const noms = nomsProjetsDisponibles();
-  // Deux fetchs locaux en parallèle : /watchers (état CCL) et /ccw/vm-statut
-  // (état de la VM, VBoxManage local — pas de guestcontrol, rapide). Aucun
-  // appel GitHub, aucun polling des services CCW (guestcontrol) ici.
-  let watchersMap = null, vmStatut = null;
-  try {
-    const [repW, repVm] = await Promise.all([
-      fetch('/watchers'),
-      fetch('/ccw/vm-statut').catch(() => null),
-    ]);
-    const liste = await repW.json();
-    watchersMap = {};
-    liste.forEach(w => { watchersMap[w.nom] = w; });
-    if (repVm) { try { vmStatut = await repVm.json(); } catch(e) { vmStatut = null; } }
-  } catch(e) { watchersMap = null; }
-
-  let html = '<div class="titre-section" style="margin-top:0">Monitoring infrastructure</div>'
-           + '<div class="pl-sous">Tous projets actifs — actualisé toutes les 30 s</div>';
-  if (!watchersMap) {
-    html += '<div class="issue-vide" style="padding:10px 0">Erreur de chargement</div>';
-    zone.innerHTML = html;
-    return;
-  }
-
-  // 1. VM CCW : ligne unique, allumée/éteinte/inconnue.
-  let vmTexte = '⚪ VM : état inconnu', vmEteinte = false;
-  if (vmStatut && vmStatut.succes) {
-    if (!vmStatut.existe) {
-      vmTexte = '🔴 VM introuvable (non créée)';
-    } else if (vmStatut.etat === 'running') {
-      vmTexte = '🟢 VM allumée';
-    } else {
-      vmTexte = '🔴 VM éteinte (' + escapeHtml(vmStatut.etat || '?') + ')';
-      vmEteinte = true;
-    }
-  } else if (vmStatut && vmStatut.erreur) {
-    vmTexte = '⚪ VM : ' + escapeHtml(vmStatut.erreur);
-  }
-  html += '<div class="pl-ligne"><span class="pl-ligne-libelle">' + vmTexte + '</span>';
-  if (vmEteinte) {
-    html += '<button class="pl-btn-mini" onclick="sidebarDemarrerVm(this)">▶ Démarrer</button>';
-  }
-  html += '</div>';
-
-  // 2. Watchers CCL : une ligne PAR watcher (issue #380) — point vert = actif,
-  // gris foncé = éteint, sans couleur projet (monitoring noir et blanc, à
-  // distinguer des pastilles colorées de la liste des issues). Bouton
-  // individuel à droite (Lancer si éteint, Relancer si actif) + sous-ligne
-  // résumé « en cours/en file » (issue #381) + boutons de relance groupée :
-  // « ▶ Lancer les éteints » (seulement les watchers éteints, si au moins un)
-  // et « ↺ Relancer tous les CCL » (TOUS les watchers CCL, actifs ou non).
-  html += '<div class="pl-resume-titre">Watchers CCL</div>';
-  const cclEteints = [];
-  noms.forEach(function(nom) {
-    const actif = !!(watchersMap[nom] && watchersMap[nom].actif);
-    if (!actif) cclEteints.push(nom);
-    const resume = resumeProjetMonitoring(nom);
-    html += '<div class="pl-ligne">'
-          + '<span class="pl-ligne-libelle">' + (actif ? '🟢' : '⚫') + ' ' + escapeHtml(nom) + '</span>'
-          + '<button class="pl-btn-mini" onclick="sidebarRelancerWatcherCCL(\'' + escapeHtml(nom) + '\', this)">'
-          + (actif ? '↺ Relancer' : '▶ Lancer') + '</button>'
-          + '</div>'
-          + '<div class="pl-sous-projet">' + resume.enCours + ' en cours, ' + resume.enFile + ' en file</div>';
-  });
-  if (noms.length) {
-    html += '<div class="pl-boutons-ccl">';
-    if (cclEteints.length) {
-      html += '<button class="pl-btn-vm" onclick="sidebarRelancerTousEteints(this)">'
-            + '▶ Lancer les éteints</button>';
-    }
-    html += '<button class="pl-btn-vm" onclick="sidebarRelancerTousCCL(this)">'
-          + '↺ Relancer tous les CCL</button>';
-    html += '</div>';
-  }
-
-  // 3. Services CCW : même format ligne par ligne, seulement si des services
-  // sont déjà connus (aucun polling automatique — voir ccwProjetsConnus en
-  // tête de fichier). Pas de bouton individuel ici : la relance CCW d'un
-  // service reste une action contextuelle liée à une issue sélectionnée
-  // (#pl-zone-actions, ccwRedemarrerProjet), inchangé depuis #375.
-  html += '<div class="pl-resume-titre">Services CCW</div>';
-  if (ccwProjetsConnus.length) {
-    ccwProjetsConnus.forEach(function(p) {
-      const actif = p.etat === 'running';
-      html += '<div class="pl-ligne"><span class="pl-ligne-libelle">'
-            + (actif ? '🟢' : '⚫') + ' ' + escapeHtml(p.projet)
-            + (actif ? '' : ' (' + escapeHtml(p.etat || '?') + ')') + '</span></div>';
-    });
-  } else {
-    html += '<div class="pl-lien" onclick="sidebarChargerCcw()">🔄 Vérifier les services CCW</div>';
-  }
-
-  // 4. Horodatage du dernier rafraîchissement (issue #381), une seule ligne en
-  // bas du monitoring — heure locale du navigateur, comme le reste de
-  // l'interface (issue #58).
-  html += '<div class="pl-sous" style="margin-top:10px">Mis à jour à '
-        + new Date().toLocaleTimeString('fr-FR', {hour: '2-digit', minute: '2-digit', second: '2-digit'})
-        + '</div>';
-  zone.innerHTML = html;
+// Sélection courante (projet/numéro + issue correspondante dans
+// listeIssuesResultats), lue par le panneau latéral pour sa zone d'actions
+// contextuelles et son bouton « Tester le son » (issue #628).
+function obtenirIssueSelectionnee() {
+  const it = (projetCourant && numeroCourant)
+    ? listeIssuesResultats.find(
+        x => x.projet === projetCourant && String(x.number) === String(numeroCourant))
+    : null;
+  return {projet: projetCourant, numero: numeroCourant, issue: it || null};
 }
 
-// ─── Interrupteur global plat/cloche du bip (#pl-zone-son, issue #527) ─────
-// GLOBAL (pas par projet — voir scripts/son_actif.txt, lu par TOUS les
-// projets via le script partagé), distinct de la tonalité par projet
-// (TONALITE_BIP, onglet Configuration, issue #526) : la tonalité décale la
-// fréquence des DEUX timbres plat/cloche, elle ne choisit pas entre eux.
-// Initialisé une seule fois par demarrerPanneauLateral() (pas à chaque cycle
-// de rafraichirPanneauLateralResultats) — cette zone est la seule source
-// d'écriture de son_actif.txt depuis l'interface, rien ne peut la faire
-// diverger de l'état serveur entre deux chargements de page.
-async function initZoneSon() {
-  const seg = document.getElementById('pl-son-segmente');
-  if (!seg) return;
-  let son = 'plat';
-  try {
-    const rep = await fetch('/son-actif');
-    const donnees = await rep.json();
-    if (donnees && (donnees.son === 'plat' || donnees.son === 'cloche')) son = donnees.son;
-  } catch(e) { /* défaut 'plat' conservé */ }
-  refleterSonActif(son);
-}
-
-function refleterSonActif(son) {
-  const optPlat   = document.getElementById('pl-son-opt-plat');
-  const optCloche = document.getElementById('pl-son-opt-cloche');
-  if (optPlat)   optPlat.classList.toggle('actif', son === 'plat');
-  if (optCloche) optCloche.classList.toggle('actif', son === 'cloche');
-}
-
-// Grise le bouton « Tester le son » tant qu'aucune ligne n'est sélectionnée
-// (projetCourant null) : sinon testerSonActif() jouerait une tonalité neutre
-// qui ne correspond à aucune notification réelle (issue #533, suite à #532).
-// Appelée à l'initialisation (disabled déjà posé dans le HTML) et à chaque
-// changement de sélection (selectionnerLigne/selectionnerPremiereVisible).
-function majBoutonTesterSonActif() {
-  const btn = document.getElementById('pl-btn-tester-son');
-  if (!btn) return;
-  btn.disabled = !projetCourant;
-  btn.title = projetCourant ? '' : 'Aucune ligne sélectionnée';
-}
-
-// Écrit le choix dans son_actif.txt au clic — effectif au bip suivant, sans
-// rechargement de page (traitement_fin.py relit le fichier à chaque bip).
-async function choisirSonActif(son) {
-  refleterSonActif(son);   // optimiste : réactivité immédiate au clic
-  try {
-    await fetch('/son-actif', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({son: son})
-    });
-  } catch(e) {
-    alert('Erreur réseau : ' + e.message);
-  }
-}
-
-// Joue le bip avec le timbre actuellement enregistré dans son_actif.txt, à la
-// tonalité du projet actif (projetCourant, celui de la ligne sélectionnée
-// dans la liste des issues — voir sa déclaration plus haut), pour que ce test
-// reflète fidèlement le son entendu à la clôture d'une issue de ce projet
-// (issue #532). Le bouton est disabled tant que projetCourant est null
-// (majBoutonTesterSonActif, issue #533) ; ce garde-fou est une redondance
-// défensive au cas où l'appel serait déclenché autrement qu'au clic.
-async function testerSonActif() {
-  if (!projetCourant) return;
-  try {
-    await fetch('/tester-son', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({projet: projetCourant})
-    });
-  } catch(e) {
-    alert('Erreur réseau : ' + e.message);
-  }
-}
-
-// Zone réservée #pl-zone-extras (issue #380), occupée depuis l'issue #485 par
-// le contrôle du watcher spool issues_inbox (scripts/watcher_issues_inbox.py)
-// — un seul watcher, pas de paramètre projet, contrairement aux watchers CCL
-// de #pl-zone-monitoring. Fetch dédié /issues-inbox/etat (même route que
-// l'onglet « Résultats inbox », étendue par l'issue #485 avec watcher_actif/
-// watcher_pid/watcher_restant_s). Contrairement aux watchers CCL, un bouton
-// « Arrêter » explicite est affiché : le watcher spool n'a par défaut aucune
-// auto-extinction (« Indéfiniment »), il doit pouvoir être coupé à tout
-// moment.
-async function rendrePanneauLateralExtras() {
-  const zone = document.getElementById('pl-zone-extras');
-  if (!zone) return;
-  let etat = null;
-  try {
-    const rep = await fetch('/issues-inbox/etat');
-    etat = await rep.json();
-  } catch(e) { etat = null; }
-  if (!etat) { zone.innerHTML = ''; return; }
-
-  const actif = !!etat.watcher_actif;
-  let html = '<div class="pl-resume-titre">Watcher spool</div>';
-  html += '<div class="pl-ligne"><span class="pl-ligne-libelle">'
-        + (actif ? '🟢' : '⚫') + ' Watcher spool (issues_inbox)</span>'
-        + '<button class="pl-btn-mini" onclick="sidebarOuvrirDureeWatcherInbox()">'
-        + (actif ? '↺ Relancer' : '▶ Démarrer') + '</button>'
-        + '</div>';
-  if (actif) {
-    const restant = (etat.watcher_restant_s === null || etat.watcher_restant_s === undefined)
-      ? 'indéfini' : formaterDureeRestante(etat.watcher_restant_s);
-    html += '<div class="pl-sous-projet">Extinction : ' + restant + '</div>';
-    html += '<div class="pl-boutons-ccl">'
-          + '<button class="pl-btn-vm" onclick="sidebarArreterWatcherInbox(this)">⏹ Arrêter</button>'
-          + '</div>';
-  }
-  zone.innerHTML = html;
-}
-
-// Formate un nombre de secondes restant avant auto-extinction en « Xh0Y » /
-// « Y min » (arrondi à la minute supérieure — jamais « 0 min » tant qu'il
-// reste du temps, cohérent avec un compte à rebours affiché toutes les 30s).
-function formaterDureeRestante(secondes) {
-  const totalMin = Math.max(1, Math.ceil(secondes / 60));
-  const h = Math.floor(totalMin / 60);
-  const m = totalMin % 60;
-  return h > 0 ? (h + 'h' + String(m).padStart(2, '0')) : (m + ' min');
-}
-
-// Ouvre le choix de durée (modal-duree-watcher-inbox, issue #485) avant tout
-// démarrage/relance du watcher spool — remis à « Indéfiniment » à chaque
-// ouverture, pour ne jamais reproposer silencieusement un choix précédent.
-function sidebarOuvrirDureeWatcherInbox() {
-  const overlay = document.getElementById('modal-duree-watcher-inbox');
-  if (!overlay) return;
-  const radioIndef = document.getElementById('dwi-indefini');
-  if (radioIndef) radioIndef.checked = true;
-  const champMin = document.getElementById('dwi-minutes');
-  if (champMin) champMin.value = '';
-  overlay.classList.add('actif');
-}
-
-function sidebarFermerDureeWatcherInbox() {
-  const overlay = document.getElementById('modal-duree-watcher-inbox');
-  if (overlay) overlay.classList.remove('actif');
-}
-
-// Lit le choix de durée du modal puis démarre (ou relance) le watcher spool
-// via POST /issues-inbox/demarrer-watcher — le serveur redémarre TOUJOURS s'il
-// tourne déjà (issue #485 : pas de refus silencieux, la nouvelle durée
-// remplace l'ancienne, quel que soit l'état courant).
-async function sidebarConfirmerDureeWatcherInbox(btn) {
-  const choix = document.querySelector('input[name="dwi-choix"]:checked');
-  let dureeMin = 0;
-  if (choix && choix.value === '30') {
-    dureeMin = 30;
-  } else if (choix && choix.value === 'perso') {
-    const champ = document.getElementById('dwi-minutes');
-    dureeMin = parseInt(champ ? champ.value : '', 10);
-    if (!Number.isFinite(dureeMin) || dureeMin <= 0) {
-      alert('Indiquez un nombre de minutes valide (> 0).');
-      return;
-    }
-  }
-  const label = btn ? btn.textContent : null;
-  if (btn) { btn.disabled = true; btn.textContent = 'Démarrage…'; }
-  try {
-    await fetch('/issues-inbox/demarrer-watcher', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({duree_min: dureeMin})
-    });
-  } catch(e) {
-    alert('Erreur réseau : ' + e.message);
-  }
-  if (btn) { btn.disabled = false; if (label !== null) btn.textContent = label; }
-  sidebarFermerDureeWatcherInbox();
-  await rafraichirPanneauLateralResultats();
-}
-
-// Arrête le watcher spool (bouton explicite, issue #485 — à la différence des
-// watchers CCL de projet, ce watcher n'a par défaut aucune auto-extinction,
-// il doit donc pouvoir être coupé manuellement à tout moment).
-async function sidebarArreterWatcherInbox(btn) {
-  if (!confirm('Arrêter le watcher spool (issues_inbox) ?')) return;
-  const label = btn ? btn.textContent : null;
-  if (btn) { btn.disabled = true; btn.textContent = 'Arrêt…'; }
-  try {
-    await fetch('/issues-inbox/arreter-watcher', {method: 'POST'});
-  } catch(e) {
-    alert('Erreur réseau : ' + e.message);
-  }
-  if (btn) { btn.disabled = false; if (label !== null) btn.textContent = label; }
-  await rafraichirPanneauLateralResultats();
-}
-
-// Actions contextuelles (issue #375, zone basse fixe depuis #377) : projet/
-// issue actuellement sélectionnés (projetCourant/numeroCourant). Aucun fetch
-// réseau — les données viennent de listeIssuesResultats (déjà en mémoire) et
-// ccwProjetsConnus. Cible #pl-zone-actions, sous #pl-zone-monitoring et la
-// zone réservée #pl-zone-extras (toujours visible, voir
-// rendrePanneauLateralMonitoring) ; se vide (donc disparaît, séparateur
-// compris) quand aucune ligne n'est sélectionnée.
-// Libellé du mode d'une issue (issue #381), affiché en haut de la zone
-// actions — mêmes labels que modeEcritureDepuisLabels (mode_write/
-// mode_scratch), reformulés pour l'affichage : « écriture » → ⚠️ Écriture
-// (working tree modifié), « lecture_active » → ✏️ Lecture active (mode_scratch,
-// travail hors working tree définitif), aucun des deux → 📖 Lecture seule.
-function libelleModeIssue(nomsLabels) {
-  const modeEcr = modeEcritureDepuisLabels(nomsLabels);
-  if (modeEcr === 'ecriture')       return '⚠️ Écriture';
-  if (modeEcr === 'lecture_active') return '✏️ Lecture active';
-  return '📖 Lecture seule';
-}
-
-function rendrePanneauLateralActions() {
-  const zone = document.getElementById('pl-zone-actions');
-  if (!zone) return;
-  const nom = projetCourant, numero = numeroCourant;
-  if (!nom || !numero) { zone.innerHTML = ''; return; }
+// Reflète dans listeIssuesResultats (sans refetch réseau) un label de
+// notification basculé depuis le panneau latéral (toggleLabelNotif,
+// static/js/panneau_lateral.js), pour rester cohérent avec l'état affiché
+// ailleurs (ex. si un autre widget lit aussi les labels de cette issue).
+function actualiserLabelIssueLocal(nom, numero, label, actif) {
   const it = listeIssuesResultats.find(
     x => x.projet === nom && String(x.number) === String(numero));
-  const nomsLabels = it ? (it.labels || []).map(l => ((l && l.name) || l || '').toLowerCase()) : [];
-  const ferme = !!(it && (it.state || '').toUpperCase() === 'CLOSED');
-  // Même condition que le bouton « Interrompre » du détail d'issue
-  // (construireHtmlIssue, issue #323) : issue ouverte, ni done ni needs-human.
-  const interromptible = !!it && !ferme
-    && !nomsLabels.includes('done') && !nomsLabels.includes('needs-human');
-  const service = serviceCcwProjet(nom);
-  // Adaptation CCL/CCW (issue #381) : le libellé du watcher ciblé par
-  // « Interrompre et relancer » suit le label de l'issue, pas la simple
-  // présence d'un service CCW connu pour le projet (utilisée plus bas pour le
-  // bouton « Relancer watcher CCW », inchangé).
-  const windows = nomsLabels.includes('for-windows');
-  const libelleWatcherCible = windows ? 'watcher CCW' : 'watcher CCL';
-
-  let html = '<hr class="pl-sep">'
-           + '<div class="titre-section" style="margin-top:0">Actions — '
-           + escapeHtml(nom) + ' #' + escapeHtml(numero) + '</div>';
-  if (it) {
-    html += '<div class="pl-mode-issue">' + libelleModeIssue(nomsLabels) + '</div>';
+  if (!it) return;
+  const dejaPresent = (it.labels || []).some(
+    l => ((l && l.name) || l || '').toLowerCase() === label);
+  if (actif && !dejaPresent) {
+    it.labels = (it.labels || []).concat([{name: label}]);
+  } else if (!actif && dejaPresent) {
+    it.labels = (it.labels || []).filter(
+      l => ((l && l.name) || l || '').toLowerCase() !== label);
   }
-  // Toggles des labels de notification (issue #384) : mêmes conditions que les
-  // boutons d'interruption (issue ouverte, ni done ni needs-human) — pas de
-  // notification à reconfigurer sur une issue déjà terminée. État initial
-  // coché/décoché reflète les labels actuels de l'issue (listeIssuesResultats).
-  if (interromptible) {
-    html += '<div class="pl-notifs">'
-          + '<div class="pl-notifs-titre">🔔 Notifications</div>'
-          + rendreCheckboxNotif(nom, numero, 'notif_pc',   'Bureau', nomsLabels)
-          + rendreCheckboxNotif(nom, numero, 'notif_gsm',  'GSM',    nomsLabels)
-          + rendreCheckboxNotif(nom, numero, 'notif_tous', 'Tous',   nomsLabels)
-          + '<div id="pl-notif-erreur" class="pl-notif-erreur"></div>'
-          + '</div>';
-  }
-  html += '<div class="pl-actions">'
-        + '<button onclick="sidebarRelancerWatcherCCL(\'' + escapeHtml(nom) + '\', this)">'
-        + '↺ Relancer watcher CCL</button>';
-  if (interromptible) {
-    html += '<button class="danger" onclick="interrompreEtRelancer(\'' + escapeHtml(nom) + '\', '
-          + Number(numero) + ')">⛔ Interrompre et relancer (' + libelleWatcherCible + ')</button>';
-    html += '<button class="danger" onclick="interrompreIssue(\'' + escapeHtml(nom) + '\', '
-          + Number(numero) + ')">⛔ Interrompre l\'issue</button>';
-  }
-  // « Fermer l'issue » (issue #381) : même route que le bouton existant du
-  // détail (construireHtmlIssue, issue #80) — /fermer-issue via fermerIssue(),
-  // réutilisée à l'identique, aucune nouvelle route.
-  if (!ferme && nomsLabels.includes('needs-human')) {
-    html += '<button onclick="relancerIssue(\'' + escapeHtml(nom) + '\', '
-          + Number(numero) + ')">🔄 Retirer needs-human</button>';
-    html += '<button class="danger-plein" onclick="fermerIssue(\'' + escapeHtml(nom) + '\', '
-          + Number(numero) + ')">✖ Fermer l\'issue</button>';
-  }
-  if (service) {
-    html += '<button onclick="ccwRedemarrerProjet(\'' + escapeHtml(nom) + '\', this)">'
-          + '↺ Relancer watcher CCW</button>'
-          + '<button class="danger" onclick="ccwNettoyerVerrous(\'' + escapeHtml(nom) + '\', this)">'
-          + '🔒 Nettoyer verrous CCW + redémarrer</button>';
-  }
-  html += '</div>';
-  if (!ccwProjetsConnus.length) {
-    html += '<div class="pl-lien" onclick="sidebarChargerCcw()">🔄 Vérifier le service CCW de ce projet</div>';
-  }
-  zone.innerHTML = html;
-}
-
-// Une ligne « ☐ Libellé » du bloc Notifications (issue #384). Coché si `label`
-// (ex. notif_pc) figure parmi les labels actuels de l'issue (nomsLabels, déjà
-// en minuscules — voir rendrePanneauLateralActions).
-function rendreCheckboxNotif(nom, numero, label, libelle, nomsLabels) {
-  const coche = nomsLabels.includes(label) ? ' checked' : '';
-  return '<label class="pl-notif-ligne">'
-       + '<input type="checkbox"' + coche + ' onchange="toggleLabelNotif(\''
-       + escapeHtml(nom) + '\', ' + Number(numero) + ', \'' + label + '\', this)"> '
-       + escapeHtml(libelle) + '</label>';
-}
-
-// Bascule un label de notification (notif_pc/notif_gsm/notif_tous) sur l'issue
-// sélectionnée via /modifier-label-notif (issue #384), sans passer par GitHub.
-// En cas d'échec (réseau ou refus serveur) : la checkbox revient à son état
-// précédent et un message d'erreur discret s'affiche brièvement sous les
-// toggles, sans bloquer l'interface (pas d'alert()).
-async function toggleLabelNotif(nom, numero, label, cb) {
-  const actif = cb.checked;
-  cb.disabled = true;
-  let ok = false, erreur = '';
-  try {
-    const rep = await fetch('/modifier-label-notif', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({projet: nom, numero: numero, label: label, actif: actif})
-    });
-    const json = await rep.json();
-    ok = !!json.succes;
-    if (!ok) erreur = json.erreur || 'échec de la mise à jour du label.';
-  } catch(e) {
-    erreur = 'Erreur réseau : ' + e.message;
-  }
-  cb.disabled = false;
-  if (!ok) {
-    cb.checked = !actif;
-    afficherErreurNotifDiscrete(erreur);
-    return;
-  }
-  // Mise à jour locale de listeIssuesResultats (sans refetch réseau), puis
-  // re-rendu du panneau d'actions pour rester cohérent avec l'état affiché
-  // ailleurs (ex. si un autre widget lit aussi les labels de cette issue).
-  const it = listeIssuesResultats.find(
-    x => x.projet === nom && String(x.number) === String(numero));
-  if (it) {
-    const dejaPresent = (it.labels || []).some(
-      l => ((l && l.name) || l || '').toLowerCase() === label);
-    if (actif && !dejaPresent) {
-      it.labels = (it.labels || []).concat([{name: label}]);
-    } else if (!actif && dejaPresent) {
-      it.labels = (it.labels || []).filter(
-        l => ((l && l.name) || l || '').toLowerCase() !== label);
-    }
-  }
-  rendrePanneauLateralActions();
-}
-
-// Message d'erreur discret (pas d'alert()) sous les toggles de notification —
-// s'efface tout seul après quelques secondes.
-function afficherErreurNotifDiscrete(message) {
-  const zone = document.getElementById('pl-notif-erreur');
-  if (!zone) return;
-  zone.textContent = '⚠ ' + message;
-  setTimeout(function() {
-    if (zone.textContent === '⚠ ' + message) zone.textContent = '';
-  }, 4000);
-}
-
-// Relance (ou lance) le watcher CCL du projet donné — même endpoint que
-// l'onglet Watchers (actionWatchers → /lancer-watcher), appelé ici pour un
-// seul projet directement depuis le panneau latéral.
-async function sidebarRelancerWatcherCCL(nom, btn) {
-  const label = btn ? btn.textContent : null;
-  if (btn) { btn.disabled = true; btn.textContent = 'Relance…'; }
-  try {
-    await fetch('/lancer-watcher', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({projet: nom, relancer: true})
-    });
-  } catch(e) {
-    alert('Erreur réseau : ' + e.message);
-  }
-  const panneauWatchers = document.getElementById('panneau-watchers');
-  if (panneauWatchers && panneauWatchers.classList.contains('actif')) await chargerWatchers();
-  if (btn) { btn.disabled = false; if (label !== null) btn.textContent = label; }
-  await rafraichirPanneauLateralResultats();
-}
-
-// Relance séquentiellement TOUS les watchers CCL actuellement éteints (issue
-// #377), un par un via le même endpoint que sidebarRelancerWatcherCCL. Relit
-// /watchers juste avant de lancer les relances plutôt que de réutiliser la
-// liste déjà affichée dans le panneau, potentiellement périmée entre le rendu
-// et le clic.
-async function sidebarRelancerTousEteints(btn) {
-  if (btn) { btn.disabled = true; btn.textContent = 'Relance…'; }
-  try {
-    const repW = await fetch('/watchers');
-    const liste = await repW.json();
-    const watchersMap = {};
-    liste.forEach(w => { watchersMap[w.nom] = w; });
-    const eteints = nomsProjetsDisponibles()
-      .filter(n => !(watchersMap[n] && watchersMap[n].actif));
-    for (const nom of eteints) {
-      try {
-        await fetch('/lancer-watcher', {
-          method: 'POST',
-          headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({projet: nom, relancer: true})
-        });
-      } catch(e) { /* une relance en échec ne doit pas bloquer les suivantes */ }
-    }
-  } catch(e) {
-    alert('Erreur réseau : ' + e.message);
-  }
-  const panneauWatchers = document.getElementById('panneau-watchers');
-  if (panneauWatchers && panneauWatchers.classList.contains('actif')) await chargerWatchers();
-  if (btn) { btn.disabled = false; btn.textContent = '▶ Lancer les éteints'; }
-  await rafraichirPanneauLateralResultats();
-}
-
-// Relance séquentiellement TOUS les watchers CCL, actifs OU éteints (issue
-// #381) — même mécanique que sidebarRelancerTousEteints, mais SANS filtrer
-// sur l'état : chaque projet est relancé via /lancer-watcher (relancer=true),
-// qui redémarre un watcher déjà actif comme il lance un watcher éteint.
-async function sidebarRelancerTousCCL(btn) {
-  if (btn) { btn.disabled = true; btn.textContent = 'Relance…'; }
-  try {
-    for (const nom of nomsProjetsDisponibles()) {
-      try {
-        await fetch('/lancer-watcher', {
-          method: 'POST',
-          headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({projet: nom, relancer: true})
-        });
-      } catch(e) { /* une relance en échec ne doit pas bloquer les suivantes */ }
-    }
-  } catch(e) {
-    alert('Erreur réseau : ' + e.message);
-  }
-  const panneauWatchers = document.getElementById('panneau-watchers');
-  if (panneauWatchers && panneauWatchers.classList.contains('actif')) await chargerWatchers();
-  if (btn) { btn.disabled = false; btn.textContent = '↺ Relancer tous les CCL'; }
-  await rafraichirPanneauLateralResultats();
 }
 
 // Sélectionne la première ligne encore visible SANS charger son détail (voir
@@ -2823,30 +2237,16 @@ function construireHtmlIssue(it, nom) {
           + 'Interrompre et fermer cette issue</button></div>';
   }
 
-  // Issue en échec définitif (label needs-human) et toujours ouverte :
-  // l'intervention humaine ayant été effectuée, on propose de la clore
-  // directement, sans passer par GitHub (issue #80). Bouton rouge plein à côté
-  // du rappel « intervention humaine requise ».
+  // Issue en échec définitif (label needs-human) et toujours ouverte : rappel
+  // visuel de l'intervention humaine requise. Le bouton « Fermer
+  // définitivement » (fermerIssue) et le bouton « Interrompre cette issue »
+  // (interrompreIssue) faisaient double emploi avec le panneau latéral
+  // Infrastructure (#pl-zone-actions, static/js/panneau_lateral.js) — retirés
+  // d'ici par l'issue #628, l'action ne vit plus que dans le panneau.
   if (!ferme && nomsLabels.includes('needs-human')) {
     html += '<div class="bloc-annuler">'
           + '<span class="traitement-encours">'
-          + '⚠️ Échec — intervention humaine requise</span> '
-          + '<button class="danger-plein" onclick="fermerIssue(\'' + nom + '\', '
-          + Number(it.number) + ')">'
-          + 'Fermer définitivement</button></div>';
-  }
-
-  // Bouton « Interrompre » (issue #323, suite #320) : sur TOUTE issue ouverte
-  // ni done ni needs-human — remplace au niveau de l'issue elle-même l'action
-  // corrective qui se faisait jusqu'ici hors interface (kill manuel, verrou à
-  // la main). Contrairement à « Interrompre et fermer » (#144, ci-dessus) :
-  // ne FERME PAS l'issue (needs-human seulement, trace via commentaire), et
-  // fonctionne aussi côté for-windows (CCW), pas seulement for-linux.
-  if (!ferme && !nomsLabels.includes('done') && !nomsLabels.includes('needs-human')) {
-    html += '<div class="bloc-annuler">'
-          + '<button class="danger" onclick="interrompreIssue(\'' + nom + '\', '
-          + Number(it.number) + ')">'
-          + '⛔ Interrompre cette issue</button></div>';
+          + '⚠️ Échec — intervention humaine requise</span></div>';
   }
 
   html += '<div class="issue-body">' + escapeHtml(it.body || '(pas de description)') + '</div>';
@@ -5501,30 +4901,34 @@ setInterval(rafraichirRateLimit, 30000);
 // supprimé depuis par #611, pas ce repli #589. Le dossier principal du
 // projet est alors en cours d'écriture et ne doit PAS être touché (merge,
 // push) avant la fin.
-// Réutilise /watchers (déjà interrogé par l'onglet Watchers), à la même
-// cadence que le rate limit ci-dessus plutôt qu'un polling dédié de plus.
-async function rafraichirReplisRepTravail() {
+// Mutualisé avec le monitoring du panneau latéral Infrastructure (issue #628,
+// pont socle→ancien, voir socle/pont.js) : au lieu de son propre fetch
+// /watchers, ce bandeau s'abonne à store.watchers, alimenté par l'UNIQUE
+// lecture périodique de /watchers de static/js/panneau_lateral.js
+// (rafraichirWatchersPartages, même cadence 30s qu'avant). Affichage inchangé.
+function rafraichirReplisRepTravail(watchersMap) {
   const bandeau = document.getElementById('bandeau-repli-rep-travail');
   if (!bandeau) return;
-  try {
-    const rep   = await fetch('/watchers');
-    const liste = await rep.json();
-    const enRepli = liste.filter(w => w.repli_rep_travail).map(w => w.nom);
-    if (enRepli.length) {
-      bandeau.textContent = '⚠️ Tâche mode_write en cours directement dans REP_TRAVAIL '
-        + '(hors worktree isolé) pour : ' + enRepli.join(', ')
-        + ' — ne pas merger/pousser le dossier principal avant la fin.';
-      bandeau.style.display = 'block';
-    } else {
-      bandeau.style.display = 'none';
-    }
-  } catch(e) {
-    // Best-effort, silencieux : mieux vaut garder le dernier état connu
-    // plutôt qu'un bandeau qui clignote sur une erreur réseau transitoire.
+  const enRepli = Object.values(watchersMap || {})
+    .filter(w => w.repli_rep_travail).map(w => w.nom);
+  if (enRepli.length) {
+    bandeau.textContent = '⚠️ Tâche mode_write en cours directement dans REP_TRAVAIL '
+      + '(hors worktree isolé) pour : ' + enRepli.join(', ')
+      + ' — ne pas merger/pousser le dossier principal avant la fin.';
+    bandeau.style.display = 'block';
+  } else {
+    bandeau.style.display = 'none';
   }
 }
-rafraichirReplisRepTravail();
-setInterval(rafraichirReplisRepTravail, 30000);
+// window.Bridge n'est publié qu'après l'exécution du module (voir
+// scripts.html) : DOMContentLoaded, qui n'est déclenché qu'une fois TOUS les
+// scripts différés/modules exécutés, garantit que window.Bridge.store existe
+// déjà au moment de cet abonnement.
+window.addEventListener('DOMContentLoaded', function() {
+  if (window.Bridge && window.Bridge.store) {
+    window.Bridge.store.abonnerCle('watchers', rafraichirReplisRepTravail);
+  }
+});
 
 // ─── Canal SSE de début/fin d'issue (issues #350, #515) ───────────────────
 // Ouvert une seule fois ici, au chargement de la page — indépendamment de
