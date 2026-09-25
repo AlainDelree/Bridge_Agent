@@ -1,0 +1,28 @@
+<!-- ─── Modal « Durée du watcher spool » (issue #485) ─────────────────────────
+     Ouverte au clic sur Démarrer/Relancer dans #pl-zone-extras
+     (sidebarOuvrirDureeWatcherInbox) : choix par case à cocher (radio) de la
+     durée avant auto-extinction du watcher — Indéfiniment (défaut),
+     30 min, ou un nombre de minutes libre. Transmis à POST
+     /issues-inbox/demarrer-watcher (sidebarConfirmerDureeWatcherInbox). -->
+<div id="modal-duree-watcher-inbox" class="modal-overlay">
+  <div class="modal-carte" style="max-width:420px">
+    <div class="modal-titre" id="dwi-titre">▶ Démarrer le watcher spool (issues_inbox)</div>
+    <label style="display:block;margin-bottom:10px;font-size:13px;color:#333">
+      <input type="radio" name="dwi-choix" id="dwi-indefini" value="indefini" checked>
+      Indéfiniment
+    </label>
+    <label style="display:block;margin-bottom:10px;font-size:13px;color:#333">
+      <input type="radio" name="dwi-choix" value="30">
+      30 min
+    </label>
+    <label style="display:block;margin-bottom:14px;font-size:13px;color:#333">
+      <input type="radio" name="dwi-choix" value="perso">
+      Choix en minutes :
+      <input type="number" id="dwi-minutes" min="1" step="1" style="width:70px;margin-left:6px">
+    </label>
+    <div class="modal-boutons">
+      <button id="dwi-annuler" onclick="sidebarFermerDureeWatcherInbox()">Annuler</button>
+      <button class="primaire" id="dwi-confirmer" onclick="sidebarConfirmerDureeWatcherInbox(this)">Confirmer</button>
+    </div>
+  </div>
+</div>

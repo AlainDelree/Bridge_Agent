@@ -1,0 +1,50 @@
+  <!-- ─── Bandeau d'avertissement échéance éval Windows CCW (issue #454) : visible
+       sur tous les onglets, hors des panneaux, tant que l'échéance approche. ─ -->
+  {% if eval_windows %}
+  <div class="bandeau-eval-windows {{ eval_windows.niveau }}">
+    {% for message in eval_windows.messages %}
+    <div>{{ message }}</div>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  <!-- ─── Bandeau global : tâche(s) mode_write en cours directement dans
+       REP_TRAVAIL, hors worktree isolé (repli #589, issue #609) — visible sur
+       TOUS les onglets, comme le bandeau éval Windows ci-dessus. Alimenté par
+       rafraichirReplisRepTravail() (polling /watchers, static/js/app.js). ─ -->
+  <div id="bandeau-repli-rep-travail" class="bandeau-eval-windows orange" style="display:none"></div>
+
+  <!-- ─── Bandeau global : sélecteur de projet (pilote tous les onglets sauf Watchers) ─ -->
+  <div class="bandeau-projet">
+
+    <!-- Ligne 1 : combobox Projet + bouton (relancer) à sa droite, statut à droite -->
+    <div class="bandeau-ligne">
+      <label for="projet">Projet :</label>
+      <select id="projet" onchange="onProjetChange()">
+        {% for p in projets %}
+        <option value="{{ p.nom }}">{{ p.nom }} — {{ p.depot }}</option>
+        {% endfor %}
+      </select>
+      <button id="btn-nouveau-projet" onclick="ouvrirNouveauProjet()"
+              title="Créer ou installer un nouveau projet dans le bridge">+ Nouveau projet</button>
+      <button id="btn-watcher" onclick="lancerWatcher()">Lancer le watcher</button>
+
+      <div id="bandeau-statut" style="display:flex;align-items:center;gap:10px;
+           margin-left:auto;padding:6px 12px;background:#f8f8f5;
+           border:1px solid #e0dfda;border-radius:6px;font-size:13px">
+        <span id="dot-statut" style="width:8px;height:8px;border-radius:50%;
+              background:#ccc;flex-shrink:0"></span>
+        <span id="texte-statut" style="color:#888">Vérification…</span>
+      </div>
+    </div>
+
+    <!-- Ligne 2 : « Projet actif : … » en grand, avec la couleur accent du projet -->
+    <div id="projet-actif-label" class="projet-actif-label"></div>
+
+    <!-- Ligne 3 : nom du dépôt et du répertoire, sous la combobox et le statut -->
+    <div id="info-projet" style="font-size:12px;color:#888;padding:0 2px">
+      <span id="info-depot"></span>
+      <span id="info-rep-travail"></span>
+      <span id="info-perimetre"></span>
+    </div>
+  </div>

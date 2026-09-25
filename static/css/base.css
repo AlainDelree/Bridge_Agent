@@ -1,0 +1,70 @@
+/* base.css : reset, mise en page (fenêtre, entête, bandeaux, onglets, panneaux), primitives de formulaire — extrait de style.css (issue #625, étape 1). Ordre de
+   chargement à préserver : voir templates/fragments/entete.html. */
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:system-ui,sans-serif;font-size:14px;background:#f0efe9;color:#1a1a18;min-height:100vh;padding:28px 16px;position:relative}
+/* 860px→1160px (issue #375) : l'ancienne largeur laissait l'onglet Résultats
+   sans place pour le panneau latéral droit (~280px + espacement) sans écraser
+   la liste des issues. Élargie globalement plutôt que pour ce seul onglet —
+   les autres onglets (formulaires flex, tableaux width:100%) s'en accommodent
+   sans régression, juste un peu plus de confort de lecture. */
+.fenetre{max-width:1160px;margin:0 auto;background:#fff;border:1px solid #ddd;border-radius:12px;overflow:hidden}
+.entete{padding:14px 20px;border-bottom:1px solid #dad9d2;display:flex;align-items:center;gap:9px;background:#e7e6e0}
+.entete h1{font-size:15px;font-weight:500}
+.entete .statut{font-size:12px;color:#888}
+/* Rate limit GitHub GraphQL (issue #607) : pilule compacte entre le titre et le
+   compteur de projets, TOUJOURS visible (l'auto-margin, déplacé ici depuis
+   .statut, pousse ce widget + le compteur + les boutons à droite en bloc).
+   Couleur selon le % consommé : vert < 70%, orange 70-90%, rouge > 90%
+   (risque immédiat) ; gris = état dégradé (appel gh échoué, cf. rate_limit.py). */
+.entete .rate-limit{margin-left:auto;font-size:12px;font-weight:600;
+  padding:2px 9px;border-radius:9px;color:#fff;white-space:nowrap}
+.entete .rate-limit.rl-vert{background:#3B8C2F}
+.entete .rate-limit.rl-orange{background:#C77A15}
+.entete .rate-limit.rl-rouge{background:#B32020}
+.entete .rate-limit.rl-gris{background:#8A8A85}
+.bandeau-eval-windows{padding:9px 20px;font-size:13px;font-weight:600;text-align:center}
+.bandeau-eval-windows.orange{background:#fff3cd;color:#856404;border-bottom:1px solid #ffe08a}
+.bandeau-eval-windows.rouge{background:#f8d7da;color:#721c24;border-bottom:1px solid #f5c6cb}
+.bandeau-projet{display:flex;flex-direction:column;gap:8px;
+  padding:14px 20px;border-bottom:1px solid #dad9d2;background:#e7e6e0;
+  border-left:4px solid #1a1a18}
+.bandeau-ligne{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.bandeau-ligne label{font-size:14px;color:#333;font-weight:600;white-space:nowrap}
+.bandeau-projet select{padding:8px 12px;border:1px solid #ccc;border-radius:6px;
+  font-size:15px;font-weight:600;background:#fff;color:#1a1a18;min-width:240px;
+  border-left:4px solid #1a1a18}
+.bandeau-projet select:focus{outline:none;border-color:#888}
+/* padding/border-radius pensés pour le fond coloré posé en inline par
+   appliquerAccentProjet (issue #535, styleAccentProjet) — restent discrets
+   quand background est vide (ancien style, porte de sortie). */
+.projet-actif-label{font-size:14px;font-weight:700;color:#1a1a18;padding:2px 8px;
+  border-radius:6px;display:inline-block}
+.onglets{display:flex;gap:4px;padding:8px 20px 0;background:#e7e6e0;border-bottom:1px solid #dad9d2;
+  box-shadow:inset 0 6px 8px -8px rgba(0,0,0,.18)}
+.onglet{padding:9px 16px 10px;font-size:15px;font-weight:500;color:#777;cursor:pointer;
+  border:1px solid transparent;border-bottom:none;border-radius:8px 8px 0 0;
+  margin-bottom:-1px;user-select:none;background:transparent}
+.onglet:hover:not(.actif){color:#1a1a18;background:#f0efe9}
+.onglet.actif{color:#1a1a18;font-weight:700;background:#fff;border-color:#dad9d2}
+.panneau{display:none;padding:20px}
+.panneau.actif{display:block}
+/* Onglet Résultats (issue #94→#95) : l'ascenseur horizontal est désormais porté
+   par la liste elle-même (.liste-issues) quand la colonne titre est élargie
+   au-delà de la largeur visible — voir .liste-issues plus bas. La règle
+   #panneau-resultats{overflow-x:auto} de l'issue #94 est donc retirée (obsolète :
+   elle faisait défiler tout le panneau, filtres compris, sans effet réel car le
+   titre était tronqué par CSS, pas débordant). */
+.rangee{display:flex;gap:12px;margin-bottom:14px;align-items:flex-end}
+.champ{display:flex;flex-direction:column;gap:5px;flex:1}
+.champ label{font-size:12px;color:#666}
+.champ select,.champ input[type=text],.champ input[type=number]{
+  width:100%;padding:7px 10px;border:1px solid #ddd;border-radius:6px;
+  font-size:13px;background:#fff;color:#1a1a18}
+.champ select:focus,.champ input:focus,textarea:focus{outline:none;border-color:#888}
+textarea{width:100%;padding:10px;border:1px solid #ddd;border-radius:6px;
+  font-size:13px;font-family:monospace;resize:vertical;color:#1a1a18;min-height:460px}
+.titre-section{font-size:11px;font-weight:500;color:#999;text-transform:uppercase;
+  letter-spacing:.06em;margin:16px 0 8px;padding-bottom:6px;border-bottom:1px solid #f0efe9}
+.radio-groupe,.case-groupe{display:flex;gap:18px;flex-wrap:wrap;padding:4px 0}
+.radio-groupe label,.case-groupe label{font-size:13px;display:flex;align-items:center;gap:6px;cursor:pointer}
+.badge-alerte{font-size:11px;padding:2px 7px;border-radius:4px;background:#fff3cd;color:#856404;margin-left:4px}

@@ -1,0 +1,5 @@
+{
+  "private": true,
+  "type": "module",
+  "description": "Marqueur ESM pour Node : sans build, `node --test` traite les .js de ce dossier comme des modules ES. Aucune dépendance, aucun script d'installation. Le navigateur, lui, ignore ce fichier (les <script type=\"module\"> suffisent)."
+}

@@ -1,0 +1,49 @@
+<!-- ─── Modal « Supprimer projet » (issue #587) — symétrique au modal
+     « Nouveau projet » ci-dessus, côté CCL/local uniquement. La checklist
+     ci-dessous doit être ENTIÈREMENT cochée (chaque case = une des cibles
+     démontées) avant que le champ de confirmation ne soit même activé, et le
+     nom du projet doit y être retapé à l'identique — double garde-fou côté
+     interface, le serveur revérifie indépendamment la confirmation. ────────── -->
+<div id="modal-supprimer-projet" class="modal-overlay">
+  <div class="modal-carte" style="max-width:520px">
+    <div class="modal-titre">🗑 Supprimer le projet « <span id="sp-nom-titre"></span> »</div>
+
+    <div id="sp-chargement" style="font-size:13px;color:#666;margin-bottom:12px">Chargement de l'aperçu…</div>
+    <div id="sp-contenu" style="display:none">
+      <div style="font-size:12.5px;color:#666;margin-bottom:14px">
+        Dépôt GitHub <b id="sp-depot"></b> — <u>conservé, non touché</u>
+        (geste manuel volontaire, hors scope). Le côté CCW (clone Windows,
+        service NSSM, tokens) n'est pas non plus touché ici.
+      </div>
+
+      <div class="modal-liste" id="sp-apercu" style="margin-bottom:14px"></div>
+
+      <div style="font-size:13px;color:#333;margin-bottom:8px">Cocher chaque cible avant de pouvoir confirmer :</div>
+      <label style="display:block;font-size:13px;color:#333;margin-bottom:6px">
+        <input type="checkbox" class="sp-case" onchange="spMajBoutonEtat()">
+        Répertoire de travail (contenu, CONTEXTE.md/specs, dépôt git local)
+      </label>
+      <label style="display:block;font-size:13px;color:#333;margin-bottom:6px">
+        <input type="checkbox" class="sp-case" onchange="spMajBoutonEtat()">
+        Fichier <code id="sp-conf-nom"></code>
+      </label>
+      <label style="display:block;font-size:13px;color:#333;margin-bottom:14px">
+        <input type="checkbox" class="sp-case" onchange="spMajBoutonEtat()">
+        Retrait des tableaux §2/§7 de BRIDGE_AGENT_DOC.md (régénération immédiate)
+      </label>
+
+      <div class="champ" style="margin-bottom:14px">
+        <label>Taper « <span id="sp-nom-confirmation-attendu"></span> » pour confirmer la suppression définitive</label>
+        <input type="text" id="sp-nom-confirmation" oninput="spMajBoutonEtat()" autocomplete="off">
+      </div>
+    </div>
+
+    <div id="sp-compte-rendu" class="modal-liste" style="display:none"></div>
+    <div id="sp-message" class="message" style="display:none"></div>
+
+    <div class="modal-boutons">
+      <button id="sp-fermer" onclick="fermerSupprimerProjet()">Fermer</button>
+      <button class="danger-plein" id="sp-supprimer" onclick="soumettreSupprimerProjet()" disabled>Supprimer définitivement</button>
+    </div>
+  </div>
+</div>

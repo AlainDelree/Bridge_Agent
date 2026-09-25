@@ -48,6 +48,11 @@ def create_app() -> Flask:
     app.config["PROC_TUNNEL"]    = None    # processus cloudflared (mode --externe)
     app.config["FIN_ISSUE_ABONNES"] = []   # files SSE actives /stream, une par onglet Résultats (issue #350)
 
+    # Versionnage des fichiers statiques (cache-busting) : url_statique() et
+    # importmap_socle() disponibles dans les gabarits (issue #625, étape 1).
+    from app.statique import enregistrer_aides_statiques
+    enregistrer_aides_statiques(app)
+
     _enregistrer_routes(app)
     return app
 

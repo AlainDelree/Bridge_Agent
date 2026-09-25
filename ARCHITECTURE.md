@@ -47,14 +47,20 @@ Bridge_Agent/
 │   │                       (shutdown), route /quitter, thread surveiller_heartbeat.
 │   ├── tunnel.py           Tunnel cloudflared (mode --externe) : démarrage/arrêt
 │   │                       automatique de « cloudflared tunnel run bridge-agent ».
-│   └── vues.py             Vue générale : route index() qui rend le gabarit
-│                           principal de l'interface.
+│   ├── vues.py             Vue générale : route index() qui rend le gabarit
+│   │                       principal de l'interface.
+│   └── statique.py         Versionnage cache-busting des statiques : url_statique
+│                           et importmap_socle, globales Jinja (§6.6, issue #625).
 │
 ├── templates/
-│   └── index.html          Gabarit principal (interface, onglets).
+│   ├── index.html          Squelette : inclut les fragments (issue #625).
+│   └── fragments/          Un fragment par onglet / panneau / modale (§6.5).
 ├── static/
-│   ├── css/style.css       Feuille de style de l'interface.
-│   └── js/app.js           Logique front (onglets, appels fetch, flux SSE).
+│   ├── css/                Feuilles découpées par zone, ordre = cascade (§6.5).
+│   └── js/
+│       ├── app.js          Ancien front (script CLASSIQUE, vidé par étapes).
+│       └── socle/          Briques ES : store/api/sse/toasts/dom/persistance,
+│                           pont de transition, tests (§6.2). Refonte issue #625.
 │
 ├── configs/                Un fichier <projet>.conf par projet actif.
 ├── logs/                   Journaux watcher-<projet>.log et fichiers .pid.
@@ -255,6 +261,196 @@ Passage d'un `new_issue.py` monolithique à un package `app/` structuré :
 
 Résultat : responsabilités isolées, état partagé propre, aucune globale de
 module — la base sur laquelle s'appuient les décisions du §2 et le §4.
+
+---
+
+## 6. Refonte de l'interface web — carte de migration (issue #625)
+
+> **Document de référence des étapes suivantes.** Il se veut auto-suffisant :
+> une issue « sortir la fonctionnalité X de app.js » doit pouvoir s'appuyer sur
+> ce seul §6. Les étapes suivantes peuvent tourner **en parallèle**, dans des
+> worktrees distincts, en touchant autant que possible des fichiers différents.
+
+### 6.1 Pourquoi et principe
+
+`static/js/app.js` (~6400 lignes), `templates/index.html` (~900) et l'ancien
+`static/css/style.css` (~500) sont refondus **par étapes**. Architecture retenue
+par Alain : **modules JavaScript natifs** (`<script type="module">`), **sans
+étape de build**, organisés autour de **briques partagées** (le « socle ») et de
+**modules par fonctionnalité** (à venir). **Contrainte absolue : aucun changement
+visible pour l'utilisateur à aucune étape.**
+
+L'étape 1 (issue #625) pose le socle et découpe les fichiers **sans rien
+remplacer** : l'ancien `app.js` reste seul aux commandes. Le socle est **inerte**
+(chargé, testé, mais ne pilote aucun rendu et n'ouvre aucune connexion SSE).
+
+### 6.2 Arborescence des modules du socle (`static/js/socle/`)
+
+```
+static/js/socle/
+├── package.json      {"type":"module"} — fait traiter les .js comme ESM par Node
+│                     (tests). Ignoré par le navigateur.
+├── index.js          Point d'entrée chargé comme MODULE. Assemble les briques,
+│                     installe le pont. N'ouvre PAS le SSE, n'enregistre AUCUNE
+│                     délégation (socle inerte à l'étape 1).
+├── store.js          Source de vérité unique (voir §6.3).
+├── api.js            Accès unique aux routes Flask, vérifie response.ok,
+│                     remonte toute erreur via toasts (plus d'erreur avalée).
+├── sse.js            Canaux /stream et /events centralisés — NON connectés.
+├── toasts.js         Notifications non bloquantes + LA modale de confirmation
+│                     destructive. Styles auto-injectés (classes `socle-`).
+├── dom.js            Utilitaires DOM + registre de délégation d'événements.
+├── persistance.js    localStorage restreint aux préférences d'interface.
+├── pont.js           Mécanisme de transition ancien⇄nouveau (voir §6.4).
+└── tests/            Tests `node:test` (store, persistance, dom) + README.
+```
+
+### 6.3 Responsabilité de chaque brique (ce qu'elle expose)
+
+- **store** — état applicatif centralisé, indexé de façon stable. Tranches :
+  `issues` (dictionnaire indexé par `cleIssue(projet, numero)` = `"projet#numero"`),
+  `selection`, `filtres`, `projets`, `watchers`, `issuesInbox`, `son`,
+  `rateLimit`. API : `get` / `set` / `maj` / `abonner` / `abonnerCle`, plus les
+  aides issues `lireIssue` / `ecrireIssue` / `remplacerIssues` / `listerIssues`.
+  `creerStore(etatInitial)` est la fabrique générique testable.
+- **api** — `api.get/post/supprimer(url, …)` : vérifie **systématiquement**
+  `response.ok`, lève `ErreurApi{statut,url,corps}` et affiche un toast (sauf
+  `{silencieux:true}`). Remplace les ~68 `fetch()` en dur qui testaient un champ
+  métier du JSON et laissaient passer les 500.
+- **sse** — `creerCanalSse(url, gestionnaires, opts)` + `sse.stream`/`sse.events`
+  préconfigurés pour écrire dans le store. **`connecter()` n'est appelé nulle
+  part à l'étape 1** : interdiction de double connexion `/stream` ou `/events`
+  tant que l'ancien code gère les siennes.
+- **toasts** — `toasts.info/succes/erreur/avertissement(msg)` (éphémère, jamais
+  de « OK » à cliquer) et `toasts.confirmer(msg, opts) → Promise<boolean>` (LA
+  seule modale, réservée au destructif). Remplace `alert()` / `confirm()` /
+  `afficherToast()`.
+- **dom** — `$`, `$$`, `creerElement`, `echapperHtml` (pure) et le **registre de
+  délégation** : `surAction(selecteur, type, handler)` + `installerDelegation()`.
+  Un seul écouteur par type d'événement, routé par `closest(selecteur)` — destiné
+  à remplacer les gestionnaires inline du HTML et ceux générés en texte.
+- **persistance** — `lire/ecrire` (JSON), `lireTexte/ecrireTexte` (brut, compat
+  clés historiques), `supprimer`, `supprimerParPrefixe`, et `CLES` (rappel des
+  clés localStorage d'app.js). **Uniquement des préférences d'interface locales.**
+
+### 6.4 Mécanisme de transition (`pont.js`) — à retirer à la dernière étape
+
+L'ancien `app.js` **doit rester un script CLASSIQUE**, chargé À CÔTÉ du module
+(pas importé par lui) : dans un module tout est isolé et en mode strict, or les
+>70 gestionnaires inline du HTML et les handlers générés en texte appellent les
+~233 fonctions d'app.js **par leur nom global**. L'importer comme module casserait
+l'interface.
+
+`pont.js` est **le seul point de contact** entre les deux mondes, dans les deux
+sens :
+
+1. **ancien → socle** : `installerPont({store, api, …})` publie les briques sous
+   `window.Bridge`. L'ancien code peut donc, temporairement, faire
+   `window.Bridge.toasts.info(...)` ou lire `window.Bridge.store`.
+2. **socle → ancien** : `appelerAncien('nomFonction', …args)` appelle une
+   fonction globale de l'ancien app.js sans y référer en dur (elle n'est pas
+   importable), avec un `warn` si absente.
+
+**Cohabitation avec le store** : à l'étape 1 le store ne pilote rien. Quand une
+donnée migrera dans le store et que l'ancien code en aura encore besoin, on
+posera **dans pont.js** un miroir explicite (`store.abonnerCle(cle, …)` →
+variable/DOM ancien), retiré avec le reste.
+
+**Suppression** : à la dernière étape (app.js vidé), supprimer `pont.js`, l'appel
+`installerPont()` dans `index.js`, et toute référence à `window.Bridge` /
+`appelerAncien`. Aucune autre brique ne dépend de `pont.js`.
+
+**Ordre de chargement** (`templates/fragments/scripts.html`) — à préserver :
+1. `<script type="importmap">` (versionnage des modules, cf. §6.6) ;
+2. `<script>` inline Jinja : `window.COULEURS_PERSISTEES`,
+   `window.MIMES_IMAGE_ACCEPTES` (doit précéder les deux mondes) ;
+3. `<script src=app.js>` (classique, s'exécute au parsing) ;
+4. `<script type="module" src=index.js>` (différé ⇒ s'exécute **après** app.js et
+   après le script inline : l'ancien code et les variables Jinja sont prêts).
+
+### 6.5 Correspondance zones de l'interface ↔ fichiers
+
+**Fragments HTML** (`templates/index.html` = squelette qui `{% include %}`) :
+
+| Zone | Fragment (`templates/fragments/`) |
+|------|-----------------------------------|
+| Entête (titre, rate-limit, Quitter, Déconnexion) | `entete.html` |
+| Bandeaux (éval Windows, repli REP_TRAVAIL, sélecteur projet) | `bandeaux.html` |
+| Barre d'onglets | `onglets.html` |
+| Onglet Nouvelle issue | `onglet_creation.html` |
+| Onglet Résultats (+ inclut le panneau latéral) | `onglet_resultats.html` |
+| Panneau latéral Infrastructure | `panneau_lateral.html` |
+| Onglet Résultats inbox | `onglet_inbox.html` |
+| Onglet Watchers | `onglet_watchers.html` |
+| Onglet Configuration | `onglet_config.html` |
+| Onglet Journal | `onglet_journal.html` |
+| Onglet CCW | `onglet_ccw.html` |
+| Modales | `modale_confirmation.html`, `modale_nouveau_projet.html`, `modale_supprimer_projet.html`, `modale_recherche_titre.html`, `modale_interrompre.html`, `modale_duree_watcher_inbox.html`, `overlay_arret.html` |
+| Scripts (importmap + Jinja + app.js + module) | `scripts.html` |
+
+**Feuilles CSS** — chargées dans cet ORDRE dans `<head>` (ordre = cascade ;
+concaténation byte-identique à l'ancien `style.css`, vérifiée) :
+
+| Ordre | Feuille (`static/css/`) | Zone |
+|-------|-------------------------|------|
+| 1 | `base.css` | reset, mise en page, primitives de formulaire |
+| 2 | `composants.css` | boutons, messages, aperçu, rappels Nouveau projet, terminal |
+| 3 | `resultats.css` | onglet Résultats (liste, détail, panneau latéral, diff) |
+| 4 | `modales.css` | overlay/carte de modale, boutons destructifs, overlay d'arrêt |
+| 5 | `recherche-interruption.css` | recherche par titre + interruption (zone Résultats) — **DOIT rester après `modales.css`** (`.modal-recherche-titre` surcharge `.modal-carte` à specificité égale) |
+| 6 | `inbox.css` | onglet Résultats inbox |
+
+**Futurs modules JS par fonctionnalité** : un module par zone, à créer dans
+`static/js/` (ex. `static/js/creation.js`, `resultats.js`, `watchers.js`,
+`config.js`, `ccw.js`, `journal.js`, `inbox.js`, `nouveau_projet.js`), importé
+par `index.js`. Chaque module utilise les briques du socle.
+
+> **Note parallélisme** : HTML et JS se découpent proprement par zone. Le CSS
+> est plus contraint : la cascade impose de garder l'ordre source, donc quelques
+> règles partagées (`button`, `.message`, primitives) vivent dans `base.css` /
+> `composants.css`. Règle : une étape ajoute ses règles dans la feuille de SA
+> zone ; ne toucher `base.css`/`composants.css` que pour un changement réellement
+> transverse.
+
+### 6.6 Versionnage des fichiers servis (cache-busting)
+
+`app/statique.py` expose deux globales Jinja (`enregistrer_aides_statiques`
+dans `create_app`) :
+
+- `url_statique(chemin)` = `url_for('static', …)` + `?v=<mtime>`. Utilisée pour
+  chaque CSS, pour `app.js` et pour le `src` du module d'entrée : dès qu'un
+  fichier change, son URL change, le navigateur refetch — sans vider le cache.
+- `importmap_socle()` = un **import map** JSON remappant chaque module du socle
+  vers son URL `?v=<mtime>`. Nécessaire car les imports RELATIFS entre modules ES
+  (`import './store.js'`) ne propagent pas le `?v=` de l'importateur. Les modules
+  gardent des imports relatifs (indispensables à `node --test`) ; le navigateur
+  applique l'import map pour le cache-busting par fichier.
+
+Les fichiers statiques ne sont **pas** derrière `login_requis` : les modules et
+CSS sont donc servis (statut 200, `text/javascript` / `text/css`) en local,
+`--lan` et `--externe`, **même session expirée** (la page protégée redirige vers
+`/login`, mais pas ses ressources statiques). Vérifié par un test serveur.
+
+### 6.7 Procédure type — sortir une fonctionnalité de l'ancien code
+
+Pour chaque fonctionnalité migrée (étapes suivantes), dans l'ordre :
+
+1. **Créer/compléter son module** dans `static/js/` (ex. `resultats.js`),
+   importé par `index.js`. Y déplacer les fonctions concernées d'app.js ; leur
+   état passe dans le **store**, leurs appels réseau passent par **api**, leurs
+   messages par **toasts**.
+2. **Brancher ses événements via le registre de délégation** (`dom.surAction`)
+   au lieu des `onclick=` inline.
+3. **Retirer les gestionnaires inline** de sa zone (fragment HTML) et les
+   handlers générés en texte correspondants.
+4. **Supprimer le code correspondant d'app.js.** Vérifier qu'aucune autre partie
+   d'app.js n'appelle encore ces fonctions (sinon, passer par le pont le temps
+   de la transition).
+5. **Vérifier** : `node --test static/js/socle/tests/` (+ tests du nouveau
+   module si ajoutés) et **rejouer `VERIFICATIONS_MANUELLES.md`** (au moins la
+   zone touchée + le préambule « une seule connexion SSE »).
+
+Quand app.js est vide : retirer le pont (§6.4) et le `<script src=app.js>`.
 
 ---
 

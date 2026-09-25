@@ -1,0 +1,113 @@
+  <!-- ─── Onglet 3 : configuration ────────────────────────────────────── -->
+  <div id="panneau-config" class="panneau">
+
+    <div class="titre-section">Identité — modification manuelle dans le .conf uniquement</div>
+    <div id="config-readonly" style="background:#f8f8f5;border:1px solid #e0dfda;
+         border-radius:6px;padding:10px 14px;font-size:12px;font-family:monospace;
+         color:#666;line-height:2;margin-bottom:14px"></div>
+
+    <div class="titre-section">Paramètres éditables</div>
+
+    <div class="rangee">
+      <div class="champ">
+        <label>Topic ntfy</label>
+        <input type="text" id="conf-TOPIC_NTFY">
+      </div>
+      <div class="champ" style="max-width:140px">
+        <label>Label</label>
+        <input type="text" id="conf-LABEL">
+      </div>
+    </div>
+
+    <div class="rangee">
+      <div class="champ" style="max-width:140px">
+        <label>Intervalle (s)</label>
+        <input type="number" id="conf-INTERVALLE" min="5" step="5">
+      </div>
+      <div class="champ" style="max-width:140px">
+        <label>Max essais</label>
+        <input type="number" id="conf-MAX_ESSAIS" min="1" step="1">
+      </div>
+      <div class="champ" style="max-width:160px">
+        <label>Timeout Claude (s)</label>
+        <input type="number" id="conf-TIMEOUT_CLAUDE" min="30" step="30">
+      </div>
+    </div>
+
+    <div class="champ" style="margin-bottom:14px">
+      <label>Script bip</label>
+      <input type="text" id="conf-SCRIPT_BIP">
+    </div>
+
+    <div class="champ" style="margin-bottom:14px">
+      <label title="Décalage de la hauteur du bip pour ce projet, en demi-tons. 0 = tonalité normale.">Tonalité du bip (demi-tons, 0 = normale)</label>
+      <div style="display:flex;align-items:center;gap:10px">
+        <input type="range" id="conf-TONALITE_BIP" min="-12" max="12" step="1" value="0"
+               oninput="document.getElementById('tonalite-bip-valeur').textContent = this.value"
+               style="flex:1">
+        <span id="tonalite-bip-valeur" style="min-width:2.5em;text-align:right">0</span>
+        <button type="button" onclick="testerBip()">Tester le son</button>
+      </div>
+    </div>
+
+    <div class="champ" style="margin-bottom:14px">
+      <label title="Nombre maximum de tâches mode_write concurrentes (issue #337), via git worktrees. 1 = traitement séquentiel historique. Plafonné à 4 : au-delà, risque de contention sur CCW (Pentium G2020 dual-core) et de diluer la relecture humaine des diffs.">Tâches mode_write en parallèle (1-4)</label>
+      <div style="display:flex;align-items:center;gap:10px">
+        <input type="range" id="conf-MAX_WRITE_PARALLELE" min="1" max="4" step="1" value="2"
+               oninput="document.getElementById('max-write-parallele-valeur').textContent = this.value"
+               style="flex:1">
+        <span id="max-write-parallele-valeur" style="min-width:2.5em;text-align:right">2</span>
+      </div>
+    </div>
+
+    <div class="champ" style="margin-bottom:14px">
+      <label>Fichier de contexte projet (relatif au rep. de travail)</label>
+      <input type="text" id="conf-FICHIER_CONTEXTE"
+             placeholder="ex: CONTEXTE.md ou BRIDGE_AGENT_DOC.md">
+    </div>
+
+    <div class="champ" style="margin-bottom:14px">
+      <label>Modèle Claude Code (vide = défaut)</label>
+      <input type="text" id="conf-MODELE_CCL" placeholder="ex: claude-opus-4-5">
+    </div>
+
+    <div class="rangee">
+      <div class="champ" style="max-width:180px">
+        <label>Taille max journal (Mo)</label>
+        <input type="number" id="conf-LOG_TAILLE_MAX_MO" min="1" step="1">
+      </div>
+      <div class="champ" style="max-width:140px">
+        <label>Archives journal</label>
+        <input type="number" id="conf-LOG_ARCHIVES" min="1" step="1">
+      </div>
+      <div class="champ" style="max-width:220px">
+        <label title="Le watcher s'arrête proprement après ce délai sans aucune issue traitable. 0 = désactivé (watcher permanent).">Auto-extinction (min, 0 = désactivé)</label>
+        <input type="number" id="conf-DELAI_INACTIVITE_MIN" min="0" step="1"
+               title="Le watcher s'arrête proprement après ce délai sans aucune issue traitable. 0 = désactivé (watcher permanent).">
+      </div>
+    </div>
+
+    <div id="msg-config" class="message"></div>
+
+    <div class="barre-envoi">
+      <button onclick="sauvegarderConfig(false)">Enregistrer</button>
+      <button class="primaire" onclick="sauvegarderConfig(true)">Enregistrer et relancer</button>
+    </div>
+
+    <!-- ─── Zone dangereuse : suppression de projet (issue #587), côté
+         CCL/local uniquement — le dépôt GitHub et le côté CCW sont
+         explicitement hors scope et restent intacts. ───────────────────── -->
+    <div class="titre-section" style="margin-top:26px;color:#a32d2d">Zone dangereuse</div>
+    <div style="border:1px solid #f5c6cb;border-radius:6px;padding:12px 14px">
+      <div style="font-size:12.5px;color:#666;margin-bottom:10px">
+        Supprime <code>configs/&lt;nom&gt;.conf</code>, le répertoire de
+        travail (contenu + dépôt git local) et retire le projet des
+        tableaux §2/§7 de BRIDGE_AGENT_DOC.md. Le dépôt GitHub distant et
+        le côté CCW ne sont jamais touchés — à démonter à la main.
+      </div>
+      <div id="danger-projet-cible" style="font-weight:700;color:#a32d2d;margin-bottom:10px">
+        Projet ciblé : <span id="danger-projet-cible-nom"></span>
+      </div>
+      <button class="danger" onclick="ouvrirSupprimerProjet()">🗑 Supprimer ce projet…</button>
+    </div>
+  </div>
