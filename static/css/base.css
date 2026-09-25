@@ -6,8 +6,14 @@ body{font-family:system-ui,sans-serif;font-size:14px;background:#f0efe9;color:#1
    sans place pour le panneau latéral droit (~280px + espacement) sans écraser
    la liste des issues. Élargie globalement plutôt que pour ce seul onglet —
    les autres onglets (formulaires flex, tableaux width:100%) s'en accommodent
-   sans régression, juste un peu plus de confort de lecture. */
-.fenetre{max-width:1160px;margin:0 auto;background:#fff;border:1px solid #ddd;border-radius:12px;overflow:hidden}
+   sans régression, juste un peu plus de confort de lecture.
+   1160px→1520px (issue #633) : depuis #628, le panneau latéral Infrastructure
+   occupe sa PROPRE colonne (340px + 16px de gap) au lieu de flotter en
+   overlay au-dessus de la liste — la liste avait donc perdu ~360px par
+   rapport à sa largeur d'avant #628. +360px lui rend cette largeur, panneau
+   ouvert, sur un écran large. Élargie globalement, même raisonnement que
+   #375 ci-dessus. */
+.fenetre{max-width:1520px;margin:0 auto;background:#fff;border:1px solid #ddd;border-radius:12px;overflow:hidden}
 .entete{padding:14px 20px;border-bottom:1px solid #dad9d2;display:flex;align-items:center;gap:9px;background:#e7e6e0}
 .entete h1{font-size:15px;font-weight:500}
 .entete .statut{font-size:12px;color:#888}

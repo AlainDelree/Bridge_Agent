@@ -47,9 +47,6 @@
    d'un coup d'œil malgré l'aération supplémentaire. */
 .liste-issues{max-height:300px;overflow-y:auto;border:1px solid #e0dfda;
   border-radius:6px;margin-bottom:6px;background:#fff}
-/* Colonne titre redimensionnée (issue #95) : dès qu'une largeur est mémorisée,
-   la liste peut défiler horizontalement pour révéler la colonne titre élargie. */
-.liste-issues.titre-redimensionne{overflow-x:auto}
 /* Barre « Mise à jour… » : bouton rafraîchir + indicateur (issue #56). */
 .barre-maj{display:flex;align-items:center;gap:10px;margin-bottom:12px}
 /* Bouton rafraîchir discret, même gabarit que les boutons de filtre. */
@@ -124,21 +121,16 @@
   border-radius:3px;padding:1px 4px;margin-left:3px;vertical-align:middle;user-select:none}
 .ligne-issue .badge-copie-diff:hover{background:#e8f1f8}
 .ligne-issue .pastille-ligne{width:9px;height:9px;border-radius:50%;flex-shrink:0}
-/* Poignée de redimensionnement de la SEULE colonne titre (issue #95), posée sur
-   sa bordure gauche. Fine bande à curseur col-resize, surlignée au survol. */
-.ligne-issue .poignee-titre{flex-shrink:0;align-self:stretch;width:5px;margin:0 -2px;
-  cursor:col-resize;border-left:2px solid transparent}
-.ligne-issue .poignee-titre:hover{border-left-color:#bbb}
 /* Colonne titre : flex:1 lui fait déjà occuper tout l'espace restant avant de
    tronquer (…). Titre légèrement agrandi (issue #155) pour le confort de lecture,
-   la troncature ne survenant donc qu'une fois la place réellement épuisée. */
+   la troncature ne survenant donc qu'une fois la place réellement épuisée.
+   Redimensionnement manuel de cette colonne (issue #95) entièrement retiré
+   (issue #633) : la poignée de 5px se déclenchait par accident et la largeur
+   mémorisée provoquait un défilement horizontal qui cachait les badges de fin
+   de ligne — flex:1 + ellipsis suffit à garantir qu'une ligne ne déborde
+   jamais de la liste, panneau latéral ouvert ou fermé. */
 .ligne-issue .ligne-texte{flex:1;min-width:0;overflow:hidden;
   text-overflow:ellipsis;white-space:nowrap;font-size:14px}
-/* Largeur fixe de la colonne titre quand l'utilisateur l'a redimensionnée : la
-   colonne prend --largeur-titre (posée en JS), ne s'étire plus (flex:0 0), et
-   la liste défile horizontalement au besoin. Les autres colonnes restent fixes. */
-.liste-issues.titre-redimensionne .ligne-issue .ligne-texte{
-  flex:0 0 var(--largeur-titre)}
 /* Badge de temps restant estimé des issues ouvertes (issue #91), conscient du
    budget de retry (issue #106). Couleur selon l'état : vert = large marge,
    orange = échéance proche (<=30 s), rouge = budget total dépassé, gris = pas
@@ -205,7 +197,11 @@
    lieu de le recouvrir. */
 .resultats-layout{display:flex;align-items:flex-start;gap:16px}
 .resultats-corps{flex:1;min-width:0}
-.panneau-lateral-col{flex-shrink:0;display:flex;flex-direction:column;gap:10px}
+/* position:static explicite (issue #633) : garde-fou contre toute résurgence
+   du panneau flottant de l'ancien positionnement (issue #375→#380, retiré par
+   #628) — cette colonne et le panneau qu'elle contient ne doivent JAMAIS
+   sortir du flux normal du flex .resultats-layout. */
+.panneau-lateral-col{position:static;flex-shrink:0;display:flex;flex-direction:column;gap:10px}
 @media (max-width:900px){
   .resultats-layout{flex-direction:column}
   .panneau-lateral-col{width:100%}
@@ -222,7 +218,7 @@
   border-radius:8px;background:#fff;font-size:13px;font-weight:600;
   color:#1a1a18;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.12)}
 .pl-toggle.actif{border-color:#185FA5;color:#185FA5}
-.panneau-lateral{width:340px;max-height:calc(100vh - 120px);overflow-y:auto;
+.panneau-lateral{position:static;width:340px;max-height:calc(100vh - 120px);overflow-y:auto;
   border:1px solid #e0dfda;border-radius:10px;background:#fff;padding:16px;
   box-shadow:0 2px 10px rgba(0,0,0,.08)}
 .panneau-lateral.ferme{display:none}

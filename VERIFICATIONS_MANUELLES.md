@@ -77,7 +77,17 @@
 - [ ] **Copie** : « Copier résumé », « Copier tout », badges ✅ / Diff / All.
 - [ ] **Cochage** d'un résultat (case à gauche) : la ligne passe en « traité »
       (barré + fond) ; état conservé après rechargement.
-- [ ] Redimensionnement de la colonne titre : largeur mémorisée.
+- [ ] **Largeur de la liste** (issue #633) : à zoom 100 % sur un écran large,
+      panneau latéral **ouvert**, la liste retrouve au moins la largeur qu'elle
+      avait avant #628 (plus de colonne étriquée par le panneau). Aucune ligne
+      ne déborde de la liste **quelle que soit sa largeur de fenêtre**, panneau
+      ouvert ou fermé : le titre s'ellipse (…), les badges de fin de ligne
+      (temps restant, estimation, ✅/Diff/All) restent **toujours entièrement
+      visibles sans défilement horizontal**. Le redimensionnement manuel de la
+      colonne titre (issue #95, poignée avant le titre) a été **entièrement
+      retiré** (issue #633, se déclenchait par accident et provoquait
+      justement ce défilement) — plus de poignée, et une largeur mémorisée par
+      un ancien navigateur ne doit plus avoir aucun effet après rechargement.
 - [ ] Recherche par titre : la fenêtre de résultats s'ouvre, double-clic affiche
       le détail dans sa propre zone.
 - [ ] Actions sur une issue ouverte : annuler / interrompre / relancer / fermer
@@ -89,9 +99,12 @@
 - [ ] Badges de temps restant / estimation présents et cohérents (compte à
       rebours qui décroît chaque seconde ; « dépassement » figé à zéro puis
       vérification unique 15 s après — jamais de polling), et **entièrement
-      visibles à zoom 100 %** (y compris le badge de la dernière colonne d'une
-      ligne, à côté du panneau latéral ouvert — issue #628, non-régression du
-      panneau flottant qui les recouvrait).
+      visibles à zoom 100 % dès l'affichage de la ligne, sans avoir à faire
+      défiler la liste horizontalement** (y compris le badge de la dernière
+      colonne d'une ligne, à côté du panneau latéral ouvert — issue #628,
+      non-régression du panneau flottant qui les recouvrait ; issue #633,
+      non-régression du défilement horizontal introduit par le
+      redimensionnement de la colonne titre).
 
 ## Panneau latéral (Infrastructure)
 
@@ -112,6 +125,12 @@
       la liste.
 - [ ] Écran étroit (< 900px, ou réduire la fenêtre) : la colonne panneau
       apparaît **sous** la liste (empilement vertical), jamais par-dessus.
+- [ ] **Jamais flottant** (issue #633) : le panneau ne doit **jamais** apparaître
+      détaché de sa colonne (ex. plaqué en haut à gauche de la page) — à
+      surveiller particulièrement au chargement de la page, au changement
+      d'onglet et à l'ouverture/fermeture du panneau. À vérifier avec un
+      rechargement complet (Ctrl+Maj+R, pas juste F5) pour écarter tout ancien
+      CSS/JS caché en cache de navigateur.
 - [ ] Zone monitoring : une ligne par watcher CCL / service CCW. **Plus aucune
       ligne « VM » et plus aucune requête `/ccw/vm-statut`** (onglet Réseau,
       F12) — route disparue côté serveur depuis #447 (issue #628).
@@ -123,6 +142,15 @@
       notif_pc/gsm/tous, **Interrompre / Interrompre et relancer / Retirer
       needs-human / Fermer l'issue** — ces 4 actions n'existent plus que dans
       cette zone (issue #628, retirées du détail qui faisait double emploi).
+- [ ] **Cases de notification conformes aux labels réels** (issue #633) : pour
+      une issue portant `notif_pc` (et/ou `notif_gsm`/`notif_tous`), la case
+      correspondante est **cochée** dès la sélection — y compris pour une
+      issue apparue par `creation_issue` (issues_inbox) puis prise en charge
+      par `debut_issue`, pas seulement au chargement initial/↻. Décocher/cocher
+      depuis le panneau modifie bien le label GitHub réel.
+- [ ] **Lien « Vérifier le service CCW de ce projet »** : n'apparaît **que**
+      pour une issue portant le label `for-windows` — absent pour une issue
+      for-linux (issue #633).
 - [ ] Onglet Réseau (F12) : une seule requête `/watchers` toutes les ~30s au
       total (mutualisée entre le panneau et le bandeau orange « écriture
       directe dans REP_TRAVAIL », affiché sur tous les onglets en cas de

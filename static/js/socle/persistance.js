@@ -88,7 +88,7 @@ export const CLES = {
   limiteIssues: 'bridge_limite_issues_projet',
   filtresResultats: 'bridge_filtres_resultats', // JSON
   filtreOuvriers: 'bridge_filtre_ouvriers',
-  largeurTitre: 'bridge_largeur_titre',
+  largeurTitre: 'bridge_largeur_titre',  // obsolète (issue #633) : purgée au chargement, voir resultats.js#initialiser
   notifPc: 'bridge_notif_pc',
   prefixeCacheDetail: 'bridge_cache_detail_',   // + nom + '_' + numero
   prefixeCocheResultat: 'resultat-coche:',      // + projet + ':' + numero

@@ -1368,11 +1368,6 @@ function construireLigneIssueDOM(it) {
     + '<span class="ligne-badges">' + badgesHtml + '</span>'
     + '<span class="pastille-ligne" style="background:' + couleur + '"></span>'
     + '</span>'
-    // Poignée de redimensionnement de la SEULE colonne titre (issue #95) :
-    // sur la bordure gauche de .ligne-texte. onclick stoppe la propagation
-    // pour qu'un clic de fin de glisser ne sélectionne pas l'issue.
-    + '<span class="poignee-titre" title="Glisser pour redimensionner la colonne titre"'
-    + ' onmousedown="demarrerRedimTitre(event)" onclick="event.stopPropagation()"></span>'
     + '<span class="ligne-texte">#' + escapeHtml(numero) + ' — '
     + escapeHtml(it.title) + ' [' + etat + ']</span>'
     // Badge d'estimation prédictive (issue #108) PUIS badge de temps restant
@@ -1434,103 +1429,10 @@ function rendreListeIssues(reset) {
     zone.appendChild(ligne);
   }
   appliquerFiltresListe();
-  appliquerLargeurTitre();
   restaurerCasesCocheesResultats();
   if (window.Bridge && window.Bridge.resultats) window.Bridge.resultats.majBadges();
   majPastillesFiltres();
   if (reset) selectionnerPremiereVisible();
-}
-
-// ─── Colonne titre redimensionnable (issue #95) ───────────────────────────
-// SEULE la colonne titre (.ligne-texte) est redimensionnable : par défaut elle
-// est en flex:1 (occupe l'espace restant, tronquée par ellipsis). Dès qu'une
-// largeur est mémorisée, on bascule .liste-issues en mode « titre fixe » : la
-// colonne prend cette largeur explicite (var CSS --largeur-titre) et l'onglet
-// défile horizontalement si la ligne dépasse. Les autres colonnes (heure,
-// badges, pastille) gardent leur largeur fixe. La largeur choisie est persistée
-// (même convention que bridge_notif_pc, issue #93).
-const CLE_LARGEUR_TITRE = 'bridge_largeur_titre';
-
-// Lit la largeur mémorisée (px) ou null si absente/illisible/invalide.
-function largeurTitreStockee() {
-  try {
-    const v = parseInt(localStorage.getItem(CLE_LARGEUR_TITRE), 10);
-    return Number.isFinite(v) && v > 0 ? v : null;
-  } catch(e) { return null; }
-}
-
-// Applique (ou retire) la largeur de titre mémorisée sur le conteneur de liste.
-// Sans largeur stockée : mode par défaut (flex:1, ellipsis, pas de scroll).
-function appliquerLargeurTitre() {
-  const liste = document.getElementById('liste-issues');
-  if (!liste) return;
-  const w = largeurTitreStockee();
-  if (w) {
-    liste.style.setProperty('--largeur-titre', w + 'px');
-    liste.classList.add('titre-redimensionne');
-  } else {
-    liste.classList.remove('titre-redimensionne');
-    liste.style.removeProperty('--largeur-titre');
-  }
-}
-
-// État du glisser-déposer en cours (null hors redimensionnement).
-let redimTitreEtat = null;
-
-// Début du glisser sur la poignée gauche de la colonne titre. On mémorise la
-// largeur de départ de CETTE ligne comme référence, ainsi que la liste (.liste-
-// issues) qui la contient : depuis l'issue #321, ce n'est plus forcément
-// #liste-issues (l'onglet Résultats) — la fenêtre de recherche par titre
-// affiche ses propres lignes dans #liste-resultats-recherche, qui porte aussi
-// la classe .liste-issues et doit se redimensionner indépendamment, sans
-// affecter la colonne de l'onglet.
-function demarrerRedimTitre(event) {
-  event.preventDefault();
-  event.stopPropagation();
-  const ligne = event.currentTarget.closest('.ligne-issue');
-  const texte = ligne ? ligne.querySelector('.ligne-texte') : null;
-  const liste = ligne ? ligne.closest('.liste-issues') : null;
-  if (!texte || !liste) return;
-  redimTitreEtat = {
-    xDepart: event.clientX,
-    largeurDepart: texte.getBoundingClientRect().width,
-    liste: liste,
-  };
-  document.body.style.cursor = 'col-resize';
-  document.body.style.userSelect = 'none';
-  document.addEventListener('mousemove', surRedimTitre);
-  document.addEventListener('mouseup', finRedimTitre);
-}
-
-// Pendant le glisser : la poignée est sur la bordure GAUCHE du titre → tirer
-// vers la gauche élargit la colonne, vers la droite la rétrécit. Bornée à
-// [80, 1200] px pour rester utilisable.
-function surRedimTitre(event) {
-  if (!redimTitreEtat) return;
-  const delta = redimTitreEtat.xDepart - event.clientX;
-  let w = Math.round(redimTitreEtat.largeurDepart + delta);
-  w = Math.max(80, Math.min(w, 1200));
-  redimTitreEtat.liste.style.setProperty('--largeur-titre', w + 'px');
-  redimTitreEtat.liste.classList.add('titre-redimensionne');
-}
-
-// Fin du glisser : on persiste la largeur courante dans localStorage — mais
-// UNIQUEMENT pour la liste de l'onglet Résultats (#liste-issues) ; un
-// redimensionnement dans la fenêtre de recherche reste local à cette session,
-// la fenêtre étant reconstruite à chaque nouvelle recherche.
-function finRedimTitre() {
-  document.removeEventListener('mousemove', surRedimTitre);
-  document.removeEventListener('mouseup', finRedimTitre);
-  document.body.style.cursor = '';
-  document.body.style.userSelect = '';
-  if (!redimTitreEtat) return;
-  const liste = redimTitreEtat.liste;
-  redimTitreEtat = null;
-  if (liste.id !== 'liste-issues') return;
-  const w = parseInt(liste.style.getPropertyValue('--largeur-titre'), 10);
-  if (Number.isFinite(w) && w > 0) {
-    try { localStorage.setItem(CLE_LARGEUR_TITRE, String(w)); } catch(e) {}
-  }
 }
 
 // Masque/affiche les lignes selon les projets actifs ET le filtre ouvriers

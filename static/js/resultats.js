@@ -28,6 +28,7 @@ import { api } from './socle/api.js';
 import { toasts } from './socle/toasts.js';
 import { sse } from './socle/sse.js';
 import { appelerAncien } from './socle/pont.js';
+import * as persistance from './socle/persistance.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 1. LOGIQUE PURE (testée sous Node — voir static/js/tests/resultats.test.js)
@@ -285,8 +286,18 @@ async function chargerListe(nomsAFetcher) {
 
 // ─── Données de temps (décompte + estimation) ────────────────────────────────
 // Met à jour le timing d'UN projet à partir de sa liste /issues-en-attente :
-// purge les entrées de ce projet puis réinjecte les issues ouvertes. Renvoie la
-// liste brute reçue (ou null en cas d'échec — badges conservés).
+// purge les entrées de ce projet puis réinjecte les issues ouvertes. Profite
+// du même fetch pour rafraîchir les labels/titre des issues DÉJÀ connues du
+// store (correctif anomalie #4, issue #633) : /issues-en-attente renvoie les
+// labels GitHub réels (tous, pas seulement for-linux/for-windows), alors
+// qu'une issue tout juste apparue via creation_issue n'a encore que labels:[]
+// (placeholder, voir surCreationIssue) — sans ce raccord, ce placeholder
+// restait figé indéfiniment (labels jamais vrais, y compris après debut_issue)
+// et les cases de notification du panneau latéral ne reflétaient jamais les
+// labels réels (ex. notif_pc) pour ce chemin. Une issue pas encore connue
+// n'est PAS créée ici : ses appelants (surDebutIssue, surCreationIssue) le
+// font déjà avec le reste des champs nécessaires (state, createdAt…). Renvoie
+// la liste brute reçue (ou null en cas d'échec — badges conservés).
 async function chargerTimingProjet(nom) {
   let liste;
   try {
@@ -298,10 +309,16 @@ async function chargerTimingProjet(nom) {
     if (cle.startsWith(nom + '#')) delete timing[cle];
   }
   for (const it of liste) {
-    timing[cleIssue(nom, it.number)] = {
+    const cle = cleIssue(nom, it.number);
+    timing[cle] = {
       timeout: it.timeout, max_essais: it.max_essais, backoff: it.backoff,
       debut: it.debut, sans_limite: it.sans_limite, estimation: it.estimation,
     };
+    const ancienne = store.get('issues')[cle];
+    if (ancienne) {
+      store.ecrireIssue(Object.assign({}, ancienne,
+        { title: it.title || ancienne.title, labels: it.labels || [] }));
+    }
   }
   store.set('timing', timing);
   return liste;
@@ -486,6 +503,11 @@ async function rafraichir(nomsAFetcher) {
 
 // ─── Amorçage (appelé une fois par index.js) ─────────────────────────────────
 function initialiser() {
+  // Purge de l'ancienne clé de redimensionnement de la colonne titre (issue
+  // #95, fonctionnalité entièrement retirée par l'issue #633) : sans ce
+  // nettoyage, un navigateur ayant mémorisé une largeur avant #633 n'aurait
+  // plus aucun moyen de s'en débarrasser (plus de poignée à glisser).
+  persistance.supprimer(persistance.CLES.largeurTitre);
   // Abonnement aux notifications /stream (déposées dans le store par sse.js).
   store.abonnerCle('derniereNotifIssue', (notif) => traiterNotif(notif));
   // Activation/désactivation de l'onglet Résultats : abonnement direct au

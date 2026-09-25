@@ -44,6 +44,28 @@ const CLE_PANNEAU_OUVERT = 'bridge_panneau_lateral_ouvert';
 
 let intervalPanneauLateral = null;
 
+// ─────────────────────────────────────────────────────────────────────────────
+// LOGIQUE PURE (testée sous Node — voir static/js/tests/panneau_lateral.test.js)
+//    Aucune dépendance au DOM ni au réseau.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// État des 3 cases « 🔔 Notifications » du panneau, dérivé des labels réels de
+// l'issue sélectionnée (correctif anomalie #4, issue #633) : une case cochée
+// reflète directement — et SEULEMENT — la présence du label GitHub
+// correspondant, quel que soit le chemin par lequel l'issue est arrivée dans
+// le store (chargement initial, ↻, creation_issue, debut_issue, fin_issue —
+// voir le correctif de chargerTimingProjet dans resultats.js, qui garantit que
+// ces labels restent à jour). `nomsLabels` : labels déjà normalisés en
+// minuscules (voir rendrePanneauLateralActions).
+export function etatsCasesNotif(nomsLabels) {
+  const labels = nomsLabels || [];
+  return {
+    notif_pc: labels.includes('notif_pc'),
+    notif_gsm: labels.includes('notif_gsm'),
+    notif_tous: labels.includes('notif_tous'),
+  };
+}
+
 // ─── État ouvert/fermé (persisté, ouvert par défaut) ───────────────────────
 function panneauEstOuvert() {
   return persistance.lire(CLE_PANNEAU_OUVERT, true);
@@ -320,11 +342,12 @@ function rendrePanneauLateralActions() {
     html += '<div class="pl-mode-issue">' + libelleModeIssue(nomsLabels) + '</div>';
   }
   if (interromptible) {
+    const etatsNotif = etatsCasesNotif(nomsLabels);
     html += '<div class="pl-notifs">'
           + '<div class="pl-notifs-titre">🔔 Notifications</div>'
-          + rendreCheckboxNotif(nom, numero, 'notif_pc',   'Bureau', nomsLabels)
-          + rendreCheckboxNotif(nom, numero, 'notif_gsm',  'GSM',    nomsLabels)
-          + rendreCheckboxNotif(nom, numero, 'notif_tous', 'Tous',   nomsLabels)
+          + rendreCheckboxNotif(nom, numero, 'notif_pc',   'Bureau', etatsNotif.notif_pc)
+          + rendreCheckboxNotif(nom, numero, 'notif_gsm',  'GSM',    etatsNotif.notif_gsm)
+          + rendreCheckboxNotif(nom, numero, 'notif_tous', 'Tous',   etatsNotif.notif_tous)
           + '<div id="pl-notif-erreur" class="pl-notif-erreur"></div>'
           + '</div>';
   }
@@ -350,16 +373,18 @@ function rendrePanneauLateralActions() {
           + '🔒 Nettoyer verrous CCW + redémarrer</button>';
   }
   html += '</div>';
-  if (!ccwProjetsConnus.length) {
+  // Lien de repli sans objet pour une issue for-linux (issue #633) : le
+  // service CCW n'existe que côté Windows, ce lien n'a de sens que si le
+  // service en question pourrait exister pour CETTE issue.
+  if (windows && !ccwProjetsConnus.length) {
     html += '<div class="pl-lien" data-action="pl-charger-ccw">🔄 Vérifier le service CCW de ce projet</div>';
   }
   zone.innerHTML = html;
 }
 
-function rendreCheckboxNotif(nom, numero, label, libelle, nomsLabels) {
-  const coche = nomsLabels.includes(label) ? ' checked' : '';
+function rendreCheckboxNotif(nom, numero, label, libelle, coche) {
   return '<label class="pl-notif-ligne">'
-       + '<input type="checkbox"' + coche + ' data-action="pl-notif-toggle" data-projet="' + dom.echapperHtml(nom)
+       + '<input type="checkbox"' + (coche ? ' checked' : '') + ' data-action="pl-notif-toggle" data-projet="' + dom.echapperHtml(nom)
        + '" data-numero="' + Number(numero) + '" data-label="' + label + '"> '
        + dom.echapperHtml(libelle) + '</label>';
 }
