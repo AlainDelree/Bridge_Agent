@@ -1,11 +1,10 @@
   <div class="onglets">
-    <div class="onglet actif" onclick="basculerOnglet('creation')">Nouvelle issue</div>
-    <div class="onglet" onclick="basculerOnglet('resultats')">Résultats</div>
-    <div class="onglet" onclick="basculerOnglet('inbox')">Résultats inbox
+    <div class="onglet actif" data-onglet="resultats">Résultats</div>
+    <div class="onglet" data-onglet="inbox">Résultats inbox
       <span id="badge-alarme-inbox" class="badge-alarme-inbox" style="display:none" title="Des fichiers issues_inbox/rejected/ attendent une correction manuelle">🚨</span>
     </div>
-    <div class="onglet" onclick="basculerOnglet('journal')">Journal watcher</div>
-    <div class="onglet" onclick="basculerOnglet('config')">Configuration</div>
-    <div class="onglet" onclick="basculerOnglet('watchers')">Watchers</div>
-    <div class="onglet" onclick="basculerOnglet('ccw')">CCW</div>
+    <div class="onglet" data-onglet="journal">Journal watcher</div>
+    <div class="onglet" data-onglet="config">Configuration</div>
+    <div class="onglet" data-onglet="ccw">CCW</div>
+    <div class="onglet" data-onglet="creation">Nouvelle issue</div>
   </div>

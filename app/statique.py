@@ -48,16 +48,23 @@ def url_statique(chemin_relatif: str) -> str:
 
 
 def importmap_socle() -> str:
-    """Import map JSON versionnant chaque module du socle.
+    """Import map JSON versionnant chaque module du socle ET chaque module de
+    fonctionnalité déjà sorti d'app.js (ex. ``js/onglets.js``, issue #626).
 
     Clé = URL résolue du module (``/static/js/socle/store.js``), valeur = même
     URL + ``?v=<mtime>``. Le navigateur remappe ainsi les imports relatifs vers
     leur version courante. Le point d'entrée index.js est inclus pour homogénéité
-    (son ``src`` porte déjà son propre ``?v=`` via url_statique)."""
-    dossier = DOSSIER_STATIC / "js" / "socle"
+    (son ``src`` porte déjà son propre ``?v=`` via url_statique). ``app.js``
+    reste exclu : script CLASSIQUE (pas un module ES), déjà versionné via son
+    propre ``<script src>`` dans scripts.html."""
     imports = {}
     try:
-        for fichier in sorted(dossier.glob("*.js")):
+        for fichier in sorted(DOSSIER_STATIC.glob("js/*.js")):
+            if fichier.name == "app.js":
+                continue
+            rel = f"js/{fichier.name}"
+            imports[url_for("static", filename=rel)] = url_statique(rel)
+        for fichier in sorted((DOSSIER_STATIC / "js" / "socle").glob("*.js")):
             rel = f"js/socle/{fichier.name}"
             imports[url_for("static", filename=rel)] = url_statique(rel)
     except OSError:

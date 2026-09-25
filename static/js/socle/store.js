@@ -13,7 +13,7 @@
 //                                tranches (slices) couvrent : issues indexées
 //                                par projet+numéro, sélection courante, filtres,
 //                                projets, watchers, état issues_inbox, son
-//                                global, rate-limit.
+//                                global, rate-limit, onglet actif.
 //   - cleIssue(projet, numero) : clé canonique d'une issue ("projet#numero").
 //
 // NON-BUT À CETTE ÉTAPE
@@ -103,6 +103,7 @@ const socle = creerStore({
   issuesInbox: { alarme: false, rejetes: [], historique: '' },
   son: 'plat',           // 'plat' | 'cloche' (interrupteur global du bip)
   rateLimit: null,       // { restant, limite, pourcent, etat } | null
+  ongletActif: 'resultats', // nom de l'onglet actif (voir static/js/onglets.js)
 });
 
 // Aides spécifiques aux issues, construites sur la tranche `issues` indexée.

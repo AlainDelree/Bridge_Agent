@@ -1546,9 +1546,9 @@ automatique au boot du ThinkPad et relance sur crash, sans jamais relancer un
 arrêt volontaire (extinction pour inactivité ci-dessous, ou interruption
 manuelle #323).
 
-**1. Démarrage manuel.** Le bouton « Lancer watcher » de l'onglet « Watchers »
+**1. Démarrage manuel.** Le bouton « Lancer le watcher » du bandeau global
 (ou `python3 watcher.py --config configs/<projet>.conf` en terminal, cf. bloc
-ci-dessus) démarre le watcher d'un projet — désormais via `systemctl --user
+ci-dessus) démarre le watcher du projet sélectionné — désormais via `systemctl --user
 start|restart watcher@<projet>` côté serveur (#596). L'interface suit le
 process via un fichier PID (`logs/watcher-<nom>.pid`), publié par `watcher.py`
 lui-même dès son démarrage.
@@ -1607,13 +1607,13 @@ sondé vivant), seul canal visible depuis `new_issue.py` puisque
 `issues_en_cours` reste en mémoire du process watcher — n'est **jamais**
 exécuté immédiatement. Il est mémorisé, et un thread démon de `new_issue.py`
 (`surveiller_redemarrages_differes`) l'exécute automatiquement dès la fin de
-la tâche. Ce point d'entrée unique couvre les **trois** déclencheurs de
+la tâche. Ce point d'entrée unique couvre les **deux** déclencheurs de
 relance manuelle : bouton « Enregistrer et relancer » de l'onglet
-Configuration, bouton « Relancer » de l'onglet Watchers, et bouton
-« ↺ Relancer » du panneau latéral Infrastructure — les trois passent par la
-même route `/lancer-watcher` → `demarrer_watcher_ou_differer`. L'onglet
-Configuration et l'onglet Watchers l'indiquent clairement (« redémarrage
-différé, appliqué à la fin de la tâche en cours »). Un redémarrage
+Configuration, et bouton « ↺ Relancer » du panneau latéral Infrastructure
+(l'ex-onglet « Watchers », supprimé par l'issue #626, en offrait un troisième,
+par lot) — les deux passent par la même route `/lancer-watcher` →
+`demarrer_watcher_ou_differer`. L'onglet Configuration l'indique clairement
+(« redémarrage différé, appliqué à la fin de la tâche en cours »). Un redémarrage
 `forcer=False` (`redemarrer_si_eteint`, watcher éteint relancé à la création
 d'une issue — point 2 ci-dessus) n'est par construction jamais concerné : il
 ne redémarre qu'un watcher **inactif**, qui ne peut pas avoir de tâche en
@@ -1668,8 +1668,8 @@ techniques qui suivent), puis exécute selon le label de l'issue
   risquer un double traitement.
 
 Le watcher n'est **jamais** relancé automatiquement (contrairement à
-#202) : relance manuelle requise (bouton « Lancer watcher » de l'onglet
-Watchers côté CCL, onglet CCW côté CCW-Watcher).
+#202) : relance manuelle requise (panneau latéral Infrastructure ou bandeau
+global côté CCL, onglet CCW côté CCW-Watcher).
 
 **Équivalent manuel (CCL) :**
 
@@ -2055,10 +2055,9 @@ séquentiellement dans `REP_TRAVAIL` (hors périmètre de cette issue).
   de `watcher.py`, champ `mode=`, cf. §"Redémarrage forcé différé..." plus
   haut) ne signale donc plus qu'un cas d'anomalie, plus un cas normal et
   fréquent comme avant #611 : dès qu'une tâche `mode_write` est en cours
-  dans `REP_TRAVAIL`, l'onglet Watchers l'affiche (colonne Statut) et un
-  bandeau global (visible sur tous les onglets) le signale — en plus,
-  désormais, du `notify-send` immédiat émis au moment du repli (issue #611,
-  ci-dessus). Le bandeau ne s'allume donc plus à chaque tâche `mode_write`
+  dans `REP_TRAVAIL`, un bandeau global (visible sur tous les onglets) le
+  signale — en plus, désormais, du `notify-send` immédiat émis au moment du
+  repli (issue #611, ci-dessus). Le bandeau ne s'allume donc plus à chaque tâche `mode_write`
   normale (toutes isolées dans un worktree désormais), seulement dans ce cas
   d'anomalie rare.
 - **CHANGELOG** : dans un worktree, CCL reçoit une consigne de prompt dédiée

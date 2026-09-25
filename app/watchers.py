@@ -2,7 +2,8 @@
 
 Extraite de new_issue.py à l'étape 6 du refactoring modulaire. Regroupe le
 cycle de vie des watchers : démarrage, arrêt, détection du PID et les routes
-Flask associées à l'onglet « Watchers » de l'interface.
+Flask utilisées par le panneau latéral Infrastructure et l'onglet Configuration
+de l'interface (l'onglet « Watchers » dédié a été supprimé, issue #626).
 
 Démarrage/arrêt via systemd --user (issue #596) : demarrer_watcher()/
 arreter_watcher() appellent `systemctl --user start|restart|stop
@@ -35,7 +36,7 @@ log = logging.getLogger(__name__)
 
 # ─── Redémarrages différés (issue #609) ──────────────────────────────────────
 # Un redémarrage FORCÉ (bouton « Enregistrer et relancer », relances manuelles
-# du panneau latéral/onglet Watchers) d'un watcher qui a une tâche en cours ne
+# du panneau latéral) d'un watcher qui a une tâche en cours ne
 # doit JAMAIS la couper : vécu sur relecture_bridge #73 (diagnostic confirmé
 # le 24/09/2026) — MAX_WRITE_PARALLELE changé de 1 à 2 puis watcher relancé
 # pendant que #73 tournait déjà dans son worktree dédié ; `systemctl --user
@@ -145,7 +146,7 @@ def demarrer_watcher(cfg: Config, forcer: bool = True) -> tuple[bool, int | None
 def demarrer_watcher_ou_differer(cfg: Config, forcer: bool) -> tuple[str, int | None]:
     """Point d'entrée de la route /lancer-watcher (bouton « Enregistrer et
     relancer » de l'onglet Configuration, relances manuelles du panneau
-    latéral et de l'onglet Watchers) — DISTINCT de demarrer_watcher() (issue
+    latéral) — DISTINCT de demarrer_watcher() (issue
     #609) : un redémarrage FORCÉ (forcer=True) d'un watcher qui a une tâche en
     cours (verrou fichier actif, cf. tache_en_cours ci-dessus) n'est jamais
     exécuté immédiatement, il COUPERAIT cette tâche. Vécu sur relecture_bridge
@@ -276,8 +277,8 @@ def arreter_watcher(cfg: Config) -> tuple[bool, str]:
 
 def watchers():
     """Retourne le statut de tous les projets disponibles. `tache_en_cours`,
-    `repli_rep_travail` et `redemarrage_differe` (issue #609) permettent à
-    l'onglet Watchers/au panneau latéral d'afficher visiblement qu'un
+    `repli_rep_travail` et `redemarrage_differe` (issue #609) permettent au
+    panneau latéral d'afficher visiblement qu'un
     redémarrage serait dangereux ou a été différé, et qu'une tâche mode_write
     tourne directement dans REP_TRAVAIL (repli #589, pas de worktree isolé) —
     auquel cas le dossier principal du projet ne doit pas être touché (merge,

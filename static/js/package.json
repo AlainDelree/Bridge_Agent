@@ -1,0 +1,5 @@
+{
+  "private": true,
+  "type": "module",
+  "description": "Marqueur ESM pour Node : sans build, `node --test` traite les .js de ce dossier (modules de fonctionnalité sortis d'app.js, ex. onglets.js) comme des modules ES. Aucune dépendance, aucun script d'installation. Le navigateur, lui, ignore ce fichier (les <script type=\"module\"> suffisent). N'affecte pas static/js/socle/, qui a son propre package.json."
+}

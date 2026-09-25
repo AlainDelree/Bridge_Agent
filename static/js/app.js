@@ -1,7 +1,5 @@
 let sourceSSE = null;
 
-let intervalWatchers = null;
-
 // ─── Panneau latéral droit de l'onglet Résultats (issue #375) ─────────────
 // Rafraîchi toutes les 30s (intervalPanneauLateral) + sur chaque événement SSE
 // fin_issue (#350) + sur chaque changement de sélection de ligne. Dernière
@@ -151,39 +149,14 @@ function appliquerAccentProjet(nom) {
   if (dangerNom) dangerNom.textContent = nom;
 }
 
-function basculerOnglet(nom) {
-  const noms = ['creation', 'resultats', 'inbox', 'journal', 'config', 'watchers', 'ccw'];
-  document.querySelectorAll('.onglet').forEach((o, i) =>
-    o.classList.toggle('actif', noms[i] === nom));
-  noms.forEach(n =>
-    document.getElementById('panneau-' + n).classList.toggle('actif', n === nom));
-  if (nom === 'journal')  demarrerJournal();
-  if (nom === 'resultats') {
-    // Le canal SSE de début/fin d'issue (demarrerStreamFinIssue) n'est PLUS
-    // ouvert/fermé ici depuis l'issue #515 : il tourne en permanence dès le
-    // chargement de la page (voir son démarrage tout en bas de ce fichier),
-    // sur le même principe que le polling du badge « Résultats inbox » (§3.8).
-    chargerListeIssues(); demarrerTempsRestant();
-    demarrerPanneauLateral();
-  } else {
-    arreterTempsRestant(); arreterPanneauLateral();
-  }
-  if (nom === 'watchers') {
-    chargerWatchers();
-    intervalWatchers = setInterval(chargerWatchers, 5000);
-  } else {
-    clearInterval(intervalWatchers);
-  }
-  if (nom === 'config') chargerConfig();
-  // Onglet CCW (issue #174) : chargé à l'ouverture, PAS de polling automatique
-  // (chaque requête déclenche des appels SSH coûteux — l'utilisateur
-  // rafraîchit à la demande via les boutons dédiés).
-  if (nom === 'ccw') ccwOuvrirOnglet();
-  // Onglet « Résultats inbox » (issue #483) : rafraîchissement immédiat à
-  // l'ouverture — le polling continu (rafraichirInbox, tout en bas de ce
-  // fichier) garde le badge de l'onglet à jour même hors de cette vue.
-  if (nom === 'inbox') rafraichirInbox();
-}
+// basculerOnglet a été sorti d'app.js vers static/js/onglets.js (issue #626,
+// refonte web étape 2) : voir activerOnglet()/initialiserOnglets() là-bas,
+// appelées via le pont pour les initialisations ci-dessous (inchangées) :
+// chargerListeIssues/demarrerTempsRestant/demarrerPanneauLateral (Résultats,
+// canal SSE demarrerStreamFinIssue permanent depuis #515, cf. plus bas),
+// demarrerJournal, chargerConfig, ccwOuvrirOnglet (pas de polling — chaque
+// requête déclenche des appels SSH coûteux), rafraichirInbox (badge tenu à
+// jour par le polling continu du bas de ce fichier même hors de cette vue).
 
 // reinitialiserTimeout : un changement de projet MANUEL (sélecteur, chargement
 // initial, ajouterProjetAuSelecteur) doit recharger le timeout par défaut du
@@ -2613,9 +2586,8 @@ function afficherErreurNotifDiscrete(message) {
   }, 4000);
 }
 
-// Relance (ou lance) le watcher CCL du projet donné — même endpoint que
-// l'onglet Watchers (actionWatchers → /lancer-watcher), appelé ici pour un
-// seul projet directement depuis le panneau latéral.
+// Relance (ou lance) le watcher CCL du projet donné, directement depuis le
+// panneau latéral (route /lancer-watcher).
 async function sidebarRelancerWatcherCCL(nom, btn) {
   const label = btn ? btn.textContent : null;
   if (btn) { btn.disabled = true; btn.textContent = 'Relance…'; }
@@ -2628,8 +2600,6 @@ async function sidebarRelancerWatcherCCL(nom, btn) {
   } catch(e) {
     alert('Erreur réseau : ' + e.message);
   }
-  const panneauWatchers = document.getElementById('panneau-watchers');
-  if (panneauWatchers && panneauWatchers.classList.contains('actif')) await chargerWatchers();
   if (btn) { btn.disabled = false; if (label !== null) btn.textContent = label; }
   await rafraichirPanneauLateralResultats();
 }
@@ -2660,8 +2630,6 @@ async function sidebarRelancerTousEteints(btn) {
   } catch(e) {
     alert('Erreur réseau : ' + e.message);
   }
-  const panneauWatchers = document.getElementById('panneau-watchers');
-  if (panneauWatchers && panneauWatchers.classList.contains('actif')) await chargerWatchers();
   if (btn) { btn.disabled = false; btn.textContent = '▶ Lancer les éteints'; }
   await rafraichirPanneauLateralResultats();
 }
@@ -2685,8 +2653,6 @@ async function sidebarRelancerTousCCL(btn) {
   } catch(e) {
     alert('Erreur réseau : ' + e.message);
   }
-  const panneauWatchers = document.getElementById('panneau-watchers');
-  if (panneauWatchers && panneauWatchers.classList.contains('actif')) await chargerWatchers();
   if (btn) { btn.disabled = false; btn.textContent = '↺ Relancer tous les CCL'; }
   await rafraichirPanneauLateralResultats();
 }
@@ -3821,13 +3787,14 @@ async function fermerIssue(nom, numero) {
 // du watcher). Ordre imposé des deux appels réseau : (1) arrêt du watcher, puis
 // (2) fermeture de l'issue — on ne ferme que si la coupure a réussi ou que le
 // watcher était déjà inactif. Le watcher reste ÉTEINT : Alain le relance lui-même
-// depuis l'onglet Watchers quand il est prêt (pas de relance automatique).
+// depuis le panneau latéral Infrastructure quand il est prêt (pas de relance
+// automatique).
 async function fermerEtInterrompre(nom, numero) {
   if (!confirm("Ceci va arrêter le watcher du projet " + nom
              + " (donc interrompre le CCL en cours pour CETTE issue comme pour"
              + " toute autre en attente sur ce projet) puis fermer l'issue #"
              + numero + ". Le watcher restera éteint : tu devras le relancer"
-             + " toi-même depuis l'onglet Watchers. Continuer ?")) return;
+             + " toi-même depuis le panneau latéral Infrastructure. Continuer ?")) return;
 
   // (1) Arrêt du watcher (killpg via #145). On tolère « watcher déjà inactif » :
   // dans ce cas succes=false mais l'objectif (plus de CCL en cours) est atteint,
@@ -3856,12 +3823,6 @@ async function fermerEtInterrompre(nom, numero) {
   // (2) Fermeture de l'issue, seulement après un arrêt réussi (ou déjà inactif).
   // fermerIssue() (inchangée) recharge déjà la liste des issues en fin de course.
   await fermerIssue(nom, numero);
-
-  // Reflète l'état « watcher éteint » si l'onglet Watchers est actuellement affiché.
-  const panneauWatchers = document.getElementById('panneau-watchers');
-  if (panneauWatchers && panneauWatchers.classList.contains('actif')) {
-    await chargerWatchers();
-  }
 }
 
 // ─── Interruption ciblée d'une issue en cours (issue #323, suite #320) ──────
@@ -3971,10 +3932,6 @@ async function interrompreIssue(nom, numero) {
   if (ligne && ligne.style.display !== 'none') {
     await afficherIssue(nom, numStr);
   }
-  const panneauWatchers = document.getElementById('panneau-watchers');
-  if (panneauWatchers && panneauWatchers.classList.contains('actif')) {
-    await chargerWatchers();
-  }
   return true;
 }
 
@@ -4070,7 +4027,7 @@ function ouvrirModalInterrompre(resultat, avertTree) {
 
   let rappelTexte = resultat.agent === 'windows'
     ? 'Service CCW-Watcher arrêté — relance via l\'onglet CCW (pas de rallumage automatique).'
-    : 'Relance manuelle du watcher obligatoire (onglet Watchers) — pas de rallumage automatique.';
+    : 'Relance manuelle du watcher obligatoire (panneau latéral Infrastructure) — pas de rallumage automatique.';
   if (resultat.agent === 'windows' && resultat.vm_running === false) {
     rappelTexte += ' ⚠ La VM CCW-Build ne semble pas démarrée actuellement.';
   }
@@ -4675,137 +4632,12 @@ async function envoyerIssue() {
   }
 }
 
-// Statut affiché dans la colonne « Statut » de l'onglet Watchers (issue #609) :
-// signale visiblement une tâche en cours (bouton « Enregistrer et relancer »
-// dangereux à cet instant), un redémarrage déjà différé en attente de la fin
-// de cette tâche, et surtout le cas à risque — une tâche mode_write tournant
-// directement dans REP_TRAVAIL, hors worktree isolé. Depuis l'issue #611, ce
-// n'est plus jamais un cas normal (toute tâche mode_write obtient d'abord un
-// worktree dédié, tentatives -bis/-ter incluses) : ce n'est plus que le repli
-// en tout dernier recours après échec des 3 tentatives de création de
-// worktree (issue #589), aussi signalé activement côté watcher (notify-send).
-// DISTINCT de l'incident relecture_bridge #73 (diagnostic confirmé le
-// 24/09/2026) : #73 tournait dans son propre worktree quand un redémarrage du
-// watcher (systemctl --user restart, qui tue tout le cgroup) l'a fait
-// reprendre comme premier slot directement dans REP_TRAVAIL — l'ancien
-// comportement du premier slot, supprimé depuis par #611, pas ce repli #589.
-// Le dossier principal ne doit pas être touché (merge, push) avant la fin.
-function statutWatcher(w) {
-  if (w.repli_rep_travail) {
-    return '<span style="color:#a32d2d;font-weight:600" '
-         + 'title="Une tâche mode_write tourne directement dans REP_TRAVAIL (pas dans un worktree isolé) — '
-         + 'ne pas merger/pousser le dossier principal de ce projet avant la fin.">'
-         + '⚠️ REP_TRAVAIL en écriture (hors worktree)</span>';
-  }
-  if (w.redemarrage_differe) {
-    return '<span style="color:#b5883a" '
-         + 'title="Redémarrage demandé, différé jusqu\'à la fin de la tâche en cours.">'
-         + '⏳ redémarrage différé</span>';
-  }
-  if (w.tache_en_cours) {
-    return '<span style="color:#888">⏳ tâche en cours</span>';
-  }
-  return '';
-}
-
-async function chargerWatchers() {
-  const rep  = await fetch('/watchers');
-  const liste = await rep.json();
-  const tbody = document.getElementById('corps-watchers');
-  // Mémoriser la sélection en cours avant de reconstruire les lignes,
-  // pour ne pas la perdre lors d'un rafraîchissement automatique (issue #123).
-  const coches = new Set(
-    [...tbody.querySelectorAll('.cb-watcher:checked')].map(c => c.value)
-  );
-  tbody.innerHTML = '';
-  for (const w of liste) {
-    const tr = document.createElement('tr');
-    tr.style.borderBottom = '1px solid #f0efe9';
-    tr.innerHTML = `
-      <td style="padding:10px 0;text-align:center">
-        <input type="checkbox" class="cb-watcher" value="${w.nom}"
-               ${coches.has(w.nom) ? 'checked' : ''}
-               onchange="mettreAJourCompte()">
-      </td>
-      <td style="padding:10px 4px">
-        <span style="width:8px;height:8px;border-radius:50%;
-              background:${w.actif ? '#5cb85c' : '#d9534f'};
-              display:inline-block"></span>
-      </td>
-      <td style="padding:10px 12px;font-size:13px">${w.nom}</td>
-      <td style="padding:10px 12px;font-size:13px;color:#888">${w.depot}</td>
-      <td style="padding:10px 0;font-size:12px;color:#aaa">
-        ${w.actif ? 'pid ' + w.pid : '—'}
-      </td>
-      <td style="padding:10px 12px;font-size:12px">${statutWatcher(w)}</td>`;
-    tbody.appendChild(tr);
-  }
-  // Recalculer "cb-tous" en fonction de l'état restauré : coché seulement
-  // si toutes les lignes reconstruites sont cochées (et qu'il y en a au moins une).
-  const toutes = tbody.querySelectorAll('.cb-watcher');
-  document.getElementById('cb-tous').checked =
-    toutes.length > 0 &&
-    tbody.querySelectorAll('.cb-watcher:checked').length === toutes.length;
-  mettreAJourCompte();
-}
-
-function selectionnerTous(cb) {
-  document.querySelectorAll('.cb-watcher').forEach(c => c.checked = cb.checked);
-  mettreAJourCompte();
-}
-
-function mettreAJourCompte() {
-  const n = document.querySelectorAll('.cb-watcher:checked').length;
-  document.getElementById('compte-selection').textContent =
-    n === 0 ? 'Aucun sélectionné' : `${n} sélectionné(s)`;
-}
-
-async function actionWatchers(action) {
-  const selectionnes = [...document.querySelectorAll('.cb-watcher:checked')].map(c => c.value);
-  if (!selectionnes.length) {
-    const msg = document.getElementById('msg-watchers');
-    msg.textContent = 'Sélectionne au moins un projet.';
-    msg.className = 'message erreur'; msg.style.display = 'block';
-    setTimeout(() => msg.style.display = 'none', 3000);
-    return;
-  }
-  document.getElementById('msg-watchers').style.display = 'none';
-
-  const route   = action === 'arreter' ? '/arreter-watcher' : '/lancer-watcher';
-  const payload = action === 'lancer'
-    ? (nom) => ({projet: nom, relancer: false})
-    : (nom) => ({projet: nom, relancer: action === 'relancer'});
-
-  for (const nom of selectionnes) {
-    await fetch(route, {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify(payload(nom))
-    });
-  }
-
-  // Issue #141 : décocher explicitement les cases traitées AVANT que
-  // chargerWatchers() ne restaure la sélection (mécanisme #123 prévu pour le
-  // rafraîchissement automatique). Ordre : décochage → message → chargerWatchers().
-  const traites = new Set(selectionnes);
-  document.querySelectorAll('.cb-watcher').forEach(c => {
-    if (traites.has(c.value)) c.checked = false;
-  });
-  const cbTous = document.getElementById('cb-tous');
-  if (cbTous) cbTous.checked = false;
-  mettreAJourCompte();
-
-  const verbe = action === 'arreter' ? 'arrêté(s)'
-              : action === 'relancer' ? 'relancé(s)'
-              : 'lancé(s)';
-  const msg = document.getElementById('msg-watchers');
-  msg.textContent = `${selectionnes.length} watcher(s) ${verbe}.`;
-  msg.className = 'message succes'; msg.style.display = 'block';
-  setTimeout(() => msg.style.display = 'none', 3000);
-
-  await chargerWatchers();
-  await verifierStatut();
-}
+// statutWatcher/chargerWatchers/selectionnerTous/mettreAJourCompte/
+// actionWatchers (tableau + cases à cocher + Lancer/Relancer/Éteindre par lot
+// de l'ex-onglet Watchers) ont été supprimés avec cet onglet (issue #626,
+// refonte web étape 2) : la surveillance des watchers reste dans le panneau
+// latéral de l'onglet Résultats (sidebarRelancerWatcherCCL et consorts,
+// rendrePanneauLateralMonitoring, ci-dessus), qui n'en dépendaient pas.
 
 // Couleur du bouton d'envoi par mode — gradation cohérente avec l'ordre du
 // moins au plus permissif (issue #326) : lecture (noir) → lecture active
@@ -5501,8 +5333,8 @@ setInterval(rafraichirRateLimit, 30000);
 // supprimé depuis par #611, pas ce repli #589. Le dossier principal du
 // projet est alors en cours d'écriture et ne doit PAS être touché (merge,
 // push) avant la fin.
-// Réutilise /watchers (déjà interrogé par l'onglet Watchers), à la même
-// cadence que le rate limit ci-dessus plutôt qu'un polling dédié de plus.
+// Réutilise /watchers (déjà interrogé par le panneau latéral Infrastructure),
+// à la même cadence que le rate limit ci-dessus plutôt qu'un polling dédié de plus.
 async function rafraichirReplisRepTravail() {
   const bandeau = document.getElementById('bandeau-repli-rep-travail');
   if (!bandeau) return;
