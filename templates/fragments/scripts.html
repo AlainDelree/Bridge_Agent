@@ -1,0 +1,30 @@
+<!-- Import map de versionnage des modules du socle (issue #625, étape 1) : DOIT
+     précéder tout <script type="module">. Remappe les imports relatifs entre
+     modules ES (import './store.js' → /static/js/socle/store.js) vers leur URL
+     ?v=<mtime>, pour un cache-busting par fichier sans étape de build. -->
+<script type="importmap">{{ importmap_socle() | safe }}</script>
+<script>
+  // Couleurs persistées par projet (issue #121) : source PRIORITAIRE de
+  // couleurProjet(). Peuplée côté serveur depuis lister_projets() (champ COULEUR
+  // du .conf). Un projet sans couleur en config est simplement absent ici et
+  // retombe sur la map fixe COULEURS_PROJET puis sur le hash HSL (migration
+  // douce : les .conf existants continuent de fonctionner sans réécriture).
+  window.COULEURS_PERSISTEES = {
+    {% for p in projets if p.couleur %}"{{ p.nom }}": "{{ p.couleur }}",
+    {% endfor %}
+  };
+  // Types MIME image acceptés (issue #192), source serveur unique
+  // (TYPES_IMAGE_ACCEPTES). Utilisé comme garde-fou côté client dans
+  // joindreImage() — évite de redupliquer la liste en dur dans app.js.
+  window.MIMES_IMAGE_ACCEPTES = {{ formats_image.mimes | tojson }};
+</script>
+<!-- Ancien code : script CLASSIQUE (PAS un module). Ses ~233 fonctions restent
+     globales, appelées par les >70 gestionnaires inline du HTML. Versionné
+     (?v=mtime) pour le cache-busting. Il sera vidé progressivement par les
+     étapes suivantes de la refonte (issue #625). -->
+<script src="{{ url_statique('js/app.js') }}"></script>
+<!-- Socle (issue #625, étape 1) : point d'entrée chargé comme MODULE, À CÔTÉ de
+     app.js (pas importé par lui). type=module ⇒ différé ⇒ s'exécute APRÈS app.js
+     et après le script inline ci-dessus (variables Jinja disponibles). N'ouvre
+     aucune connexion SSE et ne remplace rien à cette étape. -->
+<script type="module" src="{{ url_statique('js/socle/index.js') }}"></script>

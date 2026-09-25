@@ -1,0 +1,28 @@
+  <!-- ─── Onglet 2 : gestion des watchers ──────────────────────────────── -->
+  <div id="panneau-watchers" class="panneau">
+    <table style="width:100%;border-collapse:collapse" id="tableau-watchers">
+      <thead>
+        <tr style="border-bottom:1px solid #eee">
+          <th style="width:36px;padding:8px 0;text-align:center">
+            <input type="checkbox" id="cb-tous" onchange="selectionnerTous(this)">
+          </th>
+          <th style="width:20px"></th>
+          <th style="text-align:left;font-size:12px;color:#666;font-weight:500;padding:8px 12px">Projet</th>
+          <th style="text-align:left;font-size:12px;color:#666;font-weight:500;padding:8px 12px">Dépôt</th>
+          <th style="text-align:left;font-size:12px;color:#666;font-weight:500;padding:8px 0;width:120px">PID</th>
+          <th style="text-align:left;font-size:12px;color:#666;font-weight:500;padding:8px 12px">Statut</th>
+        </tr>
+      </thead>
+      <tbody id="corps-watchers"></tbody>
+    </table>
+    <div id="msg-watchers" class="message"></div>
+    <div style="display:flex;align-items:center;gap:10px;margin-top:16px;
+         padding-top:14px;border-top:1px solid #eee">
+      <span style="font-size:12px;color:#aaa" id="compte-selection">0 sélectionné</span>
+      <div style="margin-left:auto;display:flex;gap:10px">
+        <button onclick="actionWatchers('lancer')">Lancer</button>
+        <button onclick="actionWatchers('relancer')">Relancer</button>
+        <button class="danger" onclick="actionWatchers('arreter')">Éteindre</button>
+      </div>
+    </div>
+  </div>

@@ -1,0 +1,119 @@
+  <!-- ─── Onglet 1 : création d'issue ──────────────────────────────────── -->
+  <div id="panneau-creation" class="panneau actif">
+
+    <!-- Bibliothèque de templates d'issues récurrentes (issue #284) : liste
+         filtrée dynamiquement selon le projet sélectionné dans le bandeau.
+         Charger un template pré-remplit tout le formulaire ci-dessous ; les
+         icônes crayon/poubelle modifient/suppriment le template sélectionné. -->
+    <div class="rangee" style="align-items:flex-end;gap:8px;margin-bottom:14px">
+      <div class="champ" style="flex:1">
+        <label>Charger un template</label>
+        <select id="template-select" onchange="onTemplateSelectChange()">
+          <option value="">-- Aucun --</option>
+        </select>
+      </div>
+      <button type="button" id="btn-template-modifier" onclick="modifierTemplateSelectionne()"
+              disabled title="Modifier le template sélectionné" style="padding:8px 12px">✏️</button>
+      <button type="button" id="btn-template-supprimer" onclick="supprimerTemplateSelectionne()"
+              disabled title="Supprimer le template sélectionné" style="padding:8px 12px">🗑️</button>
+    </div>
+
+    <div class="rangee">
+      <div class="champ" style="max-width:150px">
+        <label>Priorité</label>
+        <select id="priorite">
+          <option value="normale">normale</option>
+          <option value="haute">haute</option>
+          <option value="critique">critique</option>
+        </select>
+      </div>
+      <div class="champ" style="max-width:110px">
+        <label>Timeout (s)</label>
+        <input type="number" id="timeout" value="300" min="30" step="30">
+      </div>
+    </div>
+
+    <div class="champ" style="margin-bottom:14px">
+      <label>Titre</label>
+      <input type="text" id="titre" placeholder="Résumé court et actionnable">
+      <!-- Résumé lecture seule des champs d'en-tête détectés dans le corps
+           collé (issue #117). Masqué tant qu'aucun champ n'est reconnu ;
+           rempli/mis à jour en direct par mettreAJourResumeEntete(). -->
+      <div id="resume-entete" class="resume-entete" style="display:none"></div>
+    </div>
+
+    <div class="titre-section">Mode</div>
+    <!-- Ordre du moins au plus permissif (issue #326) : lecture → lecture
+         active → écriture. Lecture active (label mode_scratch, issue #327) :
+         écriture confinée à /tmp/bridge_scratch_<projet>/, jamais dans le
+         projet — utile aux linters/outils exigeant un vrai fichier de config
+         sur disque (eslint flat config ≥ 9, etc.). Livrable = rapport, comme
+         la lecture seule. -->
+    <div class="radio-groupe">
+      <label><input type="radio" name="mode" value="lecture" checked
+                    onchange="mettreAJourBoutonEnvoi()"> Lecture seule</label>
+      <label><input type="radio" name="mode" value="lecture_active"
+                    onchange="mettreAJourBoutonEnvoi()"
+                    title="Écriture confinée au dossier scratch (/tmp/bridge_scratch_<projet>/), jamais dans le projet.">
+        Lecture active <span class="badge-alerte">scratch (mode_scratch)</span>
+      </label>
+      <label><input type="radio" name="mode" value="ecriture"
+                    onchange="mettreAJourBoutonEnvoi()">
+        Écriture <span class="badge-alerte">⚠ mode_write</span>
+      </label>
+    </div>
+
+    <div class="titre-section">Notifications</div>
+    <div class="case-groupe">
+      <label><input type="checkbox" id="notif_pc" name="notifs" value="notif_pc"> Bureau (notif_pc)</label>
+      <label><input type="checkbox" name="notifs" value="notif_gsm"> GSM (notif_gsm)</label>
+      <label><input type="checkbox" name="notifs" value="notif_tous"> Tous (notif_tous)</label>
+    </div>
+
+    <div class="barre-envoi">
+      <select id="modele-ponctuel" title="Modèle CCL pour cette issue uniquement"
+              style="font-size:13px;padding:6px 10px;border:1px solid #ddd;
+                     border-radius:6px;color:#555;background:#fff">
+        <option value="">(modèle par défaut)</option>
+        <option value="claude-sonnet-5">claude-sonnet-5</option>
+        <option value="claude-opus-4-8">claude-opus-4-8</option>
+        <option value="claude-haiku-4-5">claude-haiku-4-5</option>
+        <option value="claude-fable-5">claude-fable-5</option>
+      </select>
+      <div style="flex:1"></div>
+      <button class="danger" onclick="viderFormulaire()">Vider</button>
+      <button onclick="afficherApercu()">Aperçu de la commande</button>
+      <button onclick="creerTemplate()" title="Enregistre l'état actuel du formulaire comme nouveau template">Créer le template</button>
+      <button class="primaire" id="btn-envoyer" onclick="envoyerIssue()">Envoyer l'issue</button>
+    </div>
+
+    <div class="titre-section">Corps de la tâche</div>
+    <textarea id="corps" placeholder="## Contexte&#10;…&#10;&#10;Ou coller directement avec #Titre: mon titre en première ligne."></textarea>
+
+    <!-- Pièce jointe image (issue #191) : upload optionnel d'un PNG/JPEG.
+         L'image est committée + poussée sur le dépôt du projet sélectionné
+         (dossier issue-attachments/) puis référencée dans le corps ci-dessus
+         via une URL raw.githubusercontent.com automatiquement insérée. -->
+    <div class="rangee" style="align-items:center;gap:10px;margin-top:10px">
+      <input type="file" id="image-jointe" accept="{{ formats_image.accept }}"
+             style="font-size:13px;max-width:340px"
+             onchange="majEtatBoutonImage()">
+      <button type="button" id="btn-joindre-image" onclick="joindreImage()"
+              disabled title="Committe l'image sur le dépôt et insère son lien dans le corps">
+        Joindre une image
+      </button>
+      <span id="image-jointe-msg" style="font-size:12px;color:#888"></span>
+    </div>
+    <!-- Formats acceptés + limite, visibles avant tout upload (issue #192).
+         Texte synchronisé côté serveur depuis TYPES_IMAGE_ACCEPTES /
+         TAILLE_MAX_IMAGE via formats_image_acceptes() : aucun format en dur. -->
+    <div style="font-size:12px;color:#888;margin-top:4px">
+      Formats acceptés : {{ formats_image.texte }} — {{ formats_image.taille_max_mo }} Mo maximum.
+    </div>
+
+    <div id="zone-apercu" class="apercu"></div>
+    <div id="message" class="message"></div>
+    <!-- Récapitulatif de l'envoi en lot (issue #135) : une ligne par bloc
+         « #Titre: » traité (issue créée ou erreur). Réutilise le style .message. -->
+    <div id="resume-lot" class="message" style="display:none"></div>
+  </div>

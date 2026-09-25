@@ -1,0 +1,57 @@
+/* composants.css : boutons, messages, aperçu, rappels Nouveau projet, résumé d'en-tête, terminal/journal — extrait de style.css (issue #625, étape 1). Ordre de
+   chargement à préserver : voir templates/fragments/entete.html. */
+/* Rappel git add/commit/push après création réussie d'un projet (issue #118).
+   Encart d'action requise, fond ambré comme .badge-alerte, pour ne pas passer
+   inaperçu ; les 3 commandes dans un <pre> monospace, sélectionnables en 1 clic. */
+.np-rappel-git{margin-top:14px;padding:10px 12px;border:1px solid #ffe08a;border-left:4px solid #f0ad4e;border-radius:6px;background:#fff3cd;color:#856404}
+.np-rappel-git .titre{font-size:13px;font-weight:600;margin-bottom:8px}
+.np-rappel-git pre{margin:0;padding:8px 10px;background:#fffaf0;border:1px solid #ffe08a;border-radius:4px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;color:#5a4a00;white-space:pre;overflow-x:auto;cursor:pointer}
+/* Rappels côté PROJET créé — CONTEXTE.md vide + init git manuelle éventuelle
+   (issue #257). Bordure bleue, délibérément distincte de .np-rappel-git
+   (bordure orange, dépôt Bridge_Agent) : la confusion entre les deux dépôts
+   est précisément ce qui avait fait passer inaperçu le bug de cette issue. */
+.np-rappel-projet{margin-top:14px;padding:10px 12px;border:1px solid #b6d4f0;border-left:4px solid #4a90d9;border-radius:6px;background:#eaf2fb;color:#1d4a76}
+.np-rappel-projet .titre{font-size:13px;font-weight:600;margin-bottom:8px}
+.np-rappel-projet div{margin-bottom:6px}
+.np-rappel-projet pre{margin:0;padding:8px 10px;background:#f5f9fd;border:1px solid #b6d4f0;border-radius:4px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;color:#1d4a76;white-space:pre;overflow-x:auto;cursor:pointer}
+/* Sélecteur de couleur d'accent du modal « Nouveau projet » (issue #121) :
+   une pastille cliquable par couleur disponible, la choisie entourée d'un anneau. */
+.np-couleurs{display:flex;flex-wrap:wrap;gap:10px;padding:2px 0}
+.np-pastille{width:26px;height:26px;padding:0;border-radius:50%;border:2px solid #fff;
+  box-shadow:0 0 0 1px #d0cfca;cursor:pointer;transition:transform .08s,box-shadow .08s}
+.np-pastille:hover{transform:scale(1.12)}
+.np-pastille.choisie{box-shadow:0 0 0 2px #333;transform:scale(1.12)}
+/* Résumé lecture seule des champs d'en-tête détectés dans le corps (issue #117).
+   Compact et discret : petite série de badges gris sous le champ Titre. */
+.resume-entete{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
+.resume-entete .badge-entete{font-size:11px;padding:2px 8px;border-radius:10px;
+  background:#f4f4ef;border:1px solid #e6e5df;color:#666;white-space:nowrap}
+.resume-entete .badge-entete b{color:#444;font-weight:600;margin-right:4px;font-size:10px;
+  text-transform:uppercase;letter-spacing:.03em}
+.barre-envoi{display:flex;justify-content:flex-end;gap:10px;margin-top:18px;
+  padding-top:14px;border-top:1px solid #eee}
+button{padding:7px 16px;border:1px solid #ccc;border-radius:6px;font-size:13px;
+  cursor:pointer;background:#fff;color:#1a1a18}
+button:hover{background:#f0efe9}
+button:active{transform:scale(.98)}
+button.primaire{background:#1a1a18;color:#fff;border-color:#1a1a18}
+button.primaire:hover{background:#333}
+button.primaire:disabled{background:#999;border-color:#999;cursor:not-allowed}
+button.danger{color:#721c24;border-color:#f5c6cb}
+button.danger:hover{background:#f8d7da}
+.apercu{background:#f8f8f5;border:1px solid #e0dfda;border-radius:6px;padding:14px;
+  font-family:monospace;font-size:12px;margin-top:14px;white-space:pre-wrap;
+  word-break:break-all;display:none;line-height:1.6}
+.message{padding:10px 14px;border-radius:6px;font-size:13px;margin-top:12px;display:none}
+.message.succes{background:#d4edda;color:#155724}
+.message.erreur{background:#f8d7da;color:#721c24}
+.message.avertissement{background:#fff3cd;color:#856404}
+.terminal{background:#1a1a18;color:#a0a098;border-radius:8px;padding:14px;
+  font-family:monospace;font-size:12px;min-height:360px;max-height:520px;
+  overflow-y:auto;line-height:1.7}
+.log-info{color:#a0a098}
+.log-warn{color:#d4a017}
+.log-ok{color:#5cb85c}
+.log-err{color:#d9534f}
+.barre-journal{display:flex;justify-content:space-between;align-items:center;margin-top:10px}
+.barre-journal span{font-size:11px;color:#aaa}

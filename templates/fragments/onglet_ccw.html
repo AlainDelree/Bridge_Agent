@@ -1,0 +1,104 @@
+  <!-- ─── Onglet CCW : pilotage du PC fixe Windows et de ses projets (issue #174) ─ -->
+  <div id="panneau-ccw" class="panneau">
+
+    <!-- Section 2 : projets CCW existants -->
+    <div class="titre-section" style="display:flex;align-items:center">
+      <span>Projets CCW existants</span>
+      <button onclick="ccwChargerProjets()"
+              style="margin-left:auto;font-size:12px;padding:4px 10px">Rafraîchir</button>
+    </div>
+    <table style="width:100%;border-collapse:collapse" id="ccw-tableau-projets">
+      <thead>
+        <tr style="border-bottom:1px solid #eee">
+          <th style="text-align:left;font-size:12px;color:#666;font-weight:500;padding:8px 12px">Projet</th>
+          <th style="text-align:left;font-size:12px;color:#666;font-weight:500;padding:8px 12px">Service</th>
+          <th style="text-align:left;font-size:12px;color:#666;font-weight:500;padding:8px 12px;width:110px">État</th>
+          <th style="text-align:left;font-size:12px;color:#666;font-weight:500;padding:8px 12px;width:150px">TOPIC_NTFY</th>
+          <th style="text-align:left;font-size:12px;color:#666;font-weight:500;padding:8px 12px;width:230px">Actions</th>
+        </tr>
+      </thead>
+      <tbody id="ccw-corps-projets"></tbody>
+    </table>
+    <div id="ccw-msg-projets" class="message" style="margin-top:10px"></div>
+
+    <!-- Section 3 : ajouter un projet -->
+    <div class="titre-section" style="margin-top:22px">Ajouter un projet</div>
+    <div class="rangee">
+      <div class="champ">
+        <label>Nom du projet</label>
+        <input type="text" id="ccw-add-nom" placeholder="ex : Scrabble" autocomplete="off">
+      </div>
+      <div class="champ">
+        <label>Dépôt GitHub (owner/repo)</label>
+        <input type="text" id="ccw-add-depot" placeholder="AlainDelree/Scrabble" autocomplete="off">
+      </div>
+    </div>
+    <div class="barre-envoi">
+      <div style="flex:1"></div>
+      <button class="primaire" id="ccw-btn-ajouter" onclick="ccwAjouterProjet()">Créer</button>
+    </div>
+
+    <!-- Section 4 : finaliser un projet (TOPIC_NTFY + tokens) -->
+    <div class="titre-section" style="margin-top:22px">Finaliser un projet</div>
+    <div class="rangee">
+      <div class="champ" style="max-width:220px">
+        <label>Projet (sélection)</label>
+        <select id="ccw-fin-nom">
+          <option value="" disabled selected>-- Choisir un projet --</option>
+        </select>
+      </div>
+      <div class="champ">
+        <label>TOPIC_NTFY</label>
+        <input type="text" id="ccw-fin-topic" placeholder="ex : bridge_scrabble_xxxxx" autocomplete="off">
+      </div>
+    </div>
+    <div class="rangee">
+      <div class="champ">
+        <label>GH_TOKEN</label>
+        <!-- Anti auto-remplissage (issue #175) : autocomplete="new-password"
+             (interprété comme un nouveau champ, pas un login), pas d'attribut
+             name reconnu par les gestionnaires de mots de passe, et readonly au
+             chargement rendu editable au premier focus/clic (empêche le
+             remplissage automatique à l'ouverture). Le bouton œil est le filet
+             de sécurité fiable : voir la valeur en clair avant de finaliser. -->
+        <div style="display:flex;gap:6px;align-items:center">
+          <input type="password" id="ccw-fin-gh" autocomplete="new-password"
+                 readonly onfocus="this.removeAttribute('readonly')"
+                 onmousedown="this.removeAttribute('readonly')"
+                 style="flex:1;min-width:0">
+          <button type="button" class="oeil-token" tabindex="-1"
+                  title="Afficher / masquer la valeur (vérifier avant Finaliser)"
+                  style="padding:6px 9px;font-size:14px;line-height:1"
+                  onclick="var i=document.getElementById('ccw-fin-gh'); var m=i.type==='password'; i.type=m?'text':'password'; this.textContent=m?'🙈':'👁';">👁</button>
+        </div>
+      </div>
+      <div class="champ">
+        <label>CLAUDE_CODE_OAUTH_TOKEN</label>
+        <div style="display:flex;gap:6px;align-items:center">
+          <input type="password" id="ccw-fin-oauth" autocomplete="new-password"
+                 readonly onfocus="this.removeAttribute('readonly')"
+                 onmousedown="this.removeAttribute('readonly')"
+                 style="flex:1;min-width:0">
+          <button type="button" class="oeil-token" tabindex="-1"
+                  title="Afficher / masquer la valeur (vérifier avant Finaliser)"
+                  style="padding:6px 9px;font-size:14px;line-height:1"
+                  onclick="var i=document.getElementById('ccw-fin-oauth'); var m=i.type==='password'; i.type=m?'text':'password'; this.textContent=m?'🙈':'👁';">👁</button>
+        </div>
+      </div>
+    </div>
+    <div style="font-size:12px;color:#999;margin-bottom:8px">
+      🔒 Les tokens ne transitent jamais en argument de commande ni dans un log :
+      fichier temporaire poussé sur le PC fixe via SCP, lu par PowerShell, puis
+      supprimé des deux côtés. Créez d'abord le token GitHub dédié (repo unique, Issues R/W,
+      expiration alignée — cf. §16).
+    </div>
+    <div class="barre-envoi">
+      <div style="flex:1"></div>
+      <button class="primaire" id="ccw-btn-finaliser" onclick="ccwFinaliserProjet()">Finaliser</button>
+    </div>
+
+    <!-- Sortie commune (messages + terminal des scripts distants) -->
+    <div id="ccw-message" class="message"></div>
+    <div class="terminal" id="ccw-sortie"
+         style="display:none;margin-top:12px;white-space:pre-wrap;min-height:0"></div>
+  </div>

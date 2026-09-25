@@ -1,7 +1,6 @@
 # CONTEXTE — bridge_agent
 
-Ce fichier est injecté automatiquement en tête de chaque prompt CCL
-(via `FICHIER_CONTEXTE`, plafonné à 4000 caractères). Il résume le projet.
+Injecté en tête de chaque prompt CCL (`FICHIER_CONTEXTE`, plafond 4000 car.).
 Référence complète : `BRIDGE_AGENT_DOC.md` (+ `ARCHITECTURE.md`).
 
 ## Objectif
@@ -13,21 +12,21 @@ Bridge_Agent se développe lui-même par ses propres issues (dogfooding).
 
 ## Architecture
 - **`watcher.py`** — watcher générique unique (`--config configs/<nom>.conf`),
-  partagé par TOUS les projets et les deux plateformes (CCL/CCW). Un watcher
-  et un log (`logs/watcher-<nom>.log`) par projet. En début de chaque cycle :
-  `git pull --ff-only` du clone de travail (`REP_TRAVAIL`) — fast-forward si
-  possible, sinon poursuit sur le code local sans rien écraser.
+  partagé par TOUS les projets et les deux plateformes (CCL/CCW). Un watcher +
+  un log par projet. En début de cycle : `git pull --ff-only` du clone de travail
+  (`REP_TRAVAIL`), sinon poursuit sur le code local sans rien écraser.
 - **`new_issue.py`** — point d'entrée mince de l'interface web Flask (port
   5100). Tourne en permanence sur le ThinkPad. `--externe` → tunnel
   cloudflared (`app/tunnel.py`, https://bridge.frederiqueferette.be) + login.
-- **`app/`** — package Flask. `create_app()` (`__init__.py`) : état partagé
-  dans `app.config`, routes via `add_url_rule`. Modules : `auth`, `projets`
-  (config `.conf`), `watchers` (start/stop/état), `issues` (création/suivi,
-  pièces jointes image), `journal`, `cycle_vie` (heartbeat/SSE), `ccw`
-  (onglet pilotage PC Windows physique), `notifications_poller` (thread démon
-  détectant les transitions d'issues pour bip/notify-send/ntfy), `tunnel`,
-  `etat`, `vues`.
-- **`templates/`** (`index.html`, Jinja2), **`static/`** (css/js/img).
+- **`app/`** — package Flask. `create_app()` (`__init__.py`) : état partagé dans
+  `app.config`, routes via `add_url_rule`. Modules : `auth`, `projets` (`.conf`),
+  `watchers`, `issues`, `journal`, `cycle_vie` (heartbeat/SSE), `ccw` (pilotage
+  Windows), `notifications_poller` (bip/notify-send/ntfy), `tunnel`, `etat`,
+  `vues`, `statique` (versionnage cache-busting des statiques).
+- **`templates/`** — `index.html` (squelette) + `fragments/` (un par onglet /
+  panneau / modale, Jinja2). **`static/`** — `css/` découpé par zone (ordre de
+  chargement = cascade), `js/app.js` (hérité, script classique) + `js/socle/`
+  (modules ES : store/api/sse/toasts/dom/persistance ; refonte issue #625).
 - **`configs/`** (gitignoré) — un `.conf` par projet. **`provisioning/windows/`**
   + **`systemd/`** (`watcher@.service`) — déploiement. **`scripts/`** (bip).
 
@@ -43,32 +42,22 @@ Bridge_Agent se développe lui-même par ses propres issues (dogfooding).
   création, sinon PowerShell 5.1 plante sur les accents.
 
 ## État d'avancement (récent, cf. changelog en bas du DOC)
+- #625 (refonte interface web, étape 1/n) : socle de modules ES natifs sans build
+  dans `static/js/socle/` (store/api/sse/toasts/dom/persistance + pont de
+  transition), `index.html` et `style.css` découpés en fragments/feuilles,
+  versionnage `?v=<mtime>` des statiques + import map. INERTE : ne remplace rien
+  encore (app.js reste seul aux commandes). Détail : `ARCHITECTURE.md`.
 - #221 (calibration TIMEOUT, 2/3) : `watcher.py` maintient `logs/etat_timeout.json`
-  (EWMA duree_typique/variabilite par combinaison projet+TYPE+mode, demi-vie 15
-  issues, k=4, backoff ×1.5 par timeout, reset après 3 succès rapides consécutifs)
-  et `logs/etat_ambiance.json` (F_reseau/F_local, EWMA temporelle demi-vie 4h,
-  GLOBAL à tous les projets, écriture atomique + verrou fichier anti-collision).
-  `TIMEOUT_suggéré = (duree_typique + k×variabilite) × F × backoff` journalisé à
-  chaque clôture d'issue (`maj_calibration_timeout`) — n'affecte PAS encore le
-  TIMEOUT réellement appliqué (celui de l'en-tête reste seul décisif ; exposition
-  = 3e issue séparée à venir).
-- §12.1 (#209/#211) : dossier `consignes/` (3 couches globales/type/projet)
-  injecté dans le PROMPT CCL par `watcher.py` (`lancer_claude` →
-  `_consignes_injectees`), au moment du traitement — comme `CONTEXTE.md`. Depuis
-  #211 c'est le point de passage UNIQUE : couvre tous les chemins de création
-  (formulaire web, `gh issue create` d'un chef, création manuelle GitHub) ;
-  `app/issues.py` n'écrit plus les consignes dans le corps GitHub. Bloc placé
-  après CONTEXTE, avant le périmètre/garde-fou. `globales.md` non-optionnel
-  (sécurité), `type_*.md`/`projet_*.md` facultatifs (créés à la demande).
-- §18 (#191) : pièces jointes image PNG/JPEG dans les issues → commit+push dans
-  `issue-attachments/` + URL raw insérée. #192 : support GIF + affichage des
-  formats/limite dans l'UI.
-- §17 (#187) : notifications centralisées — `new_issue.py` détecte lui-même les
-  transitions d'issues (tous projets, y compris CCW) et notifie localement.
-- §16 (#174…) : onglet « CCW » — pilotage complet du PC Windows physique depuis Linux.
-- #186/#185 : `git pull --ff-only` automatique en début de cycle du watcher.
+  (EWMA par projet+TYPE+mode) et `logs/etat_ambiance.json` (F_reseau/F_local) ;
+  `TIMEOUT_suggéré` journalisé à chaque clôture — n'affecte PAS encore le TIMEOUT
+  appliqué (en-tête seul décisif ; exposition à venir).
+- §12.1 (#209/#211) : dossier `consignes/` (globales/type/projet) injecté dans le
+  PROMPT CCL par `watcher.py`, point de passage UNIQUE de tous les chemins de
+  création. `globales.md` non-optionnel, `type_*`/`projet_*` facultatifs.
+- §18 (#191/#192) : pièces jointes image → `issue-attachments/` + URL raw.
+- §17 (#187) : notifications centralisées via `new_issue.py` (tous projets, CCW inclus).
+- §16 (#174…) : onglet « CCW » — pilotage du PC Windows physique depuis Linux.
 
 ## Maintenance de ce fichier
-Si la tâche que tu exécutes modifie l'architecture, les dépendances, les
-conventions de code, ou l'état d'avancement majeur de ce projet, mets à
-jour ce CONTEXTE.md en conséquence, dans le même commit.
+Si ta tâche modifie l'architecture, les dépendances, les conventions ou l'état
+d'avancement majeur, mets à jour ce CONTEXTE.md dans le même commit (≤ 4000 car.).

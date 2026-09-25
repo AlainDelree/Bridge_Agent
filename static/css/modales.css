@@ -1,0 +1,31 @@
+/* modales.css : overlay de modale générique, carte, boutons destructifs, overlay d'arrêt serveur — extrait de style.css (issue #625, étape 1). Ordre de
+   chargement à préserver : voir templates/fragments/entete.html. */
+/* Modal de confirmation — overlay en flux normal (position:absolute, pas fixed).
+   Le body est positionné (position:relative) : l'overlay le recouvre entièrement. */
+.modal-overlay{position:absolute;top:0;left:0;width:100%;min-height:100%;
+  background:rgba(0,0,0,.42);display:none;justify-content:center;
+  align-items:flex-start;padding:70px 16px 40px;z-index:1000}
+.modal-overlay.actif{display:flex}
+.modal-carte{background:#fff;border-radius:12px;max-width:460px;width:100%;
+  padding:22px 24px;box-shadow:0 10px 40px rgba(0,0,0,.28)}
+.modal-titre{font-size:15px;font-weight:600;line-height:1.4;margin-bottom:14px}
+.modal-liste{font-family:monospace;font-size:12px;background:#f8f8f5;
+  border:1px solid #e0dfda;border-radius:6px;padding:10px 12px;margin-bottom:18px;
+  max-height:200px;overflow-y:auto;line-height:1.8;word-break:break-word}
+.modal-boutons{display:flex;justify-content:flex-end;gap:10px}
+button.danger-plein{background:#a32d2d;color:#fff;border-color:#a32d2d}
+button.danger-plein:hover{background:#8f2626}
+button.danger-plein:disabled{background:#ccc;border-color:#ccc;color:#888;
+  cursor:not-allowed}
+button.danger-plein:disabled:hover{background:#ccc}
+/* Overlay « serveur arrêté » — flux normal (position:absolute, pas fixed),
+   recouvre tout le body (position:relative). Affiché sur Ctrl+C serveur ou
+   coupure brutale de la connexion SSE /events. */
+.overlay-arret{position:absolute;top:0;left:0;width:100%;min-height:100%;
+  background:rgba(20,20,18,.94);display:none;flex-direction:column;
+  justify-content:center;align-items:center;gap:22px;padding:60px 20px;
+  z-index:2000;text-align:center}
+.overlay-arret.actif{display:flex}
+.overlay-arret .msg{color:#fff;font-size:18px;font-weight:600;line-height:1.5;
+  max-width:520px}
+.overlay-arret button{font-size:15px;padding:11px 24px}

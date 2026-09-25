@@ -1,0 +1,17 @@
+<!-- ─── Modal « Résultats de recherche par titre » (issue #321) ──────────────
+     Fenêtre séparée et AUTONOME : sa propre liste (réplique exacte des lignes
+     de l'onglet Résultats, mêmes badges ✅/Diff/All) et sa PROPRE zone de
+     détail (#zone-issue-recherche) — un double-clic ici n'affecte jamais la
+     zone de détail de l'onglet Résultats. -->
+<div id="modal-recherche-titre" class="modal-overlay">
+  <div class="modal-carte modal-recherche-titre">
+    <div class="modal-titre">🔍 Résultats de recherche</div>
+    <div id="liste-resultats-recherche" class="liste-issues"></div>
+    <div id="zone-issue-recherche" class="zone-issue">
+      <div class="issue-vide">Double-cliquez un résultat pour afficher son détail.</div>
+    </div>
+    <div class="modal-boutons">
+      <button id="btn-fermer-recherche-titre" onclick="fermerModalRechercheTitre()">Fermer</button>
+    </div>
+  </div>
+</div>

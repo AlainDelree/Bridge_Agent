@@ -1,0 +1,19 @@
+/* recherche-interruption.css : barre/modale de recherche par titre et étapes d'interruption (zone Résultats, DOIT rester chargé après modales.css) — extrait de style.css (issue #625, étape 1). Ordre de
+   chargement à préserver : voir templates/fragments/entete.html. */
+/* Recherche par titre (issue #321) : barre statique + modal de résultats. */
+.barre-recherche-titre{display:flex;align-items:center;gap:8px;flex-wrap:wrap;
+  margin:8px 0}
+.barre-recherche-titre input[type="text"]{flex:1;min-width:180px;
+  padding:5px 9px;font-size:13px;border:1px solid #ccc;border-radius:4px}
+.modal-recherche-titre{max-width:900px;max-height:85vh;overflow-y:auto;
+  text-align:left}
+.modal-recherche-titre .liste-issues{max-height:280px;margin-bottom:14px}
+.modal-recherche-titre .zone-issue{max-height:360px;overflow-y:auto}
+/* Interruption d'une issue (issue #323, suite #320) : une ligne par étape,
+   couleur selon son statut à trois valeurs (succes/rien_a_faire/echec). */
+.etape-interrompre{padding:4px 2px;border-bottom:1px solid #eee}
+.etape-interrompre:last-child{border-bottom:none}
+.etape-badge{display:inline-block;width:16px;text-align:center}
+.etape-interrompre.etape-echec{color:#a32d2d}
+.etape-interrompre.etape-rien_a_faire{color:#888}
+.etape-interrompre.etape-succes{color:#22803a}

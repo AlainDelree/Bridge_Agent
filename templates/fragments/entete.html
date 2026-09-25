@@ -1,0 +1,17 @@
+  <div class="entete">
+    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+      <circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/>
+      <path d="M6 9v1a2 2 0 002 2h4a2 2 0 012 2v1"/>
+    </svg>
+    <h1>Bridge Agent</h1>
+    <!-- Rate limit GitHub GraphQL (issue #607) : toujours visible quel que soit
+         l'onglet actif, rafraîchi côté JS toutes les 30s (rafraichirRateLimit). -->
+    <span id="rate-limit-widget" class="rate-limit rl-gris" title="Quota GitHub GraphQL">⚡ …</span>
+    <span class="statut">{{ projets|length }} projet(s) disponible(s)</span>
+    {% if auth_active %}
+    <button class="danger" onclick="if(confirm('Se déconnecter ?')) location.href='/logout'"
+            style="font-size:12px;padding:5px 12px">Déconnexion</button>
+    {% endif %}
+    <button id="btn-quitter" class="danger" onclick="quitter()"
+            style="font-size:12px;padding:5px 12px">Quitter</button>
+  </div>
