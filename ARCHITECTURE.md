@@ -400,10 +400,24 @@ concaténation byte-identique à l'ancien `style.css`, vérifiée) :
 | 5 | `recherche-interruption.css` | recherche par titre + interruption (zone Résultats) — **DOIT rester après `modales.css`** (`.modal-recherche-titre` surcharge `.modal-carte` à specificité égale) |
 | 6 | `inbox.css` | onglet Résultats inbox |
 
-**Futurs modules JS par fonctionnalité** : un module par zone, à créer dans
+**Modules JS par fonctionnalité** : un module par zone, à créer dans
 `static/js/` (ex. `static/js/creation.js`, `resultats.js`, `watchers.js`,
 `config.js`, `ccw.js`, `journal.js`, `inbox.js`, `nouveau_projet.js`), importé
 par `index.js`. Chaque module utilise les briques du socle.
+
+> **Étape 3 réalisée — `static/js/resultats.js` (issue #627)** : premier module
+> par fonctionnalité. Il sort d'`app.js` le **moteur** de l'onglet Résultats —
+> chargement de la liste (initial unique + ↻, sans cache localStorage), canal
+> `/stream` (via la brique `sse`, UNIQUE connexion), traitement CIBLÉ des
+> événements `debut_issue`/`fin_issue`/`creation_issue`, fetch unique
+> post-dépassement #334, et calcul + application des badges de décompte/estimation
+> — avec le **store** (tranches `issues` + `timing`) pour source de vérité unique.
+> `app.js` conserve, pendant la transition, le rendu DOM d'une ligne et les
+> fonctionnalités hors périmètre (filtres, case à cocher, badges ✅/Diff/All,
+> détail, recherche, panneau latéral), qui lisent un MIROIR du store via quelques
+> hooks `window.__resultats*` posés dans `app.js` et appelés par `resultats.js`.
+> Tests de logique pure : `static/js/tests/resultats.test.js`. L'import map
+> (§6.6) couvre désormais aussi ces modules de `static/js/` (hors `app.js`).
 
 > **Note parallélisme** : HTML et JS se découpent proprement par zone. Le CSS
 > est plus contraint : la cascade impose de garder l'ordre source, donc quelques

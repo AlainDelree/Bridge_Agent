@@ -38,13 +38,31 @@
       l'URL dans le corps.
 - [ ] Bouton « Vider » réinitialise le formulaire.
 
-## Onglet « Résultats »
+## Onglet « Résultats » (piloté par le store + SSE depuis l'issue #627)
 
-- [ ] La liste des issues **apparaît** (rendu immédiat depuis le cache puis
-      rafraîchissement de fond, indicateur « Mise à jour… »).
-- [ ] L'issue créée ci-dessus **apparaît dans Résultats** après traitement.
+- [ ] La liste des issues **apparaît** au PREMIER affichage de l'onglet
+      (indicateur « Mise à jour… » pendant le chargement initial).
+- [ ] **Chargement à la demande** (onglet Réseau F12) : quitter puis revenir sur
+      Résultats ne déclenche **AUCUN** appel `/issues-liste` ni
+      `/issues-en-attente` (plus de rechargement complet à l'activation). Seuls
+      le PREMIER affichage, le bouton ↻ et les événements SSE font des appels.
+- [ ] L'issue créée ci-dessus **apparaît dans Résultats** après traitement,
+      **sans ↻** (événement SSE).
+- [ ] **Décompte TIMEOUT** : dès qu'une issue CCL est prise en charge par le
+      watcher (ACK), son badge passe de « ⏳ en file » au décompte, **sans ↻**
+      (événement `debut_issue` — vérifier qu'il ne reste PAS bloqué « en file »
+      et qu'il n'affiche PAS à tort « dépassement déjà vérifié »).
+- [ ] **Clôture** : à la fin d'une issue, sa ligne se met à jour (état final,
+      arrêt du décompte) **sans ↻** (événement `fin_issue`).
+- [ ] **Une seule** connexion `/stream` dans l'onglet Réseau (jamais deux),
+      présente même hors de l'onglet Résultats.
+- [ ] **Échec d'un projet** : si un `/issues-liste/<projet>` échoue, ses issues
+      **restent affichées** (données précédentes conservées) et un **toast**
+      d'erreur apparaît — jamais de disparition silencieuse.
+- [ ] Bouton ↻ : recharge liste + décompte ; la limite « par projet : N » saisie
+      juste avant s'applique bien au clic sur ↻ (et pas à la frappe).
 - [ ] Filtres par projet : activer/désactiver ; bouton « Tous » ; pastilles de
-      notification correctes ; état conservé après rechargement.
+      notification correctes ; état conservé après rechargement (F5).
 - [ ] Clic sur une ligne → **détail** de l'issue s'affiche (badges, corps,
       commentaires, réponse CCL).
 - [ ] Onglets Réponse / Diff du détail ; le Diff se charge.
@@ -55,8 +73,11 @@
 - [ ] Recherche par titre : la fenêtre de résultats s'ouvre, double-clic affiche
       le détail dans sa propre zone.
 - [ ] Actions sur une issue ouverte : annuler / fermer / interrompre / relancer
-      (modale d'interruption : étapes détaillées + rappel de relance watcher).
-- [ ] Badges de temps restant / estimation présents et cohérents.
+      (modale d'interruption : étapes détaillées + rappel de relance watcher) —
+      la liste se rafraîchit après l'action.
+- [ ] Badges de temps restant / estimation présents et cohérents (compte à
+      rebours qui décroît chaque seconde ; « dépassement » figé à zéro puis
+      vérification unique 15 s après — jamais de polling).
 
 ## Panneau latéral (Infrastructure)
 

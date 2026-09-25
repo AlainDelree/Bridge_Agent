@@ -6,14 +6,16 @@ Node** (`node:test` + `node:assert`). **Aucune dépendance, aucun build, aucun
 
 ## Lancer les tests
 
-Depuis la racine du dépôt :
+Depuis la racine du dépôt (socle + modules par fonctionnalité) :
 
 ```bash
-node --test static/js/socle/tests/
+node --test static/js/socle/tests/ static/js/tests/
 ```
 
-Sortie attendue : `# pass 20  # fail 0` (au moins ; le nombre grandit avec la
-refonte).
+Sortie attendue : `# pass 36  # fail 0` (au moins ; le nombre grandit avec la
+refonte). Les tests du module Résultats (issue #627) vivent dans
+`static/js/tests/resultats.test.js` — le fichier `static/js/package.json`
+(`{"type":"module"}`) suffit à ce que Node traite ces `.js` comme des modules ES.
 
 > Le fichier `static/js/socle/package.json` (`{"type":"module"}`) suffit à ce
 > que Node traite les `.js` du socle comme des modules ES. Le navigateur ignore
@@ -26,6 +28,7 @@ refonte).
 | `store.test.js`        | `creerStore` (get/set/maj, abonnements global et par clé, immuabilité) et le store applicatif (tranches par défaut, issues indexées par projet+numéro). |
 | `persistance.test.js`  | `lire`/`ecrire` (JSON), `lireTexte`/`ecrireTexte`, `supprimer`, `supprimerParPrefixe`, avec un faux `localStorage`. |
 | `dom.test.js`          | `echapperHtml` (seule logique de `dom.js` indépendante du DOM). |
+| `../tests/resultats.test.js` | Module Résultats (issue #627) : `formaterDuree`, calcul des badges de décompte TIMEOUT et d'estimation, `planifierEvenementSse` (dont `debut_issue` qui ne passe jamais par la vérif post-dépassement), fusion de chargement conservant un projet en échec. |
 
 Ce qui touche au DOM (utilitaires `dom`, toasts, délégation) et au réseau (`api`,
 `sse`) est vérifié **manuellement** dans le navigateur : voir

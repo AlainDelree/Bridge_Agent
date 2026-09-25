@@ -67,11 +67,13 @@ export function creerCanalSse(url, gestionnaires = {}, opts = {}) {
 import { store } from './store.js';
 
 function surEvenementIssue(e) {
-  // /stream émet 'debut_issue' et 'fin_issue' : { projet, numero }.
+  // /stream émet 'debut_issue' / 'fin_issue' : { projet, numero } et
+  // 'creation_issue' (issue #627/#9a) : { projet, numero, titre, fichier? }.
+  // On note la dernière notification dans le store ; le module Résultats
+  // (static/js/resultats.js, issue #627) y est abonné et applique un
+  // traitement CIBLÉ (jamais un rechargement de tous les projets).
   try {
     const donnees = JSON.parse(e.data);
-    // À l'activation, un futur module rechargera l'issue concernée ; ici on ne
-    // fait que noter la dernière notification dans le store, sans effet visible.
     store.set('derniereNotifIssue', { ...donnees, type: e.type });
   } catch { /* données non-JSON ignorées */ }
 }
@@ -84,6 +86,7 @@ export const sse = {
   stream: creerCanalSse('/stream', {
     debut_issue: surEvenementIssue,
     fin_issue: surEvenementIssue,
+    creation_issue: surEvenementIssue,
   }),
   events: creerCanalSse('/events', {
     shutdown: surShutdown,
