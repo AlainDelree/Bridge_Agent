@@ -9,6 +9,164 @@ milliers de caractères sur une seule ligne logique, coûteux à relire et
 
 Convention d'ajout : voir §10 de `BRIDGE_AGENT_DOC.md`.
 
+## 25 septembre 2026 — issue #632
+
+Refonte interface web — raccord de la vague 1 (issue #632, suite #625/#626/#627/#628) : `onglets.js` appelait encore, via le pont, `chargerListeIssues`/`demarrerTempsRestant`/`demarrerPanneauLateral` (activation de Résultats) et `arreterTempsRestant`/`arreterPanneauLateral` (désactivation), toutes retirées d'app.js depuis #626/#627 — la liste Résultats et le panneau latéral ne démarraient donc plus jamais au chargement. `resultats.js` et `panneau_lateral.js` s'abonnent désormais directement à `store.ongletActif` (`initialisationsPour()` ne renvoie plus rien pour `resultats` ; journal/config/ccw/inbox inchangés, toujours via le pont vers app.js). `socle/index.js` sépare l'installation de la délégation de clic (`initialiserOnglets()`) de l'activation de l'onglet par défaut (nouvelle `activerOngletParDefaut()`), appelée en dernier après `resultats.initialiser()` et `initPanneauLateral()` pour garantir que les abonnements existent avant la première notification. `resultats.js` n'appelle plus `rafraichirPanneauLateralResultats` via le pont (communication de module à module par `window`) : `panneau_lateral.js` s'abonne lui-même à `store.derniereNotifIssue`. Suppression du code mort `chargerWatchers`/`#panneau-watchers` (onglet Watchers retiré par #626, condition toujours fausse) et des globales `window.demarrerPanneauLateral`/`arreterPanneauLateral` devenues inutiles (plus aucun appelant). Tests : `onglets.test.js` mis à jour, ajout de `resultats_activation.test.js` (l'activation de Résultats ne déclenche le chargement initial qu'une seule fois) et de `pont_globales.test.js` (échoue si un nom passé à `appelerAncien` ne correspond à aucune fonction déclarée dans app.js ni publiée par un module — garde-fou contre ce type de rupture lors des prochaines fusions). `VERIFICATIONS_MANUELLES.md` : retrait des mentions de l'onglet Watchers, correction de la trace console attendue au chargement (`[socle] briques chargées et inertes` n'existe plus). `CONTEXTE.md` ramené de 4067 à 3877 caractères par condensation (aucune information perdue).
+
+## Issue #628 — Refonte interface web, étape 4 : panneau latéral (mise en page non recouvrante, monitoring VM mort)
+
+Sortie du panneau latéral « Infrastructure » de `app.js` vers son propre
+module `static/js/panneau_lateral.js` (§6.7 ARCHITECTURE.md), premier module
+de la refonte à piloter réellement une zone de l'écran (au lieu du socle inerte
+posé par #625).
+
+- **Mise en page** : le panneau était en `position:fixed`, collé au bord droit
+  au-dessus du contenu — il recouvrait la fin des lignes de la liste Résultats
+  (badges de temps). Remplacé par une vraie colonne flex à côté de la liste
+  (`.resultats-layout` / `.resultats-corps` / `.panneau-lateral-col`,
+  `templates/fragments/onglet_resultats.html` + `static/css/resultats.css`) :
+  ne recouvre plus jamais la liste ; sur écran étroit, passe sous la liste au
+  lieu de la recouvrir (`flex-direction:column`).
+- **État ouvert/fermé** : mémorisé (`localStorage`, socle `persistance.js`) et
+  conservé d'un onglet à l'autre — auparavant réinitialisé à chaque entrée dans
+  l'onglet Résultats. Ouvert par défaut.
+- **Monitoring VM supprimé** : appel mort à `/ccw/vm-statut` (résidu
+  VirtualBox, route disparue côté serveur depuis #447, 404 avalé en silence),
+  bloc d'affichage « VM », appel à `sidebarDemarrerVm` (jamais défini), styles
+  associés.
+- **Actions dupliquées retirées du détail d'issue** (`construireHtmlIssue`,
+  `static/js/app.js`) : « Interrompre cette issue » et « Fermer définitivement »
+  faisaient double emploi avec le panneau (`#pl-zone-actions`) — ne restent
+  plus que dans le panneau. Le détail lui-même (hors bloc d'actions) n'a pas
+  été touché.
+- **Mutualisation `/watchers`** : une seule lecture périodique
+  (`rafraichirWatchersPartages`, `static/js/panneau_lateral.js`), écrite dans
+  `store.watchers` (socle) — le bandeau de repli REP_TRAVAIL (`app.js`,
+  `rafraichirReplisRepTravail`) s'y abonne désormais au lieu de fetcher lui-même ;
+  affichage du bandeau inchangé.
+- **Zone son** déplacée telle quelle (comportement inchangé), seule la brique
+  réseau change (`api.*`/`toasts.*` du socle au lieu de `fetch()`/`alert()` en
+  dur).
+- Événements migrés vers la délégation du socle (`dom.surAction`,
+  attributs `data-action="pl-*"`) au lieu des `onclick=` inline.
+- Glue de transition minimale conservée dans `app.js` (pont socle→ancien,
+  `appelerAncien`) pour ce qui dépend d'un état encore propriété d'autres
+  fonctionnalités non migrées (liste des issues, onglet CCW) : getters
+  `obtenirCcwProjetsConnus`/`obtenirIssueSelectionnee`, mutateur
+  `actualiserLabelIssueLocal`, `resumeProjetMonitoring` conservé.
+- `VERIFICATIONS_MANUELLES.md` et `BRIDGE_AGENT_DOC.md` mis à jour
+  (terminologie « panneau flottant » → « panneau latéral », chemins de
+  fonctions, nouvelles vérifications non-régression).
+
+Vérifié : `node --test static/js/socle/tests/` (20/20 OK), `node --check` sur
+les 3 fichiers JS touchés/ajoutés, rendu de `/` via le client de test Flask
+(200, aucune référence fonctionnelle résiduelle à `/ccw/vm-statut` ni
+`sidebarDemarrerVm`), fichiers statiques servis (200, `text/javascript`).
+Pas de test navigateur réel (pas d'environnement graphique) — à rejouer par
+Alain via `VERIFICATIONS_MANUELLES.md`.
+
+## 25 septembre 2026 — issue #627
+
+Refonte de l'interface web, **étape 3/n : la liste Résultats pilotée par le store
+et le SSE**. Étape la plus sensible (Résultats est l'outil quotidien d'Alain) :
+elle sort d'`app.js` le **moteur** de l'onglet — chargement, canal `/stream`,
+badges de temps — avec le **store** pour source de vérité unique, sans changement
+visible pour l'utilisateur. Trois anomalies confirmées corrigées à la racine.
+
+### 1. Nouveau module — `static/js/resultats.js`
+
+Premier **module par fonctionnalité** de la refonte (cf. `ARCHITECTURE.md §6.5`).
+Il détient et orchestre :
+
+- **Chargement** : un chargement initial UNIQUE (à la première activation de
+  l'onglet), puis des mises à jour ciblées par événement `/stream`, plus le ↻
+  explicite. **Plus aucun rechargement complet à l'activation de l'onglet.** Le
+  **cache de liste en `localStorage` est supprimé** : le store est la seule vérité.
+- **Canal `/stream`** ouvert via la brique `sse` (`sse.stream.connecter()`), UNE
+  SEULE connexion — l'ancien `demarrerStreamFinIssue()` d'`app.js` est retiré dans
+  le même mouvement (jamais deux connexions). Traitement **toujours CIBLÉ** sur le
+  projet+issue concernés, jamais tous les projets :
+  - `debut_issue` : recharge les données de temps **de cette issue** (le décompte
+    TIMEOUT démarre) et l'ajoute à la liste si absente ; ne passe **JAMAIS** par la
+    vérification post-dépassement ;
+  - `fin_issue` : met à jour la ligne (état final, arrêt du décompte) via un fetch
+    unique `/issue/<projet>/<numero>` ;
+  - `creation_issue` (contrat de l'étape 9a : `projet`, `numero`, `titre`,
+    `fichier` si créée via `issues_inbox`) : fait apparaître la ligne avec son
+    estimation et « en file », puis l'enrichit par un fetch ciblé. **Codé même si
+    l'événement n'est pas encore émis.**
+  - le **fetch unique post-dépassement de #334** est conservé, réservé au décompte
+    tombé à zéro.
+- **Badges** d'estimation et de décompte TIMEOUT : calcul (logique pure) +
+  application au DOM + tick 1 s + programmation du fetch #334.
+- **Store** : nouvelles tranches `issues` (déjà présente) et **`timing`** ; le
+  `derniereNotifIssue` posé par `sse.js` déclenche le traitement ciblé.
+
+### 2. Anomalies corrigées à la racine
+
+1. **Rechargement complet à chaque activation de l'onglet** (~2 appels gh/projet
+   pour la liste + 1/issue ouverte pour les temps) → supprimé. Chargement initial
+   unique + événements ciblés + ↻. *Vérifiable : aucun appel `/issues-liste` ni
+   `/issues-en-attente` en changeant d'onglet (onglet Réseau).*
+2. **`debut_issue` cassé** : l'ancien `gererEvenementIssue` rechargeait la liste
+   sans les temps, ou — si l'issue était déjà affichée — passait par
+   `verifierIssueApresDepassement` (prévu pour #334), laissant le badge « ⏳ en
+   file » et marquant l'issue « dépassement déjà vérifié » (faussant plus tard le
+   badge de dépassement). Désormais `debut_issue` recharge le timing ciblé et ne
+   touche jamais la vérif post-dépassement.
+3. **Projet en échec de chargement** : ses issues disparaissaient en silence.
+   Désormais, un projet dont le fetch échoue **conserve ses issues précédentes** et
+   l'échec est signalé par un **toast**.
+
+### 3. Ce qui reste temporairement dans `app.js` (et pourquoi)
+
+`app.js` conserve, pendant la transition, tout ce qui est **hors périmètre #627**
+et/ou entrelacé avec le rendu DOM d'une ligne, piloté par `resultats.js` via un
+MIROIR du store (hooks `window.__resultats*`) :
+
+- **Rendu DOM d'une ligne** (`construireLigneIssueDOM`, `rendreListeIssues`,
+  `remplacerLigneIssue`, `brancherEvenementsLigneIssue`) : le markup contient la
+  **case à cocher**, les **badges ✅/Diff/All** et la copie, l'ouverture du
+  **détail** — toutes fonctionnalités hors périmètre. `resultats.js` fournit les
+  données et déclenche le rendu ; `app.js` produit le DOM.
+- **Filtres** (boutons projet, filtre ouvriers, limite « par projet », ↻) :
+  `construireBoutonsFiltre`/`appliquerFiltresListe` construisent aussi le bouton
+  **« Cocher tout »** et les **pastilles** (hors périmètre) et lisent l'état de
+  filtre persisté — extraction repoussée avec ces fonctionnalités.
+- **Sélection, détail d'issue, recherche par titre, lignes issues_inbox, panneau
+  latéral** : explicitement hors périmètre — inchangés, alimentés par le miroir
+  (`listeIssuesResultats`/`timingIssues`) via le pont.
+- `cleTiming`, `trouverLigneIssue`, `remplacerLigneIssue` : petits utilitaires DOM
+  encore consommés par ce qui précède.
+
+Le pont (`window.Bridge.resultats`) et le miroir disparaîtront quand ces zones
+seront à leur tour migrées (étapes suivantes).
+
+### 4. Tests et vérifications
+
+- **Logique pure** testée sous Node — `static/js/tests/resultats.test.js`
+  (`formaterDuree`, calcul des badges de décompte/estimation, `planifierEvenementSse`
+  dont le cas `debut_issue`, fusion de chargement conservant un projet en échec).
+  Lancer : `node --test static/js/socle/tests/ static/js/tests/` (36 tests OK).
+- `app/statique.py` : l'**import map** couvre désormais aussi les modules de
+  fonctionnalité de `static/js/` (hors `app.js`, script classique), pour leur
+  cache-busting `?v=<mtime>` ; le partage d'instance du store est garanti (mêmes
+  URL résolues).
+- `VERIFICATIONS_MANUELLES.md` (zone Résultats) et `BRIDGE_AGENT_DOC.md §17.3`
+  mis à jour.
+
+### 5. Fichiers touchés
+
+- **Nouveaux** : `static/js/resultats.js`, `static/js/tests/resultats.test.js`,
+  `static/js/package.json` (`{"type":"module"}`).
+- **Modifiés** : `static/js/app.js` (moteur Résultats retiré, remplacé par des
+  relais vers le pont ; ancienne connexion `/stream` supprimée),
+  `static/js/socle/store.js` (tranche `timing`), `static/js/socle/sse.js`
+  (événement `creation_issue`), `static/js/socle/index.js` (import + amorçage
+  `resultats`), `app/statique.py` (import map élargi), `ARCHITECTURE.md`,
+  `BRIDGE_AGENT_DOC.md`, `VERIFICATIONS_MANUELLES.md`, `CONTEXTE.md`,
+  `static/js/socle/tests/README.md`.
+
 ## 25 septembre 2026 — issue #626
 
 Refonte de l'interface web, **étape 2/n : onglets**. Sortie de la mécanique de
