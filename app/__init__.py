@@ -91,7 +91,7 @@ def _enregistrer_routes(app: Flask) -> None:
     from app.issues_inbox import (etat_inbox, demarrer_watcher_inbox_route,
                                   arreter_watcher_inbox_route)
     from app.son import get_son_actif, post_son_actif, tester_son
-    from app.son_issue import get_son_issue, post_son_issue
+    from app.son_issue import get_son_issue, post_son_issue, get_sons_projet
     from app.rate_limit import rate_limit
     from app.cases_cochees import (lire_cases, cocher_case, decocher_case,
                                    importer_cases_route)
@@ -184,6 +184,7 @@ def _enregistrer_routes(app: Flask) -> None:
     # l'interrupteur global ci-dessus.
     app.add_url_rule("/son-issue/<nom_projet>/<numero>", "get_son_issue", login_requis(get_son_issue), methods=["GET"])
     app.add_url_rule("/son-issue/<nom_projet>/<numero>", "post_son_issue", login_requis(post_son_issue), methods=["POST"])
+    app.add_url_rule("/son-issue/<nom_projet>", "get_sons_projet", login_requis(get_sons_projet), methods=["GET"])
     # ─── Indicateur de rate limit GitHub GraphQL, bandeau supérieur (issue #607) ─
     app.add_url_rule("/rate-limit", "rate_limit", login_requis(rate_limit), methods=["GET"])
     # ─── État serveur des cases « traité/lu » de l'onglet Résultats, backend

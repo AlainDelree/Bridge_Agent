@@ -154,8 +154,35 @@
       (modale d'interruption : étapes détaillées + rappel de relance watcher) —
       la liste se rafraîchit après l'action. Depuis l'issue #628, Interrompre /
       Retirer needs-human / Fermer définitivement ne sont **plus** dans le détail
-      (déplacés dans le panneau latéral, voir ci-dessous) — ne doivent apparaître
-      **qu'une seule fois**.
+      (déplacés dans le panneau latéral, puis sur la ligne — voir ci-dessous et
+      §« Actions directes sur la ligne ») — ne doivent apparaître **qu'une seule
+      fois**.
+- [ ] **Actions directes sur la ligne (issue #641, refonte web étape 6)** : sur
+      une ligne **OUVERTE** portant `needs-human`, le badge **⚠️** est
+      cliquable (curseur, léger fond au survol) — cliquer retire directement le
+      label et relance **sans sélectionner l'issue ni ouvrir le panneau** (même
+      route `/relancer-issue`, même confirmation que l'ancien bouton « Retirer
+      needs-human » du panneau). Sur une ligne ouverte en `mode_write` **sans**
+      `needs-human`, le badge **✏️** est cliquable → clic **interrompt** (même
+      confirmation détaillée + modale de résultat que l'ancien bouton
+      « Interrompre l'issue » du panneau) — le clic **ne sélectionne pas** la
+      ligne (`stopPropagation`). Une ligne ouverte sans ces labels garde son
+      préfixe **○**/**✅** statique, non cliquable. Une ligne **FERMÉE** — y
+      compris fermée+`done`+`needs-human` (cas rare) — garde le préfixe
+      statique inchangé et les badges ✅/Diff/All habituels, jamais d'action
+      cliquable.
+- [ ] **Son de cette issue, sur la ligne (déplacé du panneau, issue #641)** :
+      toute ligne **ouverte** porte, après le badge d'action, un mini contrôle
+      à 3 lettres **G / P / C** (Global / Plat / Cloche), une seule active à la
+      fois, avec infobulle au survol de chacune. L'option active reflète l'état
+      serveur (`GET /son-issue/<projet>`, **une seule requête par projet** au
+      premier rendu d'une ligne de ce projet — onglet Réseau, F12 : jamais une
+      requête par ligne). Cliquer P ou C bascule **immédiatement** (optimiste)
+      et envoie un `POST /son-issue/<projet>/<numéro>` sans sélectionner la
+      ligne ; cliquer de nouveau la même option ou G revient au réglage global.
+      Une ligne **fermée** n'affiche pas ce contrôle. Clôturer une issue mise
+      en Plat/Cloche alors que le réglage global est sur l'autre timbre → le
+      bip entendu correspond au choix de l'issue.
 - [ ] Badges de temps restant / estimation présents et cohérents (compte à
       rebours qui décroît chaque seconde ; « dépassement » figé à zéro puis
       vérification unique 15 s après — jamais de polling), et **entièrement
@@ -213,30 +240,14 @@
       défaut) ; l'ouvrir affiche les dernières lignes de `logs/issues_inbox.log`
       (mêmes lignes qu'exposait l'ancien onglet « Résultats inbox », supprimé).
 - [ ] Zone actions contextuelles sur l'issue sélectionnée : toggles
-      notif_pc/gsm/tous, **Interrompre / Interrompre et relancer / Retirer
-      needs-human / Fermer l'issue** — ces 4 actions n'existent plus que dans
-      cette zone (issue #628, retirées du détail qui faisait double emploi).
-- [ ] **« 🔊 Son de cette issue » (issue #637, étape 7b)** : sélectionner une
-      issue **ouverte** → le bloc apparaît juste sous le mode (📖/✏️/⚠️), avec
-      3 options **Global / Plat / Cloche** (une seule active à la fois).
-      Sélectionner une issue **fermée** → le bloc **n'apparaît pas**. L'option
-      active au premier affichage correspond bien à l'état enregistré côté
-      serveur (`GET /son-issue/<projet>/<numéro>`) — vérifier en particulier
-      qu'une issue sans choix propre affiche **Global** actif. Cliquer sur
-      Plat/Cloche/Global : l'option active change **immédiatement**, un
-      **POST /son-issue/<projet>/<numéro>** part (onglet Réseau, F12) ;
-      revenir sur une autre issue puis reselectionner celle-ci → le choix a
-      bien été mémorisé. Couper le réseau (ou bloquer la requête dans
-      l'onglet Réseau) puis cliquer sur une option → un **toast d'erreur**
-      apparaît et l'option revient à son état précédent. Survoler le titre
-      « 🔊 Son de cette issue » et la ligne « Timbre » de la zone « Son du
-      bip » ci-dessus : une infobulle rappelle qu'un choix par issue prime
-      sur le réglage global, pour cette issue seulement. **Une seule requête
-      `/son-issue` par sélection** (onglet Réseau) — pas de requête répétée
-      au cycle de rafraîchissement de 30 s tant que la sélection ne change
-      pas. Clôturer une issue mise en Plat (ou Cloche) alors que le réglage
-      global est sur l'autre timbre → le bip entendu à la clôture correspond
-      bien au choix de l'issue, pas au réglage global.
+      notif_pc/gsm/tous, **Interrompre et relancer / Fermer l'issue**. Depuis
+      l'issue #641 (refonte web étape 6), **Interrompre** (seul), **Retirer
+      needs-human** et le contrôle **« 🔊 Son de cette issue »** (#637, étape
+      7b) ne sont **plus** ici — déplacés sur la ligne de la liste (voir
+      « Actions directes sur la ligne » de l'onglet Résultats ci-dessus) : un
+      seul emplacement par action. « Interrompre et relancer » et « Fermer
+      l'issue » restent les DEUX seules actions réseau propres à une issue
+      encore présentes dans ce panneau (avec les toggles de notification).
 - [ ] **Cases de notification conformes aux labels réels** (issues #633,
       #634) : pour une issue portant `notif_pc` (et/ou `notif_gsm`/
       `notif_tous`), la case correspondante est **cochée dès l'apparition de

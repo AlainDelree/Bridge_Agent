@@ -403,9 +403,10 @@ concaténation byte-identique à l'ancien `style.css`, vérifiée) :
 importé par `index.js` (voir §6.7). Chaque module utilise les briques du socle.
 Déjà sortis : `onglets.js` (bascule entre onglets, issue #626, étape 2),
 `resultats.js` (moteur de l'onglet Résultats, issue #627, étape 3),
-`panneau_lateral.js` (panneau latéral, issue #628, étape 4) et
+`panneau_lateral.js` (panneau latéral, issue #628, étape 4),
 `resultats_coches.js` (case « traité/lu » à état serveur + copie fiable, issue
-#636, étape 5b). Futurs
+#636, étape 5b) et `actions_ligne.js` (actions cliquables sur la ligne d'une
+issue ouverte + son par issue, issue #641, étape 6). Futurs
 modules (ex. `creation.js`, `config.js`, `ccw.js`, `journal.js`,
 `inbox.js`, `nouveau_projet.js`) suivent le même patron.
 
@@ -464,6 +465,26 @@ Résultats, Journal watcher, Configuration, CCW, Nouvelle issue.
 > zéro »** marque comme cochées, côté serveur, toutes les issues chargées de tous
 > les projets (confirmation légère, aucune copie). Tests de logique pure :
 > `static/js/tests/resultats_coches.test.js`.
+
+> **Étape 6 réalisée — `static/js/actions_ligne.js` (issue #641)** : remplace,
+> pour une ligne OUVERTE de l'onglet Résultats, les préfixes statiques ⚠️
+> needs-human / ✏️ mode_write par des actions cliquables directement sur la
+> ligne (retirer needs-human, interrompre) — `interrompreIssue()`/
+> `relancerIssue()` (`app.js`) restent la SEULE implémentation (même route,
+> même confirmation, même modale) : la ligne les appelle directement, sans
+> duplication. S'y ajoute un contrôle compact « G/P/C » pour le son PROPRE à
+> l'issue (#630/#637), dont les fonctions pures ont été **déplacées** (pas
+> dupliquées) depuis `panneau_lateral.js` : `sonIssueDepuisReponse`,
+> `normaliserChoixSonIssue`, `etatsOptionsSonIssue`. Chargement réseau du son :
+> une SEULE requête `GET /son-issue/<projet>` (nouvelle route groupée) par
+> projet connu, jamais par ligne — même stratégie que l'étape 5b. En
+> contrepartie, le panneau latéral perd les 3 actions désormais sur la ligne
+> (Interrompre seul, Retirer needs-human, contrôle de son) — un seul
+> emplacement par action ; il garde l'infrastructure (watchers, watcher
+> spool), l'interrupteur GLOBAL de son, les toggles 🔔 Notifications,
+> « Interrompre et relancer » et **Fermer définitivement** (clôture manuelle
+> distincte, jamais demandée sur la ligne). Tests de logique pure :
+> `static/js/tests/actions_ligne.test.js`.
 
 > **Note parallélisme** : HTML et JS se découpent proprement par zone. Le CSS
 > est plus contraint : la cascade impose de garder l'ordre source, donc quelques

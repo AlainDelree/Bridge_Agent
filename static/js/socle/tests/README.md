@@ -29,6 +29,8 @@ refonte). Les tests du module Résultats (issue #627) vivent dans
 | `persistance.test.js`  | `lire`/`ecrire` (JSON), `lireTexte`/`ecrireTexte`, `supprimer`, `supprimerParPrefixe`, avec un faux `localStorage`. |
 | `dom.test.js`          | `echapperHtml` (seule logique de `dom.js` indépendante du DOM). |
 | `../tests/resultats.test.js` | Module Résultats (issue #627) : `formaterDuree`, calcul des badges de décompte TIMEOUT et d'estimation, `planifierEvenementSse` (dont `debut_issue` qui ne passe jamais par la vérif post-dépassement), fusion de chargement conservant un projet en échec. |
+| `../tests/panneau_lateral.test.js` | Panneau latéral (issue #628) : `etatsCasesNotif` (cases 🔔 Notifications de l'issue sélectionnée). |
+| `../tests/actions_ligne.test.js` | Actions sur la ligne d'une issue OUVERTE (issue #641) : `actionLigneOuverte` (needs-human/mode_write/aucune action selon les labels), son par issue (#630/#637, réutilisées telles quelles) et son cache par projet (`fusionnerSonsProjet`/`sonConnuDansCache`). |
 
 Ce qui touche au DOM (utilitaires `dom`, toasts, délégation) et au réseau (`api`,
 `sse`) est vérifié **manuellement** dans le navigateur : voir

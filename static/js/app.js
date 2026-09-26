@@ -1321,9 +1321,16 @@ function construireLigneIssueDOM(it) {
   // (🪟 for-windows / rien) devant les badges. Deux dimensions distinctes et
   // cumulables : un ouvrier for-windows affiche « 👷🪟 » (issue #165).
   const prefType = prefixeTypeIssue(it) + prefixeOSCible(it);
-  let badgesHtml = (prefType ? prefType + ' ' : '') + prefixeIssue(it.labels);
   const nomsLabelsLigne = (it.labels || [])
     .map(l => ((l && l.name) || l || '').toLowerCase());
+  // Ligne OUVERTE (issue #641, refonte web étape 6) : ⚠️ needs-human / ✏️
+  // mode_write deviennent des actions cliquables (retirer needs-human /
+  // interrompre) + contrôle de son propre à l'issue — voir actions_ligne.js.
+  // Ligne FERMÉE : préfixe purement statique inchangé (prefixeIssue).
+  const prefixeOuAction = (etat === 'ouvert' && window.Bridge && window.Bridge.actionsLigne)
+    ? window.Bridge.actionsLigne.rendreActionsLigneOuverte(it.projet, numero, it.labels)
+    : prefixeIssue(it.labels);
+  let badgesHtml = (prefType ? prefType + ' ' : '') + prefixeOuAction;
   if (etat === 'fermé' && nomsLabelsLigne.includes('done')
       && badgesHtml.includes('✅')) {
     // Trois badges aux rôles distincts et non redondants (issue #116) :
@@ -2736,6 +2743,32 @@ async function relancerIssue(nom, numero) {
     .find(l => l.dataset.projet === nom && l.dataset.numero === numStr);
   if (ligne && ligne.style.display !== 'none') {
     await afficherIssue(nom, numStr);
+  }
+}
+
+// ─── Actions cliquables sur la ligne d'une issue OUVERTE (issue #641, refonte
+// web étape 6) ────────────────────────────────────────────────────────────
+// Appelées par les onclick inline générés par actions_ligne.js (badge ⚠️/✏️ et
+// contrôle de son de construireLigneIssueDOM) — stopPropagation() EN PREMIER
+// empêche la sélection de la ligne au clic (même patron que les badges ✅/Diff/
+// All, cf. copierReponseDepuisBadge ci-dessus). « Retirer needs-human » et
+// « Interrompre » réutilisent TEL QUEL relancerIssue()/interrompreIssue()
+// ci-dessus : même route, même confirm(), même modale de résultat détaillée
+// que dans le panneau latéral — aucune duplication.
+function retirerNeedsHumanDepuisLigne(event, nom, numero) {
+  if (event) event.stopPropagation();
+  relancerIssue(nom, numero);
+}
+
+function interrompreDepuisLigne(event, nom, numero) {
+  if (event) event.stopPropagation();
+  interrompreIssue(nom, numero);
+}
+
+function choisirSonIssueDepuisLigne(event, nom, numero, valeurBrute) {
+  if (event) event.stopPropagation();
+  if (window.Bridge && window.Bridge.actionsLigne) {
+    window.Bridge.actionsLigne.choisirSonIssueLigne(event.currentTarget, nom, numero, valeurBrute);
   }
 }
 

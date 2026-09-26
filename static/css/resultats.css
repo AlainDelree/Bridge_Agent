@@ -138,6 +138,23 @@
   border-radius:3px;padding:1px 4px;margin-left:3px;vertical-align:middle;user-select:none}
 .ligne-issue .badge-copie-diff:hover{background:#e8f1f8}
 .ligne-issue .pastille-ligne{width:9px;height:9px;border-radius:50%;flex-shrink:0}
+/* Badge d'action sur une ligne OUVERTE (issue #641, refonte web étape 6) :
+   remplace le préfixe statique ⚠️/✏️ — même émplacement/taille, juste cliquable
+   (léger fond au survol, sans grossir le caractère). */
+.ligne-issue .badge-action-ligne{cursor:pointer;border-radius:3px;padding:0 1px}
+.ligne-issue .badge-action-ligne:hover{background:#eee}
+/* Contrôle compact « son de cette issue » (G/P/C, issue #630/#637) déplacé de
+   la zone Actions du panneau latéral à la ligne elle-même (étape 6, #641) :
+   mini-segmenté à 3 lettres + infobulle, calibré pour peser le moins possible
+   sur la largeur disponible pour le titre (contrainte #633). Mêmes couleurs
+   que .pl-son-segmente/.pl-son-opt (interrupteur global), en plus compact. */
+.ligne-issue .ligne-son-segmente{display:inline-flex;border:1px solid #ccc;
+  border-radius:4px;overflow:hidden;margin-left:2px;vertical-align:middle}
+.ligne-issue .ligne-son-opt{padding:0 4px;font-size:9px;font-weight:700;line-height:16px;
+  border:none;border-right:1px solid #ccc;background:#fff;color:#888;cursor:pointer}
+.ligne-issue .ligne-son-opt:last-child{border-right:none}
+.ligne-issue .ligne-son-opt:hover{background:#eee}
+.ligne-issue .ligne-son-opt.actif{background:#185FA5;color:#fff}
 /* Colonne titre : flex:1 lui fait déjà occuper tout l'espace restant avant de
    tronquer (…). Titre légèrement agrandi (issue #155) pour le confort de lecture,
    la troncature ne survenant donc qu'une fois la place réellement épuisée.

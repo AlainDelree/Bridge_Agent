@@ -43,12 +43,12 @@ lui-même par ses propres issues (dogfooding).
   création, sinon PowerShell 5.1 plante sur les accents.
 
 ## État d'avancement (récent, cf. changelog en bas du DOC)
-- #625→#639 (refonte web) : socle de modules ES dans `static/js/socle/`
+- #625→#641 (refonte web) : socle de modules ES dans `static/js/socle/`
   (store/api/sse/toasts/dom/persistance/pont), et modules par fonctionnalité
-  sortis d'app.js (onglets, resultats — `/stream` + badges + lignes fichier
-  reçu/refusé, onglet « Résultats inbox » fusionné dans Résultats #639,
-  panneau latéral, resultats_coches — case « traité/lu » serveur #636)
-  communiquant entre eux par le store. Détail : `ARCHITECTURE.md §6`.
+  sortis d'app.js (onglets, resultats, panneau latéral, resultats_coches —
+  case « traité/lu » serveur #636, actions_ligne — étape 6 #641 : badges
+  ⚠️/✏️ d'une ligne OUVERTE cliquables + son par issue déplacé du panneau à
+  la ligne) communiquant entre eux par le store. Détail : `ARCHITECTURE.md §6`.
 - #221 (calibration TIMEOUT, 2/3) : `watcher.py` journalise `TIMEOUT_suggéré`
   à la clôture (EWMA par projet+TYPE+mode dans `logs/etat_timeout.json` +
   `logs/etat_ambiance.json` pour F_reseau/F_local) — n'affecte pas encore le

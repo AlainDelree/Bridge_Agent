@@ -19,7 +19,9 @@ Couvre :
   l'interrupteur global, repli sur l'interrupteur global sans choix propre
   ou sans projet/numéro fournis ;
 - routes Flask `/son-issue/<projet>/<numero>` (GET/POST) : lecture, écriture,
-  remise à zéro, numéro invalide → 400.
+  remise à zéro, numéro invalide → 400 ;
+- `sons_projet`/route `/son-issue/<projet>` (GET, issue #641) : tous les choix
+  d'un projet en une requête, projets/valeurs invalides ignorés.
 
 Exécution :  python3 tests/test_son_issue_630.py
 Sortie      :  code 0 si tous les scénarios passent, 1 sinon.
@@ -171,6 +173,36 @@ def test_son_a_jouer_repli_sur_global_sans_projet_ni_numero():
         assert traitement_fin.son_a_jouer(None, None) == "cloche"
 
 
+def test_sons_projet_regroupe_par_projet_valeurs_valides_seules():
+    with _Etat():
+        etat_son_issue.definir_son("bridge_agent", 630, "cloche")
+        etat_son_issue.definir_son("bridge_agent", 631, "plat")
+        etat_son_issue.definir_son("autre_projet", 630, "cloche")
+        assert etat_son_issue.sons_projet("bridge_agent") == {"630": "cloche", "631": "plat"}
+        assert etat_son_issue.sons_projet("autre_projet") == {"630": "cloche"}
+
+
+def test_sons_projet_projet_sans_entree():
+    with _Etat():
+        assert etat_son_issue.sons_projet("bridge_agent") == {}
+
+
+def test_route_get_sons_projet():
+    with _Etat():
+        etat_son_issue.definir_son("bridge_agent", 630, "cloche")
+        etat_son_issue.definir_son("bridge_agent", 631, "plat")
+        with APP_FLASK.test_request_context():
+            rep = route_son_issue.get_sons_projet("bridge_agent")
+        assert rep.get_json() == {"sons": {"630": "cloche", "631": "plat"}}
+
+
+def test_route_get_sons_projet_vide():
+    with _Etat():
+        with APP_FLASK.test_request_context():
+            rep = route_son_issue.get_sons_projet("bridge_agent")
+        assert rep.get_json() == {"sons": {}}
+
+
 def test_route_get_son_issue_absent():
     with _Etat():
         with APP_FLASK.test_request_context():
@@ -216,6 +248,10 @@ def main() -> int:
         ("son_a_jouer — choix de l'issue prioritaire sur l'interrupteur global", test_son_a_jouer_choix_issue_prioritaire_sur_global),
         ("son_a_jouer — repli sur l'interrupteur global sans choix propre", test_son_a_jouer_repli_sur_global_sans_choix_propre),
         ("son_a_jouer — repli sur l'interrupteur global sans projet/numéro", test_son_a_jouer_repli_sur_global_sans_projet_ni_numero),
+        ("sons_projet — regroupe par projet, valeurs valides seules", test_sons_projet_regroupe_par_projet_valeurs_valides_seules),
+        ("sons_projet — projet sans entrée → {}", test_sons_projet_projet_sans_entree),
+        ("route GET /son-issue/<projet> — regroupé", test_route_get_sons_projet),
+        ("route GET /son-issue/<projet> — vide → {}", test_route_get_sons_projet_vide),
         ("route GET /son-issue — absent → son: null", test_route_get_son_issue_absent),
         ("route POST puis GET /son-issue — écriture puis lecture", test_route_post_puis_get_son_issue),
         ("route POST /son-issue — valeur invalide → 400", test_route_post_son_invalide_400),

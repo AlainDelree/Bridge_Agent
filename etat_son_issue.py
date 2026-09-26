@@ -102,6 +102,17 @@ def son_choisi(projet: str, numero: int) -> str | None:
     return valeur if valeur in SONS_VALIDES else None
 
 
+def sons_projet(projet: str) -> dict:
+    """Tous les choix propres enregistrés pour un projet, `{numero_str: son}`
+    (issue #641, refonte web étape 6) — UNE requête par projet pour peupler le
+    contrôle de son sur chaque ligne de la liste, plutôt qu'une par issue (même
+    stratégie que `son_choisi` mais en bloc). Best-effort, jamais d'exception."""
+    entree = _lire().get(str(projet), {})
+    if not isinstance(entree, dict):
+        return {}
+    return {numero: son for numero, son in entree.items() if son in SONS_VALIDES}
+
+
 def definir_son(projet: str, numero: int, son: str | None) -> tuple[bool, str | None]:
     """Enregistre le choix pour cette issue (`son` dans SONS_VALIDES), ou le
     retire (`son` None ou vide → l'interrupteur global reprend la main pour

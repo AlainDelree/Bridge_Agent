@@ -1730,10 +1730,17 @@ indéfiniment ni sacrifier les autres issues en file pour le même watcher
 (elles restent ouvertes sur GitHub, simplement en attente tant que le
 watcher n'est pas relancé manuellement).
 
-**Ce que fait le bouton.** Sur toute issue ouverte ni `done` ni
-`needs-human`, le détail de l'issue affiche un bouton ⛔ « Interrompre cette
-issue » (contrairement à « Interrompre et fermer », #144, qui ferme
-l'issue, celui-ci ne fait que la sortir du circuit). Il appelle `POST
+**Ce que fait le bouton.** Sur toute ligne OUVERTE en `mode_write` (sans
+`needs-human`) de l'onglet Résultats, le badge **✏️** est cliquable
+(directement sur la ligne, depuis l'issue #641, refonte web étape 6 — un
+temps dans le panneau latéral Infrastructure, issue #628, puis dans le détail
+avant #628) : cliquer dessus **interrompt cette issue**, avec la même
+confirmation détaillée et la même modale de résultat qu'auparavant
+(contrairement à « Interrompre et fermer », #144, qui ferme l'issue,
+celui-ci ne fait que la sortir du circuit — bouton « Interrompre et
+relancer » toujours dans le panneau latéral). `interrompreIssue()`
+(`static/js/app.js`, appelée directement par le clic sur le badge, voir
+`static/js/actions_ligne.js::rendreBadgeActionLigne`) appelle `POST
 /interrompre` (`app/interruption.py::route_interrompre`), qui pose
 **toujours** le label `needs-human` et poste un commentaire `⛔ Interrompu
 via new_issue.py` (trace GitHub, quel que soit le résultat des étapes
@@ -1776,14 +1783,17 @@ label `needs-human` sur l'issue et cesse de la reprendre — jusqu'ici, la
 seule façon de débloquer le circuit était de retirer ce label à la main sur
 GitHub, un aller-retour répété en pratique à chaque échec.
 
-**Ce que fait le bouton.** Dans le panneau latéral Infrastructure, la zone
-d'actions contextuelles `#pl-zone-actions` (`rendrePanneauLateralActions()`,
-`static/js/panneau_lateral.js`, issue #375) affiche un bouton « 🔄 Relancer » dès que l'issue actuellement
-sélectionnée (`projetCourant`/`numeroCourant`) porte le label `needs-human`
-et est encore ouverte — sans fetch réseau, à partir des données déjà en
-mémoire (`listeIssuesResultats`). Un clic (après confirmation) appelle
-`relancerIssue()` → `POST /relancer-issue` (`app/interruption.py::
-route_relancer`), qui :
+**Ce que fait le bouton.** Sur toute ligne OUVERTE portant le label
+`needs-human` de l'onglet Résultats, le badge **⚠️** est cliquable
+(directement sur la ligne, depuis l'issue #641, refonte web étape 6 — un
+temps « 🔄 Retirer needs-human » dans la zone d'actions contextuelles
+`#pl-zone-actions` du panneau latéral Infrastructure, issue #628, retiré de
+là par #641) : sans fetch réseau supplémentaire, le label vient des données
+déjà en mémoire (`listeIssuesResultats`/`it.labels` de la ligne). Un clic
+(après confirmation) appelle `relancerIssue()` (`static/js/app.js`, appelée
+directement par le clic sur le badge, voir
+`static/js/actions_ligne.js::rendreBadgeActionLigne`) → `POST
+/relancer-issue` (`app/interruption.py::route_relancer`), qui :
 
 - retire le label `needs-human` côté GitHub (`gh issue edit --remove-label`,
   même mécanisme que `--add-label`/`--remove-label` utilisé par
@@ -3297,26 +3307,26 @@ new_issue.py (ThinkPad) → polling gh → détecte la transition → bip/bulle/
   - **Routes** `GET`/`POST /son-issue/<nom_projet>/<numero>` (`app/son_issue.py`,
     même famille que `/son-actif` ci-dessus) : lisent/écrivent le choix
     propre à UNE issue.
-  - **Interface (issue #637, étape 7b)** : contrôle à 3 états « 🔊 Son de
-    cette issue » (Global / Plat / Cloche) dans la zone Actions du panneau
-    latéral (`#pl-zone-actions`, sous le mode de l'issue), visible tant que
-    l'issue sélectionnée n'est pas fermée. **Emplacement choisi** : la zone
-    Actions de l'issue sélectionnée, PAS la ligne dans la liste Résultats —
-    l'étape 6 de la refonte (remplacement des badges ✅/Diff/All par des
-    actions sur la ligne, `ARCHITECTURE.md` §6) n'était pas encore faite au
-    moment de #637 ; le rendu (`rendreSonIssue`) s'appuie sur des fonctions
-    pures (`sonIssueDepuisReponse`, `normaliserChoixSonIssue`,
-    `etatsOptionsSonIssue`, testées sous Node) indépendantes du DOM, donc
-    reprenables tel quel sur la ligne le jour de l'étape 6. Une seule requête
-    `GET /son-issue` par sélection d'issue (mise en cache tant que la
-    sélection ne change pas — pas une par cycle de rafraîchissement de 30 s
-    ni par ligne, contrairement à ce qu'imposerait le contrôle sur CHAQUE
-    ligne de la liste). Mise à jour optimiste au clic (`POST /son-issue`),
-    reprise de l'état précédent + toast d'erreur (via `api.post`) en cas
-    d'échec réseau. L'interrupteur global (`#pl-zone-son`) reste inchangé
-    dans son fonctionnement ; une infobulle sur son libellé « Timbre » et sur
-    le titre du nouveau contrôle rappelle qu'un choix par issue prime sur lui
-    pour cette issue précise.
+  - **Interface (issue #637, étape 7b ; déplacée sur la ligne par l'issue
+    #641, étape 6)** : contrôle compact à 3 états « G / P / C » (Global /
+    Plat / Cloche) directement sur CHAQUE ligne OUVERTE de la liste Résultats
+    (`static/js/actions_ligne.js::rendreControleSonLigne`), plus dans le
+    panneau latéral. Les fonctions pures posées à #637
+    (`sonIssueDepuisReponse`, `normaliserChoixSonIssue`, `etatsOptionsSonIssue`,
+    testées sous Node) ont été reprises TELLES QUELLES, comme prévu — seul le
+    rendu (compact, lettres au lieu du texte « Global »/« Plat »/« Cloche »,
+    contrainte de largeur #633) et le déclenchement réseau ont changé.
+    **Chargement en bloc** : `GET /son-issue/<nom_projet>` (nouvelle route,
+    même fichier `app/son_issue.py`) renvoie TOUS les choix propres d'un
+    projet en une requête (`etat_son_issue.sons_projet`) — une seule requête
+    **par projet** au premier rendu d'une ligne de ce projet (jamais une par
+    ligne ni par cycle), mise en cache dans `actions_ligne.js`
+    (`fusionnerSonsProjet`/`sonConnuDansCache`) ; les lignes déjà rendues
+    avant la réponse sont repatchées (`resyncLignesSon`, même principe que
+    `resultats_coches.js::resyncDom`). Le clic (P/C/G) reste sur la route
+    existante `POST /son-issue/<nom_projet>/<numero>`, mise à jour optimiste
+    puis persistée, sans reconstruire toute la ligne. L'interrupteur global
+    (`#pl-zone-son`, panneau latéral) reste inchangé dans son fonctionnement.
   - **Résolution au moment du bip** (`scripts/traitement_fin.py::son_a_jouer(
     projet, numéro)`) : le choix de l'issue s'il existe, sinon
     `son_actif()` (interrupteur global) — dans cet ordre, pour **les deux**

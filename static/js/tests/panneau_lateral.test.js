@@ -6,12 +6,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import {
-  etatsCasesNotif,
-  sonIssueDepuisReponse,
-  normaliserChoixSonIssue,
-  etatsOptionsSonIssue,
-} from '../panneau_lateral.js';
+import { etatsCasesNotif } from '../panneau_lateral.js';
 
 test('etatsCasesNotif : aucun label → les 3 cases décochées', () => {
   assert.deepEqual(etatsCasesNotif([]), {
@@ -43,57 +38,6 @@ test('etatsCasesNotif : labels sans rapport n\'affectent aucune case', () => {
   });
 });
 
-// ─── Son PAR ISSUE (issue #637, étape 7b) ──────────────────────────────────
-
-test('sonIssueDepuisReponse : {son: "plat"} → "plat"', () => {
-  assert.equal(sonIssueDepuisReponse({ son: 'plat' }), 'plat');
-});
-
-test('sonIssueDepuisReponse : {son: "cloche"} → "cloche"', () => {
-  assert.equal(sonIssueDepuisReponse({ son: 'cloche' }), 'cloche');
-});
-
-test('sonIssueDepuisReponse : {son: null} (aucun choix propre) → null', () => {
-  assert.equal(sonIssueDepuisReponse({ son: null }), null);
-});
-
-test('sonIssueDepuisReponse : réponse absente/vide/valeur inconnue → null', () => {
-  assert.equal(sonIssueDepuisReponse(null), null);
-  assert.equal(sonIssueDepuisReponse(undefined), null);
-  assert.equal(sonIssueDepuisReponse({}), null);
-  assert.equal(sonIssueDepuisReponse({ son: 'autre-chose' }), null);
-});
-
-test('normaliserChoixSonIssue : "plat"/"cloche" inchangés', () => {
-  assert.equal(normaliserChoixSonIssue('plat'), 'plat');
-  assert.equal(normaliserChoixSonIssue('cloche'), 'cloche');
-});
-
-test('normaliserChoixSonIssue : "" (bouton « Global ») → null', () => {
-  assert.equal(normaliserChoixSonIssue(''), null);
-});
-
-test('normaliserChoixSonIssue : valeur inattendue → null (retombe sur global)', () => {
-  assert.equal(normaliserChoixSonIssue('autre-chose'), null);
-  assert.equal(normaliserChoixSonIssue(undefined), null);
-});
-
-test('etatsOptionsSonIssue : aucun choix propre (null) → option "Global" active seule', () => {
-  assert.deepEqual(etatsOptionsSonIssue(null), { global: true, plat: false, cloche: false });
-});
-
-test('etatsOptionsSonIssue : choix "plat" → option "Plat" active seule', () => {
-  assert.deepEqual(etatsOptionsSonIssue('plat'), { global: false, plat: true, cloche: false });
-});
-
-test('etatsOptionsSonIssue : choix "cloche" → option "Cloche" active seule', () => {
-  assert.deepEqual(etatsOptionsSonIssue('cloche'), { global: false, plat: false, cloche: true });
-});
-
-test('etatsOptionsSonIssue : bascule des 3 états, un seul actif à la fois', () => {
-  [null, 'plat', 'cloche'].forEach((valeur) => {
-    const etats = etatsOptionsSonIssue(valeur);
-    const nbActifs = Object.values(etats).filter(Boolean).length;
-    assert.equal(nbActifs, 1, `un seul état actif attendu pour ${valeur}`);
-  });
-});
+// Le contrôle « Son de cette issue » (#637) et ses fonctions pures ont été
+// déplacés sur la ligne de la liste à l'étape 6 de la refonte (issue #641) —
+// voir static/js/tests/actions_ligne.test.js. Le panneau ne les affiche plus.

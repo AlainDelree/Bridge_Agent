@@ -5,10 +5,10 @@ partagée avec `scripts/traitement_fin.py`, qui résout le son effectivement
 joué à la clôture) et `scripts/traitement_fin.py::main()` pour l'ordre de
 résolution (choix de l'issue, puis interrupteur global).
 
-Backend posé à l'étape #630 ; contrôle à 3 états (Global/Plat/Cloche) dans le
-panneau latéral (zone Actions de l'issue sélectionnée) depuis l'étape 7b
-(#637) — voir `static/js/panneau_lateral.js::rendreSonIssue`/`choisirSonIssue`
-et `BRIDGE_AGENT_DOC.md`."""
+Backend posé à l'étape #630 ; contrôle à 3 états (Global/Plat/Cloche) déplacé du
+panneau latéral vers la ligne de la liste à l'étape 6 de la refonte web
+(#641) — voir `static/js/actions_ligne.js::rendreControleSonLigne`/
+`choisirSonIssueLigne` et `BRIDGE_AGENT_DOC.md`."""
 
 from flask import jsonify, request
 
@@ -24,6 +24,14 @@ def get_son_issue(nom_projet, numero):
     except (TypeError, ValueError):
         return jsonify(erreur=f"Numéro d'issue invalide : {numero!r}"), 400
     return jsonify(son=etat_son_issue.son_choisi(nom_projet, numero_int))
+
+
+def get_sons_projet(nom_projet):
+    """GET /son-issue/<nom_projet> — tous les choix propres du projet en une
+    requête, `{"sons": {"630": "cloche", ...}}` (issue #641, refonte web étape
+    6) : peuple le contrôle de son de CHAQUE ligne ouverte sans une requête par
+    ligne, même stratégie que `/cases-cochees/<nom_projet>` (issue #636)."""
+    return jsonify(sons=etat_son_issue.sons_projet(nom_projet))
 
 
 def post_son_issue(nom_projet, numero):
