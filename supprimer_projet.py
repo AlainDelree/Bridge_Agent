@@ -171,7 +171,8 @@ def supprimer_projet(nom: str, dry_run: bool = False) -> dict:
              "detail": f"{apercu['conf']} serait supprimé."},
             {"etape": "Documentation", "ok": True,
              "detail": "§2/§7 de BRIDGE_AGENT_DOC.md seraient régénérés depuis "
-                       "configs/*.conf, sans ce projet."},
+                       "configs/*.conf, sans ce projet, puis commités/poussés "
+                       "automatiquement sur le dépôt Bridge_Agent."},
             {"etape": "Cases cochées (état serveur, issue #629)", "ok": True,
              "detail": (f"{len(etat_cases_cochees.lire_cases_cochees(nom))} "
                         "case(s) cochée(s) seraient retirées.")},
@@ -212,6 +213,7 @@ def supprimer_projet(nom: str, dry_run: bool = False) -> dict:
     # 3. Documentation (§2/§7) — en dernier, une fois le .conf réellement
     #    retiré du disque (sans quoi le projet réapparaîtrait dans §2/§7).
     doc = mettre_a_jour_doc()
+    doc_commit = None
     if not doc["existe"]:
         etapes.append({"etape": "Documentation", "ok": False,
                        "detail": "BRIDGE_AGENT_DOC.md introuvable — non mis à jour."})
@@ -222,6 +224,15 @@ def supprimer_projet(nom: str, dry_run: bool = False) -> dict:
                        "detail": "§2/§7/date régénérés (projet retiré)."
                                  if doc["modifie"] else "déjà à jour."})
 
+        # 3bis. Commit + push automatique de la doc dans le dépôt Bridge_Agent
+        # (issue #645) — jusqu'ici la régénération ci-dessus restait locale,
+        # sans qu'aucun message n'invite Alain à la committer/pousser.
+        doc_commit = regenerer_tableaux_projets.committer_pousser_doc(
+            f"Retrait du projet {nom} (§2)")
+        etapes.append({"etape": "Commit doc Bridge_Agent",
+                       "ok": doc_commit["statut"] in ("rien_a_faire", "ok"),
+                       "detail": doc_commit["detail"]})
+
     # 4. Cases cochées côté serveur (issue #629) — nettoyage purement local,
     #    sans lien avec GitHub ni la doc ; un échec ici ne remet pas en
     #    cause les étapes précédentes déjà réalisées avec succès.
@@ -231,7 +242,9 @@ def supprimer_projet(nom: str, dry_run: bool = False) -> dict:
                    "detail": "coche(s) retirée(s)." if ok_cases else erreur_cases})
 
     return {"succes": True, "nom": nom, "dry_run": False,
-            "depot": infos["depot"], "etapes": etapes, "erreur": None}
+            "depot": infos["depot"], "etapes": etapes, "erreur": None,
+            "doc_commit_statut": doc_commit["statut"] if doc_commit else None,
+            "doc_commit_commande_manuelle": doc_commit["commande_manuelle"] if doc_commit else None}
 
 
 # ─── Programme principal (CLI interactif, même esprit que nouveau_projet.py) ──
@@ -280,9 +293,21 @@ def main() -> int:
 
     if resultat["succes"]:
         print(f"\n✅ Projet « {nom} » supprimé côté CCL/local.")
-        print("   Reste à faire à la main : dépôt GitHub + labels (hors scope, "
-              "cf. issue #587), commit puis push des changements locaux "
-              "(configs/, doc).")
+        statut_doc = resultat.get("doc_commit_statut")
+        if statut_doc == "ok":
+            print("   Documentation Bridge_Agent : commitée et poussée automatiquement.")
+        elif statut_doc == "push_echoue":
+            print("   ⚠️  Documentation Bridge_Agent : commitée en LOCAL, push à "
+                  "refaire à la main :")
+            for ligne in resultat["doc_commit_commande_manuelle"].splitlines():
+                print(f"       {ligne}")
+        elif statut_doc == "echec":
+            print("   ⚠️  Documentation Bridge_Agent : commit automatique en échec, "
+                  "à faire à la main :")
+            for ligne in resultat["doc_commit_commande_manuelle"].splitlines():
+                print(f"       {ligne}")
+        print("   Reste à faire à la main : dépôt GitHub + labels "
+              "(hors scope, cf. issue #587).")
         return 0
     print(f"\n❌ {resultat['erreur']}")
     return 1

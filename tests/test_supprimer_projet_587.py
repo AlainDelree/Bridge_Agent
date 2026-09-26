@@ -74,6 +74,25 @@ class _CompteurRegen:
         return {"existe": True, "erreur": None, "modifie": True}
 
 
+class _FauxCommitDoc:
+    """Remplace regenerer_tableaux_projets.committer_pousser_doc (issue #645) :
+    enregistre les messages de commit reçus sans jamais toucher au vrai dépôt
+    git — même raisonnement que _CompteurRegen ci-dessus pour `regenerer`.
+    Statut "ok" (commité + poussé) par défaut ; configurable pour simuler un
+    push en échec ou l'absence de changement réel."""
+
+    def __init__(self, statut="ok"):
+        self.statut = statut
+        self.appels = []
+
+    def __call__(self, message, **kwargs):
+        self.appels.append(message)
+        commande = None if self.statut in ("ok", "rien_a_faire") else "cd ~/Bridge_Agent\ngit push"
+        return {"statut": self.statut,
+                "detail": f"détail simulé ({self.statut})",
+                "commande_manuelle": commande}
+
+
 def test_previsualiser_projet_introuvable():
     with tempfile.TemporaryDirectory() as tmp:
         ancien = sp.DOSSIER_CONFIGS
@@ -124,16 +143,20 @@ def test_dry_run_ne_touche_a_rien():
         _ecrire_conf(configs, "monprojet", rep)
 
         compteur = _CompteurRegen()
+        faux_commit = _FauxCommitDoc()
         ancien_configs = sp.DOSSIER_CONFIGS
         ancien_regen = sp.regenerer_tableaux_projets.regenerer
+        ancien_commit = sp.regenerer_tableaux_projets.committer_pousser_doc
         ancien_chemin, ancien_verrou = _isoler_cases_cochees(tmp)
         sp.DOSSIER_CONFIGS = configs
         sp.regenerer_tableaux_projets.regenerer = compteur
+        sp.regenerer_tableaux_projets.committer_pousser_doc = faux_commit
         try:
             res = sp.supprimer_projet("monprojet", dry_run=True)
         finally:
             sp.DOSSIER_CONFIGS = ancien_configs
             sp.regenerer_tableaux_projets.regenerer = ancien_regen
+            sp.regenerer_tableaux_projets.committer_pousser_doc = ancien_commit
             ecc.CHEMIN_ETAT, ecc.CHEMIN_VERROU = ancien_chemin, ancien_verrou
 
         assert res["succes"] is True
@@ -143,6 +166,7 @@ def test_dry_run_ne_touche_a_rien():
         assert (configs / "monprojet.conf").exists(), "dry-run ne doit pas supprimer le .conf"
         assert (rep / ".git").exists(), "dry-run ne doit pas toucher au répertoire de travail"
         assert compteur.appels == 0, "dry-run ne doit jamais régénérer la doc"
+        assert faux_commit.appels == [], "dry-run ne doit jamais committer la doc"
     return {"nb_etapes": len(res["etapes"])}
 
 
@@ -157,17 +181,21 @@ def test_suppression_reelle_succes():
         _ecrire_conf(configs, "monprojet", rep)
 
         compteur = _CompteurRegen()
+        faux_commit = _FauxCommitDoc()
         ancien_configs = sp.DOSSIER_CONFIGS
         ancien_regen = sp.regenerer_tableaux_projets.regenerer
+        ancien_commit = sp.regenerer_tableaux_projets.committer_pousser_doc
         ancien_chemin, ancien_verrou = _isoler_cases_cochees(tmp)
         sp.DOSSIER_CONFIGS = configs
         sp.regenerer_tableaux_projets.regenerer = compteur
+        sp.regenerer_tableaux_projets.committer_pousser_doc = faux_commit
         ecc.cocher_issue("monprojet", 12)
         try:
             res = sp.supprimer_projet("monprojet", dry_run=False)
         finally:
             sp.DOSSIER_CONFIGS = ancien_configs
             sp.regenerer_tableaux_projets.regenerer = ancien_regen
+            sp.regenerer_tableaux_projets.committer_pousser_doc = ancien_commit
             ecc.CHEMIN_ETAT, ecc.CHEMIN_VERROU = ancien_chemin, ancien_verrou
 
         assert res["succes"] is True, res
@@ -179,10 +207,17 @@ def test_suppression_reelle_succes():
             "Répertoire de travail (contenu + dépôt git local)",
             "Fichier .conf",
             "Documentation",
+            "Commit doc Bridge_Agent",
             "Cases cochées (état serveur, issue #629)",
         ], noms_etapes
         assert all(e["ok"] for e in res["etapes"]), res["etapes"]
-    return {"succes": res["succes"], "appels_regen": compteur.appels}
+        # Issue #645 : le commit/push automatique de la doc est bien déclenché
+        # une seule fois, avec un message clair mentionnant le projet retiré.
+        assert faux_commit.appels == ["Retrait du projet monprojet (§2)"], faux_commit.appels
+        assert res["doc_commit_statut"] == "ok"
+        assert res["doc_commit_commande_manuelle"] is None
+    return {"succes": res["succes"], "appels_regen": compteur.appels,
+            "doc_commit_statut": res["doc_commit_statut"]}
 
 
 def test_echec_repertoire_arrete_tout():
@@ -261,11 +296,14 @@ def test_route_executer_succes():
         _ecrire_conf(configs, "monprojet", rep_travail)
 
         compteur = _CompteurRegen()
+        faux_commit = _FauxCommitDoc()
         ancien_configs = sp.DOSSIER_CONFIGS
         ancien_regen = sp.regenerer_tableaux_projets.regenerer
+        ancien_commit = sp.regenerer_tableaux_projets.committer_pousser_doc
         ancien_chemin, ancien_verrou = _isoler_cases_cochees(tmp)
         sp.DOSSIER_CONFIGS = configs
         sp.regenerer_tableaux_projets.regenerer = compteur
+        sp.regenerer_tableaux_projets.committer_pousser_doc = faux_commit
         try:
             with APP_FLASK.test_request_context(
                     "/supprimer-projet", method="POST",
@@ -274,6 +312,7 @@ def test_route_executer_succes():
         finally:
             sp.DOSSIER_CONFIGS = ancien_configs
             sp.regenerer_tableaux_projets.regenerer = ancien_regen
+            sp.regenerer_tableaux_projets.committer_pousser_doc = ancien_commit
             ecc.CHEMIN_ETAT, ecc.CHEMIN_VERROU = ancien_chemin, ancien_verrou
 
         assert rep[1] == 200, rep[0].get_json()

@@ -4665,11 +4665,12 @@ async function soumettreNouveauProjet() {
       window.COULEURS_PERSISTEES[res.nom] = res.couleur;
     }
     ajouterProjetAuSelecteur(res.nom, res.depot);
-    // Rappel des 3 commandes git à lancer soi-même : le modal a modifié
-    // BRIDGE_AGENT_DOC.md (§2) localement mais ne pousse pas (cohérent avec le
-    // CLI — Alain vérifie puis pousse). Sans push, la doc reste invisible pour
-    // Claude Chat. Encart distinct du compte-rendu, sélectionnable en un clic.
-    afficherRappelGit(res.nom);
+    // Depuis l'issue #645, BRIDGE_AGENT_DOC.md (§2) est committé ET poussé
+    // AUTOMATIQUEMENT par creer_projet() (côté serveur) — l'étape « Commit
+    // doc Bridge_Agent » du compte-rendu ci-dessus en rend déjà compte. Cet
+    // encart ne s'affiche donc plus que si ce commit/push automatique a
+    // échoué (doc_commit_statut ≠ "ok"/"rien_a_faire") : sinon rien à faire.
+    afficherRappelGit(res.nom, res.doc_commit_statut, res.doc_commit_commande_manuelle);
     // Rappel du hook de relecture Relecture_Bridge (issue #578) : un nouveau
     // projet n'est détecté par installer.sh qu'au prochain lancement manuel
     // (celui-ci lit la liste des projets depuis BRIDGE_AGENT_DOC.md §2,
@@ -4698,22 +4699,36 @@ async function soumettreNouveauProjet() {
   }
 }
 
-// Affiche l'encart de rappel git après une création réussie : les 3 commandes
-// (add/commit/push) avec le nom du projet inséré dans le message de commit.
-// Un clic sur le <pre> sélectionne tout le bloc pour un copier-coller immédiat.
-// Pas de persistance : l'encart n'a de sens que pour la création qui vient
-// d'avoir lieu et disparaît à la prochaine ouverture du modal (issue #118).
-function afficherRappelGit(nom) {
-  const cmds = 'cd ~/Bridge_Agent\n'
+// Affiche l'encart de rappel git après une création réussie, SEULEMENT si le
+// commit/push automatique de BRIDGE_AGENT_DOC.md (creer_projet(), issue #645)
+// n'a pas pleinement réussi — sinon (statutDoc "ok" ou "rien_a_faire") rien à
+// faire, l'encart reste masqué. `commandeManuelle` vient telle quelle du
+// serveur (doc_commit_commande_manuelle), déjà adaptée au cas (push seul si
+// le commit local a réussi, séquence complète sinon). Un clic sur le <pre>
+// sélectionne tout le bloc pour un copier-coller immédiat. Pas de
+// persistance : l'encart n'a de sens que pour la création qui vient d'avoir
+// lieu et disparaît à la prochaine ouverture du modal (issue #118).
+function afficherRappelGit(nom, statutDoc, commandeManuelle) {
+  const box = document.getElementById('np-rappel-git');
+  if (statutDoc === 'ok' || statutDoc === 'rien_a_faire') {
+    box.style.display = 'none';
+    return;
+  }
+  const cmds = commandeManuelle || ('cd ~/Bridge_Agent\n'
              + 'git add BRIDGE_AGENT_DOC.md\n'
              + 'git commit -m "Ajout du projet ' + nom + ' (§2)"\n'
-             + 'git push';
-  const box = document.getElementById('np-rappel-git');
+             + 'git push');
+  const intro = statutDoc === 'push_echoue'
+    ? 'Le projet est créé et <b>BRIDGE_AGENT_DOC.md</b> (§2) a été committé '
+      + 'automatiquement en LOCAL, mais le push a échoué (réseau, conflit '
+      + "avec origin…). Tant qu'il n'est pas poussé, le projet reste invisible "
+      + 'pour Claude Chat.'
+    : 'Le projet est créé, mais le commit automatique de '
+      + '<b>BRIDGE_AGENT_DOC.md</b> (§2) a échoué.';
+  const box_titre = statutDoc === 'push_echoue' ? 'pousser la doc' : 'committer/pousser la doc';
   box.innerHTML =
-    '<div class="titre">⚠ Action requise — dépôt Bridge_Agent : pousser la doc</div>'
-    + 'Le projet est créé, mais la mise à jour de <b>BRIDGE_AGENT_DOC.md</b> (§2) '
-    + "n'est que locale. Tant qu'elle n'est pas poussée, le projet reste invisible "
-    + 'pour Claude Chat. Exécute (clic pour sélectionner) :'
+    '<div class="titre">⚠ Action requise — dépôt Bridge_Agent : ' + box_titre + '</div>'
+    + intro + ' Exécute (clic pour sélectionner) :'
     + '<pre onclick="npSelectionnerTexte(this)">' + escapeHtml(cmds) + '</pre>';
   box.style.display = 'block';
 }
@@ -4952,9 +4967,28 @@ async function soumettreSupprimerProjet() {
 
   if (res.succes) {
     btn.style.display = 'none';
+    // Depuis l'issue #645, BRIDGE_AGENT_DOC.md (§2) est committé ET poussé
+    // AUTOMATIQUEMENT par supprimer_projet() (côté serveur, étape « Commit
+    // doc Bridge_Agent » déjà visible dans le compte-rendu ci-dessus) — plus
+    // de commit local à pousser soi-même dans le cas général. configs/*.conf
+    // n'est PAS mentionné : gitignoré, il n'est jamais committable, quel que
+    // soit le statut du commit de la doc.
+    // spMsg pose le texte via textContent (pas innerHTML) : pas d'échappement
+    // HTML ici, ce serait affiché littéralement (ex. « &amp; » au lieu de « & »).
+    let msgDoc;
+    if (res.doc_commit_statut === 'push_echoue') {
+      msgDoc = ' ⚠ BRIDGE_AGENT_DOC.md a été committé en LOCAL mais le push a '
+             + 'échoué (réseau, conflit avec origin…) — à repousser toi-même : '
+             + (res.doc_commit_commande_manuelle || 'cd ~/Bridge_Agent && git push') + '.';
+    } else if (res.doc_commit_statut === 'echec') {
+      msgDoc = ' ⚠ Le commit automatique de BRIDGE_AGENT_DOC.md a échoué — '
+             + 'à committer/pousser toi-même : '
+             + (res.doc_commit_commande_manuelle || '') + '.';
+    } else {
+      msgDoc = ' BRIDGE_AGENT_DOC.md (§2) a été committé et poussé automatiquement.';
+    }
     spMsg('✅ Projet « ' + res.nom + ' » supprimé côté CCL/local. Reste à faire à la main : '
-        + 'dépôt GitHub + labels (hors scope, cf. issue #587), puis vérifier et pousser '
-        + 'toi-même les commits locaux (configs/, doc).', 'succes');
+        + 'dépôt GitHub + labels (hors scope, cf. issue #587).' + msgDoc, 'succes');
     // Purge ses clés localStorage (cache détail + entrée dans le filtre
     // Résultats) — fuite corrigée à l'issue #644 : rien n'équivalent au
     // nettoyage serveur des cases cochées/son par issue (#587) n'existait

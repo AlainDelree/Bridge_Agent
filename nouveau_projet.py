@@ -594,6 +594,7 @@ def creer_projet(nom: str, depot: str = "", rep: str = "", perimetre: str = "",
 
     # 6. Mise à jour de BRIDGE_AGENT_DOC.md (§2, §7, date).
     doc = mettre_a_jour_doc()
+    doc_commit = None
     if not doc["existe"]:
         etapes.append({"etape": "Documentation", "ok": False,
                        "detail": "BRIDGE_AGENT_DOC.md introuvable — non mis à jour."})
@@ -603,13 +604,24 @@ def creer_projet(nom: str, depot: str = "", rep: str = "", perimetre: str = "",
                        "detail": "§2/§7/date mis à jour" if ok_doc
                        else "sections §2/§7 non trouvées — à vérifier"})
 
+        # 7. Commit + push automatique de la doc dans le dépôt Bridge_Agent
+        # (issue #645) — jusqu'ici la mise à jour ci-dessus restait locale,
+        # sans qu'aucun message n'invite Alain à la committer/pousser.
+        doc_commit = regenerer_tableaux_projets.committer_pousser_doc(
+            f"Ajout du projet {nom} (§2)")
+        etapes.append({"etape": "Commit doc Bridge_Agent",
+                       "ok": doc_commit["statut"] in ("rien_a_faire", "ok"),
+                       "detail": doc_commit["detail"]})
+
     return {"succes": True, "nom": nom, "depot": depot, "rep": rep,
             "perimetre": perimetre, "depot_existait": depot_existait,
             "couleur": couleur, "etapes": etapes, "erreur": None,
             "git_deja_git": git_res["deja_git"],
             "git_push_ok": git_res["push_ok"],
             "git_contenu_preexistant": git_res["contenu_preexistant"],
-            "git_commande_manuelle": git_res["commande_manuelle"]}
+            "git_commande_manuelle": git_res["commande_manuelle"],
+            "doc_commit_statut": doc_commit["statut"] if doc_commit else None,
+            "doc_commit_commande_manuelle": doc_commit["commande_manuelle"] if doc_commit else None}
 
 
 def etape_nom() -> str:
@@ -988,8 +1000,8 @@ def main() -> None:
           f"python3 watcher.py --config configs/{nom}.conf")
     print("   • (Optionnel) Piloter le watcher depuis l'interface new_issue.py.")
     print(f"   Côté dépôt Bridge_Agent (distinct du projet {nom}) :")
-    print("   • Vérifier puis committer/pousser les changements locaux "
-          "(configs/, doc).")
+    print("   • Vérifier puis committer/pousser BRIDGE_AGENT_DOC.md (§2/§7) — "
+          "configs/*.conf est gitignoré, jamais committable.")
 
     rappel_projet_claude(nom)
 

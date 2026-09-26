@@ -40,6 +40,7 @@ script : sa source de vérité déclarée est le tableau `$Projets` de
 """
 
 import re
+import subprocess
 import sys
 from datetime import date
 from pathlib import Path
@@ -50,6 +51,13 @@ from watcher import lire_conf
 RACINE = Path(__file__).resolve().parent
 DOSSIER_CONFIGS = RACINE / "configs"
 DOC = RACINE / "BRIDGE_AGENT_DOC.md"
+
+# Timeouts (secondes) des appels git de committer_pousser_doc() (issue #645) :
+# même logique que TIMEOUT_GIT_LOCAL/TIMEOUT_GIT_PUSH de nouveau_projet.py —
+# court pour les opérations locales (diff/add/commit, jamais de réseau), plus
+# généreux pour le push (seul appel réseau du lot).
+TIMEOUT_GIT_DOC_LOCAL = 15
+TIMEOUT_GIT_DOC_PUSH = 60
 
 MOIS_FR = ["", "janvier", "février", "mars", "avril", "mai", "juin", "juillet",
            "août", "septembre", "octobre", "novembre", "décembre"]
@@ -176,6 +184,92 @@ def regenerer(doc_path: Path = DOC, dossier_configs: Path = DOSSIER_CONFIGS) -> 
 
     return {"existe": True, "modifie": modifie, "erreur": None,
             "n_projets": len(projets), "projets": projets}
+
+
+def _git_doc(racine: Path, *args: str,
+            timeout: float = TIMEOUT_GIT_DOC_LOCAL) -> subprocess.CompletedProcess:
+    try:
+        return subprocess.run(["git", *args], cwd=racine,
+                              capture_output=True, text=True, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        return subprocess.CompletedProcess(
+            args=["git", *args], returncode=124, stdout="",
+            stderr=f"timeout dépassé ({timeout}s)")
+
+
+def _commande_manuelle_doc(racine: Path, nom_fichier: str, message: str) -> str:
+    return (f"cd {racine}\n"
+            f"git add {nom_fichier}\n"
+            f'git commit -m "{message}"\n'
+            f"git push")
+
+
+def committer_pousser_doc(message: str, doc_path: Path = DOC) -> dict:
+    """Commit + push automatique de BRIDGE_AGENT_DOC.md dans le dépôt
+    Bridge_Agent (issue #645) : jusqu'ici, `regenerer()` réécrivait bien le
+    fichier sur disque après une création/suppression de projet, mais aucun
+    des deux flux appelants ne committait ni ne poussait ce changement —
+    Alain devait s'en apercevoir lui-même (`git status`) et le faire à la
+    main, sans qu'aucun message ne l'y invite clairement.
+
+    Exception documentée à la règle « CCL ne pousse jamais » (même
+    raisonnement que le push initial de `initialiser_git()` dans
+    nouveau_projet.py, et que la route pièces jointes de app/issues.py) :
+    c'est Alain qui déclenche la création/suppression de projet depuis
+    l'interface — jamais un agent — donc ce push n'est pas soumis à cette
+    règle.
+
+    `git diff --quiet` (sur le fichier seul) est l'AUTORITÉ qui décide s'il y
+    a réellement quelque chose à committer, plutôt que de faire confiance au
+    `modifie`/`ok2`/`ok7` renvoyé par l'appelant (`mettre_a_jour_doc()`) :
+    c'est ici, au plus près du commit réel, qu'on regarde ce que git
+    committerait vraiment — un commit vide n'est jamais créé.
+
+    Renvoie {statut, detail, commande_manuelle} avec statut ∈ :
+      - "rien_a_faire" : fichier inchangé, rien commité — pas un problème.
+      - "ok"           : commité ET poussé sur origin.
+      - "push_echoue"  : commité en LOCAL, le push a échoué (réseau, conflit
+                         avec origin…) — le commit reste en place, seul le
+                         push est à refaire à la main.
+      - "echec"        : git lui-même a échoué avant/pendant le commit (cas
+                         rare — dépôt absent, index verrouillé…) ; le fichier
+                         reste modifié sur disque, non commité.
+    `commande_manuelle` n'est renseigné que pour "push_echoue" et "echec"."""
+    racine = doc_path.parent
+    nom_fichier = doc_path.name
+
+    res_diff = _git_doc(racine, "diff", "--quiet", "--", nom_fichier)
+    if res_diff.returncode == 0:
+        return {"statut": "rien_a_faire",
+                "detail": f"{nom_fichier} inchangé — rien à committer.",
+                "commande_manuelle": None}
+    if res_diff.returncode != 1:
+        return {"statut": "echec",
+                "detail": f"échec de git diff : {res_diff.stderr.strip()}",
+                "commande_manuelle": _commande_manuelle_doc(racine, nom_fichier, message)}
+
+    res_add = _git_doc(racine, "add", "--", nom_fichier)
+    if res_add.returncode != 0:
+        return {"statut": "echec",
+                "detail": f"échec de git add : {res_add.stderr.strip()}",
+                "commande_manuelle": _commande_manuelle_doc(racine, nom_fichier, message)}
+
+    res_commit = _git_doc(racine, "commit", "-m", message)
+    if res_commit.returncode != 0:
+        return {"statut": "echec",
+                "detail": f"échec de git commit : {res_commit.stderr.strip()}",
+                "commande_manuelle": _commande_manuelle_doc(racine, nom_fichier, message)}
+
+    res_push = _git_doc(racine, "push", timeout=TIMEOUT_GIT_DOC_PUSH)
+    if res_push.returncode == 0:
+        return {"statut": "ok",
+                "detail": f"{nom_fichier} commité et poussé sur origin.",
+                "commande_manuelle": None}
+
+    return {"statut": "push_echoue",
+            "detail": f"{nom_fichier} commité en local — push échoué : "
+                      f"{res_push.stderr.strip()}",
+            "commande_manuelle": f"cd {racine}\ngit push"}
 
 
 def main() -> int:
