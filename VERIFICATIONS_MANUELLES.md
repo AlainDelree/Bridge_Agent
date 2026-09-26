@@ -31,20 +31,47 @@
 
 ## Onglet « Nouvelle issue » (création)
 
+> Depuis l'issue #652, tout ce formulaire vit dans `static/js/creation.js`
+> (module ES sorti d'`app.js`), initialisé par import direct depuis `onglets.js`
+> à la première ouverture de l'onglet ; les gestionnaires ne sont plus inline
+> (`data-action="creation-*"` + délégation du socle). **Comportement attendu
+> STRICTEMENT identique** — vérifier de bout en bout, notamment la première
+> ouverture de l'onglet (l'initialisation est paresseuse).
+
 - [ ] Sélection d'un projet dans le bandeau : le libellé « Projet actif » et la
-      couleur d'accent se mettent à jour ; dépôt/répertoire/périmètre affichés.
+      couleur d'accent se mettent à jour ; dépôt/répertoire/périmètre affichés ;
+      la liste des **templates** du projet se recharge (appel `chargerTemplates`
+      depuis `app.js` vers `creation.js`).
 - [ ] Saisir un titre + un corps ; le résumé d'en-tête apparaît si `#Titre:`/
       champs détectés dans le corps.
+- [ ] **Détection automatique à la frappe** (coller un corps avec un en-tête
+      tabulaire) : `#Titre:` en 1re ligne → champ Titre ; `| PROJET | … |` →
+      combobox projet (si connu, ligne retirée du corps) ; `| TIMEOUT | … |` →
+      champ Timeout ; `| MODE | … |` → radio Mode. Une correction manuelle
+      ultérieure du champ n'est pas réécrasée à la frappe suivante.
 - [ ] Changement de Mode (lecture / lecture active / écriture) : le bouton
-      d'envoi reflète le mode (libellé/avertissement).
+      d'envoi reflète le mode (couleur noir/bleu/rouge).
 - [ ] **Créer une issue via le formulaire** → message de succès ; l'issue est
-      bien créée sur GitHub.
+      bien créée sur GitHub. Anti-double-clic : le bouton se désactive pendant
+      l'envoi. Modales de garde-fou : issues en attente sur le projet, et
+      incohérence projet en-tête ⇄ sélection.
 - [ ] Bouton « Aperçu de la commande » affiche l'aperçu.
-- [ ] Templates : charger un template pré-remplit le formulaire ; créer /
-      modifier / supprimer un template fonctionne.
-- [ ] Pièce jointe image : formats/limite affichés ; joindre une image insère
-      l'URL dans le corps.
-- [ ] Bouton « Vider » réinitialise le formulaire.
+- [ ] Templates : charger un template pré-remplit le formulaire ; créer (bouton
+      « Créer le template ») / modifier (✏️) / supprimer (🗑️) un template
+      fonctionne ; le toast de confirmation s'affiche.
+- [ ] **Envoi en lot** : coller 2+ blocs `#Titre:` → le bouton devient « Envoyer
+      le lot (N issues) sur … » (mentionne « plusieurs projets » / « modes
+      mixtes » le cas échéant) ; l'envoi enchaîne les issues et affiche le
+      récapitulatif (✓/✗ par bloc).
+- [ ] Pièce jointe image : formats/limite affichés ; le bouton « Joindre une
+      image » ne s'active qu'après choix d'un fichier ; joindre une image insère
+      le lien `![…](url)` dans le corps.
+- [ ] Case **Bureau (`notif_pc`)** : cochée par défaut ; si on la décoche, l'état
+      est mémorisé et respecté à la réouverture (issue #93). « Vider » la remet à
+      l'état mémorisé, pas décochée.
+- [ ] Bouton « Vider » réinitialise le formulaire (titre, corps, priorité,
+      timeout du projet, mode lecture, notifs, modèle, image, template
+      désélectionné).
 
 ## Onglet « Résultats » (piloté par le store + SSE depuis l'issue #627)
 

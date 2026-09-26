@@ -8,13 +8,13 @@
     <div class="rangee" style="align-items:flex-end;gap:8px;margin-bottom:14px">
       <div class="champ" style="flex:1">
         <label>Charger un template</label>
-        <select id="template-select" onchange="onTemplateSelectChange()">
+        <select id="template-select" data-action="creation-template-change">
           <option value="">-- Aucun --</option>
         </select>
       </div>
-      <button type="button" id="btn-template-modifier" onclick="modifierTemplateSelectionne()"
+      <button type="button" id="btn-template-modifier" data-action="creation-template-modifier"
               disabled title="Modifier le template sélectionné" style="padding:8px 12px">✏️</button>
-      <button type="button" id="btn-template-supprimer" onclick="supprimerTemplateSelectionne()"
+      <button type="button" id="btn-template-supprimer" data-action="creation-template-supprimer"
               disabled title="Supprimer le template sélectionné" style="padding:8px 12px">🗑️</button>
     </div>
 
@@ -51,14 +51,14 @@
          la lecture seule. -->
     <div class="radio-groupe">
       <label><input type="radio" name="mode" value="lecture" checked
-                    onchange="mettreAJourBoutonEnvoi()"> Lecture seule</label>
+                    data-action="creation-mode"> Lecture seule</label>
       <label><input type="radio" name="mode" value="lecture_active"
-                    onchange="mettreAJourBoutonEnvoi()"
+                    data-action="creation-mode"
                     title="Écriture confinée au dossier scratch (/tmp/bridge_scratch_<projet>/), jamais dans le projet.">
         Lecture active <span class="badge-alerte">scratch (mode_scratch)</span>
       </label>
       <label><input type="radio" name="mode" value="ecriture"
-                    onchange="mettreAJourBoutonEnvoi()">
+                    data-action="creation-mode">
         Écriture <span class="badge-alerte">⚠ mode_write</span>
       </label>
     </div>
@@ -81,10 +81,10 @@
         <option value="claude-fable-5">claude-fable-5</option>
       </select>
       <div style="flex:1"></div>
-      <button class="danger" onclick="viderFormulaire()">Vider</button>
-      <button onclick="afficherApercu()">Aperçu de la commande</button>
-      <button onclick="creerTemplate()" title="Enregistre l'état actuel du formulaire comme nouveau template">Créer le template</button>
-      <button class="primaire" id="btn-envoyer" onclick="envoyerIssue()">Envoyer l'issue</button>
+      <button class="danger" data-action="creation-vider">Vider</button>
+      <button data-action="creation-apercu">Aperçu de la commande</button>
+      <button data-action="creation-creer-template" title="Enregistre l'état actuel du formulaire comme nouveau template">Créer le template</button>
+      <button class="primaire" id="btn-envoyer" data-action="creation-envoyer">Envoyer l'issue</button>
     </div>
 
     <div class="titre-section">Corps de la tâche</div>
@@ -97,8 +97,8 @@
     <div class="rangee" style="align-items:center;gap:10px;margin-top:10px">
       <input type="file" id="image-jointe" accept="{{ formats_image.accept }}"
              style="font-size:13px;max-width:340px"
-             onchange="majEtatBoutonImage()">
-      <button type="button" id="btn-joindre-image" onclick="joindreImage()"
+             data-action="creation-image-change">
+      <button type="button" id="btn-joindre-image" data-action="creation-joindre-image"
               disabled title="Committe l'image sur le dépôt et insère son lien dans le corps">
         Joindre une image
       </button>

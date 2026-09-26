@@ -45,8 +45,8 @@ lui-même par ses propres issues (dogfooding).
 ## État d'avancement (récent, cf. changelog en bas du DOC)
 - #625→#644 (refonte web) : socle `static/js/socle/` + modules par
   fonctionnalité sortis d'app.js (onglets, resultats, panneau latéral,
-  resultats_coches, actions_ligne — son par issue #641/#642), communiquant
-  par le store. #643 : retrait du son PAR PROJET de Configuration. #644 :
+  resultats_coches, actions_ligne, creation #652 — son #641/#642),
+  communiquant par le store. #643 : retrait du son PAR PROJET de Configuration. #644 :
   migration `localStorage` terminée, `persistance.js` seul point d'accès ;
   fuite corrigée (suppression de projet ne purgeait rien). Détail :
   `ARCHITECTURE.md §6`.

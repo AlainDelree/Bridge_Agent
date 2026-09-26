@@ -32,6 +32,11 @@
 import { store } from './socle/store.js';
 import { appelerAncien } from './socle/pont.js';
 import { surAction } from './socle/dom.js';
+// Onglet « Nouvelle issue » (issue #652) : initialisation par IMPORT DIRECT du
+// module dédié, plus par le pont (voir activerOnglet). initCreation est
+// idempotente : elle installe la délégation d'événements et les détecteurs
+// d'en-tête du formulaire à la première activation de l'onglet.
+import { initCreation } from './creation.js';
 
 const ONGLET_PAR_DEFAUT = 'resultats';
 
@@ -62,6 +67,11 @@ export function activerOnglet(nom) {
   }
   store.set('ongletActif', nom);
   for (const fonction of initialisationsPour(nom)) appelerAncien(fonction);
+  // Onglet « Nouvelle issue » (issue #652) : branché par IMPORT DIRECT, pas par
+  // le pont — d'où son absence de initialisationsPour (qui reste []). initCreation
+  // étant idempotente, l'appeler à chaque activation est sans effet après la
+  // première.
+  if (nom === 'creation') initCreation();
 }
 
 /** Branche la délégation de clic sur la barre d'onglets — appelé une seule
