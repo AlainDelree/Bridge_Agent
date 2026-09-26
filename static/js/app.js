@@ -197,7 +197,9 @@ function appliquerAccentProjet(nom) {
 function onProjetChange(reinitialiserTimeout = true) {
   const nom = document.getElementById('projet').value;
   // Mémorise le projet choisi pour le restaurer à la prochaine ouverture.
-  try { localStorage.setItem('bridge_projet_actif', nom); } catch(e) {}
+  if (window.Bridge && window.Bridge.persistance) {
+    window.Bridge.persistance.ecrireTexte(window.Bridge.persistance.CLES.projetActif, nom);
+  }
   appliquerAccentProjet(nom);
   verifierStatut();
   mettreAJourInfoProjet(reinitialiserTimeout);
@@ -825,14 +827,13 @@ let projetsFiltresActifs = new Set();
 // champ. Changer la valeur ne déclenche PAS de rechargement automatique
 // (cohérent avec #270) : seul le bouton rafraîchir applique la nouvelle limite
 // (depuis l'issue #627 il n'y a plus de cache de liste à invalider).
-const CLE_LIMITE_ISSUES = 'bridge_limite_issues_projet';
 const LIMITE_ISSUES_DEFAUT = 5;
 const LIMITE_ISSUES_MIN = 1;
 const LIMITE_ISSUES_MAX = 50;
 
 function limiteIssuesProjet() {
-  let brut = null;
-  try { brut = localStorage.getItem(CLE_LIMITE_ISSUES); } catch(e) {}
+  const persistance = window.Bridge && window.Bridge.persistance;
+  const brut = persistance ? persistance.lireTexte(persistance.CLES.limiteIssues) : null;
   const n = parseInt(brut, 10);
   return Number.isFinite(n) && n >= LIMITE_ISSUES_MIN && n <= LIMITE_ISSUES_MAX
     ? n : LIMITE_ISSUES_DEFAUT;
@@ -847,7 +848,9 @@ function changerLimiteIssuesProjet(valeur) {
   const bornee = Number.isFinite(n)
     ? Math.min(LIMITE_ISSUES_MAX, Math.max(LIMITE_ISSUES_MIN, n))
     : LIMITE_ISSUES_DEFAUT;
-  try { localStorage.setItem(CLE_LIMITE_ISSUES, String(bornee)); } catch(e) {}
+  if (window.Bridge && window.Bridge.persistance) {
+    window.Bridge.persistance.ecrireTexte(window.Bridge.persistance.CLES.limiteIssues, bornee);
+  }
   return bornee;
 }
 
@@ -878,19 +881,13 @@ function chargerListeIssues(nomsAFetcher) {
   return Promise.resolve();
 }
 
-// Clé localStorage mémorisant l'état des boutons de filtre projet.
-const CLE_FILTRES_RESULTATS = 'bridge_filtres_resultats';
-
 // Lit l'état des filtres depuis localStorage → Set des projets actifs.
 // Clé absente/illisible → tous actifs (comportement par défaut). Un projet
 // n'est inactif que s'il est explicitement marqué false ; un projet apparu
 // depuis la dernière sauvegarde (absent de l'objet) est donc actif.
 function restaurerFiltresProjets(noms) {
-  let brut = null;
-  try { brut = localStorage.getItem(CLE_FILTRES_RESULTATS); } catch(e) {}
-  if (!brut) return new Set(noms);
-  let etat;
-  try { etat = JSON.parse(brut); } catch(e) { return new Set(noms); }
+  const persistance = window.Bridge && window.Bridge.persistance;
+  const etat = persistance ? persistance.lire(persistance.CLES.filtresResultats, null) : null;
   if (!etat || typeof etat !== 'object') return new Set(noms);
   return new Set(noms.filter(nom => etat[nom] !== false));
 }
@@ -898,13 +895,12 @@ function restaurerFiltresProjets(noms) {
 // ── Filtre « 👷 Ouvriers » (issue #86) ────────────────────────────────────
 // Par défaut inactif → les issues de type ouvrier sont masquées dans Résultats.
 // État persisté (true/false) sous cette clé ; absent/illisible → false.
-const CLE_FILTRE_OUVRIERS = 'bridge_filtre_ouvriers';
 let filtreOuvriersActif = false;
 
 // Lit l'état du filtre ouvriers depuis localStorage (false par défaut).
 function restaurerFiltreOuvriers() {
-  try { return localStorage.getItem(CLE_FILTRE_OUVRIERS) === 'true'; }
-  catch(e) { return false; }
+  const persistance = window.Bridge && window.Bridge.persistance;
+  return persistance ? persistance.lireTexte(persistance.CLES.filtreOuvriers) === 'true' : false;
 }
 
 // Bascule l'affichage des issues ouvrières, persiste l'état et ré-applique le
@@ -912,8 +908,10 @@ function restaurerFiltreOuvriers() {
 // encore visible.
 function basculerFiltreOuvriers() {
   filtreOuvriersActif = !filtreOuvriersActif;
-  try { localStorage.setItem(CLE_FILTRE_OUVRIERS, filtreOuvriersActif ? 'true' : 'false'); }
-  catch(e) {}
+  if (window.Bridge && window.Bridge.persistance) {
+    window.Bridge.persistance.ecrireTexte(
+      window.Bridge.persistance.CLES.filtreOuvriers, filtreOuvriersActif ? 'true' : 'false');
+  }
   majBoutonOuvriers();
   appliquerFiltresListe();
   const sel = document.querySelector('#liste-issues .ligne-issue.selectionnee');
@@ -930,9 +928,9 @@ function majBoutonOuvriers() {
 function sauvegarderFiltresProjets(noms) {
   const etat = {};
   for (const nom of noms) etat[nom] = projetsFiltresActifs.has(nom);
-  try {
-    localStorage.setItem(CLE_FILTRES_RESULTATS, JSON.stringify(etat));
-  } catch(e) {}
+  if (window.Bridge && window.Bridge.persistance) {
+    window.Bridge.persistance.ecrire(window.Bridge.persistance.CLES.filtresResultats, etat);
+  }
 }
 
 // (Re)construit la ligne de boutons toggle — un par projet + « Tous ».
@@ -1105,6 +1103,11 @@ function basculerFiltreProjet(nom) {
   if (projetsFiltresActifs.has(nom)) projetsFiltresActifs.delete(nom);
   else projetsFiltresActifs.add(nom);
   sauvegarderFiltresProjets(nomsProjetsDisponibles());
+  // Purge le cache détail des projets sortis du filtre (issue #644) : sans
+  // ça, un projet consulté puis masqué accumule ses entrées indéfiniment.
+  if (window.Bridge && window.Bridge.persistance) {
+    window.Bridge.persistance.purgerCacheDetailHorsProjets([...projetsFiltresActifs]);
+  }
   majClassesBoutonsFiltre();
   appliquerFiltresListe();
   const sel = document.querySelector('#liste-issues .ligne-issue.selectionnee');
@@ -1131,7 +1134,14 @@ function basculerTousLesFiltres() {
     sauvegarderFiltresProjets(noms);
   } else {
     projetsFiltresActifs = new Set(noms);
-    try { localStorage.removeItem(CLE_FILTRES_RESULTATS); } catch(e) {}
+    if (window.Bridge && window.Bridge.persistance) {
+      window.Bridge.persistance.supprimer(window.Bridge.persistance.CLES.filtresResultats);
+    }
+  }
+  // Purge le cache détail des projets sortis du filtre (issue #644, cf.
+  // basculerFiltreProjet) — sans effet quand « Tous » vient d'être réactivé.
+  if (window.Bridge && window.Bridge.persistance) {
+    window.Bridge.persistance.purgerCacheDetailHorsProjets([...projetsFiltresActifs]);
   }
   majClassesBoutonsFiltre();
   appliquerFiltresListe();
@@ -1621,10 +1631,10 @@ function rendreHtmlRestreint(t) {
   return s;
 }
 
-// Cache localStorage du détail d'une issue (issue #52). Clé par projet+numéro,
-// avec un TTL court : le détail (commentaires, état) évolue vite, on n'affiche
-// donc le cache que s'il a moins de TTL_DETAIL_MS.
-const CLE_CACHE_DETAIL = 'bridge_cache_detail_';
+// Cache localStorage du détail d'une issue (issue #52). Clé par projet+numéro
+// (window.Bridge.persistance.cleCacheDetail), avec un TTL court : le détail
+// (commentaires, état) évolue vite, on n'affiche donc le cache que s'il a
+// moins de TTL_DETAIL_MS.
 
 // Projet/numéro actuellement SÉLECTIONNÉ dans la liste (ligne en surbrillance),
 // que son détail ait été chargé ou non. Permet au bouton rafraîchir (issue #56)
@@ -1841,15 +1851,16 @@ async function afficherIssue(nom, numero) {
 
   // 1) Cache frais (< TTL) : affichage immédiat. Passé le TTL, on force le fetch
   //    pour ne montrer que du frais (état/commentaires évoluent vite).
-  const cleCache = CLE_CACHE_DETAIL + nom + '_' + numero;
+  const persistance = window.Bridge && window.Bridge.persistance;
+  const cleCache = persistance ? persistance.cleCacheDetail(nom, numero) : null;
   let htmlAffiche = null;
-  try {
-    const obj = JSON.parse(localStorage.getItem(cleCache) || 'null');
+  if (persistance) {
+    const obj = persistance.lire(cleCache, null);
     if (obj && obj.it && (Date.now() - obj.ts) < TTL_DETAIL_MS) {
       htmlAffiche = construireHtmlIssue(obj.it, nom);
       zone.innerHTML = htmlAffiche;
     }
-  } catch(e) {}
+  }
   if (htmlAffiche === null) {
     zone.innerHTML = '<div class="issue-vide">Chargement de l\'issue #' + escapeHtml(numero) + '…</div>';
   }
@@ -1866,7 +1877,7 @@ async function afficherIssue(nom, numero) {
       }
       return;
     }
-    try { localStorage.setItem(cleCache, JSON.stringify({ts: Date.now(), it: it})); } catch(e) {}
+    if (persistance) persistance.ecrire(cleCache, {ts: Date.now(), it: it});
     const htmlFrais = construireHtmlIssue(it, nom);
     if (htmlFrais !== htmlAffiche) {
       zone.innerHTML = htmlFrais;
@@ -1906,15 +1917,16 @@ async function afficherIssueRecherche(nom, numero) {
   if (!zone || !nom || !numero) return;
   const seq = ++seqDetailRecherche;
 
-  const cleCache = CLE_CACHE_DETAIL + nom + '_' + numero;
+  const persistance = window.Bridge && window.Bridge.persistance;
+  const cleCache = persistance ? persistance.cleCacheDetail(nom, numero) : null;
   let htmlAffiche = null;
-  try {
-    const obj = JSON.parse(localStorage.getItem(cleCache) || 'null');
+  if (persistance) {
+    const obj = persistance.lire(cleCache, null);
     if (obj && obj.it && (Date.now() - obj.ts) < TTL_DETAIL_MS) {
       htmlAffiche = construireHtmlIssue(obj.it, nom);
       zone.innerHTML = htmlAffiche;
     }
-  } catch(e) {}
+  }
   if (htmlAffiche === null) {
     zone.innerHTML = '<div class="issue-vide">Chargement de l\'issue #' + escapeHtml(numero) + '…</div>';
   }
@@ -1929,7 +1941,7 @@ async function afficherIssueRecherche(nom, numero) {
       }
       return;
     }
-    try { localStorage.setItem(cleCache, JSON.stringify({ts: Date.now(), it: it})); } catch(e) {}
+    if (persistance) persistance.ecrire(cleCache, {ts: Date.now(), it: it});
     const htmlFrais = construireHtmlIssue(it, nom);
     if (htmlFrais !== htmlAffiche) {
       zone.innerHTML = htmlFrais;
@@ -2096,20 +2108,15 @@ async function rafraichirResultats() {
   const nomsActifs = projetsActifsDansFiltreResultats();
   const rechargeTout = nomsActifs.length === nomsDisponibles.length;
 
-  // Cache détail « bridge_cache_detail_<projet>_* » — toutes les clés si on
-  // recharge tout, sinon seulement celles des projets actifs du filtre. (Le
-  // cache de LISTE a disparu avec l'issue #627 : le store est la seule vérité.)
-  try {
-    const aSupprimer = [];
-    for (let i = 0; i < localStorage.length; i++) {
-      const cle = localStorage.key(i);
-      if (!cle || cle.indexOf(CLE_CACHE_DETAIL) !== 0) continue;
-      if (rechargeTout || nomsActifs.some(nom => cle.indexOf(CLE_CACHE_DETAIL + nom + '_') === 0)) {
-        aSupprimer.push(cle);
-      }
-    }
-    aSupprimer.forEach(cle => localStorage.removeItem(cle));
-  } catch(e) {}
+  // Cache détail « bridge_cache_detail_<projet>_* » — TOUT le cache, projets
+  // actifs comme masqués (issue #644 : purger seulement les projets actifs du
+  // filtre, comme avant, laissait les projets masqués accumuler leurs entrées
+  // indéfiniment ; le cache de LISTE a disparu avec l'issue #627, le store est
+  // la seule vérité, purger systématiquement le détail à chaque ↻ ne coûte
+  // qu'un fetch déjà en cours de toute façon pour les projets actifs).
+  if (window.Bridge && window.Bridge.persistance) {
+    window.Bridge.persistance.purgerCacheDetailProjets(null);
+  }
   // Recharge liste ET badges de temps restant d'un même geste, via le moteur
   // Résultats (issue #627) — restreinte aux projets filtrés, sauf si « Tous »
   // est actif (undefined → tous les projets).
@@ -2553,8 +2560,8 @@ async function fermerEtInterrompre(nom, numero) {
 // (« nom — depot », cf. templates/index.html et ajouterProjetAuSelecteur) —
 // JAMAIS déduit du nom du projet (les deux peuvent diverger, voir la route
 // Flask /interrompre, app/interruption.py). Les labels viennent du cache
-// localStorage du détail déjà affiché (CLE_CACHE_DETAIL), forcément à jour
-// puisque c'est ce détail qui vient de faire apparaître le bouton.
+// localStorage du détail déjà affiché (window.Bridge.persistance.cleCacheDetail),
+// forcément à jour puisque c'est ce détail qui vient de faire apparaître le bouton.
 function depotDuProjet(nom) {
   const select = document.getElementById('projet');
   if (!select) return null;
@@ -2566,7 +2573,8 @@ function depotDuProjet(nom) {
 
 function labelsIssueDepuisCache(nom, numero) {
   try {
-    const obj = JSON.parse(localStorage.getItem(CLE_CACHE_DETAIL + nom + '_' + numero) || 'null');
+    const persistance = window.Bridge && window.Bridge.persistance;
+    const obj = persistance ? persistance.lire(persistance.cleCacheDetail(nom, numero), null) : null;
     if (obj && obj.it && Array.isArray(obj.it.labels)) {
       return obj.it.labels.map(l => (l && l.name) || l || '').filter(Boolean);
     }
@@ -3966,15 +3974,18 @@ async function lancerWatcher() {
 // Au chargement : restaure le dernier projet mémorisé (localStorage) s'il
 // correspond encore à une option existante, puis initialise l'accent visuel, le
 // statut et les infos via onProjetChange(). Sonde ensuite toutes les 5 s.
-(function restaurerProjet() {
+// window.Bridge n'est publié qu'après l'exécution du module socle (voir
+// scripts.html) : on attend DOMContentLoaded, comme rafraichirReplisRepTravail
+// plus haut, pour que window.Bridge.persistance existe déjà (issue #644).
+window.addEventListener('DOMContentLoaded', function restaurerProjet() {
   const select = document.getElementById('projet');
-  let dernier = null;
-  try { dernier = localStorage.getItem('bridge_projet_actif'); } catch(e) {}
+  const persistance = window.Bridge && window.Bridge.persistance;
+  const dernier = persistance ? persistance.lireTexte(persistance.CLES.projetActif) : null;
   if (dernier && [...select.options].some(o => o.value === dernier)) {
     select.value = dernier;
   }
   onProjetChange();
-})();
+});
 setInterval(verifierStatut, 5000);
 
 // ─── Onglet « Résultats inbox » : SUPPRIMÉ (issue #639) ────────────────────
@@ -4162,28 +4173,33 @@ async function quitter() {
 // choix est mémorisé (localStorage) et respecté aux ouvertures suivantes,
 // jusqu'à ce qu'il le recoche. Cohérent avec le pattern des autres clés
 // « bridge_* » de l'interface. notif_gsm / notif_tous ne sont pas concernés.
-const CLE_NOTIF_PC = 'bridge_notif_pc';
 
 // Applique l'état mémorisé au champ notif_pc : coché par défaut si la clé
 // n'existe pas encore, sinon l'état enregistré ('true' / 'false').
 function appliquerNotifPc() {
   const cb = document.getElementById('notif_pc');
   if (!cb) return;
-  let memo = null;
-  try { memo = localStorage.getItem(CLE_NOTIF_PC); } catch(e) {}
+  const persistance = window.Bridge && window.Bridge.persistance;
+  const memo = persistance ? persistance.lireTexte(persistance.CLES.notifPc) : null;
   cb.checked = (memo === null) ? true : (memo === 'true');
 }
 
 // À chaque changement manuel, on écrit l'état courant dans localStorage.
-(function initNotifPc() {
+// window.Bridge n'est publié qu'après l'exécution du module socle (voir
+// scripts.html) : l'appel initial à appliquerNotifPc() attend DOMContentLoaded,
+// comme restaurerProjet plus haut (issue #644).
+window.addEventListener('DOMContentLoaded', function initNotifPc() {
   const cb = document.getElementById('notif_pc');
   if (cb) {
     cb.addEventListener('change', function() {
-      try { localStorage.setItem(CLE_NOTIF_PC, cb.checked ? 'true' : 'false'); } catch(e) {}
+      if (window.Bridge && window.Bridge.persistance) {
+        window.Bridge.persistance.ecrireTexte(
+          window.Bridge.persistance.CLES.notifPc, cb.checked ? 'true' : 'false');
+      }
     });
   }
   appliquerNotifPc();
-})();
+});
 
 function viderFormulaire(cacherMsg=true) {
   if (cacherMsg) cacherRetours();
@@ -4939,6 +4955,13 @@ async function soumettreSupprimerProjet() {
     spMsg('✅ Projet « ' + res.nom + ' » supprimé côté CCL/local. Reste à faire à la main : '
         + 'dépôt GitHub + labels (hors scope, cf. issue #587), puis vérifier et pousser '
         + 'toi-même les commits locaux (configs/, doc).', 'succes');
+    // Purge ses clés localStorage (cache détail + entrée dans le filtre
+    // Résultats) — fuite corrigée à l'issue #644 : rien n'équivalent au
+    // nettoyage serveur des cases cochées/son par issue (#587) n'existait
+    // côté navigateur.
+    if (window.Bridge && window.Bridge.persistance) {
+      window.Bridge.persistance.purgerProjet(res.nom);
+    }
     retirerProjetDuSelecteur(res.nom);
   } else {
     btn.disabled = false;
