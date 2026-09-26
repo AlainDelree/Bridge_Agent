@@ -131,6 +131,14 @@
    jamais de la liste, panneau latéral ouvert ou fermé. */
 .ligne-issue .ligne-texte{flex:1;min-width:0;overflow:hidden;
   text-overflow:ellipsis;white-space:nowrap;font-size:14px}
+/* Badge « modèle forcé » (issue #638) : pastille discrète (ex. « opus ») signalant
+   une issue dont le MODELE de l'en-tête diffère du défaut de son projet. Placé
+   entre le titre et les badges de temps ; flex-shrink:0 pour ne jamais être
+   rogné, ton violet sourd distinct des badges de temps (vert/orange/rouge/bleu)
+   et des badges ✅/Diff/All. */
+.ligne-issue .badge-modele{flex-shrink:0;font-size:10px;font-weight:700;line-height:1;
+  padding:2px 6px;border-radius:9px;white-space:nowrap;text-transform:uppercase;
+  letter-spacing:.03em;color:#5b3a8a;background:#efe8f8;border:1px solid #d3c3ea}
 /* Badge de temps restant estimé des issues ouvertes (issue #91), conscient du
    budget de retry (issue #106). Couleur selon l'état : vert = large marge,
    orange = échéance proche (<=30 s), rouge = budget total dépassé, gris = pas

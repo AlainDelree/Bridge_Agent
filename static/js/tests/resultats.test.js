@@ -8,6 +8,8 @@ import {
   formaterDuree,
   calculerBadgeTempsRestant,
   calculerBadgeEstimation,
+  calculerBadgeModele,
+  libelleModele,
   planifierEvenementSse,
   fusionnerChargement,
   fusionnerTimingProjet,
@@ -100,6 +102,46 @@ test('badge estimation : décompte live puis dépassement (ton neutre)', () => {
   const r2 = calculerBadgeEstimation(t2, T0);
   assert.equal(r2.texte, '≈ estimation dépassée');
   assert.match(r2.classe, /est-depasse/);
+});
+
+// ─── calculerBadgeModele / libelleModele (issue #638) ────────────────────────
+test('libelleModele : nom court par famille, repli sans préfixe claude-', () => {
+  assert.equal(libelleModele('claude-opus-4-8'), 'opus');
+  assert.equal(libelleModele('claude-haiku-4-5'), 'haiku');
+  assert.equal(libelleModele('claude-fable-5'), 'fable');
+  assert.equal(libelleModele('claude-sonnet-5'), 'sonnet');
+  assert.equal(libelleModele('claude-experimental'), 'experimental');  // repli
+  assert.equal(libelleModele(''), '');
+  assert.equal(libelleModele(null), '');
+});
+
+test('badge modèle : rien sans champ MODELE (modele null/absent)', () => {
+  assert.deepEqual(calculerBadgeModele(null, 'claude-sonnet-5'), { afficher: false });
+  assert.deepEqual(calculerBadgeModele(undefined, 'claude-sonnet-5'), { afficher: false });
+  assert.deepEqual(calculerBadgeModele('', 'claude-sonnet-5'), { afficher: false });
+});
+
+test('badge modèle : rien quand le modèle forcé EST le défaut du projet', () => {
+  assert.deepEqual(calculerBadgeModele('claude-sonnet-5', 'claude-sonnet-5'), { afficher: false });
+  // Insensible à la casse.
+  assert.deepEqual(calculerBadgeModele('CLAUDE-OPUS-4-8', 'claude-opus-4-8'), { afficher: false });
+});
+
+test('badge modèle : affiché quand le modèle effectif diffère du défaut', () => {
+  const r = calculerBadgeModele('claude-opus-4-8', 'claude-sonnet-5');
+  assert.equal(r.afficher, true);
+  assert.equal(r.label, 'opus');
+  assert.match(r.titre, /claude-opus-4-8/);
+  assert.match(r.titre, /claude-sonnet-5/);
+});
+
+test('badge modèle : défaut projet non-Sonnet (issue force Sonnet) → affiché', () => {
+  // Projet dont le défaut est Opus : une issue forçant Sonnet diffère du défaut.
+  const r = calculerBadgeModele('claude-sonnet-5', 'claude-opus-4-8');
+  assert.equal(r.afficher, true);
+  assert.equal(r.label, 'sonnet');
+  // Défaut projet manquant → « claude-sonnet-5 » implicite : Opus diffère.
+  assert.equal(calculerBadgeModele('claude-opus-4-8').afficher, true);
 });
 
 // ─── planifierEvenementSse (cœur du correctif #627) ──────────────────────────

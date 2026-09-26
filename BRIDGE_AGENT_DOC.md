@@ -3458,6 +3458,32 @@ déclencheur et un canal SSE dédié comme transport :
   fusion du timing) est testée sous Node — `node --test static/js/tests/`. La
   reconnexion après coupure reste native à `EventSource`.
 
+**Badge « modèle forcé » d'une ligne (issue #638)** : une issue peut imposer un
+modèle précis via le champ `| MODELE | … |` de son en-tête (§3). Dans l'onglet
+Résultats, chaque ligne dont le **modèle effectif** diffère du **modèle par
+défaut de son projet** porte un **badge discret** indiquant le nom court du
+modèle (ex. « opus »), placé entre le titre et les badges de temps sans les
+recouvrir. Une issue **sans** champ `MODELE`, ou dont le modèle forcé est
+justement le défaut du projet, n'affiche **rien de plus**. Pour l'alimenter,
+**trois routes exposent deux champs supplémentaires** (`app/issues.py`) :
+- **`modele`** — modèle effectif de l'issue, lu dans le champ `MODELE` de son
+  **corps** ; `null` si le champ est absent, vide ou porte une valeur inconnue
+  (aucun badge). Source unique côté serveur : `extraire_modele_entete(body)`,
+  primitive dédiée à la lecture depuis un **corps d'issue GitHub** (distincte de
+  `watcher.extraire_modele`, qui retombe sur son `CFG` global, et du parseur de
+  `scripts/watcher_issues_inbox.py`, qui lit un fichier `issues_inbox/`),
+  partagée par `/issues-liste`, `/recherche-issues`, `/issues-en-attente` et
+  `/issue`.
+- **`modele_defaut`** — modèle par défaut **réel du projet** (`MODELE_CCL` du
+  `.conf` s'il en fixe un, sinon `claude-sonnet-5`), via `modele_defaut_projet(cfg)`.
+  Une valeur par projet, répétée sur chaque issue de la réponse (les listes
+  restent de simples tableaux JSON).
+La décision « afficher/masquer » est prise côté navigateur par l'unique fonction
+pure `calculerBadgeModele(modele, modele_defaut)` de `static/js/resultats.js`,
+testée sous Node (`node --test static/js/tests/`). Le versant serveur
+(`extraire_modele_entete` : présent/absent/invalide) est testé par
+`tests/test_modele_effectif_638.py`.
+
 **Configuration héritée** : la clé `.conf` reste `SCRIPT_BIP` (voir §17.1
 ci-dessus et §10) — Alain doit mettre à jour manuellement le chemin dans ses
 `configs/*.conf` existants (`.../scripts/bip.py` → `.../scripts/traitement_fin.py`).

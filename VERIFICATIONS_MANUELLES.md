@@ -72,6 +72,15 @@
       et qu'il n'affiche PAS à tort « dépassement déjà vérifié »).
 - [ ] **Clôture** : à la fin d'une issue, sa ligne se met à jour (état final,
       arrêt du décompte) **sans ↻** (événement `fin_issue`).
+- [ ] **Badge « modèle forcé »** (issue #638) : créer une issue avec
+      `| MODELE | claude-opus-4-8 |` sur un projet dont le défaut est Sonnet →
+      sa ligne dans Résultats porte un **badge discret « opus »** (entre le titre
+      et les badges de temps, sans les recouvrir), visible aussi après clôture.
+      Une issue **sans** champ `MODELE`, ou avec le **modèle par défaut** du
+      projet, n'affiche **rien de plus** qu'avant. Une valeur `MODELE` invalide
+      (ex. `gpt-5`) n'affiche **aucun** badge et ne casse pas la ligne. Le badge
+      apparaît aussi dans la **fenêtre de recherche par titre** (même rendu de
+      ligne).
 - [ ] **Une seule** connexion `/stream` dans l'onglet Réseau (jamais deux),
       présente même hors de l'onglet Résultats.
 - [ ] **Échec d'un projet** : si un `/issues-liste/<projet>` échoue, ses issues

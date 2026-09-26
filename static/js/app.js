@@ -1351,6 +1351,22 @@ function construireLigneIssueDOM(it) {
       + ' onclick="copierToutEtDiffDepuisBadge(event, \''
       + escapeHtml(it.projet) + '\', ' + Number(numero) + ')">All</span>';
   }
+  // Badge « modèle forcé » (issue #638) : n'apparaît QUE si l'issue a forcé un
+  // modèle (champ MODELE de son en-tête) différent du défaut de son projet. La
+  // décision est prise par l'unique fonction testée du moteur Résultats
+  // (window.Bridge.resultats.calculerBadgeModele) — repli silencieux (aucun
+  // badge) si le pont n'est pas encore disponible. Le badge se place APRÈS le
+  // titre et AVANT les badges de temps, sans les recouvrir.
+  let badgeModeleHtml = '';
+  const decisionModele = (window.Bridge && window.Bridge.resultats
+      && window.Bridge.resultats.calculerBadgeModele)
+    ? window.Bridge.resultats.calculerBadgeModele(it.modele, it.modele_defaut)
+    : { afficher: false };
+  if (decisionModele.afficher) {
+    badgeModeleHtml =
+      '<span class="badge-modele" title="' + escapeHtml(decisionModele.titre || '') + '">'
+      + escapeHtml(decisionModele.label) + '</span>';
+  }
   ligne.innerHTML =
     // Case à cocher libre (issue #154), tout à gauche de la ligne. Le clic ne
     // doit PAS sélectionner/ouvrir l'issue (stopPropagation) ; onchange délègue
@@ -1370,6 +1386,9 @@ function construireLigneIssueDOM(it) {
     + '</span>'
     + '<span class="ligne-texte">#' + escapeHtml(numero) + ' — '
     + escapeHtml(it.title) + ' [' + etat + ']</span>'
+    // Badge « modèle forcé » (issue #638) : entre le titre et les badges de
+    // temps, présent aussi pour les issues fermées (rien pour la majorité).
+    + badgeModeleHtml
     // Badge d'estimation prédictive (issue #108) PUIS badge de temps restant
     // (issues #91/#106) : l'estimation (durée médiane historique du même
     // projet+type+mode) s'affiche JUSTE AVANT le décompte, qui reste inchangé.
