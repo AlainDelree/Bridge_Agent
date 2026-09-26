@@ -9,6 +9,10 @@ milliers de caractères sur une seule ligne logique, coûteux à relire et
 
 Convention d'ajout : voir §10 de `BRIDGE_AGENT_DOC.md`.
 
+## 26 septembre 2026 — issue #645
+
+Création/suppression de projet : `creer_projet()`/`supprimer_projet()` committent et poussent désormais **automatiquement** la mise à jour de `BRIDGE_AGENT_DOC.md` (§2/§7) dans le dépôt Bridge_Agent (issue #645) — jusqu'ici cette mise à jour restait purement locale sur disque, sans qu'aucun mécanisme n'invite Alain à la committer/pousser. Nouvelle fonction `regenerer_tableaux_projets.committer_pousser_doc()` : `git diff --quiet` décide s'il y a réellement quelque chose à committer (jamais de commit vide), puis `git add`/`commit`/`push`, avec un statut distinct par cas (`rien_a_faire`/`ok`/`push_echoue`/`echec`) — un push en échec (réseau, conflit…) ne fait pas échouer la création/suppression du projet, seule la doc reste à repousser à la main. Messages de fin (interface web `static/js/app.js` et scripts CLI) mis à jour en conséquence : l'encart « pousser la doc » côté création et le message de fin côté suppression ne s'affichent plus que si le commit/push automatique a réellement échoué, et ne mentionnent plus `configs/*.conf` (gitignoré, jamais committable). Tests : `tests/test_commit_doc_projet_645.py` (succès, push en échec, aucun changement réel, dépôt absent) + mise à jour de `tests/test_supprimer_projet_587.py` pour la nouvelle étape « Commit doc Bridge_Agent ».
+
 ## 26 septembre 2026 — issue #644
 
 Refonte interface web — étape 10 : purge des fuites `localStorage`, accès centralisé via `persistance.js`.
