@@ -381,7 +381,6 @@ variable/DOM ancien), retiré avec le reste.
 | Onglet Nouvelle issue | `onglet_creation.html` |
 | Onglet Résultats (+ inclut le panneau latéral) | `onglet_resultats.html` |
 | Panneau latéral Infrastructure | `panneau_lateral.html` |
-| Onglet Résultats inbox | `onglet_inbox.html` |
 | Onglet Configuration | `onglet_config.html` |
 | Onglet Journal | `onglet_journal.html` |
 | Onglet CCW | `onglet_ccw.html` |
@@ -398,7 +397,7 @@ concaténation byte-identique à l'ancien `style.css`, vérifiée) :
 | 3 | `resultats.css` | onglet Résultats (liste, détail, panneau latéral, diff) |
 | 4 | `modales.css` | overlay/carte de modale, boutons destructifs, overlay d'arrêt |
 | 5 | `recherche-interruption.css` | recherche par titre + interruption (zone Résultats) — **DOIT rester après `modales.css`** (`.modal-recherche-titre` surcharge `.modal-carte` à specificité égale) |
-| 6 | `inbox.css` | onglet Résultats inbox |
+| 6 | `inbox.css` | reliquat de l'ancien onglet « Résultats inbox » (supprimé, issue #639) : badge d'alerte (onglet Résultats) + historique du watcher spool (panneau latéral) |
 
 **Modules JS par fonctionnalité** : un module par zone, dans `static/js/`,
 importé par `index.js` (voir §6.7). Chaque module utilise les briques du socle.
@@ -414,10 +413,20 @@ modules (ex. `creation.js`, `config.js`, `ccw.js`, `journal.js`,
 + cases à cocher + actions Lancer/Relancer/Éteindre par lot n'existent plus.
 La surveillance des watchers (un par ligne, statut actif/inactif) reste dans
 le **panneau latéral Infrastructure** (`panneau_lateral.html`, actions par
-projet individuel — pas de sélection multiple). Ordre actuel de la barre
-d'onglets (`onglets.html`) : Résultats, Résultats inbox, Journal watcher,
-Configuration, CCW, Nouvelle issue — Résultats est l'onglet actif au
-chargement de la page (avant l'issue #626, c'était Nouvelle issue).
+projet individuel — pas de sélection multiple). Résultats est l'onglet actif au
+chargement de la page (avant l'issue #626, c'était Nouvelle issue ; l'ordre
+actuel des onglets figure dans la note « Onglet Résultats inbox supprimé »
+ci-dessous, issue #639).
+
+**Onglet Résultats inbox supprimé (issue #639, étape 9b)** : le fragment
+`onglet_inbox.html` et l'entrée `inbox` de la barre d'onglets n'existent plus.
+Le suivi des dépôts `issues_inbox/` est fusionné dans la liste Résultats (lignes
+« 📥 fichier reçu » / « ✕ fichier refusé », alimentées par les événements SSE
+`fichier_recu`/`creation_issue`/`fichier_refuse` de l'étape 9a #631 et
+reconstruites au rechargement depuis `/issues-inbox/etat`, `resultats.js`) ; le
+badge d'alerte 🚨 est passé sur l'onglet Résultats ; l'historique du watcher
+spool a rejoint le panneau latéral. Ordre actuel de la barre d'onglets :
+Résultats, Journal watcher, Configuration, CCW, Nouvelle issue.
 
 > **Étape 3 réalisée — `static/js/resultats.js` (issue #627)** : premier module
 > par fonctionnalité. Il sort d'`app.js` le **moteur** de l'onglet Résultats —

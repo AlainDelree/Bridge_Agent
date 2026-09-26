@@ -15,8 +15,8 @@
 
 - [ ] `python3 new_issue.py` démarre sans erreur, le navigateur s'ouvre.
 - [ ] La page s'ouvre sur l'onglet **Résultats** (issue #626, étape 2) ; ordre
-      des onglets : Résultats, Résultats inbox, Journal watcher, Configuration,
-      CCW, Nouvelle issue.
+      des onglets : Résultats, Journal watcher, Configuration, CCW, Nouvelle
+      issue (l'onglet « Résultats inbox » a été supprimé — issue #639).
 - [ ] **Console du navigateur** (F12) : aucune erreur rouge au chargement, et
       **aucun** avertissement `[pont] fonction ancienne introuvable`. On doit
       voir les traces discrètes `[socle] briques chargées (issue #625, étape 1).`
@@ -198,6 +198,10 @@
       seulement quand une ligne est sélectionnée ; joue la tonalité du projet.
 - [ ] Zone extras : contrôle du watcher spool (issues_inbox) — démarrer/arrêter
       avec la modale de durée.
+- [ ] **Historique du watcher spool (issue #639)** : sous le contrôle du watcher
+      spool, un repli discret **« Historique récent »** (`<details>` fermé par
+      défaut) ; l'ouvrir affiche les dernières lignes de `logs/issues_inbox.log`
+      (mêmes lignes qu'exposait l'ancien onglet « Résultats inbox », supprimé).
 - [ ] Zone actions contextuelles sur l'issue sélectionnée : toggles
       notif_pc/gsm/tous, **Interrompre / Interrompre et relancer / Retirer
       needs-human / Fermer l'issue** — ces 4 actions n'existent plus que dans
@@ -240,11 +244,41 @@
       directe dans REP_TRAVAIL », affiché sur tous les onglets en cas de
       repli — issue #628), pas deux pollings indépendants.
 
-## Onglet « Résultats inbox »
+## Fusion « Résultats inbox » dans Résultats (issue #639)
 
-- [ ] Badge 🚨 sur l'onglet **uniquement** si des fichiers sont dans
-      `issues_inbox/rejected/` (visible même hors de cet onglet).
-- [ ] Tableau des fichiers rejetés + historique du log ; bouton « Rafraîchir ».
+L'onglet « Résultats inbox » **n'existe plus** : ses lignes vivent désormais
+dans la liste Résultats, son badge est passé sur l'onglet Résultats, et son
+historique dans le panneau latéral (voir plus haut).
+
+- [ ] **L'onglet « Résultats inbox » a disparu** de la barre d'onglets.
+- [ ] Badge 🚨 désormais sur l'onglet **Résultats** (pas d'ancien onglet inbox),
+      **uniquement** tant qu'au moins un fichier est dans `issues_inbox/rejected/`
+      (visible même quand un autre onglet est actif ; le polling
+      `/issues-inbox/etat` tourne en continu, 7 s).
+- [ ] **Dépôt d'un fichier valide** dans `issues_inbox/` → une ligne
+      **« 📥 fichier reçu : <nom> »** apparaît **en tête** de la liste Résultats
+      en quelques secondes (sans case à cocher ni badges de temps), puis se
+      **transforme en ligne d'issue normale** une fois l'issue créée (pas de
+      doublon).
+- [ ] **Dépôt d'un fichier invalide** → la ligne « fichier reçu » (ou, si elle
+      n'a pas eu le temps d'apparaître, directement une ligne) devient une
+      **ligne rouge « ✕ fichier refusé : <nom> — <motif> »** ; le motif complet
+      s'affiche au survol (`title`). Motif absent → repli
+      « refusé, motif indisponible ».
+- [ ] **Persistance après rechargement** : recharger la page (F5) alors qu'un
+      fichier est encore dans `issues_inbox/rejected/` → la ligne rouge est
+      **reconstituée** depuis `/issues-inbox/etat`. Corriger/retirer le fichier
+      (il quitte `rejected/`) puis attendre un cycle de polling → la ligne rouge
+      **disparaît** (purge). Les lignes « fichier reçu » **ne sont PAS**
+      reconstituées au rechargement (éphémères).
+- [ ] **Lot multi-blocs mixte** (un fichier contenant plusieurs blocs, certains
+      valides, certains invalides) → chaque bloc créé devient sa **ligne d'issue**,
+      chaque bloc refusé produit sa **propre ligne rouge distincte** ; aucune
+      confusion entre elles.
+- [ ] **Exclusion propre** : les lignes fichier reçu/refusé ne sont jamais
+      comptées par les **pastilles** de filtre projet, jamais cochables (pas de
+      case à cocher), ignorées par **« Cocher tout »**, **« Tout à zéro »** et le
+      **filtre projet / quota d'affichage**, et ne portent pas de **badge modèle**.
 
 ## Onglet « Journal watcher »
 

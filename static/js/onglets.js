@@ -46,7 +46,9 @@ export function initialisationsPour(nom) {
   if (nom === 'journal') appels.push('demarrerJournal');
   if (nom === 'config') appels.push('chargerConfig');
   if (nom === 'ccw') appels.push('ccwOuvrirOnglet');
-  if (nom === 'inbox') appels.push('rafraichirInbox');
+  // L'onglet « Résultats inbox » a été supprimé (issue #639) : son contenu a
+  // rejoint la liste Résultats (lignes fichier reçu/refusé + badge d'alerte) et
+  // le panneau latéral (historique du watcher spool).
   return appels;
 }
 

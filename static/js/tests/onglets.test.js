@@ -28,8 +28,8 @@ test('ccw : ouverture de l\'onglet CCW', () => {
   assert.deepEqual(initialisationsPour('ccw'), ['ccwOuvrirOnglet']);
 });
 
-test('inbox : rafraîchissement de l\'inbox', () => {
-  assert.deepEqual(initialisationsPour('inbox'), ['rafraichirInbox']);
+test('inbox : onglet supprimé (issue #639), plus aucune initialisation', () => {
+  assert.deepEqual(initialisationsPour('inbox'), []);
 });
 
 test('aucune trace de l\'onglet Watchers, supprimé (issue #626)', () => {

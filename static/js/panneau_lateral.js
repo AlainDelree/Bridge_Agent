@@ -288,6 +288,18 @@ async function rendrePanneauLateralExtras() {
           + '<button class="pl-btn-vm" data-action="pl-arreter-watcher-inbox">⏹ Arrêter</button>'
           + '</div>';
   }
+  // Historique récent du watcher spool (issue #639) : rejoint ici depuis
+  // l'ancien onglet « Résultats inbox », supprimé. Repli discret dans un
+  // <details> fermé par défaut — n'alourdit le panneau que si on l'ouvre.
+  // Mêmes dernières lignes de logs/issues_inbox.log qu'exposées par
+  // /issues-inbox/etat, déjà chargé ci-dessus (aucun fetch supplémentaire).
+  const lignes = etat.historique || [];
+  html += '<details class="pl-inbox-historique">'
+        + '<summary>Historique récent</summary>'
+        + '<div class="inbox-historique">'
+        + (lignes.length ? dom.echapperHtml(lignes.join('\n'))
+                         : '(aucun historique pour le moment)')
+        + '</div></details>';
   zone.innerHTML = html;
 }
 
