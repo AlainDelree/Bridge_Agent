@@ -120,6 +120,37 @@ test('planifierEvenementSse : fin_issue et creation_issue', () => {
   assert.equal(planifierEvenementSse(etat, { type: 'inconnu', projet: 'p', numero: 1 }).action, 'ignorer');
 });
 
+// ─── planifierEvenementSse : défense en profondeur projets inconnus (#635) ───
+// Un événement /stream best-effort issu d'un projet fictif (ex. tests de
+// watcher.py exécutant le vrai code, tests/test_worktree_parallelisation_337.py)
+// doit être ignoré SANS toast, avant même de regarder son type.
+test('planifierEvenementSse : projet inconnu ignoré (aucun toast)', () => {
+  const etat = { issues: {} };
+  const projetsConnus = ['bridge_agent', 'rummikub'];
+  assert.deepEqual(
+    planifierEvenementSse(etat, { type: 'fin_issue', projet: 'test611par', numero: 93375 }, projetsConnus),
+    { action: 'ignorer', cle: 'test611par#93375', connue: false });
+  assert.deepEqual(
+    planifierEvenementSse(etat, { type: 'debut_issue', projet: 'test576max1', numero: 93761 }, projetsConnus),
+    { action: 'ignorer', cle: 'test576max1#93761', connue: false });
+  assert.deepEqual(
+    planifierEvenementSse(etat, { type: 'creation_issue', projet: 'test576max2', numero: 93764 }, projetsConnus),
+    { action: 'ignorer', cle: 'test576max2#93764', connue: false });
+});
+
+test('planifierEvenementSse : projet connu non affecté par le filtre', () => {
+  const etat = { issues: {} };
+  const projetsConnus = ['bridge_agent', 'rummikub'];
+  assert.equal(
+    planifierEvenementSse(etat, { type: 'fin_issue', projet: 'bridge_agent', numero: 1 }, projetsConnus).action,
+    'fin');
+});
+
+test('planifierEvenementSse : sans liste de projets connus, comportement inchangé', () => {
+  const etat = { issues: {} };
+  assert.equal(planifierEvenementSse(etat, { type: 'fin_issue', projet: 'nimporte_quoi', numero: 1 }).action, 'fin');
+});
+
 // ─── fusionnerChargement (correctif anomalie #3 : échec ≠ disparition) ────────
 test('fusionnerChargement : un projet en échec conserve ses issues précédentes', () => {
   const anciennes = [

@@ -77,6 +77,7 @@ from app.watchers import redemarrer_si_eteint  # noqa: E402 (issue #486, #600)
 from app.issues import (_issue_ouverte_meme_titre, formater_entete,  # noqa: E402 (issues #491, #601, #624)
                         numero_depuis_url, donnees_temps_creation)  # (issue #634)
 from app.interruption import relancer_issue  # noqa: E402 (issue #516)
+import utils  # noqa: E402 (issue #635 — notifications_reseau_neutralisees)
 
 # Ce script tourne dans un process SÉPARÉ de new_issue.py : il ne peut pas
 # muter directement app.notifications_poller._ISSUES_SURVEILLEES (issue #624)
@@ -95,7 +96,10 @@ def _poster_best_effort(url: str, payload: dict) -> None:
     """POST JSON best-effort vers new_issue.py — timeout court, échec
     silencieux si le serveur n'est pas lancé. Factorise le mécanisme partagé
     par _notifier_issue_a_surveiller (issue #624) et les trois émetteurs SSE
-    issues_inbox ci-dessous (issue #631)."""
+    issues_inbox ci-dessous (issue #631). Neutralisé pendant les tests
+    (issue #635, utils.notifications_reseau_neutralisees)."""
+    if utils.notifications_reseau_neutralisees():
+        return
     try:
         corps = json.dumps(payload).encode("utf-8")
         requete = urllib.request.Request(
