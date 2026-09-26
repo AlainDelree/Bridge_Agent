@@ -336,6 +336,14 @@ historique dans le panneau latéral (voir plus haut).
 - [ ] « Enregistrer » et « Enregistrer et relancer » fonctionnent.
 - [ ] Zone dangereuse : « Supprimer ce projet… » ouvre la modale (checklist +
       confirmation par saisie du nom).
+- [ ] **Suppression d'un projet — purge `localStorage`** (issue #644) : avant
+      suppression, consulter (double-clic) une issue du projet à supprimer
+      (crée une clé `bridge_cache_detail_<projet>_<numero>`, DevTools →
+      Application → Local Storage), puis le démasquer/masquer une fois dans le
+      filtre de l'onglet Résultats (crée une entrée `<projet>` dans
+      `bridge_filtres_resultats`). Supprimer le projet → les clés
+      `bridge_cache_detail_<projet>_*` ont disparu, et l'entrée `<projet>` a
+      disparu de `bridge_filtres_resultats` (DevTools, avant/après).
 
 ## Onglet « CCW »
 

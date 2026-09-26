@@ -205,15 +205,7 @@ async function rechargerCases(projets) {
 // on réimporte (sans doublon) puis on retire. Interrompu en plein retrait → les
 // clés restantes seront retirées au tour suivant.
 async function migrerLocalStorage() {
-  let entrees = [];
-  try {
-    if (typeof localStorage !== 'undefined') {
-      for (let i = 0; i < localStorage.length; i++) {
-        const cle = localStorage.key(i);
-        if (cle) entrees.push({ cle, valeur: localStorage.getItem(cle) });
-      }
-    }
-  } catch (e) { return; }
+  const entrees = persistance.toutesLesEntrees();
   const { cases, cles } = extraireCasesLegacy(entrees);
   if (!cases.length) return;
   try {

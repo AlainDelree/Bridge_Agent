@@ -331,8 +331,14 @@ static/js/socle/
   Un seul écouteur par type d'événement, routé par `closest(selecteur)` — destiné
   à remplacer les gestionnaires inline du HTML et ceux générés en texte.
 - **persistance** — `lire/ecrire` (JSON), `lireTexte/ecrireTexte` (brut, compat
-  clés historiques), `supprimer`, `supprimerParPrefixe`, et `CLES` (rappel des
-  clés localStorage d'app.js). **Uniquement des préférences d'interface locales.**
+  clés historiques), `supprimer`, `supprimerParPrefixe`, `toutesLesEntrees`
+  (scan à préfixe variable), `cleCacheDetail`, `purgerCacheDetailProjets` /
+  `purgerCacheDetailHorsProjets` / `purgerProjet` (purge du cache détail, y
+  compris à la suppression d'un projet — issue #644), et `CLES` (les clés
+  localStorage de l'interface). **Uniquement des préférences d'interface
+  locales.** Migration terminée à l'issue #644 : app.js n'accède plus DU TOUT
+  au `localStorage` en direct, uniquement via `window.Bridge.persistance`
+  (pont, cf. §6.4) — c'est désormais le SEUL point d'accès du code JS.
 
 ### 6.4 Mécanisme de transition (`pont.js`) — à retirer à la dernière étape
 
@@ -505,6 +511,32 @@ Résultats, Journal watcher, Configuration, CCW, Nouvelle issue.
 > aucune logique dupliquée. Le bouton « Interrompre et relancer (watcher CCL) »
 > du panneau latéral reste inchangé (action à l'échelle du watcher, pas de
 > l'issue seule).
+
+> **Étape 10 réalisée — purge des fuites `localStorage`, migration terminée
+> (issue #644)** : `persistance.js` était conçu depuis l'étape 1 comme LE point
+> d'accès unique au `localStorage`, mais son propre en-tête documentait que
+> l'ancien `app.js` continuait d'y accéder directement pour les clés
+> historiques. Cette étape termine la migration : `app.js` (script classique)
+> passe désormais systématiquement par `window.Bridge.persistance` (pont, cf.
+> §6.4) — plus aucun accès `localStorage` direct en dehors de `persistance.js`.
+> Deux amorçages tournaient AVANT `DOMContentLoaded` (donc avant que le module
+> socle publie `window.Bridge`, cf. `scripts.html`) : `restaurerProjet()` et
+> `initNotifPc()` sont désormais posés sur `window.addEventListener(
+> 'DOMContentLoaded', …)`, comme `rafraichirReplisRepTravail` le faisait déjà.
+> **Fuite corrigée** : `soumettreSupprimerProjet()` (flux #587) ne purgeait
+> AUCUNE clé `localStorage` du projet supprimé — `persistance.purgerProjet(nom)`
+> retire désormais son cache détail (`bridge_cache_detail_<nom>_*`) et son
+> entrée dans `bridge_filtres_resultats`. **Accumulation réduite** : le cache
+> détail (TTL appliqué à la LECTURE seulement, jamais purgé de lui-même) est
+> maintenant vidé en totalité à chaque ↻ (`purgerCacheDetailProjets(null)`,
+> simplification — les projets actifs étaient de toute façon déjà repurgés à
+> chaque ↻ avant #644), et des entrées des projets sortis du filtre à chaque
+> bascule de filtre (`purgerCacheDetailHorsProjets`, `basculerFiltreProjet` /
+> `basculerTousLesFiltres`) : un projet consulté puis masqué ne s'accumule plus
+> indéfiniment. Nouvelles fonctions PURES testées (`clesCacheDetailPourProjets`,
+> `clesCacheDetailHorsProjets`) + `toutesLesEntrees()` (remplace le scan brut de
+> `resultats_coches.js::migrerLocalStorage`, seul autre accès direct trouvé au
+> grep exhaustif).
 
 > **Note parallélisme** : HTML et JS se découpent proprement par zone. Le CSS
 > est plus contraint : la cascade impose de garder l'ordre source, donc quelques
