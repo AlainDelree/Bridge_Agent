@@ -10,6 +10,7 @@ import {
   calculerBadgeEstimation,
   calculerBadgeModele,
   libelleModele,
+  calculerBadgeSansRedacteur,
   planifierEvenementSse,
   fusionnerChargement,
   fusionnerTimingProjet,
@@ -143,6 +144,28 @@ test('badge modèle : défaut projet non-Sonnet (issue force Sonnet) → affich�
   assert.equal(r.label, 'sonnet');
   // Défaut projet manquant → « claude-sonnet-5 » implicite : Opus diffère.
   assert.equal(calculerBadgeModele('claude-opus-4-8').afficher, true);
+});
+
+// ─── calculerBadgeSansRedacteur (issue #647) ─────────────────────────────────
+test('badge sans REDACTEUR : rien sans le label sans-redacteur', () => {
+  assert.deepEqual(calculerBadgeSansRedacteur([]), { afficher: false });
+  assert.deepEqual(calculerBadgeSansRedacteur(null), { afficher: false });
+  assert.deepEqual(calculerBadgeSansRedacteur(['bridge', 'for-linux']), { afficher: false });
+});
+
+test('badge sans REDACTEUR : affiché quand le label sans-redacteur est présent', () => {
+  const r = calculerBadgeSansRedacteur(['bridge', 'for-linux', 'sans-redacteur']);
+  assert.equal(r.afficher, true);
+  assert.equal(r.titre, 'Créée sans REDACTEUR');
+});
+
+test('badge sans REDACTEUR : reconnaît le format objet {name} de gh issue list', () => {
+  const r = calculerBadgeSansRedacteur([{ name: 'bridge' }, { name: 'sans-redacteur' }]);
+  assert.equal(r.afficher, true);
+});
+
+test('badge sans REDACTEUR : insensible à la casse du label', () => {
+  assert.equal(calculerBadgeSansRedacteur(['Sans-Redacteur']).afficher, true);
 });
 
 // ─── construireIssueCreation (contenu enrichi de creation_issue, issue #640) ──

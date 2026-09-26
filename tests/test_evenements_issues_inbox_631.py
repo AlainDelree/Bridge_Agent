@@ -44,12 +44,32 @@ sys.path.insert(0, str(RACINE))
 sys.path.insert(0, str(RACINE / "scripts"))
 
 import flask  # noqa: E402
+import pytest  # noqa: E402
 
 import app.fin_issue as fi  # noqa: E402
 import app.issues_inbox as ii  # noqa: E402
 import watcher_issues_inbox as w  # noqa: E402
 
 APP_FLASK = flask.Flask(__name__)
+
+
+@pytest.fixture(autouse=True)
+def _isoler_watcher_issues_inbox():
+    """Restaure après CHAQUE test les attributs de `watcher_issues_inbox`
+    remplacés par un double dans ce fichier (`_traiter_bloc` notamment,
+    jamais restauré jusqu'ici — issue #647). `watcher_issues_inbox` est un
+    module SINGLETON partagé par toute la session pytest (`sys.modules`) : un
+    double laissé en place à la fin d'un test fuyait vers TOUS les tests
+    suivants, y compris ceux d'un tout autre fichier appelant
+    `w.traiter_fichier()` avec l'attente du VRAI `_traiter_bloc` — masqué
+    jusqu'ici par le seul fait qu'aucun fichier de test trié après
+    celui-ci n'en dépendait encore."""
+    noms = ("_traiter_bloc", "_poster_best_effort", "_creer_issue",
+            "_issue_ouverte_meme_titre", "DOSSIER_SCRIPT", "charger_config")
+    originaux = {nom: getattr(w, nom) for nom in noms}
+    yield
+    for nom, valeur in originaux.items():
+        setattr(w, nom, valeur)
 
 
 def _reabonner() -> "queue.Queue":

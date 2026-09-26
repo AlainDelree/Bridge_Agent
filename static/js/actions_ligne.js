@@ -77,7 +77,9 @@ import * as dom from './socle/dom.js';
 //    Aucune dépendance au DOM ni au réseau.
 // ─────────────────────────────────────────────────────────────────────────────
 
-function normaliserNomsLabels(labels) {
+// Exportée (issue #647) : resultats.js la réutilise pour calculerBadgeSans
+// Redacteur() plutôt que de dupliquer cette normalisation objet-ou-chaîne.
+export function normaliserNomsLabels(labels) {
   return (labels || []).map((l) => ((l && l.name) || l || '').toLowerCase());
 }
 

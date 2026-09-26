@@ -91,6 +91,16 @@
       n'étant PAS reconstruite à ce moment (seuls les badges de temps le sont
       normalement — vérifier par ex. que la sélection/case cochée de la ligne
       n'est pas perdue).
+- [ ] **Badge « sans REDACTEUR »** (issue #647) : déposer dans `issues_inbox/`
+      une issue **sans** champ `REDACTEUR` dans l'en-tête → sa ligne dans
+      Résultats porte un **badge discret ambré** (infobulle « Créée sans
+      REDACTEUR »), sans **rien bloquer** — l'issue se crée normalement. Une
+      issue indiquant `| REDACTEUR | <projet> |` **cohérent** avec `PROJET`
+      n'affiche **rien de plus** qu'avant. Une issue avec `REDACTEUR`
+      **incohérent** (autre projet) reste **rejetée** vers `rejected/` comme
+      avant #647 (aucune issue créée, donc aucun badge à vérifier pour ce cas).
+      Le badge doit apparaître **dès l'apparition de la ligne** (« ⏳ en
+      file »), sans ↻.
 - [ ] **Une seule** connexion `/stream` dans l'onglet Réseau (jamais deux),
       présente même hors de l'onglet Résultats.
 - [ ] **Échec d'un projet** : si un `/issues-liste/<projet>` échoue, ses issues

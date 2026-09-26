@@ -31,7 +31,10 @@ contre une issue rédigée par Claude Chat dans le contexte d'un projet puis
 déposée sous un PROJET différent (distraction, relecture insuffisante). Voir
 valider_redacteur() pour les deux cas acceptés (REDACTEUR == PROJET, ou
 canal CCW for-windows avec REDACTEUR == bridge_agent) ; absent, aucune
-validation (rétrocompatibilité avec les issues existantes).
+validation (rétrocompatibilité avec les issues existantes). Depuis l'issue
+#647, une absence (jamais une incohérence, qui reste rejetée) pose en plus le
+label `sans-redacteur` sur l'issue créée — signal purement visuel côté onglet
+Résultats (badge, ne bloque jamais rien), voir construire_labels().
 
 Après création réussie de l'issue, le watcher CCL du projet concerné
 (`watcher.py --config configs/<projet>.conf`) est démarré automatiquement
@@ -72,6 +75,7 @@ sys.path.insert(0, str(DOSSIER_SCRIPT))
 
 from watcher import (charger_config, lire_conf, est_titre_chef,  # noqa: E402
                      LABEL_NOTIF_PC, LABEL_NOTIF_GSM, LABEL_NOTIF_TOUS,
+                     LABEL_SANS_REDACTEUR,  # (issue #647)
                      valider_sous_dossier, valider_repo_cible)  # noqa: E402 (issue #567)
 from app.watchers import redemarrer_si_eteint  # noqa: E402 (issue #486, #600)
 from app.issues import (_issue_ouverte_meme_titre, formater_entete,  # noqa: E402 (issues #491, #601, #624)
@@ -756,6 +760,15 @@ def construire_labels(champs: dict) -> str:
     # comportement le plus courant côté formulaire, app/issues.py::construire_labels).
     if not (LABELS_NOTIF & set(labels)):
         labels.append(LABEL_NOTIF_PC)
+    # Label « sans-redacteur » (issue #647) : posé UNIQUEMENT quand REDACTEUR
+    # est ABSENT de l'en-tête (cas déjà accepté par valider_redacteur, qui
+    # renvoie (True, "") pour ce cas — rétrocompatibilité, jamais de rejet).
+    # REDACTEUR présent (cohérent ou non) → jamais posé ici : l'incohérence a
+    # déjà son propre traitement (rejet vers rejected/, valider_redacteur),
+    # inchangé. Purement informatif côté onglet Résultats (badge « Créée sans
+    # REDACTEUR », calculerBadgeSansRedacteur de resultats.js) — ne bloque rien.
+    if not champs.get("redacteur") and LABEL_SANS_REDACTEUR not in labels:
+        labels.append(LABEL_SANS_REDACTEUR)
     return ",".join(labels)
 
 

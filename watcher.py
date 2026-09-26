@@ -212,6 +212,13 @@ LABEL_SCRATCH   = "mode_scratch"  # ARME la lecture active (écriture confinée 
 LABEL_ECHEC     = "needs-human"   # posé après échec définitif : stoppe le retraitement auto
 LABEL_FAIT      = "done"          # posé au succès
 
+# Posé à la création (issue #647) quand l'en-tête ne porte pas le champ
+# optionnel REDACTEUR (issue #599) — signal purement informatif pour l'onglet
+# Résultats (badge « Créée sans REDACTEUR »), jamais un rejet : REDACTEUR
+# absent reste une création normale (voir valider_redacteur, scripts/
+# watcher_issues_inbox.py). Ne bloque jamais rien.
+LABEL_SANS_REDACTEUR = "sans-redacteur"
+
 # Garde-fou explicite sur l'AUTEUR de l'issue (issue #563), en complément du
 # filtre par labels (#477 ci-dessous dans lister_issues). Jusqu'ici, la seule
 # protection contre une issue créée par un tiers était INDIRECTE : poser un

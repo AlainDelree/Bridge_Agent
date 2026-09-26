@@ -1364,6 +1364,19 @@ function construireLigneIssueDOM(it) {
     '<span class="badge-modele"' + (decisionModele.afficher ? '' : ' style="display:none"')
     + ' title="' + escapeHtml(decisionModele.titre || '') + '">'
     + escapeHtml(decisionModele.label || '') + '</span>';
+  // Badge « sans REDACTEUR » (issue #647) : signale, sans jamais bloquer la
+  // création, qu'une issue a été créée sans le champ optionnel REDACTEUR
+  // (label GitHub `sans-redacteur`, posé par construire_labels() côté
+  // watcher_issues_inbox.py). Même patron que le badge modèle ci-dessus :
+  // span TOUJOURS présent, masqué si rien à afficher, pour que majBadges()
+  // puisse le retrouver via querySelector sans reconstruire la ligne.
+  const decisionSansRedacteur = (window.Bridge && window.Bridge.resultats
+      && window.Bridge.resultats.calculerBadgeSansRedacteur)
+    ? window.Bridge.resultats.calculerBadgeSansRedacteur(it.labels)
+    : { afficher: false };
+  const badgeSansRedacteurHtml =
+    '<span class="badge-sans-redacteur"' + (decisionSansRedacteur.afficher ? '' : ' style="display:none"')
+    + ' title="' + escapeHtml(decisionSansRedacteur.titre || '') + '">⚠</span>';
   ligne.innerHTML =
     // Case à cocher libre (issue #154), tout à gauche de la ligne. Le clic ne
     // doit PAS sélectionner/ouvrir l'issue (stopPropagation) ; onchange délègue
@@ -1386,6 +1399,9 @@ function construireLigneIssueDOM(it) {
     // Badge « modèle forcé » (issue #638) : entre le titre et les badges de
     // temps, présent aussi pour les issues fermées (rien pour la majorité).
     + badgeModeleHtml
+    // Badge « sans REDACTEUR » (issue #647) : juste après, même raison
+    // d'être présent aussi sur une issue fermée.
+    + badgeSansRedacteurHtml
     // Badge d'estimation prédictive (issue #108) PUIS badge de temps restant
     // (issues #91/#106) : l'estimation (durée médiane historique du même
     // projet+type+mode) s'affiche JUSTE AVANT le décompte, qui reste inchangé.

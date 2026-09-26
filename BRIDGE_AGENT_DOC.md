@@ -234,6 +234,14 @@ tout autre traitement (avant même la vérification du titre) :
 
 `REDACTEUR` **absent** → aucune validation, traitement normal
 (rétrocompatibilité avec les issues existantes, qui ne portent pas ce champ).
+Depuis l'issue #647, ce cas précis (absent — jamais l'incohérence du cas 3
+ci-dessus, qui reste un rejet inchangé) pose en plus le label GitHub
+`sans-redacteur` sur l'issue créée : signal purement **visuel**, jamais
+bloquant, pour qu'Alain repère dans l'onglet Résultats une issue rédigée par
+Claude Chat sans indication de projet d'origine (risque réel dans une
+conversation longue abordant plusieurs projets sans changer de session) et
+lui demande de relire la documentation à jour. Voir §17.3 (« Badge « sans
+REDACTEUR » ») pour le détail du badge côté navigateur.
 
 ### 3.5 Journalisation (rotation par nombre de lignes)
 
@@ -3589,6 +3597,42 @@ pure `calculerBadgeModele(modele, modele_defaut)` de `static/js/resultats.js`,
 testée sous Node (`node --test static/js/tests/`). Le versant serveur
 (`extraire_modele_entete` : présent/absent/invalide) est testé par
 `tests/test_modele_effectif_638.py`.
+
+**Badge « sans REDACTEUR » d'une ligne (issue #647)** : signal purement
+**visuel**, jamais bloquant, complémentaire de la validation `REDACTEUR` du
+§3.4. Une issue créée via `issues_inbox/` (`scripts/watcher_issues_inbox.py`)
+**sans** champ optionnel `REDACTEUR` dans son en-tête — cas déjà accepté par
+`valider_redacteur()` (rétrocompatibilité, jamais de rejet) — reçoit en plus,
+à la création, le label GitHub `sans-redacteur` (`watcher.LABEL_SANS_
+REDACTEUR`), posé par `construire_labels()`. `REDACTEUR` **présent** (cohérent
+avec `PROJET` ou non — l'incohérence a son propre traitement, rejet vers
+`rejected/`, inchangé au §3.4) → jamais posé. Objectif (besoin d'Alain) :
+repérer, dans l'onglet Résultats, le cas où Claude Chat a rédigé une issue sans
+indiquer son projet d'origine au fil d'une conversation longue (plusieurs
+projets abordés sans changer de session) — l'absence de tout signal
+empêchait jusqu'ici de le remarquer.
+
+Cette pastille ambrée discrète (infobulle « Créée sans REDACTEUR »), placée
+juste après le badge « modèle forcé » ci-dessus, **réutilise l'infrastructure
+de #638** plutôt que de la dupliquer : aucun appel GitHub supplémentaire (le
+label posé à la création est déjà présent dans la réponse `labels` de chaque
+route existante), même patron span-toujours-présent-masqué-si-rien-à-afficher
+rafraîchi à chaque tick par `majBadges()`. La décision « afficher/masquer »
+est prise côté navigateur par l'unique fonction pure
+`calculerBadgeSansRedacteur(labels)` de `static/js/resultats.js` (simple
+présence du label `sans-redacteur`, réutilisant `normaliserNomsLabels()`
+d'`actions_ligne.js` — objets `{name}` de `gh issue list` ou chaînes),
+testée sous Node. Le versant serveur (pose du label par `construire_labels()`)
+est testé par `tests/test_label_sans_redacteur_647.py`.
+
+Formulaire web (`new_issue.py`, `app/issues.py::envoyer()`) : **volontairement
+non concerné**. Ce chemin (Alain tapant directement dans le navigateur, pas
+Claude Chat) ne propose **aucun** champ `REDACTEUR` — `construire_labels(data)`
+n'en lit jamais depuis `data`. Y appliquer la même logique poserait donc le
+label sur **100 % des créations de ce chemin sans exception**, un signal
+toujours vrai qui ne distinguerait jamais rien (contrairement à `issues_inbox/`
+où l'absence reste l'exception) : ajouter ce code y aurait été du code mort
+en pratique, écarté sciemment plutôt qu'ajouté sans utilité.
 
 **Configuration héritée** : la clé `.conf` reste `SCRIPT_BIP` (voir §17.1
 ci-dessus et §10) — Alain doit mettre à jour manuellement le chemin dans ses

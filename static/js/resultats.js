@@ -29,7 +29,7 @@ import { toasts } from './socle/toasts.js';
 import { sse } from './socle/sse.js';
 import { appelerAncien } from './socle/pont.js';
 import * as persistance from './socle/persistance.js';
-import { afficherIconeInterruption } from './actions_ligne.js';
+import { afficherIconeInterruption, normaliserNomsLabels } from './actions_ligne.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 1. LOGIQUE PURE (testée sous Node — voir static/js/tests/resultats.test.js)
@@ -171,6 +171,24 @@ export function calculerBadgeModele(modele, modeleDefaut) {
     titre: 'Cette issue force le modèle « ' + eff + ' », différent du modèle par '
          + 'défaut du projet (« ' + def + ' »).',
   };
+}
+
+// Label GitHub posé à la création (scripts/watcher_issues_inbox.py ::
+// construire_labels) quand le champ optionnel REDACTEUR (issue #599) est
+// ABSENT de l'en-tête — jamais quand il est présent, cohérent ou non (une
+// incohérence a son propre traitement, rejet vers rejected/, inchangé).
+export const LABEL_SANS_REDACTEUR = 'sans-redacteur';
+
+// Décide si une issue doit afficher le badge « sans REDACTEUR » (issue #647) :
+// avertissement VISIBLE mais jamais bloquant, purement basé sur la présence du
+// label ci-dessus — même patron que calculerBadgeModele() (issue #638),
+// enrichissement à partir des labels déjà connus, aucun appel GitHub
+// supplémentaire. Renvoie { afficher, titre } — logique pure, testée sous
+// Node.
+export function calculerBadgeSansRedacteur(labels) {
+  const noms = normaliserNomsLabels(labels);
+  if (!noms.includes(LABEL_SANS_REDACTEUR)) return { afficher: false };
+  return { afficher: true, titre: 'Créée sans REDACTEUR' };
 }
 
 // Décide, à partir de l'état courant et d'un événement /stream, l'action CIBLÉE
@@ -485,6 +503,14 @@ export function majBadges() {
       const it = issues[cle];
       appliquerBadgeModele(badgeModele, calculerBadgeModele(it && it.modele, it && it.modele_defaut));
     }
+    // Badge « sans REDACTEUR » (issue #647) : même patron que le badge modèle
+    // ci-dessus — recalculé à chaque tick depuis les labels déjà connus du
+    // store, aucun appel réseau.
+    const badgeSansRedacteur = ligne.querySelector('.badge-sans-redacteur');
+    if (badgeSansRedacteur) {
+      const it = issues[cle];
+      appliquerBadgeSansRedacteur(badgeSansRedacteur, calculerBadgeSansRedacteur((it && it.labels) || []));
+    }
     // Icône dédiée d'interruption (issue #642) : révélée sur toute issue OUVERTE
     // actuellement EN COURS (lecture ou écriture), à partir du même `t.debut`
     // que le décompte TIMEOUT ci-dessous — jamais posée pour une ligne fermée
@@ -528,6 +554,22 @@ function appliquerBadgeModele(badge, decision) {
   }
   badge.style.display = '';
   badge.textContent = decision.label;
+  badge.title = decision.titre;
+}
+
+// Met à jour (sans reconstruire) le badge « sans REDACTEUR » d'une ligne déjà
+// dans le DOM — le pendant de appliquerBadgeModele() ci-dessus, décision
+// déléguée à calculerBadgeSansRedacteur() (logique pure, testée sous Node).
+// Contenu textuel FIXE (posé une fois pour toutes dans le HTML de la ligne,
+// cf. construireLigneIssueDOM d'app.js) : seuls l'affichage et l'infobulle
+// varient ici.
+function appliquerBadgeSansRedacteur(badge, decision) {
+  if (!decision || !decision.afficher) {
+    badge.style.display = 'none';
+    badge.title = '';
+    return;
+  }
+  badge.style.display = '';
   badge.title = decision.titre;
 }
 
@@ -901,4 +943,6 @@ export const resultats = {
   // Exposée pour que l'ancien app.js (construireLigneIssueDOM) décide du badge
   // « modèle forcé » d'une ligne via l'unique fonction testée (issue #638).
   calculerBadgeModele,
+  // Idem pour le badge « sans REDACTEUR » (issue #647).
+  calculerBadgeSansRedacteur,
 };

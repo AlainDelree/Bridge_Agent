@@ -189,6 +189,13 @@
 .ligne-issue .badge-modele{flex-shrink:0;font-size:10px;font-weight:700;line-height:1;
   padding:2px 6px;border-radius:9px;white-space:nowrap;text-transform:uppercase;
   letter-spacing:.03em;color:#5b3a8a;background:#efe8f8;border:1px solid #d3c3ea}
+/* Badge « sans REDACTEUR » (issue #647) : pastille discrète signalant une
+   issue créée SANS le champ optionnel REDACTEUR (label GitHub
+   `sans-redacteur`) — purement informatif, jamais un blocage. Ton ambre
+   sourd, distinct du violet du badge modèle et des badges de temps. */
+.ligne-issue .badge-sans-redacteur{flex-shrink:0;font-size:11px;font-weight:700;
+  line-height:1;padding:1px 5px;border-radius:9px;white-space:nowrap;
+  color:#8a5a00;background:#fdf0d5;border:1px solid #e8c98a}
 /* Badge de temps restant estimé des issues ouvertes (issue #91), conscient du
    budget de retry (issue #106). Couleur selon l'état : vert = large marge,
    orange = échéance proche (<=30 s), rouge = budget total dépassé, gris = pas
