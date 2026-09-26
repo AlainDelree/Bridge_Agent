@@ -82,6 +82,7 @@ Claude Chat → crée une issue → GitHub → watcher.py détecte → CCL exéc
 | `relecture_bridge` | AlainDelree/Relecture_Bridge | ~/Relecture_Bridge | (conf local) | `#CCFF00` |
 | `rummikub` | AlainDelree/Rummikub | ~/Rummikub | (conf local) | `#ADFF8F` |
 | `scrabble` | AlainDelree/Scrabble | ~/Scrabble | (conf local) | `#7AFFFF` |
+| `testprojetrefonte` | AlainDelree/Testprojetrefonte | ~/Testprojetrefonte | (conf local) | `#CCDDFF` |
 <!-- FIN:TABLEAU_PROJETS_ACTIFS -->
 
 Chaque projet a son propre watcher (`watcher.py --config configs/<nom>.conf`)
@@ -844,6 +845,7 @@ hors périmètre même si l'issue le demande explicitement :
 | `relecture_bridge` | /home/alain/Relecture_Bridge |
 | `rummikub` | /home/alain/Rummikub |
 | `scrabble` | /home/alain/Scrabble |
+| `testprojetrefonte` | /home/alain/Testprojetrefonte |
 <!-- FIN:TABLEAU_PERIMETRE_PROJETS -->
 
 ---
@@ -4119,7 +4121,7 @@ de création d'issue, seul valable pour du contenu qu'il produit.
 
 ---
 
-*Dernière mise à jour : 25 septembre 2026 — issue #629 (étape 5a de la
+*Dernière mise à jour : 26 septembre 2026 — issue #629 (étape 5a de la
 refonte web, §6 d'`ARCHITECTURE.md`) : nouveau backend d'état serveur pour
 la case « traité/lu » de l'onglet Résultats, jusqu'ici 100% localStorage
 (issue #154) — `etat_cases_cochees.py` (fichier JSON sous `logs/`, écriture
