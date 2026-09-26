@@ -9,6 +9,13 @@ milliers de caractères sur une seule ligne logique, coûteux à relire et
 
 Convention d'ajout : voir §10 de `BRIDGE_AGENT_DOC.md`.
 
+## Issue #640 — Badge modèle absent sur une issue créée via issues_inbox tant que la page n'est pas rechargée
+
+- **Backend** : l'événement SSE `creation_issue` transporte désormais `modele`/`modele_defaut` (dans le dict `timing`, mêmes primitives `extraire_modele_entete()`/`modele_defaut_projet()` que l'issue #638) — ajoutés dans les deux émetteurs, `app/issues.py::envoyer()` (formulaire web) et `scripts/watcher_issues_inbox.py::_traiter_bloc()` (issues_inbox), sans appel GitHub supplémentaire.
+- **Frontend** : `majBadges()` (`static/js/resultats.js`) met désormais aussi à jour le badge « modèle forcé » d'une ligne déjà construite (via `calculerBadgeModele()` + `store.get('issues')`), sans reconstruire toute la ligne — corrige le cas où `debut_issue` backfillait `modele`/`modele_defaut` dans le store (issue #638) sans jamais redessiner le badge. `construireLigneIssueDOM()` (`static/js/app.js`) émet désormais systématiquement le span `.badge-modele` (masqué si rien à afficher), pour que `majBadges()` puisse le retrouver.
+- Extraction d'une fonction pure `construireIssueCreation()` (testée sous Node) pour la construction de l'entrée `issues` du store à la création, incluant `modele`/`modele_defaut`.
+- Tests : 4 nouveaux tests Node (`static/js/tests/resultats.test.js`) sur `construireIssueCreation()` ; suite Python existante (`tests/test_creation_issue_enrichie_634.py`, `tests/test_evenements_issues_inbox_631.py`) non modifiée, toujours verte (l'enrichissement est passé par le dict `timing` déjà opaque à ces tests). Entrée ajoutée à `VERIFICATIONS_MANUELLES.md` pour la partie DOM de `majBadges()`, non testable sous Node par convention du projet (aucun DOM dans les tests JS).
+
 ## 26 septembre 2026 — issue #636
 
 Refonte interface web — étape 5b : case « traité/lu » à état serveur, copie fiable au cochage, pastilles et « Cocher tout » cohérents.
