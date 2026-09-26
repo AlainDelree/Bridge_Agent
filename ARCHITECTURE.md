@@ -402,8 +402,11 @@ concaténation byte-identique à l'ancien `style.css`, vérifiée) :
 
 **Modules JS par fonctionnalité** : un module par zone, dans `static/js/`,
 importé par `index.js` (voir §6.7). Chaque module utilise les briques du socle.
-Déjà sortis : `onglets.js` (bascule entre onglets, issue #626, étape 2) et
-`resultats.js` (moteur de l'onglet Résultats, issue #627, étape 3). Futurs
+Déjà sortis : `onglets.js` (bascule entre onglets, issue #626, étape 2),
+`resultats.js` (moteur de l'onglet Résultats, issue #627, étape 3),
+`panneau_lateral.js` (panneau latéral, issue #628, étape 4) et
+`resultats_coches.js` (case « traité/lu » à état serveur + copie fiable, issue
+#636, étape 5b). Futurs
 modules (ex. `creation.js`, `config.js`, `ccw.js`, `journal.js`,
 `inbox.js`, `nouveau_projet.js`) suivent le même patron.
 
@@ -429,6 +432,29 @@ chargement de la page (avant l'issue #626, c'était Nouvelle issue).
 > hooks `window.__resultats*` posés dans `app.js` et appelés par `resultats.js`.
 > Tests de logique pure : `static/js/tests/resultats.test.js`. L'import map
 > (§6.6) couvre désormais aussi ces modules de `static/js/` (hors `app.js`).
+
+> **Étape 5b réalisée — `static/js/resultats_coches.js` (issue #636)** : sort
+> d'`app.js` la **case « traité/lu »** de chaque ligne Résultats. Son état ne vit
+> plus dans le `localStorage` mais **côté serveur** (`store.casesCochees`,
+> synchronisé via les routes `/cases-cochees` de l'étape 5a, issue #629) : une
+> SEULE requête `GET /cases-cochees/<projet>` par projet au chargement, plus une
+> **migration idempotente** au premier lancement (les clés
+> `resultat-coche:<projet>:<numero>` du `localStorage` sont envoyées en une fois à
+> `POST /cases-cochees/importer` puis retirées). `app.js` ne garde que de minces
+> relais (`estResultatCoche`/`basculerCocheResultat` → module via le pont). Le
+> module porte aussi le **moteur de copie fiable** : cocher une case (ou cliquer
+> un badge ✅/Diff/All) engage la copie **pendant le geste** — `ClipboardItem`
+> alimenté par une promesse en contexte sécurisé (localhost/HTTPS), texte
+> **préchargé** + `execCommand` synchrone en `--lan` (HTTP non-localhost, API
+> presse-papier moderne absente) — au lieu de fetcher AVANT d'écrire (ce qui
+> sortait de la fenêtre d'activation et faisait échouer la copie par
+> intermittence). **Feedback honnête** : jamais de ✓ sur échec (toast d'erreur),
+> et le cochage (persistance/grisage/pastilles) ne dépend jamais de la copie.
+> Enfin, « Cocher tout » est aligné sur le périmètre des pastilles (les N
+> premières issues par projet, `premieresParProjet`), et un bouton **« Tout à
+> zéro »** marque comme cochées, côté serveur, toutes les issues chargées de tous
+> les projets (confirmation légère, aucune copie). Tests de logique pure :
+> `static/js/tests/resultats_coches.test.js`.
 
 > **Note parallélisme** : HTML et JS se découpent proprement par zone. Le CSS
 > est plus contraint : la cascade impose de garder l'ordre source, donc quelques

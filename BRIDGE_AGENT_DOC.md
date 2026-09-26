@@ -1455,6 +1455,50 @@ Tests : `tests/test_cases_cochees_629.py` (stockage isolé du vrai
 `configs/`) — lecture/écriture, idempotence cocher/décocher/import, règle
 de nettoyage, isolation entre projets, suppression de projet, routes Flask.
 
+### Case « traité/lu » côté interface + copie fiable (issue #636, étape 5b)
+
+Branche l'interface sur le backend de #629 et corrige trois défauts connus de
+la case à cocher, dans le module dédié **`static/js/resultats_coches.js`**
+(sorti d'`app.js` selon `ARCHITECTURE.md` §6.7 ; `app.js` ne garde que de minces
+relais appelés par le markup inline des lignes).
+
+- **État serveur.** La case ne vit plus dans le `localStorage` mais dans
+  `store.casesCochees` (`{ nomProjet: [numero, …] }`), synchronisé avec le
+  serveur : **un seul `GET /cases-cochees/<projet>` par projet** au chargement
+  (jamais un par issue). L'état survit à un plantage du PC et est **identique
+  quel que soit le navigateur ou l'adresse** (localhost / `--lan`).
+- **Migration idempotente.** Au premier chargement, les clés héritées
+  `resultat-coche:<projet>:<numero>` du `localStorage` sont extraites
+  (`extraireCasesLegacy`), envoyées **en une fois** à
+  `POST /cases-cochees/importer`, puis retirées du `localStorage`. Rejouable
+  sans dégât (import idempotent côté serveur ; clés retirées seulement après
+  succès).
+- **Copie fiable au cochage.** Cocher une case (ou cliquer un badge
+  ✅/Diff/All) **engage la copie pendant le geste**, plus jamais après un fetch
+  réseau : en **contexte sécurisé** (localhost/HTTPS) via `ClipboardItem`
+  alimenté par une **promesse** (`navigator.clipboard.write` appelé au clic, le
+  texte est fetché ensuite) ; en **contexte non sécurisé** (`--lan`, API
+  presse-papier moderne absente) via un **préchargement** du détail+diff des
+  issues visibles décochées puis `execCommand` **synchrone**. `decisionModeCopie`
+  tranche entre les deux. **Feedback honnête** : jamais de ✓ sur échec (toast
+  d'erreur, jamais de boîte « OK ») ; le cochage (persistance/grisage/pastilles)
+  ne dépend jamais de la copie. Décocher ne copie rien. Les copies des badges
+  sont **factorisées** dans le même moteur (`lancerCopie`).
+- **Pastilles ↔ « Cocher tout » alignés.** Choix retenu : **élargir « Cocher
+  tout »** au périmètre exact des pastilles (les N premières issues par projet,
+  `premieresParProjet`, sans le quota d'affichage ni le filtre ouvriers) plutôt
+  que restreindre les pastilles — la pastille garde ainsi son sens (nombre réel
+  d'issues à traiter par projet). Après « Cocher tout », aucune pastille des
+  projets actifs ne reste.
+- **Bouton « ⊘ Tout à zéro »** (à côté de « Cocher tout ») : marque comme
+  cochées, côté serveur (`POST /cases-cochees/importer`), **toutes** les issues
+  chargées de **tous** les projets, quel que soit le filtre. Confirmation légère
+  (`toasts.confirmer`). **Aucune copie.**
+
+Tests de logique pure : `static/js/tests/resultats_coches.test.js` (fusion de
+l'état serveur dans le store, décision du mode de copie, migration idempotente
+du `localStorage`, périmètre `premieresParProjet`).
+
 ### Couleur d'accent des projets (issues #120, #121, #534, #535, #539, #540)
 
 Trois niveaux de priorité déterminent la couleur affichée d'un projet

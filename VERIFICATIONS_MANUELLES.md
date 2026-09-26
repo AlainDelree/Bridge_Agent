@@ -85,8 +85,39 @@
       commentaires, réponse CCL).
 - [ ] Onglets Réponse / Diff du détail ; le Diff se charge.
 - [ ] **Copie** : « Copier résumé », « Copier tout », badges ✅ / Diff / All.
-- [ ] **Cochage** d'un résultat (case à gauche) : la ligne passe en « traité »
-      (barré + fond) ; état conservé après rechargement.
+- [ ] **Cochage** d'un résultat (case à gauche, issue #636 — état SERVEUR) : la
+      ligne passe en « traité » (barré + fond) ; **cocher copie fiablement le
+      rapport complet (réponse + diff)** de cette issue dans le presse-papier
+      (toast de succès), **décocher ne copie rien**. L'état est conservé après
+      **F5** ET après **fermeture/réouverture du navigateur** ET **identique en
+      localhost et en `--lan`** (les deux adresses lisent le même état serveur) ;
+      il survit à un redémarrage du PC. En cas d'échec de copie : **jamais de faux
+      succès** — un toast d'erreur (qui disparaît seul, aucune boîte « OK »).
+- [ ] **Copie en localhost / HTTPS** (contexte sécurisé) : cocher une case ou
+      cliquer ✅/Diff/All copie bien le contenu attendu, **sans échec
+      intermittent** (la copie est engagée au clic, pas après le fetch réseau).
+- [ ] **Copie en `--lan`** (HTTP non-localhost, API presse-papier moderne
+      absente) : lancer `python3 new_issue.py --lan`, ouvrir depuis une autre
+      machine via `http://<ip>:5100`. Cocher une case copie quand même le rapport
+      (repli `execCommand`, texte préchargé) ; au tout premier clic sur une issue
+      dont le texte n'est pas encore préchargé, un toast « préparation en cours »
+      peut apparaître — un second clic aboutit. **Jamais de faux succès.**
+- [ ] **Migration du localStorage** (issue #636, à faire UNE fois sur un
+      navigateur ayant déjà des coches d'avant #636) : avant mise à jour, cocher
+      quelques résultats (anciennes clés `resultat-coche:*`). Après mise à jour +
+      rechargement : les mêmes lignes restent cochées (reprise serveur), et les
+      clés `resultat-coche:*` ont disparu du `localStorage` (DevTools →
+      Application). Rejouer un rechargement ne recrée rien (idempotent).
+- [ ] **Pastilles ↔ « Cocher tout »** (issue #636) : avec plusieurs projets
+      chargés, cliquer **« ✓ Cocher tout »** → **aucune pastille des projets
+      actifs (filtrés) ne reste** (même après une longue coupure). Le périmètre
+      coché est celui des pastilles (N premières issues par projet), y compris
+      ouvriers et issues hors quota d'affichage. Ne déclenche aucune copie.
+- [ ] **Bouton « ⊘ Tout à zéro »** (issue #636), à côté de « Cocher tout » :
+      demande une **confirmation légère** (toast de confirmation) ; une fois
+      confirmé, **toutes** les pastilles de **tous** les projets (même non
+      filtrés) tombent à zéro. **Ne déclenche AUCUNE copie** presse-papier. État
+      persisté côté serveur (survit à F5 et changement de navigateur).
 - [ ] **Largeur de la liste** (issue #633) : à zoom 100 % sur un écran large,
       panneau latéral **ouvert**, la liste retrouve au moins la largeur qu'elle
       avait avant #628 (plus de colonne étriquée par le panneau). Aucune ligne

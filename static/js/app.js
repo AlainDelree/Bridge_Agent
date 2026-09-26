@@ -1031,6 +1031,23 @@ function construireBoutonsFiltre(noms) {
   coutTout.textContent = '✓ Cocher tout';
   coutTout.onclick = cocherToutesVisibles;
   zone.appendChild(coutTout);
+  // Bouton « Tout à zéro » (issue #636), à côté de « Cocher tout » : marque comme
+  // cochées, CÔTÉ SERVEUR, toutes les issues chargées de TOUS les projets (quel
+  // que soit le filtre courant) → remet toutes les pastilles à zéro. Ne déclenche
+  // AUCUNE copie presse-papier ; confirmation légère (toasts.confirmer) via le
+  // module dédié (static/js/resultats_coches.js).
+  const coutZero = document.createElement('button');
+  coutZero.id = 'btn-remise-zero-cases';
+  coutZero.className = 'btn-remise-zero-cases';
+  coutZero.title = 'Marquer comme traitées toutes les issues chargées de TOUS les '
+    + 'projets (remet toutes les pastilles à zéro). Ne copie rien.';
+  coutZero.textContent = '⊘ Tout à zéro';
+  coutZero.onclick = () => {
+    if (window.Bridge && window.Bridge.resultatsCoches) {
+      window.Bridge.resultatsCoches.remettreAZero();
+    }
+  };
+  zone.appendChild(coutZero);
   // Bouton rafraîchir déplacé ici, juste après « Tous » (issue #57). Recréé à
   // chaque reconstruction de la ligne car zone.innerHTML est vidé au début.
   const rafr = document.createElement('button');
@@ -1045,24 +1062,15 @@ function construireBoutonsFiltre(noms) {
   majPastillesFiltres();
 }
 
-// Coche toutes les issues actuellement visibles dans la liste (issue #381) —
-// « visible » au sens d'appliquerFiltresListe (projet filtré + quota + filtre
-// ouvriers), donc « tous projets » quand le filtre « Tous » est actif. Même
-// mécanisme que la case individuelle (basculerCocheResultat, issue #154) :
-// persistance localStorage + classe .resultat-traite, sans logique métier.
+// « Cocher tout » (issue #381, périmètre élargi #636) : délègue au module dédié.
+// Depuis l'issue #636, coche toutes les issues chargées DANS LA LIMITE PAR PROJET
+// des projets actuellement filtrés (même périmètre que les pastilles, sans le
+// quota d'affichage ni le filtre ouvriers) — de sorte qu'après coup aucune
+// pastille des projets actifs ne reste. NE déclenche AUCUNE copie.
 function cocherToutesVisibles() {
-  document.querySelectorAll('#liste-issues .ligne-issue').forEach(ligne => {
-    if (ligne.style.display === 'none') return;
-    const cb = ligne.querySelector('.coche-resultat');
-    if (!cb || cb.checked) return;
-    cb.checked = true;
-    try { localStorage.setItem(cleCocheResultat(ligne.dataset.projet, ligne.dataset.numero), '1'); }
-    catch(e) { /* localStorage indisponible : la case reste juste visuelle */ }
-    ligne.classList.add('resultat-traite');
-  });
-  // Pastilles filtre projet (issue #383) : comptent les issues décochées,
-  // donc cocher tout le visible doit rafraîchir immédiatement leur compte.
-  majPastillesFiltres();
+  if (window.Bridge && window.Bridge.resultatsCoches) {
+    window.Bridge.resultatsCoches.cocherTout();
+  }
 }
 
 // Pastille de notification sur chaque bouton de filtre projet (issue #381) :
@@ -1078,11 +1086,14 @@ function cocherToutesVisibles() {
 // cache plus profond que la limite couramment affichée (N abaissé sans clic
 // sur ↻, cf. commentaire de limiteIssuesProjet) gonflerait la pastille
 // au-delà de ce que l'utilisateur voit réellement dans la liste.
-// Compte les issues DÉCOCHÉES (issue #383) : la case à cocher libre
-// (localStorage, voir estResultatCoche/cleCocheResultat) reflète si Alain a
-// déjà traité/lu ce résultat — indépendamment de son état GitHub (open/closed,
-// labels done/needs-human). Une issue décochée reste à traiter quel que soit
-// son état GitHub, donc plus aucun filtre sur state/labels ici.
+// Compte les issues DÉCOCHÉES (issue #383) : la case à cocher « traité/lu »
+// (état SERVEUR depuis l'issue #636, voir estResultatCoche → module
+// resultats_coches.js) reflète si Alain a déjà traité/lu ce résultat —
+// indépendamment de son état GitHub (open/closed, labels done/needs-human). Une
+// issue décochée reste à traiter quel que soit son état GitHub, donc plus aucun
+// filtre sur state/labels ici. Ce périmètre (N premières par projet) est EXACTEMENT
+// celui coché par « Cocher tout » et la remise à zéro (issue #636,
+// premieresParProjet) : après ces actions, aucune pastille concernée ne reste.
 function majPastillesFiltres() {
   const limite = limiteIssuesProjet();
   const vus = {};
@@ -1199,41 +1210,28 @@ function avecOpacite(hex, alpha) {
        + (n & 255) + ',' + alpha + ')';
 }
 
-// ─── Case à cocher libre par résultat (issue #154) ────────────────────────
-// Repère visuel purement personnel pour Alain (« ce résultat, je l'ai déjà
-// traité/lu »), SANS aucune logique métier. L'état vit UNIQUEMENT dans le
-// localStorage du navigateur : aucun appel au serveur Flask, rien de stocké
-// côté Python/fichier. La clé est stable, dérivée de l'identité de l'issue
-// (projet + numéro), donc l'état survit aux rechargements et re-rendus.
-function cleCocheResultat(projet, numero) {
-  return 'resultat-coche:' + projet + ':' + numero;
-}
-// Vrai si l'utilisateur a coché ce résultat. Robuste si localStorage est
-// indisponible (mode privé strict) : on renvoie simplement false.
+// ─── Case à cocher « traité/lu » par résultat (issue #154, refondue #636) ──────
+// Repère visuel personnel pour Alain (« ce résultat, je l'ai déjà traité/lu »),
+// SANS logique métier. Depuis l'issue #636, l'état ne vit PLUS dans le
+// localStorage mais CÔTÉ SERVEUR (store.casesCochees, routes /cases-cochees) :
+// il survit à un plantage du PC et est identique quel que soit le navigateur ou
+// l'adresse d'accès (localhost / --lan). Toute la logique (état serveur, copie
+// fiable au cochage, « Cocher tout », remise à zéro) vit dans le module dédié
+// static/js/resultats_coches.js ; ces fonctions ne sont plus que de minces
+// relais appelés par le markup inline des lignes (onchange/onclick) et par
+// majPastillesFiltres. Repli sûr (false / no-op) tant que le module n'est pas prêt.
 function estResultatCoche(projet, numero) {
-  try { return localStorage.getItem(cleCocheResultat(projet, numero)) === '1'; }
-  catch (e) { return false; }
+  if (window.Bridge && window.Bridge.resultatsCoches) {
+    return window.Bridge.resultatsCoches.estCoche(projet, numero);
+  }
+  return false;
 }
-// Bascule appelée par onchange de la case : persiste l'état dans localStorage
-// et grise/dégrise instantanément la ligne (aucun rechargement de page).
+// Bascule appelée par onchange de la case → module dédié (persistance serveur,
+// grisage, pastilles, et copie fiable au cochage — jamais de faux succès).
 function basculerCocheResultat(event, projet, numero) {
-  const cb = event.target;
-  const ligne = cb.closest('.ligne-issue');
-  const coche = cb.checked;
-  try {
-    if (coche) localStorage.setItem(cleCocheResultat(projet, numero), '1');
-    else       localStorage.removeItem(cleCocheResultat(projet, numero));
-  } catch (e) { /* localStorage indisponible : la case reste juste visuelle */ }
-  if (ligne) ligne.classList.toggle('resultat-traite', coche);
-  // Pastilles filtre projet (issue #383) : comptent les issues décochées,
-  // donc chaque bascule de case doit rafraîchir immédiatement leur compte.
-  majPastillesFiltres();
-  // Cocher la case déclenche, pour cette SEULE issue, la même copie
-  // réponse+diff que le badge « All » (issue #444). Décocher ne fait rien
-  // (pas de « décopie »). copierToutEtDiffDepuisBadge gère déjà sans erreur
-  // le cas d'une issue sans réponse/commit (garde « copie vide », feedback
-  // ⚠/∅) : appel sans condition sur l'état de l'issue.
-  if (coche) copierToutEtDiffDepuisBadge(event, projet, numero);
+  if (window.Bridge && window.Bridge.resultatsCoches) {
+    window.Bridge.resultatsCoches.basculer(event, projet, numero);
+  }
 }
 
 // Relit le LocalStorage et resynchronise l'état de TOUTES les cases à cocher
@@ -2137,18 +2135,9 @@ function texteCopieVide(texte) {
   return !texte || !texte.trim();
 }
 
-// Feedback ⚠ sur un badge de liste (span) : ⚠ + tooltip explicite pendant ~2 s,
-// puis restauration du libellé et du titre d'origine. Ne touche pas au
-// presse-papier.
-function feedbackBadgeVide(badge, original, titreOriginal) {
-  if (!badge) return;
-  badge.textContent = '⚠';
-  badge.title = TITRE_COPIE_VIDE;
-  setTimeout(function() {
-    badge.textContent = original;
-    badge.title = titreOriginal;
-  }, 2000);
-}
+// (issue #636) Le feedback ⚠ des badges de liste (✅/Diff/All) vit désormais dans
+// static/js/resultats_coches.js (feedbackBadge), avec le moteur de copie fiable —
+// l'ancien feedbackBadgeVide d'app.js a été retiré dans le même mouvement.
 
 // Feedback ⚠ sur un bouton « Copier … » : ⚠ + tooltip explicite pendant ~2 s,
 // puis restauration du libellé et du titre d'origine. Ne touche pas au
@@ -2304,51 +2293,13 @@ async function copierTout(btn) {
 // bridge_cache_detail_<projet>_<numero> s'il est frais (< TTL), sinon fetch le
 // détail (et met le cache à jour). Feedback visuel bref sur le badge lui-même,
 // sans modifier la ligne. stopPropagation() empêche la sélection de la ligne.
-async function copierReponseDepuisBadge(event, nom, numero) {
-  event.stopPropagation();
-  const badge = event.currentTarget;   // capturé avant tout await (nullé ensuite)
-  const original = badge ? badge.textContent : '';
-  const titreOriginal = badge ? badge.title : '';
-  numero = String(numero);
-  const cleCache = CLE_CACHE_DETAIL + nom + '_' + numero;
-  let texte = null;
-
-  // 1) Cache frais (< TTL) : on évite le fetch.
-  try {
-    const obj = JSON.parse(localStorage.getItem(cleCache) || 'null');
-    if (obj && obj.it && (Date.now() - obj.ts) < TTL_DETAIL_MS) {
-      texte = reponseCompleteCcl(obj.it);
-    }
-  } catch(e) {}
-
-  // 2) Pas de cache exploitable : fetch le détail et rafraîchit le cache.
-  if (texte === null) {
-    try {
-      const rep = await fetch('/issue/' + encodeURIComponent(nom)
-                              + '/' + encodeURIComponent(numero));
-      const it = await rep.json();
-      if (!it.erreur) {
-        try { localStorage.setItem(cleCache, JSON.stringify({ts: Date.now(), it: it})); } catch(e) {}
-        texte = reponseCompleteCcl(it);
-      }
-    } catch(e) {
-      console.warn('copierReponseDepuisBadge : échec fetch du détail.', e);
-    }
-  }
-  if (texte === null) texte = '';
-
-  // Garde « copie vide » (issue #122) : réponse pas encore disponible (fetch en
-  // échec ou dernier commentaire vide) → feedback ⚠, aucune copie, pas de ✓.
-  if (texteCopieVide(texte)) { feedbackBadgeVide(badge, original, titreOriginal); return; }
-
-  // Copie dans le presse-papier (fallback execCommand si l'API clipboard est
-  // indisponible ou échoue — issue #464).
-  await copierPressePapier(texte);
-
-  // Feedback visuel : ✅ → ✓ pendant 1,5 s, puis retour au libellé (ligne inchangée).
-  if (badge) {
-    badge.textContent = '✓';
-    setTimeout(function() { badge.textContent = original; }, 1500);
+// Clic sur le badge ✅ (vert) d'une issue fermée+done : copie la réponse CCL
+// COMPLÈTE. Depuis l'issue #636, la copie est ENGAGÉE PENDANT LE GESTE (moteur
+// unique de resultats_coches.js — ClipboardItem/promesse en contexte sécurisé,
+// texte préchargé + execCommand en --lan) et ne signale jamais de faux succès.
+function copierReponseDepuisBadge(event, nom, numero) {
+  if (window.Bridge && window.Bridge.resultatsCoches) {
+    window.Bridge.resultatsCoches.copierReponseBadge(event, nom, numero);
   }
 }
 
@@ -2459,72 +2410,13 @@ async function chargerDiffOnglet(pane) {
 // pour chaque hash). Sans commit (lecture seule), copie la réponse seule — sans
 // section diff vide ni erreur. Même mécanique cache/fetch et feedback que les
 // autres badges de la liste.
-async function copierToutEtDiffDepuisBadge(event, nom, numero) {
-  event.stopPropagation();
-  const badge = event.currentTarget;   // capturé avant tout await (nullé ensuite)
-  const original = badge ? badge.textContent : '';
-  const titreOriginal = badge ? badge.title : '';
-  numero = String(numero);
-  const cleCache = CLE_CACHE_DETAIL + nom + '_' + numero;
-  let it = null;
-
-  // 1) Cache frais (< TTL) : on évite le fetch du détail.
-  try {
-    const obj = JSON.parse(localStorage.getItem(cleCache) || 'null');
-    if (obj && obj.it && (Date.now() - obj.ts) < TTL_DETAIL_MS) it = obj.it;
-  } catch(e) {}
-
-  // 2) Pas de cache exploitable : fetch le détail et rafraîchit le cache.
-  if (it === null) {
-    try {
-      const rep = await fetch('/issue/' + encodeURIComponent(nom)
-                              + '/' + encodeURIComponent(numero));
-      const j = await rep.json();
-      if (!j.erreur) {
-        it = j;
-        try { localStorage.setItem(cleCache, JSON.stringify({ts: Date.now(), it: it})); } catch(e) {}
-      }
-    } catch(e) {
-      console.warn('copierToutEtDiffDepuisBadge : échec fetch du détail.', e);
-    }
-  }
-
-  let texte = it ? reponseCompleteCcl(it) : '';
-  const hashes = it ? hashesDeCommit(it) : [];
-  // Concatène le diff de chaque commit sous la réponse complète. Lecture seule
-  // (aucun hash) : la boucle ne s'exécute pas, on copie la réponse seule.
-  for (const h of hashes) {
-    try {
-      const rep = await fetch('/diff/' + encodeURIComponent(nom)
-                              + '/' + encodeURIComponent(h));
-      const j = await rep.json();
-      if (j.diff) texte += '\n\n===== Diff ' + h + ' =====\n\n' + j.diff;
-    } catch(e) {
-      console.warn('copierToutEtDiffDepuisBadge : échec fetch diff ' + h + '.', e);
-    }
-  }
-
-  // Garde « copie vide » (issue #122) : fetch du détail en échec ou réponse CCL
-  // pas encore propagée côté GitHub → texte vide. Feedback ⚠, aucune copie
-  // silencieuse, pas de ✓ trompeur.
-  if (texteCopieVide(texte)) { feedbackBadgeVide(badge, original, titreOriginal); return; }
-
-  // Avertissement diff volumineux (issue #441) : Claude.ai tronque silencieusement
-  // les collages trop longs. La copie a quand même lieu — le toast est purement
-  // informatif, sans bouton de confirmation.
-  const nbLignes = texte.split('\n').length;
-  if (nbLignes > 1000) {
-    afficherToast('⚠ Diff volumineux (' + nbLignes + ' lignes) — Claude.ai pourrait ne pas le lire');
-  }
-
-  // Copie dans le presse-papier (fallback execCommand si l'API clipboard est
-  // indisponible ou échoue — issue #464).
-  await copierPressePapier(texte);
-
-  // Feedback visuel : « All » → ✓ pendant 1,5 s, puis retour au libellé.
-  if (badge) {
-    badge.textContent = '✓';
-    setTimeout(function() { badge.textContent = original; }, 1500);
+// Clic sur le badge « All » d'une issue fermée+done (issue #114/#116) : copie la
+// réponse CCL COMPLÈTE + le diff du/des commit(s). Depuis l'issue #636, copie
+// ENGAGÉE PENDANT LE GESTE via le moteur unique de resultats_coches.js (plus de
+// fetch avant écriture qui faisait perdre l'activation) ; feedback honnête.
+function copierToutEtDiffDepuisBadge(event, nom, numero) {
+  if (window.Bridge && window.Bridge.resultatsCoches) {
+    window.Bridge.resultatsCoches.copierAllBadge(event, nom, numero);
   }
 }
 
@@ -2534,75 +2426,13 @@ async function copierToutEtDiffDepuisBadge(event, nom, numero) {
 // Sans commit (lecture seule), comportement NEUTRE : rien n'est copié, feedback
 // « ∅ » bref, pas d'erreur. Même mécanique cache/fetch du détail et feedback que
 // les autres badges de la liste.
-async function copierDiffDepuisBadge(event, nom, numero) {
-  event.stopPropagation();
-  const badge = event.currentTarget;   // capturé avant tout await (nullé ensuite)
-  const original = badge ? badge.textContent : '';
-  const titreOriginal = badge ? badge.title : '';
-  numero = String(numero);
-  const cleCache = CLE_CACHE_DETAIL + nom + '_' + numero;
-  let it = null;
-
-  // 1) Cache frais (< TTL) : on évite le fetch du détail.
-  try {
-    const obj = JSON.parse(localStorage.getItem(cleCache) || 'null');
-    if (obj && obj.it && (Date.now() - obj.ts) < TTL_DETAIL_MS) it = obj.it;
-  } catch(e) {}
-
-  // 2) Pas de cache exploitable : fetch le détail et rafraîchit le cache.
-  if (it === null) {
-    try {
-      const rep = await fetch('/issue/' + encodeURIComponent(nom)
-                              + '/' + encodeURIComponent(numero));
-      const j = await rep.json();
-      if (!j.erreur) {
-        it = j;
-        try { localStorage.setItem(cleCache, JSON.stringify({ts: Date.now(), it: it})); } catch(e) {}
-      }
-    } catch(e) {
-      console.warn('copierDiffDepuisBadge : échec fetch du détail.', e);
-    }
-  }
-
-  const hashes = it ? hashesDeCommit(it) : [];
-  // Aucun commit (lecture seule) : rien à copier, comportement neutre. Feedback
-  // « ∅ » bref pour signaler l'absence de diff, sans toucher au presse-papier.
-  if (!hashes.length) {
-    if (badge) {
-      badge.textContent = '∅';
-      setTimeout(function() { badge.textContent = original; }, 1500);
-    }
-    return;
-  }
-
-  // Concatène le diff de chaque commit — sans la réponse (contraste avec « All »).
-  const morceaux = [];
-  for (const h of hashes) {
-    try {
-      const rep = await fetch('/diff/' + encodeURIComponent(nom)
-                              + '/' + encodeURIComponent(h));
-      const j = await rep.json();
-      if (j.diff) morceaux.push('===== Diff ' + h + ' =====\n\n' + j.diff);
-    } catch(e) {
-      console.warn('copierDiffDepuisBadge : échec fetch diff ' + h + '.', e);
-    }
-  }
-  const texte = morceaux.join('\n\n');
-
-  // Garde « copie vide » (issue #122) : des commits existent mais tous les fetch
-  // de diff ont échoué / renvoyé vide → texte vide. Feedback ⚠, aucune copie
-  // silencieuse, pas de ✓ trompeur. (Le cas « aucun commit » reste géré par ∅
-  // plus haut, feedback neutre déjà distinct du ✓.)
-  if (texteCopieVide(texte)) { feedbackBadgeVide(badge, original, titreOriginal); return; }
-
-  // Copie dans le presse-papier (fallback execCommand si l'API clipboard est
-  // indisponible ou échoue — issue #464).
-  await copierPressePapier(texte);
-
-  // Feedback visuel : « Diff » → ✓ pendant 1,5 s, puis retour au libellé.
-  if (badge) {
-    badge.textContent = '✓';
-    setTimeout(function() { badge.textContent = original; }, 1500);
+// Clic sur le badge « Diff » d'une issue fermée+done (issue #116) : copie
+// UNIQUEMENT le diff du/des commit(s). Sans commit (lecture seule), feedback « ∅ »
+// neutre. Depuis l'issue #636, copie ENGAGÉE PENDANT LE GESTE via le moteur unique
+// de resultats_coches.js ; feedback honnête (jamais de ✓ sur échec).
+function copierDiffDepuisBadge(event, nom, numero) {
+  if (window.Bridge && window.Bridge.resultatsCoches) {
+    window.Bridge.resultatsCoches.copierDiffBadge(event, nom, numero);
   }
 }
 
