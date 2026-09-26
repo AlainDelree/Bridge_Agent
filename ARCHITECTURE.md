@@ -413,10 +413,10 @@ Déjà sortis : `onglets.js` (bascule entre onglets, issue #626, étape 2),
 `panneau_lateral.js` (panneau latéral, issue #628, étape 4),
 `resultats_coches.js` (case « traité/lu » à état serveur + copie fiable, issue
 #636, étape 5b), `actions_ligne.js` (actions cliquables sur la ligne d'une
-issue ouverte + son par issue, issue #641, étape 6) et `ccw.js` (onglet CCW,
-pilotage du PC fixe Windows, issue #649). Futurs modules (ex. `creation.js`,
-`config.js`, `journal.js`, `inbox.js`, `nouveau_projet.js`) suivent le même
-patron.
+issue ouverte + son par issue, issue #641, étape 6), `ccw.js` (onglet CCW,
+pilotage du PC fixe Windows, issue #649) et `journal.js` (onglet Journal
+watcher, issue #650). Futurs modules (ex. `creation.js`, `config.js`,
+`nouveau_projet.js`) suivent le même patron.
 
 **Onglet Watchers supprimé (issue #626, étape 2)** : le tableau des watchers
 + cases à cocher + actions Lancer/Relancer/Éteindre par lot n'existent plus.
@@ -553,6 +553,19 @@ Résultats, Journal watcher, Configuration, CCW, Nouvelle issue.
 > La case « Projet CCW » de la modale Nouveau projet (bootstrap initial,
 > `npCcw*`) est une fonctionnalité distincte, non touchée par cette étape.
 
+> **Étape 11 réalisée — `static/js/journal.js` (issue #650)** : sort d'`app.js`
+> l'onglet **Journal watcher** — `demarrerJournal()` (connexion SSE
+> `/journal/<projet>`, une seule à la fois, lignes colorées insérées en tête de
+> `#terminal`) et `viderTerminal()`. La variable `sourceSSE`, propriété exclusive
+> de ces deux fonctions (vérifié : aucune autre partie d'app.js ne la lisait),
+> devient une variable de module (`sourceJournal`), non exposée. **Branchement
+> par import direct** (pas par le pont) : `static/js/onglets.js` importe
+> `demarrerJournal` et l'appelle directement dans `activerOnglet('journal')` ;
+> `index.js` appelle `initJournal()` une fois (délégation du bouton « Vider
+> l'affichage », `data-action="journal-vider"`, retire l'`onclick=` inline du
+> fragment `onglet_journal.html`). Tests de logique pure (code couleur d'une
+> ligne selon son contenu) : `static/js/tests/journal.test.js`.
+>
 > **Étape 10 réalisée — purge des fuites `localStorage`, migration terminée
 > (issue #644)** : `persistance.js` était conçu depuis l'étape 1 comme LE point
 > d'accès unique au `localStorage`, mais son propre en-tête documentait que
