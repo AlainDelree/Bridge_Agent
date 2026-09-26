@@ -6,7 +6,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { etatsCasesNotif } from '../panneau_lateral.js';
+import { etatsCasesNotif, afficherBoutonArreterWatcherCcl } from '../panneau_lateral.js';
 
 test('etatsCasesNotif : aucun label → les 3 cases décochées', () => {
   assert.deepEqual(etatsCasesNotif([]), {
@@ -36,6 +36,23 @@ test('etatsCasesNotif : labels sans rapport n\'affectent aucune case', () => {
   assert.deepEqual(etatsCasesNotif(['for-windows', 'done', 'needs-human']), {
     notif_pc: false, notif_gsm: false, notif_tous: false,
   });
+});
+
+// ─── afficherBoutonArreterWatcherCcl (issue #655) ──────────────────────────
+// Bouton « ⏹ Arrêter » d'un watcher CCL du panneau latéral : visible
+// seulement quand le watcher est actif — même patron que
+// afficherBoutonDemarrer/afficherBoutonArreter pour les services CCW
+// (static/js/tests/ccw.test.js).
+test('afficherBoutonArreterWatcherCcl : watcher actif → bouton affiché', () => {
+  assert.equal(afficherBoutonArreterWatcherCcl(true), true);
+});
+
+test('afficherBoutonArreterWatcherCcl : watcher inactif → bouton masqué', () => {
+  assert.equal(afficherBoutonArreterWatcherCcl(false), false);
+});
+
+test('afficherBoutonArreterWatcherCcl : état absent (undefined) → bouton masqué', () => {
+  assert.equal(afficherBoutonArreterWatcherCcl(undefined), false);
 });
 
 // Le contrôle « Son de cette issue » (#637) et ses fonctions pures ont été

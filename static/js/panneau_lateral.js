@@ -65,6 +65,13 @@ let intervalPanneauLateral = null;
 //    Aucune dépendance au DOM ni au réseau.
 // ─────────────────────────────────────────────────────────────────────────────
 
+// Faut-il afficher le bouton « ⏹ Arrêter » sur la ligne d'un watcher CCL du
+// panneau latéral (issue #655) : seulement s'il est actif — même patron que
+// afficherBoutonDemarrer/afficherBoutonArreter pour les services CCW
+// (static/js/ccw.js), mais un seul bouton ici (pas de « Démarrer » séparé,
+// « ▶ Lancer »/« ↺ Relancer » restent un bouton unique déjà en place).
+export function afficherBoutonArreterWatcherCcl(actif) { return !!actif; }
+
 // État des 3 cases « 🔔 Notifications » du panneau, dérivé des labels réels de
 // l'issue sélectionnée (correctif anomalie #4, issue #633) : une case cochée
 // reflète directement — et SEULEMENT — la présence du label GitHub
@@ -160,8 +167,13 @@ async function rendrePanneauLateralMonitoring() {
     const resume = appelerAncien('resumeProjetMonitoring', nom) || { enCours: 0, enFile: 0 };
     html += '<div class="pl-ligne">'
           + '<span class="pl-ligne-libelle">' + (actif ? '🟢' : '⚫') + ' ' + dom.echapperHtml(nom) + '</span>'
+          + '<span class="pl-ligne-btns">'
           + '<button class="pl-btn-mini" data-action="pl-relancer-ccl" data-projet="' + dom.echapperHtml(nom) + '">'
           + (actif ? '↺ Relancer' : '▶ Lancer') + '</button>'
+          + (afficherBoutonArreterWatcherCcl(actif)
+              ? '<button class="pl-btn-mini" data-action="pl-arreter-ccl" data-projet="' + dom.echapperHtml(nom) + '">⏹ Arrêter</button>'
+              : '')
+          + '</span>'
           + '</div>'
           + '<div class="pl-sous-projet">' + resume.enCours + ' en cours, ' + resume.enFile + ' en file</div>';
   });
@@ -459,6 +471,21 @@ async function sidebarRelancerWatcherCCL(nom, btn) {
   await rafraichirPanneauLateralResultats();
 }
 
+// Arrêt immédiat d'un watcher CCL (issue #655) : jusqu'ici un watcher actif ne
+// s'éteignait que par son délai d'auto-extinction (Configuration) — même
+// mécanique de confirmation que sidebarArreterWatcherInbox (watcher spool).
+async function sidebarArreterWatcherCCL(nom, btn) {
+  const ok = await toasts.confirmer('Arrêter le watcher CCL du projet « ' + nom + ' » ?', { texteConfirmer: 'Arrêter' });
+  if (!ok) return;
+  const label = btn ? btn.textContent : null;
+  if (btn) { btn.disabled = true; btn.textContent = 'Arrêt…'; }
+  try {
+    await api.post('/arreter-watcher', { projet: nom });
+  } catch (e) { /* déjà signalé par api.post (toast) */ }
+  if (btn) { btn.disabled = false; if (label !== null) btn.textContent = label; }
+  await rafraichirPanneauLateralResultats();
+}
+
 async function sidebarRelancerTousEteints(btn) {
   if (btn) { btn.disabled = true; btn.textContent = 'Relance…'; }
   try {
@@ -504,6 +531,8 @@ function installerDelegationPanneau() {
 
   dom.surAction('[data-action="pl-relancer-ccl"]', 'click',
     (e, el) => sidebarRelancerWatcherCCL(el.dataset.projet, el));
+  dom.surAction('[data-action="pl-arreter-ccl"]', 'click',
+    (e, el) => sidebarArreterWatcherCCL(el.dataset.projet, el));
   dom.surAction('[data-action="pl-relancer-eteints"]', 'click',
     (e, el) => sidebarRelancerTousEteints(el));
   dom.surAction('[data-action="pl-relancer-tous-ccl"]', 'click',

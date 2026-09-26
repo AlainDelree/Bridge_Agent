@@ -404,11 +404,11 @@ seulement journalisé en `WARNING` du logger du watcher — n'empêche jamais la
 création de l'issue elle-même, déjà actée à ce stade.
 
 **Arrêt manuel.** `POST /issues-inbox/arreter-watcher` envoie un `SIGTERM`
-et nettoie PID + échéance. Contrairement aux watchers CCL de projet (pas de
-bouton « Arrêter » dans `#pl-zone-monitoring`, seulement Lancer/Relancer),
-le watcher spool expose un bouton « ⏹ Arrêter » explicite dans le panneau :
-son comportement par défaut étant « Indéfiniment », il doit pouvoir être
-coupé manuellement à tout moment.
+et nettoie PID + échéance. Le watcher spool expose un bouton « ⏹ Arrêter »
+explicite dans le panneau : son comportement par défaut étant
+« Indéfiniment », il doit pouvoir être coupé manuellement à tout moment
+(même bouton, même confirmation, que celui des watchers CCL de projet dans
+`#pl-zone-monitoring` — issue #655, ci-dessous).
 
 **Interface — zone `#pl-zone-extras`.** Cette zone du panneau latéral
 « Infrastructure » (onglet Résultats, colonne à côté de la liste depuis

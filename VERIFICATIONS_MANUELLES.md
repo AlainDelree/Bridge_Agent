@@ -279,6 +279,13 @@
 - [ ] Zone monitoring : une ligne par watcher CCL / service CCW. **Plus aucune
       ligne « VM » et plus aucune requête `/ccw/vm-statut`** (onglet Réseau,
       F12) — route disparue côté serveur depuis #447 (issue #628).
+- [ ] **Bouton « ⏹ Arrêter » par watcher CCL (issue #655)** : visible
+      **seulement** à côté de « ↺ Relancer » sur un watcher **actif** (🟢) —
+      absent quand il est éteint (⚫, bouton « ▶ Lancer » seul). Cliquer
+      dessus déclenche une confirmation (« Arrêter le watcher CCL du projet
+      « <nom> » ? ») ; **Annuler** ne fait rien ; **Arrêter** désactive le
+      bouton pendant l'appel (`POST /arreter-watcher`), puis la ligne repasse
+      à ⚫ / « ▶ Lancer » après rafraîchissement.
 - [ ] Interrupteur son (Plat / Cloche) : bascule ; « Tester le son » actif
       seulement quand une ligne est sélectionnée ; joue le timbre choisi à
       tonalité neutre (plus de tonalité par projet, issue #643).
