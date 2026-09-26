@@ -16,10 +16,9 @@
 //                                global, rate-limit, onglet actif.
 //   - cleIssue(projet, numero) : clé canonique d'une issue ("projet#numero").
 //
-// NON-BUT À CETTE ÉTAPE
-//   Le store est créé et testé mais NE PILOTE encore RIEN : l'ancien app.js
-//   reste la seule source de vérité vivante de l'écran. Voir pont.js et
-//   ARCHITECTURE.md (§ Refonte web) pour la procédure de migration.
+// Depuis l'étape 3 (#627), le store pilote réellement du rendu : resultats.js
+// et panneau_lateral.js s'abonnent à ses tranches (issues, ongletActif,
+// derniereNotifIssue, …) pour se redessiner — voir ARCHITECTURE.md §6.5.
 
 /** Clé canonique d'une issue dans la tranche `issues`. */
 export function cleIssue(projet, numero) {

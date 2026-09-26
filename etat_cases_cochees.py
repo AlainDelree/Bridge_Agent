@@ -10,10 +10,10 @@ navigateur — état perdu après un plantage du PC, différent selon l'adresse
 d'accès (localhost vs LAN), clés accumulées sans fin. Décision d'Alain :
 faire passer cet état côté serveur.
 
-Cette étape (5a) ne livre QUE ce module de stockage + les routes Flask
-(`app/cases_cochees.py`) — aucun front ne les appelle encore, la reprise du
-localStorage existant viendra à l'étape 5b (import idempotent, voir
-`importer_cases` ci-dessous). Aucun changement visible pour l'instant.
+Cette étape (5a) n'a livré QUE ce module de stockage + les routes Flask
+(`app/cases_cochees.py`) ; le front (`static/js/resultats_coches.js`) les
+appelle depuis l'étape 5b (#636), avec reprise idempotente du localStorage
+existant via `importer_cases` ci-dessous.
 
 Même modèle que `etat_rate_limit.py` (issue #615) : petit fichier JSON sous
 `logs/`, écriture atomique (fichier temporaire + `os.replace`) protégée par
@@ -31,6 +31,8 @@ import json
 import os
 import time
 from pathlib import Path
+
+from plafond_nettoyage import numeros_perimes
 
 CHEMIN_ETAT   = Path(__file__).resolve().parent / "logs" / "etat_cases_cochees.json"
 CHEMIN_VERROU = CHEMIN_ETAT.with_suffix(".lock")
@@ -171,17 +173,16 @@ def nettoyer_anciennes(plafond: int = PLAFOND_NETTOYAGE) -> tuple[bool, int, str
     nb_supprimees = 0
     modifie = False
     for projet, numeros in list(donnees.items()):
-        if not numeros:
+        a_retirer = numeros_perimes(numeros, plafond)
+        if not a_retirer:
             continue
-        seuil = max(numeros) - plafond
-        restants = [n for n in numeros if n > seuil]
-        if len(restants) != len(numeros):
-            nb_supprimees += len(numeros) - len(restants)
-            modifie = True
-            if restants:
-                donnees[projet] = restants
-            else:
-                donnees.pop(projet, None)
+        restants = [n for n in numeros if n not in a_retirer]
+        nb_supprimees += len(numeros) - len(restants)
+        modifie = True
+        if restants:
+            donnees[projet] = restants
+        else:
+            donnees.pop(projet, None)
     if not modifie:
         return True, 0, None
     ok, erreur = _ecrire(donnees)

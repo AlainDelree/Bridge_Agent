@@ -6,14 +6,12 @@
 // chargé À CÔTÉ de l'ancien static/js/app.js (script classique), sans le
 // remplacer ni l'importer.
 //
-// ⚠️ LE SOCLE NE REMPLACE PAS TOUT ENCORE ⚠️
-//   - sse.connecter() n'est PAS appelé : l'ancien app.js gère /stream et /events
-//     (interdiction de double connexion, cf. sse.js et issue #625).
-//   - seule la règle de délégation de la barre d'onglets est enregistrée
-//     (onglets.js, issue #626) ; le reste de dom.installerDelegation() reste
-//     inerte tant que les étapes suivantes n'ajoutent pas leurs propres règles.
-//   - le store ne pilote encore aucun rendu (hors classes actif/inactif des
-//     onglets) ; les autres tranches sont simplement disponibles et testées.
+// CE QUI RESTE À L'ANCIEN app.js (refonte terminée, #625→#645, voir
+// ARCHITECTURE.md §6) :
+//   - `/events` (cycle de vie serveur : heartbeat, shutdown) — `/stream`, lui,
+//     est ouvert et piloté par static/js/resultats.js (issue #627).
+//   - la liste des issues, le détail, les filtres, la recherche et les onglets
+//     Nouvelle issue/Journal/Configuration/CCW (pas encore sortis d'app.js).
 //
 // Ordre de chargement (voir templates/fragments/scripts.html) :
 //   1. <script> Jinja : window.COULEURS_PERSISTEES / window.MIMES_IMAGE_ACCEPTES
@@ -40,9 +38,9 @@ import { resultatsCoches } from '../resultats_coches.js';
 // ouverte + son par issue (refonte étape 6, issue #641).
 import { actionsLigne } from '../actions_ligne.js';
 
-// Délégation : inerte tant qu'aucune règle n'est enregistrée par le socle lui-
-// même (les modules par fonctionnalité, ex. panneau_lateral.js, enregistrent
-// les leurs).
+// Délégation : les modules par fonctionnalité (onglets.js, panneau_lateral.js)
+// enregistrent leurs propres règles via dom.surAction(...) ; ceci (ré)installe
+// les écouteurs racine correspondants.
 dom.installerDelegation();
 
 // Pont de transition : unique point de contact avec l'ancien code, à retirer à

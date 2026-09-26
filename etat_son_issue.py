@@ -31,6 +31,8 @@ import os
 import time
 from pathlib import Path
 
+from plafond_nettoyage import numeros_perimes
+
 log = logging.getLogger("etat_son_issue")
 
 CHEMIN_ETAT   = Path(__file__).resolve().parent / "logs" / "son_issues.json"
@@ -165,9 +167,7 @@ def nettoyer_entrees_perimees(marge: int = MARGE_CONSERVATION_N) -> dict:
             numeros = {int(n): n for n in entree}
         except (TypeError, ValueError):
             continue
-        plus_grand = max(numeros)
-        seuil = plus_grand - marge
-        a_retirer = [brut for n, brut in numeros.items() if n <= seuil]
+        a_retirer = [numeros[n] for n in numeros_perimes(numeros.keys(), marge)]
         if not a_retirer:
             continue
         for brut in a_retirer:

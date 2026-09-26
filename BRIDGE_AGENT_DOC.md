@@ -626,10 +626,10 @@ Avant #631, aucun événement n'était émis ni au dépôt d'un fichier dans
 dans l'onglet Résultats qu'à sa prise en charge par le watcher CCL (ACK,
 `debut_issue`, §17.3) ou après un rafraîchissement manuel (↻). Trois nouveaux
 événements sur le canal SSE `/stream` couvrent tout le cycle de vie d'un
-fichier déposé — **backend seul à l'origine (#631)** : `fichier_recu` et
-`fichier_refuse` restent ignorés par l'onglet Résultats (préparation de la
-fusion de l'onglet « Résultats inbox » dans Résultats, étape 9b, toujours pas
-faite) ; **`creation_issue` est consommé côté navigateur depuis #627** (voir
+fichier déposé — **backend seul à l'origine (#631)** ; `fichier_recu` et
+`fichier_refuse` sont désormais consommés par l'onglet Résultats depuis la
+fusion de l'onglet « Résultats inbox » dans Résultats (étape 9b, #639 — voir
+§3.8) ; **`creation_issue` est consommé côté navigateur depuis #627** (voir
 §17.3, « Côté navigateur ») et **enrichi depuis #634** (labels + données de
 temps, voir ci-dessous). Même famille que
 `/notifier-fin-issue`/`/notifier-debut-issue` (`app/fin_issue.py`, §17.3) :
@@ -3501,10 +3501,10 @@ déclencheur et un canal SSE dédié comme transport :
   `scripts/watcher_issues_inbox.py` ET, en appel direct sans HTTP,
   `app.issues.envoyer()`), `fichier_refuse` (par bloc refusé). Détail complet
   du contenu de chaque événement et de l'ordre pour un fichier multi-blocs :
-  §3.15. `fichier_recu`/`fichier_refuse` restent **backend seul** (préparation
-  de la fusion de l'onglet « Résultats inbox » dans Résultats, étape 9b) ;
-  `creation_issue` est consommé côté navigateur depuis #627, enrichi depuis
-  #634 (voir « Côté navigateur » ci-dessous).
+  §3.15. `fichier_recu`/`fichier_refuse` sont désormais consommés côté
+  navigateur depuis la fusion de l'onglet « Résultats inbox » dans Résultats
+  (étape 9b, #639 — voir §3.8) ; `creation_issue` est consommé côté navigateur
+  depuis #627, enrichi depuis #634 (voir « Côté navigateur » ci-dessous).
 - **`GET /stream`** (`app/fin_issue.py`, protégé par `login_requis` comme
   `/events`) : générateur Flask SSE dédié, séparé de `/events` (cycle de vie)
   et de `/journal/<projet>` (log watcher). Mécanisme de diffusion : une

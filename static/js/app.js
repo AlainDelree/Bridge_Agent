@@ -1221,13 +1221,14 @@ function basculerCocheResultat(event, projet, numero) {
   }
 }
 
-// Relit le LocalStorage et resynchronise l'état de TOUTES les cases à cocher
-// « résultat » actuellement dans le DOM (issue #462). construireLigneIssueDOM
-// lit déjà le LocalStorage à la CONSTRUCTION d'une ligne, mais rien ne
-// garantissait qu'un futur redessin partiel (heartbeat, SSE) passe par cette
-// construction — ce filet de sécurité resynchronise explicitement après
-// coup, pour que l'état coché/décoché survive à toute mise à jour dynamique
-// du DOM exactement comme il survit à un F5.
+// Relit l'état serveur (depuis #636, voir estResultatCoche ci-dessus) et
+// resynchronise l'état de TOUTES les cases à cocher « résultat » actuellement
+// dans le DOM (issue #462). construireLigneIssueDOM lit déjà cet état à la
+// CONSTRUCTION d'une ligne, mais rien ne garantissait qu'un futur redessin
+// partiel (heartbeat, SSE) passe par cette construction — ce filet de
+// sécurité resynchronise explicitement après coup, pour que l'état
+// coché/décoché survive à toute mise à jour dynamique du DOM exactement
+// comme il survit à un F5.
 function restaurerCasesCocheesResultats() {
   document.querySelectorAll('.ligne-issue').forEach(ligne => {
     const cb = ligne.querySelector('.coche-resultat');

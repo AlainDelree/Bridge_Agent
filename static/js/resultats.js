@@ -888,7 +888,9 @@ function initialiser() {
 // pendant la transition ; onActiverOnglet/onDesactiverOnglet ne sont plus
 // appelées que par l'abonnement à store.ongletActif ci-dessus (issue #632),
 // exposées ici surtout pour rester testables directement (voir
-// static/js/tests/resultats.test.js).
+// static/js/tests/resultats.test.js). initialiser, elle, n'est jamais appelée
+// via le pont — index.js l'appelle directement par import ES ; exposée ici
+// uniquement pour la testabilité, comme les deux précédentes.
 export const resultats = {
   initialiser,
   onActiverOnglet,

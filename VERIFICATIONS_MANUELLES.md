@@ -121,12 +121,6 @@
       (repli `execCommand`, texte préchargé) ; au tout premier clic sur une issue
       dont le texte n'est pas encore préchargé, un toast « préparation en cours »
       peut apparaître — un second clic aboutit. **Jamais de faux succès.**
-- [ ] **Migration du localStorage** (issue #636, à faire UNE fois sur un
-      navigateur ayant déjà des coches d'avant #636) : avant mise à jour, cocher
-      quelques résultats (anciennes clés `resultat-coche:*`). Après mise à jour +
-      rechargement : les mêmes lignes restent cochées (reprise serveur), et les
-      clés `resultat-coche:*` ont disparu du `localStorage` (DevTools →
-      Application). Rejouer un rechargement ne recrée rien (idempotent).
 - [ ] **Pastilles ↔ « Cocher tout »** (issue #636) : avec plusieurs projets
       chargés, cliquer **« ✓ Cocher tout »** → **aucune pastille des projets
       actifs (filtrés) ne reste** (même après une longue coupure). Le périmètre
@@ -378,3 +372,17 @@ historique dans le panneau latéral (voir plus haut).
       modules et CSS chargés en HTTPS ; **session expirée** → la page redirige
       vers le login mais les fichiers statiques restent servis (pas d'erreur MIME
       de module).
+
+## Archives — vérifications ponctuelles déjà rejouées
+
+Cas one-shot déjà validés au moment de leur issue d'origine, sans intérêt à
+rejouer à chaque étape suivante de la refonte (le mécanisme testé reste en
+place, mais son déclencheur — un navigateur avec de l'état pré-migration —
+n'existe plus en pratique). Conservés ici pour mémoire plutôt que supprimés.
+
+- [ ] **Migration du localStorage** (issue #636, à faire UNE fois sur un
+      navigateur ayant déjà des coches d'avant #636) : avant mise à jour, cocher
+      quelques résultats (anciennes clés `resultat-coche:*`). Après mise à jour +
+      rechargement : les mêmes lignes restent cochées (reprise serveur), et les
+      clés `resultat-coche:*` ont disparu du `localStorage` (DevTools →
+      Application). Rejouer un rechargement ne recrée rien (idempotent).

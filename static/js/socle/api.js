@@ -13,6 +13,7 @@
 //   - api.post(url, corps, opts)        -> Promise<any>
 //   - api.supprimer(url, opts)          -> Promise<any>
 //   - api.requete(url, opts)            -> Promise<Response>  (bas niveau)
+//   - api.lireJson(url, opts)           -> Promise<any>       (bas niveau)
 //   - class ErreurApi { statut, url, corps }
 //
 // opts accepte toutes les options de fetch(), plus :

@@ -19,3 +19,8 @@ issues_inbox/
 # sans intérêt dans l'historique git (régénérée à chaque réinstallation de
 # CCW, cf. REINSTALLATION_CCW.md §8). Rafraîchie manuellement, jamais committée.
 configs/ccw_bootstrap_publique.pem
+# État courant de l'interrupteur global plat/cloche (issues #498/#527),
+# réécrit à chaque bascule depuis l'interface — même nature que
+# `configs/*.conf` ci-dessus (état, pas du code), à la différence près
+# qu'il était encore suivi par erreur (issue #646, balayage final).
+scripts/son_actif.txt

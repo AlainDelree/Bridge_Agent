@@ -1,10 +1,11 @@
 """Routes Flask de l'état serveur des cases « traité/lu » de l'onglet
 Résultats (issue #629, étape 5a de la refonte web — ARCHITECTURE.md §6).
 
-Backend seul à ce stade : aucun front ne les appelle encore, la reprise du
-localStorage existant (via `importer_cases`) viendra à l'étape 5b. Toute la
-logique de stockage (fichier JSON sous `logs/`, écriture atomique + verrou)
-vit dans `etat_cases_cochees.py` à la racine — même relation que
+Backend posé à l'étape 5a (#629) ; consommé côté navigateur par
+`static/js/resultats_coches.js` (dont l'import idempotent de l'existant via
+`importer_cases`) depuis l'étape 5b (#636). Toute la logique de stockage
+(fichier JSON sous `logs/`, écriture atomique + verrou) vit dans
+`etat_cases_cochees.py` à la racine — même relation que
 `app/rate_limit.py` / `etat_rate_limit.py` (issue #615). Mêmes protections
 d'authentification (`login_requis`) que le reste de l'interface."""
 

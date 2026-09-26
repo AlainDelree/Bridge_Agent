@@ -297,7 +297,8 @@ static/js/socle/
 ├── store.js          Source de vérité unique (voir §6.3).
 ├── api.js            Accès unique aux routes Flask, vérifie response.ok,
 │                     remonte toute erreur via toasts (plus d'erreur avalée).
-├── sse.js            Canaux /stream et /events centralisés — NON connectés.
+├── sse.js            Canal /stream centralisé (connecté depuis l'étape 3, #627
+│                     — voir §6.3) ; `/events` reste géré par l'ancien app.js.
 ├── toasts.js         Notifications non bloquantes + LA modale de confirmation
 │                     destructive. Styles auto-injectés (classes `socle-`).
 ├── dom.js            Utilitaires DOM + registre de délégation d'événements.
@@ -318,16 +319,16 @@ static/js/socle/
   `response.ok`, lève `ErreurApi{statut,url,corps}` et affiche un toast (sauf
   `{silencieux:true}`). Remplace les ~68 `fetch()` en dur qui testaient un champ
   métier du JSON et laissaient passer les 500.
-- **sse** — `creerCanalSse(url, gestionnaires, opts)` + `sse.stream`/`sse.events`
-  préconfigurés pour écrire dans le store. **`connecter()` n'est appelé nulle
-  part à l'étape 1** : interdiction de double connexion `/stream` ou `/events`
-  tant que l'ancien code gère les siennes.
+- **sse** — `creerCanalSse(url, gestionnaires, opts)` + `sse.stream`, préconfiguré
+  pour écrire dans le store. Connecté par `static/js/resultats.js::initialiser()`
+  (issue #627) — pas par `index.js`, pour qu'un import du module reste sûr sous
+  Node. `/events` n'est pas repris ici : il reste géré par l'ancien app.js.
 - **toasts** — `toasts.info/succes/erreur/avertissement(msg)` (éphémère, jamais
   de « OK » à cliquer) et `toasts.confirmer(msg, opts) → Promise<boolean>` (LA
   seule modale, réservée au destructif). Remplace `alert()` / `confirm()` /
   `afficherToast()`.
-- **dom** — `$`, `$$`, `creerElement`, `echapperHtml` (pure) et le **registre de
-  délégation** : `surAction(selecteur, type, handler)` + `installerDelegation()`.
+- **dom** — `echapperHtml` (pure) et le **registre de délégation** :
+  `surAction(selecteur, type, handler)` + `installerDelegation()`.
   Un seul écouteur par type d'événement, routé par `closest(selecteur)` — destiné
   à remplacer les gestionnaires inline du HTML et ceux générés en texte.
 - **persistance** — `lire/ecrire` (JSON), `lireTexte/ecrireTexte` (brut, compat

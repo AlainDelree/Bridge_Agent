@@ -536,8 +536,13 @@ async function initialiser() {
 }
 
 // Objet publié sous window.Bridge.resultatsCoches (via installerPont dans index.js) :
-// consommé par l'ancien app.js pendant la transition (case à cocher, badges de
-// copie, boutons « Cocher tout » et remise à zéro).
+// estCoche/basculer/cocherTout/remettreAZero/copierReponseBadge/copierAllBadge/
+// copierDiffBadge sont l'API consommée par l'ancien app.js pendant la
+// transition (case à cocher, badges de copie, boutons « Cocher tout » et
+// remise à zéro). initialiser et rechargerCases ne passent jamais par le pont
+// (initialiser est appelée directement par index.js via import ES ;
+// rechargerCases n'est utilisée qu'en interne à ce module) — exposées ici
+// uniquement pour rester testables directement.
 export const resultatsCoches = {
   initialiser,
   estCoche,

@@ -1,10 +1,5 @@
 /* resultats.css : onglet Résultats (liste, lignes, badges, détail issue, panneau latéral, diff) — extrait de style.css (issue #625, étape 1). Ordre de
    chargement à préserver : voir templates/fragments/entete.html. */
-.barre-issue{display:flex;align-items:center;gap:10px;margin-bottom:16px;
-  padding-bottom:14px;border-bottom:1px solid #eee}
-.barre-issue select{flex:1;padding:7px 10px;border:1px solid #ddd;border-radius:6px;
-  font-size:13px;background:#fff;color:#1a1a18;min-width:0}
-.barre-issue select:focus{outline:none;border-color:#888}
 .zone-issue{min-height:120px}
 .issue-vide{color:#aaa;font-size:13px;text-align:center;padding:40px 0}
 .issue-titre{font-size:20px;font-weight:600;line-height:1.3;margin-bottom:10px}
