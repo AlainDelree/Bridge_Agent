@@ -43,9 +43,10 @@ lui-même par ses propres issues (dogfooding).
   création, sinon PowerShell 5.1 plante sur les accents.
 
 ## État d'avancement (récent, cf. changelog en bas du DOC)
-- #625→#632 (refonte web) : socle de modules ES dans `static/js/socle/`
+- #625→#636 (refonte web) : socle de modules ES dans `static/js/socle/`
   (store/api/sse/toasts/dom/persistance/pont), et modules par fonctionnalité
-  sortis d'app.js (onglets, resultats — `/stream` + badges, panneau latéral)
+  sortis d'app.js (onglets, resultats — `/stream` + badges, panneau latéral,
+  resultats_coches — case « traité/lu » à état serveur + copie fiable #636)
   communiquant entre eux par le store, jamais par le pont/window (réservé aux
   échanges avec l'ancien app.js). Détail : `ARCHITECTURE.md §6`.
 - #221 (calibration TIMEOUT, 2/3) : `watcher.py` journalise `TIMEOUT_suggéré`

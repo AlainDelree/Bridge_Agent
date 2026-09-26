@@ -33,6 +33,9 @@ import { initialiserOnglets, activerOngletParDefaut } from '../onglets.js';
 import { resultats } from '../resultats.js';
 // Module par fonctionnalité — panneau latéral (refonte étape 4, issue #628).
 import { initPanneauLateral } from '../panneau_lateral.js';
+// Module par fonctionnalité — case « traité/lu » à état serveur + copie fiable
+// (refonte étape 5b, issue #636).
+import { resultatsCoches } from '../resultats_coches.js';
 
 // Délégation : inerte tant qu'aucune règle n'est enregistrée par le socle lui-
 // même (les modules par fonctionnalité, ex. panneau_lateral.js, enregistrent
@@ -42,7 +45,7 @@ dom.installerDelegation();
 // Pont de transition : unique point de contact avec l'ancien code, à retirer à
 // la dernière étape de la refonte. `resultats` y est publié pour qu'app.js pilote
 // l'onglet Résultats (activation, ↻, badges) pendant la transition (issue #627).
-installerPont({ store, api, toasts, dom, sse, persistance, resultats });
+installerPont({ store, api, toasts, dom, sse, persistance, resultats, resultatsCoches });
 
 // Onglet Résultats (issue #627) : ouvre l'UNIQUE connexion /stream et s'abonne
 // aux transitions d'issue ET à store.ongletActif (issue #632). Le chargement
@@ -60,6 +63,13 @@ initialiserOnglets();
 // (voir ARCHITECTURE.md §6.7). S'abonne aussi à store.ongletActif (#632).
 initPanneauLateral();
 
+// Case « traité/lu » à état serveur + copie fiable (issue #636, refonte web
+// étape 5b) : migre le localStorage hérité (idempotent), charge l'état serveur
+// des cases (un GET par projet) et resynchronise le DOM. Lancé AVANT l'activation
+// de l'onglet par défaut ; son travail réseau étant asynchrone, la resync du DOM
+// se fait dès la réponse serveur (la liste, elle, se rend indépendamment).
+resultatsCoches.initialiser();
+
 // Activation de l'onglet par défaut (Résultats) — APPELÉE EN DERNIER,
 // volontairement : resultats.js et panneau_lateral.js se sont abonnés à
 // store.ongletActif juste au-dessus, et store.set() notifie toujours ses
@@ -76,3 +86,4 @@ console.debug('[socle] onglets initialisés (issue #626, étape 2).');
 console.debug('[socle] Résultats piloté par le store (issue #627).');
 console.debug('[socle] panneau latéral actif (issue #628).');
 console.debug('[socle] Résultats + panneau latéral raccordés au store (issue #632).');
+console.debug('[socle] cases « traité/lu » à état serveur + copie fiable (issue #636).');

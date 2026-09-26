@@ -105,6 +105,7 @@ const socle = creerStore({
   son: 'plat',           // 'plat' | 'cloche' (interrupteur global du bip)
   rateLimit: null,       // { restant, limite, pourcent, etat } | null
   ongletActif: 'resultats', // nom de l'onglet actif (voir static/js/onglets.js)
+  casesCochees: {},      // { nomProjet: [numero, ...] } — état serveur des cases « traité/lu » (issue #636), source /cases-cochees
 });
 
 // Aides spécifiques aux issues, construites sur la tranche `issues` indexée.

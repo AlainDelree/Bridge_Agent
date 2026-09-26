@@ -59,6 +59,12 @@
   border-radius:14px;background:#fff;color:#555;cursor:pointer;user-select:none;
   transition:opacity .12s}
 .btn-cocher-tout:hover{opacity:.6}
+/* Bouton « Tout à zéro » (issue #636), à côté de « Cocher tout » : même gabarit,
+   teinte plus sobre pour le distinguer (action globale tous projets). */
+.btn-remise-zero-cases{font-size:12px;padding:5px 11px;border:1px solid #ccc;
+  border-radius:14px;background:#fff;color:#8a6d00;cursor:pointer;user-select:none;
+  transition:opacity .12s}
+.btn-remise-zero-cases:hover{opacity:.6}
 /* Indicateur discret de rafraîchissement en arrière-plan (cache localStorage). */
 .maj-indicateur{font-size:11px;color:#9a978f;font-style:italic;
   margin:0 2px;user-select:none}
