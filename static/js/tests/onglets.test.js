@@ -20,8 +20,8 @@ test('journal : démarrage du journal', () => {
   assert.deepEqual(initialisationsPour('journal'), ['demarrerJournal']);
 });
 
-test('config : chargement de la config', () => {
-  assert.deepEqual(initialisationsPour('config'), ['chargerConfig']);
+test('config : plus aucun appel pont — chargerConfig est importé directement (issue #651)', () => {
+  assert.deepEqual(initialisationsPour('config'), []);
 });
 
 test('ccw : ouverture de l\'onglet CCW', () => {

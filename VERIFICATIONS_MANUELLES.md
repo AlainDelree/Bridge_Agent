@@ -331,6 +331,12 @@ historique dans le panneau latéral (voir plus haut).
 
 ## Onglet « Configuration »
 
+*(sorti d'app.js vers `static/js/config.js`, issue #651, étape 12 — import
+direct de `chargerConfig` depuis `onglets.js`, plus par le pont ; boutons
+Enregistrer/Enregistrer et relancer/Supprimer ce projet, curseur Tâches en
+parallèle et modale de suppression branchés par délégation, `data-action`,
+plus d'`onclick=`/`onchange=`/`oninput=` inline.)*
+
 - [ ] Identité (lecture seule) affichée ; paramètres éditables chargés.
 - [ ] **Plus aucun réglage de son** (ni « Script bip », ni « Tonalité du
       bip », ni bouton « Tester le son » — retirés à l'issue #643 ; le son se
@@ -338,8 +344,15 @@ historique dans le panneau latéral (voir plus haut).
       global + choix par issue).
 - [ ] Curseur Tâches en parallèle : valeur suivie.
 - [ ] « Enregistrer » et « Enregistrer et relancer » fonctionnent.
+- [ ] **Changement de projet (sélecteur global) pendant que l'onglet
+      Configuration est déjà actif** : la config affichée se recharge pour le
+      nouveau projet (pas d'avertissement `[pont] fonction ancienne
+      introuvable` en console — `chargerConfig` doit rester accessible en
+      `window.chargerConfig` malgré le passage en module ES).
 - [ ] Zone dangereuse : « Supprimer ce projet… » ouvre la modale (checklist +
-      confirmation par saisie du nom).
+      confirmation par saisie du nom) ; les 3 cases + le nom retapé
+      correctement sont bien nécessaires pour activer « Supprimer
+      définitivement » (garde-fous #587 inchangés).
 - [ ] **Suppression d'un projet — purge `localStorage`** (issue #644) : avant
       suppression, consulter (double-clic) une issue du projet à supprimer
       (crée une clé `bridge_cache_detail_<projet>_<numero>`, DevTools →

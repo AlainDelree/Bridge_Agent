@@ -183,11 +183,14 @@ function appliquerAccentProjet(nom) {
 // appelées via le pont pour les initialisations ci-dessous (inchangées) :
 // chargerListeIssues/demarrerTempsRestant/demarrerPanneauLateral (Résultats,
 // canal SSE demarrerStreamFinIssue permanent depuis #515, cf. plus bas),
-// demarrerJournal, chargerConfig, ccwOuvrirOnglet (pas de polling — chaque
-// requête déclenche des appels SSH coûteux). L'onglet « Résultats inbox » et son
-// rafraichirInbox ont été retirés d'ici (issue #639) : le polling
-// /issues-inbox/etat (badge d'alerte + lignes rejetées) vit désormais dans
-// static/js/resultats.js, et l'historique dans le panneau latéral.
+// demarrerJournal, ccwOuvrirOnglet (pas de polling — chaque requête déclenche
+// des appels SSH coûteux). L'onglet « Résultats inbox » et son rafraichirInbox
+// ont été retirés d'ici (issue #639) : le polling /issues-inbox/etat (badge
+// d'alerte + lignes rejetées) vit désormais dans static/js/resultats.js, et
+// l'historique dans le panneau latéral. L'onglet Configuration
+// (chargerConfig/sauvegarderConfig + zone dangereuse de suppression de
+// projet) a été sorti vers static/js/config.js (issue #651, refonte web
+// étape 12), branché par import direct depuis onglets.js — plus par le pont.
 
 // reinitialiserTimeout : un changement de projet MANUEL (sélecteur, chargement
 // initial, ajouterProjetAuSelecteur) doit recharger le timeout par défaut du
@@ -243,93 +246,12 @@ async function mettreAJourInfoProjet(reinitialiserTimeout = true) {
   } catch(e) {}
 }
 
-// Écrit une valeur dans un champ de l'onglet Configuration sans planter si
-// l'élément est absent du DOM (page pas encore rafraîchie après un déploiement
-// ayant ajouté ce champ, ou valeur absente/null/undefined renvoyée par le
-// serveur — issue #570) : ignore ce champ plutôt que d'interrompre le
-// chargement des champs suivants.
-function majChampConfig(id, valeur, proprite = 'value') {
-  const el = document.getElementById(id);
-  if (el) el[proprite] = valeur;
-}
-
-async function chargerConfig() {
-  const nom = document.getElementById('projet').value;
-  try {
-    const rep = await fetch('/config/' + encodeURIComponent(nom));
-    const cfg = await rep.json();
-
-    majChampConfig('config-readonly',
-      `NOM = ${cfg.nom}<br>DEPOT = ${cfg.depot}<br>` +
-      `REP_TRAVAIL = ${cfg.rep_travail}<br>` +
-      (cfg.perimetre  ? `PERIMETRE = ${cfg.perimetre}<br>` : '') +
-      (cfg.cmd_backup ? `CMD_BACKUP = ${cfg.cmd_backup}` : ''),
-      'innerHTML');
-
-    majChampConfig('conf-TOPIC_NTFY', cfg.topic_ntfy || '');
-    majChampConfig('conf-LABEL', cfg.label || 'for-linux');
-    majChampConfig('conf-INTERVALLE', cfg.intervalle || 10);
-    majChampConfig('conf-MAX_ESSAIS', cfg.max_essais || 3);
-    majChampConfig('conf-TIMEOUT_CLAUDE', cfg.timeout_claude || 300);
-    majChampConfig('conf-FICHIER_CONTEXTE', cfg.fichier_contexte || '');
-    majChampConfig('conf-MODELE_CCL', cfg.modele_ccl || '');
-    majChampConfig('conf-LOG_TAILLE_MAX_MO', cfg.log_taille_max_mo || 1);
-    majChampConfig('conf-LOG_ARCHIVES', cfg.log_archives || 5);
-    // ?? et non || : 0 est une valeur valide (auto-extinction désactivée).
-    majChampConfig('conf-DELAI_INACTIVITE_MIN', cfg.delai_inactivite_min ?? 20);
-    majChampConfig('conf-MAX_WRITE_PARALLELE', cfg.max_write_parallele || 2);
-    majChampConfig('max-write-parallele-valeur', cfg.max_write_parallele || 2, 'textContent');
-    const msgConfig = document.getElementById('msg-config');
-    if (msgConfig) msgConfig.style.display = 'none';
-  } catch(e) {
-    const msg = document.getElementById('msg-config');
-    msg.textContent = 'Erreur de chargement : ' + e.message;
-    msg.className = 'message erreur'; msg.style.display = 'block';
-  }
-}
-
-async function sauvegarderConfig(relancer) {
-  const nom = document.getElementById('projet').value;
-  const data = {
-    TOPIC_NTFY:        document.getElementById('conf-TOPIC_NTFY').value,
-    LABEL:             document.getElementById('conf-LABEL').value,
-    INTERVALLE:        document.getElementById('conf-INTERVALLE').value,
-    MAX_ESSAIS:        document.getElementById('conf-MAX_ESSAIS').value,
-    TIMEOUT_CLAUDE:    document.getElementById('conf-TIMEOUT_CLAUDE').value,
-    FICHIER_CONTEXTE:  document.getElementById('conf-FICHIER_CONTEXTE').value,
-    MODELE_CCL:        document.getElementById('conf-MODELE_CCL').value,
-    LOG_TAILLE_MAX_MO: document.getElementById('conf-LOG_TAILLE_MAX_MO').value,
-    LOG_ARCHIVES:      document.getElementById('conf-LOG_ARCHIVES').value,
-    DELAI_INACTIVITE_MIN: document.getElementById('conf-DELAI_INACTIVITE_MIN').value,
-    MAX_WRITE_PARALLELE: document.getElementById('conf-MAX_WRITE_PARALLELE').value,
-  };
-  const rep  = await fetch('/config/' + encodeURIComponent(nom), {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify(data)
-  });
-  const json = await rep.json();
-  const msg  = document.getElementById('msg-config');
-  msg.textContent = json.message;
-  msg.className   = 'message ' + (json.succes ? 'succes' : 'erreur');
-  msg.style.display = 'block';
-  if (json.succes && relancer) {
-    const repW  = await fetch('/lancer-watcher', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({projet: nom, relancer: true})
-    });
-    const jsonW = await repW.json();
-    // Issue #609 : un redémarrage forcé pendant qu'une tâche est en cours
-    // n'est jamais exécuté tout de suite (il la couperait) — il est différé
-    // jusqu'à sa fin (app.watchers.demarrer_watcher_ou_differer), et
-    // l'interface doit le dire clairement plutôt que de laisser croire à un
-    // redémarrage immédiat.
-    msg.textContent += jsonW.differe
-      ? ' ⏳ Watcher occupé (tâche en cours) — redémarrage différé, appliqué automatiquement à la fin de la tâche en cours.'
-      : ' Watcher relancé.';
-  }
-}
+// chargerConfig/sauvegarderConfig (onglet Configuration) ont été sortis vers
+// static/js/config.js (issue #651, refonte web étape 12) — chargerConfig()
+// reste appelée directement ci-dessus (onProjetChange, quand l'onglet
+// Configuration est déjà actif) : elle est exposée en window.chargerConfig
+// par config.js (voir son en-tête), une globale ordinaire comme avant la
+// sortie.
 
 // ─── Onglet CCW (issue #174, SSH depuis #447) ──────────────────────────────
 // Pilotage du PC fixe Windows CCW et de ses projets depuis Linux, via les
@@ -4852,6 +4774,10 @@ function ajouterProjetAuSelecteur(nom, depot) {
 // Symétrique de ajouterProjetAuSelecteur ci-dessus (issue #587) : retire
 // l'option du <select> après une suppression réussie et sélectionne le
 // premier projet restant (s'il y en a un) pour laisser l'interface utilisable.
+// Reste dans app.js après la sortie de la « Zone dangereuse » (suppression de
+// projet) vers static/js/config.js (issue #651) : cette fonction manipule le
+// sélecteur global #projet du bandeau supérieur, pas un élément de l'onglet
+// Configuration — config.js l'appelle via le pont (appelerAncien).
 function retirerProjetDuSelecteur(nom) {
   const select = document.getElementById('projet');
   const opt = [...select.options].find(o => o.value === nom);
@@ -4864,159 +4790,3 @@ function retirerProjetDuSelecteur(nom) {
   }
 }
 
-// ─── Suppression de projet (issue #587) ────────────────────────────────────
-// Modal symétrique à « Nouveau projet » ci-dessus, côté CCL/local uniquement
-// (dépôt GitHub distant + côté CCW jamais touchés ici). L'aperçu (dry-run,
-// GET /supprimer-projet/verifier/<nom>) se charge automatiquement à
-// l'ouverture ; le bouton de suppression réelle reste désactivé tant que les
-// 3 cases de la checklist ne sont pas cochées ET que le nom n'a pas été
-// retapé à l'identique — double garde-fou côté interface, la route serveur
-// revérifie indépendamment la confirmation (app/supprimer_projet.py).
-let spNomCourant = '';
-
-function ouvrirSupprimerProjet() {
-  const nom = document.getElementById('projet').value;
-  if (!nom) return;
-  spNomCourant = nom;
-  document.getElementById('sp-nom-titre').textContent = nom;
-  document.getElementById('sp-nom-confirmation-attendu').textContent = nom;
-  document.getElementById('sp-conf-nom').textContent = 'configs/' + nom + '.conf';
-  document.getElementById('sp-chargement').textContent = 'Chargement de l\'aperçu…';
-  document.getElementById('sp-chargement').style.display = 'block';
-  document.getElementById('sp-contenu').style.display = 'none';
-  document.getElementById('sp-compte-rendu').style.display = 'none';
-  document.getElementById('sp-message').style.display = 'none';
-  document.getElementById('sp-nom-confirmation').value = '';
-  document.querySelectorAll('.sp-case').forEach(c => c.checked = false);
-  const btn = document.getElementById('sp-supprimer');
-  btn.style.display = '';
-  btn.disabled = true;
-  btn.textContent = 'Supprimer définitivement';
-  document.getElementById('sp-fermer').textContent = 'Fermer';
-  document.getElementById('modal-supprimer-projet').classList.add('actif');
-  spChargerApercu(nom);
-}
-
-function fermerSupprimerProjet() {
-  document.getElementById('modal-supprimer-projet').classList.remove('actif');
-}
-
-async function spChargerApercu(nom) {
-  const chargement = document.getElementById('sp-chargement');
-  const contenu = document.getElementById('sp-contenu');
-  let r;
-  try {
-    r = await (await fetch('/supprimer-projet/verifier/' + encodeURIComponent(nom))).json();
-  } catch (e) {
-    chargement.textContent = 'Erreur réseau : ' + e.message;
-    return;
-  }
-  if (!r.existe) {
-    chargement.textContent = '❌ configs/' + nom + '.conf introuvable — rien à supprimer.';
-    return;
-  }
-  chargement.style.display = 'none';
-  contenu.style.display = 'block';
-  document.getElementById('sp-depot').textContent = r.depot || '(inconnu)';
-
-  let html = '<div>Répertoire de travail : <b>' + escapeHtml(r.rep_travail || '') + '</b>'
-    + (r.rep_existe
-        ? ' (' + r.nb_fichiers + ' élément(s)' + (r.git_local ? ', dépôt git local inclus' : '') + ')'
-        : ' — déjà absent')
-    + '</div>';
-  if (r.apercu_fichiers && r.apercu_fichiers.length) {
-    html += '<div style="margin-top:6px;font-size:12px;color:#666">'
-      + r.apercu_fichiers.map(escapeHtml).join('<br>') + '</div>';
-  }
-  document.getElementById('sp-apercu').innerHTML = html;
-  spMajBoutonEtat();
-}
-
-// Rappelée à chaque case cochée/décochée et à chaque frappe dans le champ de
-// confirmation (voir onchange/oninput dans templates/index.html) : le bouton
-// de suppression réelle ne s'active QUE si les 3 cases sont cochées ET que le
-// nom retapé correspond exactement au projet ouvert.
-function spMajBoutonEtat() {
-  const casesOk = [...document.querySelectorAll('.sp-case')].every(c => c.checked);
-  const nomOk = document.getElementById('sp-nom-confirmation').value.trim().toLowerCase()
-              === spNomCourant.toLowerCase();
-  document.getElementById('sp-supprimer').disabled = !(casesOk && nomOk);
-}
-
-function spMsg(texte, type) {
-  const el = document.getElementById('sp-message');
-  el.textContent = texte;
-  el.className = 'message ' + type;
-  el.style.display = 'block';
-}
-
-async function soumettreSupprimerProjet() {
-  const confirmation = document.getElementById('sp-nom-confirmation').value.trim().toLowerCase();
-  const cr = document.getElementById('sp-compte-rendu');
-  document.getElementById('sp-message').style.display = 'none';
-  cr.style.display = 'none';
-  const btn = document.getElementById('sp-supprimer');
-  const avant = btn.textContent;
-  btn.disabled = true;
-  btn.textContent = 'Suppression…';
-
-  let res;
-  try {
-    const rep = await fetch('/supprimer-projet', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({nom: spNomCourant, confirmation}),
-    });
-    res = await rep.json();
-  } catch (e) {
-    btn.disabled = false;
-    btn.textContent = avant;
-    spMsg('Erreur réseau : ' + e.message, 'erreur');
-    return;
-  }
-
-  if (res.etapes && res.etapes.length) {
-    cr.innerHTML = res.etapes.map(e =>
-      (e.ok ? '✓ ' : '❌ ') + '<b>' + escapeHtml(e.etape) + '</b> — ' + escapeHtml(e.detail || '')
-    ).join('<br>');
-    cr.style.display = 'block';
-  }
-
-  if (res.succes) {
-    btn.style.display = 'none';
-    // Depuis l'issue #645, BRIDGE_AGENT_DOC.md (§2) est committé ET poussé
-    // AUTOMATIQUEMENT par supprimer_projet() (côté serveur, étape « Commit
-    // doc Bridge_Agent » déjà visible dans le compte-rendu ci-dessus) — plus
-    // de commit local à pousser soi-même dans le cas général. configs/*.conf
-    // n'est PAS mentionné : gitignoré, il n'est jamais committable, quel que
-    // soit le statut du commit de la doc.
-    // spMsg pose le texte via textContent (pas innerHTML) : pas d'échappement
-    // HTML ici, ce serait affiché littéralement (ex. « &amp; » au lieu de « & »).
-    let msgDoc;
-    if (res.doc_commit_statut === 'push_echoue') {
-      msgDoc = ' ⚠ BRIDGE_AGENT_DOC.md a été committé en LOCAL mais le push a '
-             + 'échoué (réseau, conflit avec origin…) — à repousser toi-même : '
-             + (res.doc_commit_commande_manuelle || 'cd ~/Bridge_Agent && git push') + '.';
-    } else if (res.doc_commit_statut === 'echec') {
-      msgDoc = ' ⚠ Le commit automatique de BRIDGE_AGENT_DOC.md a échoué — '
-             + 'à committer/pousser toi-même : '
-             + (res.doc_commit_commande_manuelle || '') + '.';
-    } else {
-      msgDoc = ' BRIDGE_AGENT_DOC.md (§2) a été committé et poussé automatiquement.';
-    }
-    spMsg('✅ Projet « ' + res.nom + ' » supprimé côté CCL/local. Reste à faire à la main : '
-        + 'dépôt GitHub + labels (hors scope, cf. issue #587).' + msgDoc, 'succes');
-    // Purge ses clés localStorage (cache détail + entrée dans le filtre
-    // Résultats) — fuite corrigée à l'issue #644 : rien n'équivalent au
-    // nettoyage serveur des cases cochées/son par issue (#587) n'existait
-    // côté navigateur.
-    if (window.Bridge && window.Bridge.persistance) {
-      window.Bridge.persistance.purgerProjet(res.nom);
-    }
-    retirerProjetDuSelecteur(res.nom);
-  } else {
-    btn.disabled = false;
-    btn.textContent = avant;
-    spMsg('❌ ' + (res.erreur || 'Échec.'), 'erreur');
-  }
-}
