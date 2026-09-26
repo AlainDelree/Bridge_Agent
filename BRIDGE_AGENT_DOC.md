@@ -79,7 +79,6 @@ Claude Chat → crée une issue → GitHub → watcher.py détecte → CCL exéc
 | `ecole` | AlainDelree/Ecole | ~/Ecole | (conf local) | `#767676` |
 | `ff_galerie` | AlainDelree/FF_Galerie | ~/FF_Galerie | (conf local) | `#767676` |
 | `gestionmail` | AlainDelree/GestionMail | ~/GestionMail | (conf local) | `#3B45A0` |
-| `nouveaupetitprojet` | AlainDelree/Nouveaupetitprojet | ~/Nouveaupetitprojet | (conf local) | `#FFE4CC` |
 | `petitprojet` | AlainDelree/Petitprojet | ~/Petitprojet | (conf local) | `#CCDDFF` |
 | `relecture_bridge` | AlainDelree/Relecture_Bridge | ~/Relecture_Bridge | (conf local) | `#CCFF00` |
 | `rummikub` | AlainDelree/Rummikub | ~/Rummikub | (conf local) | `#ADFF8F` |
@@ -843,7 +842,6 @@ hors périmètre même si l'issue le demande explicitement :
 | `ecole` | /home/alain/Ecole |
 | `ff_galerie` | /home/alain/FF_Galerie |
 | `gestionmail` | /home/alain/GestionMail |
-| `nouveaupetitprojet` | /home/alain/Nouveaupetitprojet |
 | `petitprojet` | /home/alain/Petitprojet |
 | `relecture_bridge` | /home/alain/Relecture_Bridge |
 | `rummikub` | /home/alain/Rummikub |
