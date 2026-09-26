@@ -9,6 +9,38 @@ milliers de caractères sur une seule ligne logique, coûteux à relire et
 
 Convention d'ajout : voir §10 de `BRIDGE_AGENT_DOC.md`.
 
+# CHANGELOG-655 — à fusionner dans CHANGELOG.md
+
+## 26 septembre 2026 — issue #655
+
+Panneau latéral : bouton « ⏹ Arrêter » par projet pour les watchers CCL.
+
+Depuis la suppression de l'onglet Watchers (issue #626, étape 2), la ligne d'un watcher CCL du panneau latéral (`rendrePanneauLateralMonitoring`, `static/js/panneau_lateral.js`) n'offrait que « ▶ Lancer »/« ↺ Relancer » — aucun moyen de l'arrêter immédiatement depuis l'interface, alors que la route serveur `POST /arreter-watcher` (`app/watchers.py::arreter_watcher_route`/`arreter_watcher`, `systemctl --user stop`) existait déjà et n'était utilisée que par le bouton Configuration. Un watcher actif finissait par s'éteindre seul (auto-extinction, 20 min par défaut), mais rien ne permettait de l'arrêter tout de suite (ex. avant de modifier son `.conf`, ou pour libérer des ressources).
+
+- **`static/js/panneau_lateral.js`** : nouvelle fonction pure `afficherBoutonArreterWatcherCcl(actif)` (même patron que `afficherBoutonDemarrer`/`afficherBoutonArreter` de `ccw.js`, issue #203) — le bouton n'apparaît que si le watcher est actif. Nouveau bouton `⏹ Arrêter` (`data-action="pl-arreter-ccl"`) affiché à côté de `↺ Relancer` dans ce cas, dans un nouveau wrapper `<span class="pl-ligne-btns">` (nécessaire pour garder deux boutons dans une ligne `.pl-ligne` en `justify-content:space-between`, qui n'attendait jusqu'ici que deux enfants). Nouvelle fonction réseau `sidebarArreterWatcherCCL(nom, btn)` : confirmation (`toasts.confirmer`, même style que `sidebarArreterWatcherInbox`), `POST /arreter-watcher`, bouton désactivé pendant l'appel, puis rafraîchissement — même mécanique que `sidebarRelancerWatcherCCL`. Reste interne au module (pas exposée en `window.*`, contrairement à `sidebarRelancerWatcherCCL` que `app.js` appelle encore directement).
+- **`static/css/resultats.css`** : règle `.pl-ligne-btns{display:flex;gap:6px;flex-shrink:0}` pour le nouveau wrapper.
+- **`static/js/tests/panneau_lateral.test.js`** : 3 nouveaux tests sur `afficherBoutonArreterWatcherCcl` (actif → affiché, inactif → masqué, `undefined` → masqué), sur le modèle de `ccw.test.js`.
+- **`VERIFICATIONS_MANUELLES.md`** : nouvelle case dans la zone monitoring du panneau latéral décrivant le bouton, sa visibilité conditionnelle et le comportement de confirmation.
+- **`BRIDGE_AGENT_DOC.md`** (§3.11, watcher spool) : la phrase « contrairement aux watchers CCL de projet, pas de bouton Arrêter » était devenue fausse — reformulée pour renvoyer vers le nouveau bouton CCL (même mécanique de confirmation).
+
+Tests : `node --test static/js/tests/*.test.js` → 157/157 OK (154 précédents + 3 nouveaux). `py_compile` sans changement côté Python (aucun fichier `.py` touché, la route serveur existait déjà).
+
+# CHANGELOG-652 — à fusionner dans CHANGELOG.md
+
+## 26 septembre 2026 — issue #652
+
+Refonte interface web (dernier chantier, ARCHITECTURE.md §6/§6.7) : le formulaire « Nouvelle issue » quitte `static/js/app.js` pour un module ES dédié `static/js/creation.js`. Objectif PUREMENT structurel — comportement strictement inchangé (backup manuel, seul moyen de joindre un fichier à une issue). `app.js` passe de 5022 à 3823 lignes (~1199 retirées).
+
+- **`static/js/creation.js`** (nouveau) : regroupe l'intégralité de l'onglet de création trouvée par grep exhaustif depuis `onglet_creation.html` — `collecterFormulaire`, `envoyerIssue`, la bibliothèque de **templates** (#284 : `chargerTemplates`, `templateSelectionne`, `onTemplateSelectChange`, `chargerTemplateDansFormulaire`, `creerTemplate`, `modifierTemplateSelectionne`, `supprimerTemplateSelectionne`), la **pièce jointe image** (#191/#192 : `majEtatBoutonImage`, `insererDansCorps`, `joindreImage`), l'**envoi en lot** (#135/#505 : `decouperCorpsEnBlocs`, `enModeLot`, `projetEffectifBloc`, `modeEffectifBloc`, `mettreAJourBoutonLot`, `afficherResumeLot`, `envoyerLot`), les **détecteurs d'en-tête à la frappe** (`detecterTitreDansCorps`, `detecterProjetDansCorps` #109, `detecterTimeoutDansCorps` #111, `detecterModeDansCorps` #326) et le **parsing d'en-tête** partagé (`zoneEntete`/`lireChampEntete`/`retirerLigneEntete` #512/#129), le **résumé d'en-tête** (#117 : `mettreAJourResumeEntete`), l'**aperçu** (`afficherApercu`), les modales (`afficherModalConfirmation`/`afficherModalIncoherence`/`afficherModalErreur`, `detecterIncoherenceProjet` #44), `mettreAJourBoutonEnvoi`, `viderFormulaire`, les helpers `afficherMessage`/`afficherToast`/`cacherRetours`, et la **mémorisation de `notif_pc`** (#93 : `appliquerNotifPc`).
+- **Délégation du socle à la place des handlers inline** : `templates/fragments/onglet_creation.html` (le fragment qui en portait le plus, 10) n'a plus aucun `onclick=`/`onchange=` — ils deviennent des attributs `data-action="creation-*"` routés par `dom.surAction`. Les 6 détecteurs déclenchés sur `input` de `#corps` (à la frappe/collage) sont enregistrés dans le MÊME ORDRE qu'avant (titre → projet → timeout → mode → résumé → bouton lot) ; la brique de délégation exécute les règles d'un type dans leur ordre d'enregistrement. Le bouton d'envoi a un point d'entrée unique (`creation-envoyer`) qui choisit `envoyerLot`/`envoyerIssue` selon `enModeLot()` — remplace l'ancien basculement de `btn.onclick`.
+- **Initialisation par IMPORT DIRECT** depuis `static/js/onglets.js` (`import { initCreation }`) plutôt que par le pont : `activerOnglet` appelle `initCreation()` (idempotente) à l'activation de l'onglet `creation`. `initialisationsPour('creation')` reste `[]` (pont non utilisé, cf. test `onglets.test.js`).
+- **Pont résiduel** (à retirer avec le pont en fin de refonte) : `creation.js` publie `window.chargerTemplates` et `window.afficherMessage` (encore appelées PAR LEUR NOM depuis `app.js` — respectivement `onProjetChange` au changement de projet et `lancerWatcher` pour ses erreurs) dès l'évaluation du module ; et appelle `onProjetChange()` / `mettreAJourInfoProjet()` (restés dans `app.js`) via `appelerAncien`.
+- **`notif_pc` non factorisée davantage** : vérifié par grep — cette clé n'est lue/écrite QUE par le formulaire (le panneau latéral dérive l'état de ses cases 🔔 des labels GitHub de l'issue, `panneau_lateral.js::etatsCasesNotif`, sans lire cette clé). `creation.js` utilise directement la brique `persistance` du socle et sa clé unique `persistance.CLES.notifPc` (déjà point d'accès unique depuis #644), sans duplication.
+- **Tests Node** (`node --test`, 158 + 29 OK) : nouveau `static/js/tests/creation.test.js` couvrant la logique PURE jusqu'ici non testée — `zoneEntete`, `lireChampEntete`, `retirerLigneEntete`, `normaliserTexteMode`/`reconnaitreModeTexte`, `detecterIncoherenceProjet`, `decouperCorpsEnBlocs`, `projetEffectifBloc`, `modeEffectifBloc` (exportées à cette fin ; le module reste sûr à importer sous Node — aucun accès DOM/réseau au chargement, exposition `window.*` gardée par `typeof window`). `pont_globales.test.js` gagne un garde-fou du **pont inverse** : les globales `window.*` qu'`app.js` appelle encore par leur nom (`chargerTemplates`, `afficherMessage`) doivent être publiées par un module et ne plus être définies dans `app.js`.
+- **Docs** : `ARCHITECTURE.md §6.5` (creation.js ajouté aux modules « déjà sortis », note de réalisation #652), `VERIFICATIONS_MANUELLES.md` (section « Nouvelle issue » enrichie : détection auto, envoi en lot, notif_pc, init paresseuse), `CONTEXTE.md` (état d'avancement).
+
+Aucune modification Python. `git push` non effectué (Alain pousse après revue).
+
 # CHANGELOG-653 — à fusionner dans CHANGELOG.md
 
 ## 26 septembre 2026 — issue #653
