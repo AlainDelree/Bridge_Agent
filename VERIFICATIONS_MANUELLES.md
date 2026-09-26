@@ -325,8 +325,17 @@ historique dans le panneau latéral (voir plus haut).
 
 ## Onglet « Journal watcher »
 
+*(sorti d'app.js vers `static/js/journal.js`, issue #650, étape 11 — import
+direct depuis `onglets.js`, plus par le pont. Bouton « Vider l'affichage »
+branché par délégation, `data-action="journal-vider"`, plus d'`onclick=`
+inline.)*
+
 - [ ] Sélectionner un projet avec watcher actif : le terminal streame le log en
       direct (SSE), lignes colorées.
+- [ ] **Changement de projet/ré-entrée dans l'onglet** : l'ancienne connexion
+      SSE se ferme proprement (pas de doublon de lignes, pas d'avertissement
+      `[pont] fonction ancienne introuvable` en console) et le terminal se
+      réinitialise (label + contenu) sur le nouveau projet.
 - [ ] Bouton « Vider l'affichage ».
 
 ## Onglet « Configuration »

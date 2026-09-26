@@ -37,6 +37,11 @@ import { resultatsCoches } from '../resultats_coches.js';
 // Module par fonctionnalité — actions cliquables sur la ligne d'une issue
 // ouverte + son par issue (refonte étape 6, issue #641).
 import { actionsLigne } from '../actions_ligne.js';
+// Module par fonctionnalité — onglet Journal watcher (refonte étape 11,
+// issue #650). demarrerJournal() est appelé directement par onglets.js (import
+// direct, plus par le pont) ; initJournal() ci-dessous ne branche que la
+// délégation du bouton « Vider l'affichage ».
+import { initJournal } from '../journal.js';
 
 // Délégation : les modules par fonctionnalité (onglets.js, panneau_lateral.js)
 // enregistrent leurs propres règles via dom.surAction(...) ; ceci (ré)installe
@@ -71,6 +76,11 @@ initPanneauLateral();
 // se fait dès la réponse serveur (la liste, elle, se rend indépendamment).
 resultatsCoches.initialiser();
 
+// Onglet Journal watcher (issue #650, refonte web étape 11) : ne branche que
+// le bouton « Vider l'affichage » — demarrerJournal() est appelé directement
+// par onglets.js à l'activation de l'onglet, sans passer par ici.
+initJournal();
+
 // Activation de l'onglet par défaut (Résultats) — APPELÉE EN DERNIER,
 // volontairement : resultats.js et panneau_lateral.js se sont abonnés à
 // store.ongletActif juste au-dessus, et store.set() notifie toujours ses
@@ -89,3 +99,4 @@ console.debug('[socle] panneau latéral actif (issue #628).');
 console.debug('[socle] Résultats + panneau latéral raccordés au store (issue #632).');
 console.debug('[socle] cases « traité/lu » à état serveur + copie fiable (issue #636).');
 console.debug('[socle] actions sur la ligne (needs-human/interrompre/son) actives (issue #641).');
+console.debug('[socle] onglet Journal watcher piloté par import direct (issue #650).');

@@ -16,8 +16,8 @@ test('un onglet non listé (ex. creation) ne déclenche aucun appel pont', () =>
   assert.deepEqual(initialisationsPour('creation'), []);
 });
 
-test('journal : démarrage du journal', () => {
-  assert.deepEqual(initialisationsPour('journal'), ['demarrerJournal']);
+test('journal : plus aucun appel pont — demarrerJournal est importé directement (issue #650)', () => {
+  assert.deepEqual(initialisationsPour('journal'), []);
 });
 
 test('config : chargement de la config', () => {

@@ -1,5 +1,3 @@
-let sourceSSE = null;
-
 // ── Services CCW connus (lus par le panneau latéral, static/js/panneau_lateral.js) ──
 // Dernière liste connue des services CCW (projet/service/etat), alimentée par
 // ccwChargerProjets() — jamais interrogée directement depuis le panneau latéral
@@ -183,11 +181,14 @@ function appliquerAccentProjet(nom) {
 // appelées via le pont pour les initialisations ci-dessous (inchangées) :
 // chargerListeIssues/demarrerTempsRestant/demarrerPanneauLateral (Résultats,
 // canal SSE demarrerStreamFinIssue permanent depuis #515, cf. plus bas),
-// demarrerJournal, chargerConfig, ccwOuvrirOnglet (pas de polling — chaque
-// requête déclenche des appels SSH coûteux). L'onglet « Résultats inbox » et son
-// rafraichirInbox ont été retirés d'ici (issue #639) : le polling
-// /issues-inbox/etat (badge d'alerte + lignes rejetées) vit désormais dans
-// static/js/resultats.js, et l'historique dans le panneau latéral.
+// chargerConfig, ccwOuvrirOnglet (pas de polling — chaque requête déclenche des
+// appels SSH coûteux). L'onglet « Résultats inbox » et son rafraichirInbox ont
+// été retirés d'ici (issue #639) : le polling /issues-inbox/etat (badge
+// d'alerte + lignes rejetées) vit désormais dans static/js/resultats.js, et
+// l'historique dans le panneau latéral. L'onglet Journal watcher
+// (demarrerJournal/viderTerminal) a été sorti vers static/js/journal.js
+// (issue #650, refonte web étape 11), branché par import direct depuis
+// onglets.js — plus par le pont.
 
 // reinitialiserTimeout : un changement de projet MANUEL (sélecteur, chargement
 // initial, ajouterProjetAuSelecteur) doit recharger le timeout par défaut du
@@ -690,39 +691,6 @@ async function ccwFinaliserProjet() {
   } finally {
     ccwOccupe('ccw-btn-finaliser', false);
   }
-}
-
-function demarrerJournal() {
-  if (sourceSSE) { sourceSSE.close(); sourceSSE = null; }
-  const nom = document.getElementById('projet').value;
-  document.getElementById('label-journal').textContent = 'logs/watcher-' + nom + '.log';
-  document.getElementById('terminal').innerHTML = '';
-  sourceSSE = new EventSource('/journal/' + encodeURIComponent(nom));
-  sourceSSE.onmessage = function(e) {
-    const term = document.getElementById('terminal');
-    const div = document.createElement('div');
-    const t = e.data;
-    if (t.includes('[WARNING]') || t.includes('⚠'))  div.className = 'log-warn';
-    else if (t.includes('[ERROR]'))                    div.className = 'log-err';
-    else if (t.includes('✓') || t.includes('succès')) div.className = 'log-ok';
-    else                                               div.className = 'log-info';
-    div.textContent = t;
-    // Les lignes les plus récentes s'affichent en haut
-    term.insertBefore(div, term.firstChild);
-    term.scrollTop = 0;
-  };
-  sourceSSE.onerror = function() {
-    const term = document.getElementById('terminal');
-    const div = document.createElement('div');
-    div.className = 'log-warn';
-    div.textContent = '— connexion perdue, tentative de reconnexion…';
-    term.insertBefore(div, term.firstChild);
-    term.scrollTop = 0;
-  };
-}
-
-function viderTerminal() {
-  document.getElementById('terminal').innerHTML = '';
 }
 
 // ─── Onglet Résultats : visualisation des issues ──────────────────────────
