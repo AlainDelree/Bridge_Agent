@@ -10,7 +10,10 @@ import {
   construireResumeIdentite,
   suppressionActivable,
   messageStatutCommitDoc,
+  construireOptionsModeleCCL,
 } from '../config.js';
+
+const MODELES = ['claude-sonnet-5', 'claude-opus-4-8', 'claude-haiku-4-5', 'claude-fable-5'];
 
 test('construireResumeIdentite : champs obligatoires seuls', () => {
   const html = construireResumeIdentite({ nom: 'demo', depot: 'org/demo', rep_travail: '/home/x/demo' });
@@ -66,4 +69,35 @@ test('messageStatutCommitDoc : echec → message dédié', () => {
 test('messageStatutCommitDoc : statut inconnu ou absent → succès automatique', () => {
   assert.match(messageStatutCommitDoc(undefined, null), /committé et poussé automatiquement/);
   assert.match(messageStatutCommitDoc('ok', null), /committé et poussé automatiquement/);
+});
+
+// ─── construireOptionsModeleCCL (issue #656) ───────────────────────────────
+
+test('construireOptionsModeleCCL : MODELE_CCL vide → option vide + 4 modèles triés, aucune inconnue', () => {
+  const { options, inconnue } = construireOptionsModeleCCL(MODELES, '', 'claude-sonnet-5');
+  assert.equal(inconnue, false);
+  assert.deepEqual(options.map(o => o.value),
+    ['', 'claude-fable-5', 'claude-haiku-4-5', 'claude-opus-4-8', 'claude-sonnet-5']);
+  assert.equal(options[0].label, '-- Défaut global (claude-sonnet-5) --');
+});
+
+test('construireOptionsModeleCCL : valeur reconnue → sélectionnable, aucune option supplémentaire', () => {
+  const { options, inconnue } = construireOptionsModeleCCL(MODELES, 'claude-opus-4-8', 'claude-sonnet-5');
+  assert.equal(inconnue, false);
+  assert.equal(options.length, 5);
+  assert.ok(options.some(o => o.value === 'claude-opus-4-8'));
+});
+
+test('construireOptionsModeleCCL : casse/espaces de la valeur .conf normalisés avant comparaison', () => {
+  const { inconnue } = construireOptionsModeleCCL(MODELES, '  Claude-Opus-4-8  ', 'claude-sonnet-5');
+  assert.equal(inconnue, false);
+});
+
+test('construireOptionsModeleCCL : valeur .conf inconnue (ancienne/faute de frappe) → option supplémentaire, inconnue=true', () => {
+  const { options, inconnue } = construireOptionsModeleCCL(MODELES, 'claude-opus-4-5', 'claude-sonnet-5');
+  assert.equal(inconnue, true);
+  assert.equal(options.length, 6);
+  const derniere = options[options.length - 1];
+  assert.equal(derniere.value, 'claude-opus-4-5');
+  assert.match(derniere.label, /non reconnue/);
 });

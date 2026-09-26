@@ -3599,6 +3599,28 @@ testée sous Node (`node --test static/js/tests/`). Le versant serveur
 (`extraire_modele_entete` : présent/absent/invalide) est testé par
 `tests/test_modele_effectif_638.py`.
 
+`MODELES_VALIDES`/`MODELE_DEFAUT_GLOBAL` vivent dans `app/projets.py` (SOURCE
+UNIQUE, issue #656 — auparavant dupliquées à l'identique dans `app/issues.py`
+et `scripts/watcher_issues_inbox.py`, qui les importent désormais d'ici ;
+définies dans `app/projets.py` plutôt que dans `app/issues.py` pour éviter un
+import circulaire, `app/issues.py` important déjà `projet_par_nom` depuis
+`app/projets.py`). `GET /config/<projet>` les expose (`modeles_valides` triée,
+`modele_defaut_global`) pour que l'onglet Configuration construise
+dynamiquement la liste déroulante du champ **Modèle Claude Code**
+(`#conf-MODELE_CCL`, `static/js/config.js::construireOptionsModeleCCL`,
+`templates/fragments/onglet_config.html`) — remplace l'ancien champ texte
+libre, source de fautes de frappe silencieuses (`--model` de `watcher.py`
+transmettait la valeur telle quelle au CLI sans validation). Une option vide
+en tête correspond à un `MODELE_CCL` vide/absent (défaut global) ; si la
+valeur déjà enregistrée dans le `.conf` d'un projet n'est plus reconnue
+(ancienne valeur, faute de frappe historique), elle est ajoutée comme option
+supplémentaire en fin de liste plutôt que silencieusement écrasée, avec un
+avertissement discret sous le champ. Testé sous Node
+(`static/js/tests/config.test.js`) et par
+`tests/test_modele_ccl_liste_deroulante_656.py` (partage de l'objet
+`MODELES_VALIDES`, contenu de la réponse `/config`, tolérance à une ancienne
+valeur).
+
 **Badge « sans REDACTEUR » d'une ligne (issue #647)** : signal purement
 **visuel**, jamais bloquant, complémentaire de la validation `REDACTEUR` du
 §3.4. Une issue créée via `issues_inbox/` (`scripts/watcher_issues_inbox.py`)

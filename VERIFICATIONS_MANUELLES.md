@@ -381,6 +381,16 @@ parallèle et modale de suppression branchés par délégation, `data-action`,
 plus d'`onclick=`/`onchange=`/`oninput=` inline.)*
 
 - [ ] Identité (lecture seule) affichée ; paramètres éditables chargés.
+- [ ] **Modèle Claude Code** (`MODELE_CCL`, issue #656) : liste déroulante
+      (plus de champ texte libre) avec une option vide en tête (« -- Défaut
+      global (claude-sonnet-5) -- »), suivie des 4 modèles reconnus. Un
+      projet sans `MODELE_CCL` affiche l'option vide sélectionnée ; un projet
+      qui en fixe un affiche ce modèle sélectionné. Enregistrer avec un
+      modèle choisi puis recharger l'onglet → le même modèle reste
+      sélectionné. Si un `.conf` de test porte une ancienne valeur non
+      reconnue (éditer temporairement `configs/<projet>.conf` à la main),
+      elle apparaît comme option supplémentaire en fin de liste, sélectionnée,
+      avec un avertissement discret sous le champ — la page ne plante pas.
 - [ ] **Plus aucun réglage de son** (ni « Script bip », ni « Tonalité du
       bip », ni bouton « Tester le son » — retirés à l'issue #643 ; le son se
       règle désormais uniquement depuis le panneau latéral, interrupteur

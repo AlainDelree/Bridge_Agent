@@ -82,6 +82,7 @@ from app.issues import (_issue_ouverte_meme_titre, formater_entete,  # noqa: E40
                         numero_depuis_url, donnees_temps_creation,  # (issue #634)
                         extraire_modele_entete, modele_defaut_projet,  # (issue #638, #640)
                         creer_issue_gh)  # (issue #648)
+from app.projets import MODELES_VALIDES  # noqa: E402 (issue #656 — source unique, ex-dupliquée ici)
 from app.interruption import relancer_issue  # noqa: E402 (issue #516)
 import utils  # noqa: E402 (issue #635 — notifications_reseau_neutralisees)
 
@@ -381,9 +382,6 @@ def reconnaitre_mode(brut: str | None) -> str:
             if _sans_accents(motif.lower()) in normalise:
                 return valeur
     return "lecture"
-
-
-MODELES_VALIDES = {"claude-sonnet-5", "claude-opus-4-8", "claude-haiku-4-5", "claude-fable-5"}
 
 
 # ─── REDACTEUR — cohérence avec PROJET (issue #599) ────────────────────────

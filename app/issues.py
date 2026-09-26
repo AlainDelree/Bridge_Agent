@@ -19,7 +19,7 @@ from pathlib import Path
 from flask import jsonify, request
 from werkzeug.utils import secure_filename
 
-from app.projets import projet_par_nom
+from app.projets import projet_par_nom, MODELES_VALIDES, MODELE_DEFAUT_GLOBAL
 from app.auth import login_requis  # noqa: F401 (exporté pour l'enregistrement des routes)
 # projet_par_nom (app.projets) a déjà inséré la racine dans sys.path : l'import
 # du watcher fonctionne. On réutilise ses primitives pour éviter toute dérive
@@ -1013,11 +1013,9 @@ def _parser_priorite(body: str) -> str:
 #     un unique point de lecture partagé par les trois routes.
 #   - modele_defaut_projet(cfg)     : modèle par défaut RÉEL du projet.
 #
-# Valeurs reconnues : mêmes que MODELES_VALIDES de
-# scripts/watcher_issues_inbox.py et la liste §3 du DOC. Défaut global aligné
-# sur MODELE_CCL_DEFAUT de nouveau_projet.py.
-MODELES_VALIDES = {"claude-sonnet-5", "claude-opus-4-8", "claude-haiku-4-5", "claude-fable-5"}
-MODELE_DEFAUT_GLOBAL = "claude-sonnet-5"
+# MODELES_VALIDES/MODELE_DEFAUT_GLOBAL : importés depuis app.projets (issue
+# #656, source unique — voir le commentaire à leur définition), plutôt que
+# redéfinis ici. Utilisés ci-dessous pour valider le champ MODELE d'en-tête.
 
 
 def extraire_modele_entete(body: str):

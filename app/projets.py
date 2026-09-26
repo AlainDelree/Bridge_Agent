@@ -20,6 +20,19 @@ sys.path.insert(0, str(DOSSIER_SCRIPT))
 from watcher import Config, charger_config  # noqa: E402
 
 
+# Source UNIQUE des modèles CCL reconnus (issue #656 — auparavant dupliquée à
+# l'identique dans app/issues.py et scripts/watcher_issues_inbox.py, qui
+# l'importent désormais d'ici ; définie dans ce module plutôt que dans
+# app/issues.py pour éviter un import circulaire, celui-ci important déjà
+# projet_par_nom depuis ici). Reprise par la liste §3 du DOC, par la
+# validation du champ MODELE d'en-tête (app/issues.py) et par la route
+# GET /config/<projet> ci-dessous, pour la liste déroulante MODELE_CCL de
+# l'onglet Configuration. Défaut global aligné sur MODELE_CCL_DEFAUT de
+# nouveau_projet.py.
+MODELES_VALIDES = {"claude-sonnet-5", "claude-opus-4-8", "claude-haiku-4-5", "claude-fable-5"}
+MODELE_DEFAUT_GLOBAL = "claude-sonnet-5"
+
+
 # Clés modifiables via l'interface (les autres : NOM, DEPOT, REP_TRAVAIL,
 # PERIMETRE, CMD_BACKUP se changent à la main dans le .conf).
 CLES_EDITABLES = {
@@ -140,6 +153,8 @@ def get_config(nom_projet):
         log_taille_max_mo = cfg.log_taille_max_mo,
         log_archives   = cfg.log_archives,
         modele_ccl     = cfg.modele_ccl,
+        modeles_valides = sorted(MODELES_VALIDES),
+        modele_defaut_global = MODELE_DEFAUT_GLOBAL,
         couleur        = cfg.couleur,
         delai_inactivite_min = cfg.delai_inactivite_min,
         max_write_parallele = cfg.max_write_parallele,

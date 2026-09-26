@@ -64,6 +64,31 @@ export function suppressionActivable(casesCochees, confirmationSaisie, nomAttend
   return casesOk && nomOk;
 }
 
+/** Construit les options de la liste déroulante « Modèle Claude Code »
+ *  (issue #656 — remplace le champ texte libre `#conf-MODELE_CCL`, qui
+ *  laissait passer silencieusement toute faute de frappe).
+ *
+ *  `modelesValides` vient du serveur (GET /config/<projet>, `modeles_valides`
+ *  — lui-même reflet de app.projets.MODELES_VALIDES, SOURCE UNIQUE partagée
+ *  avec app/issues.py et scripts/watcher_issues_inbox.py) : jamais dupliquée
+ *  en dur ici. Une option vide explicite en tête correspond à un MODELE_CCL
+ *  vide/absent du `.conf` (défaut global). Si `valeurActuelle` (le
+ *  `MODELE_CCL` déjà enregistré dans le `.conf` du projet) ne fait plus
+ *  partie des valeurs reconnues (ancienne valeur, faute de frappe
+ *  historique), elle est ajoutée en fin de liste comme option
+ *  supplémentaire — pour que la page s'affiche sans planter et sans
+ *  perdre/écraser silencieusement cette valeur — et `inconnue` remonte à
+ *  true pour que l'appelant affiche un avertissement discret. */
+export function construireOptionsModeleCCL(modelesValides, valeurActuelle, defautGlobal) {
+  const valeur = String(valeurActuelle || '').trim().toLowerCase();
+  const valides = [...(modelesValides || [])].sort();
+  const options = [{ value: '', label: `-- Défaut global (${defautGlobal}) --` }];
+  for (const m of valides) options.push({ value: m, label: m });
+  const inconnue = valeur !== '' && !valides.includes(valeur);
+  if (inconnue) options.push({ value: valeur, label: `${valeur} (ancienne valeur, non reconnue)` });
+  return { options, inconnue };
+}
+
 /** Message final affiché après une suppression réussie, selon le statut du
  *  commit/push automatique de BRIDGE_AGENT_DOC.md (issue #645). */
 export function messageStatutCommitDoc(statut, commandeManuelle) {
@@ -90,6 +115,28 @@ function majChampConfig(id, valeur, propriete = 'value') {
   if (el) el[propriete] = valeur;
 }
 
+// Peuple la liste déroulante #conf-MODELE_CCL à partir de cfg.modeles_valides
+// (issue #656) et affiche un avertissement discret si le MODELE_CCL déjà
+// enregistré dans le .conf n'est plus une valeur reconnue.
+function remplirSelectModeleCCL(cfg) {
+  const select = document.getElementById('conf-MODELE_CCL');
+  const avertissement = document.getElementById('conf-MODELE_CCL-avertissement');
+  if (!select) return;
+  const { options, inconnue } = construireOptionsModeleCCL(
+    cfg.modeles_valides || [], cfg.modele_ccl || '', cfg.modele_defaut_global || 'claude-sonnet-5');
+  select.innerHTML = options.map(o =>
+    `<option value="${dom.echapperHtml(o.value)}">${dom.echapperHtml(o.label)}</option>`).join('');
+  select.value = String(cfg.modele_ccl || '').trim().toLowerCase();
+  if (avertissement) {
+    avertissement.style.display = inconnue ? 'block' : 'none';
+    if (inconnue) {
+      avertissement.textContent = `⚠ Valeur actuelle « ${cfg.modele_ccl} » non reconnue (ancienne `
+        + 'valeur ou faute de frappe) — conservée telle quelle tant qu\'un autre modèle n\'est pas '
+        + 'choisi puis enregistré.';
+    }
+  }
+}
+
 /** Charge la config du projet actuellement sélectionné (sélecteur global
  *  #projet) dans les champs de l'onglet. */
 export async function chargerConfig() {
@@ -105,7 +152,7 @@ export async function chargerConfig() {
     majChampConfig('conf-MAX_ESSAIS', cfg.max_essais || 3);
     majChampConfig('conf-TIMEOUT_CLAUDE', cfg.timeout_claude || 300);
     majChampConfig('conf-FICHIER_CONTEXTE', cfg.fichier_contexte || '');
-    majChampConfig('conf-MODELE_CCL', cfg.modele_ccl || '');
+    remplirSelectModeleCCL(cfg);
     majChampConfig('conf-LOG_TAILLE_MAX_MO', cfg.log_taille_max_mo || 1);
     majChampConfig('conf-LOG_ARCHIVES', cfg.log_archives || 5);
     // ?? et non || : 0 est une valeur valide (auto-extinction désactivée).
