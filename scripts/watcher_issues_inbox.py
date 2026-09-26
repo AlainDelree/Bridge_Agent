@@ -80,7 +80,8 @@ from watcher import (charger_config, lire_conf, est_titre_chef,  # noqa: E402
 from app.watchers import redemarrer_si_eteint  # noqa: E402 (issue #486, #600)
 from app.issues import (_issue_ouverte_meme_titre, formater_entete,  # noqa: E402 (issues #491, #601, #624)
                         numero_depuis_url, donnees_temps_creation,  # (issue #634)
-                        extraire_modele_entete, modele_defaut_projet)  # (issue #638, #640)
+                        extraire_modele_entete, modele_defaut_projet,  # (issue #638, #640)
+                        creer_issue_gh)  # (issue #648)
 from app.interruption import relancer_issue  # noqa: E402 (issue #516)
 import utils  # noqa: E402 (issue #635 — notifications_reseau_neutralisees)
 
@@ -887,23 +888,19 @@ def _creer_issue(cfg: ConfigInbox, cfg_projet, titre: str, labels: str, body: st
         f.write(body)
         chemin_body = f.name
     try:
-        res = subprocess.run(
-            ["gh", "issue", "create",
-             "--repo",  cfg_projet.depot,
-             "--title", titre,
-             "--label", labels,
-             "--body-file", chemin_body],
-            capture_output=True, text=True, timeout=30, env=env,
+        # gh issue create robuste à un label manquant sur le dépôt (issue #648,
+        # régression #647) : creer_issue_gh() retire de lui-même un label absent
+        # du dépôt et journalise l'anomalie (log.warning côté app.issues), au
+        # lieu de faire échouer — et rejeter — toute la création pour un label
+        # secondaire oublié lors du provisionnement d'un dépôt.
+        succes, resultat, _labels_effectifs, labels_omis = creer_issue_gh(
+            cfg_projet.depot, titre, labels, chemin_body, env=env
         )
-        if res.returncode == 0:
-            return True, res.stdout.strip()
-        return False, res.stderr.strip() or "erreur inconnue de gh."
-    except subprocess.TimeoutExpired:
-        return False, "timeout (gh n'a pas répondu en 30s)."
-    except FileNotFoundError:
-        return False, "gh introuvable dans le PATH."
-    except Exception as e:
-        return False, str(e)
+        if labels_omis:
+            log.warning(f"Issue « {titre} » créée sans le(s) label(s) "
+                        f"{', '.join(labels_omis)} (absent(s) du dépôt "
+                        f"{cfg_projet.depot}).")
+        return succes, resultat
     finally:
         Path(chemin_body).unlink(missing_ok=True)
 

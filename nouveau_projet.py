@@ -34,19 +34,26 @@ RACINE = Path(__file__).resolve().parent
 DOSSIER_CONFIGS = RACINE / "configs"
 DOC = RACINE / "BRIDGE_AGENT_DOC.md"
 
-# Les 9 labels requis par le watcher (§4 de la doc). color = hex sans '#'.
+# Les 10 labels requis par le watcher (§4 de la doc). color = hex sans '#'.
 # On les recrée à l'identique sur chaque nouveau dépôt cible ; sans eux, le
 # watcher ne voit pas les issues (for-linux) et le mode écriture reste inerte.
+# sans-redacteur (issue #648, régression #647) : oublié de cette liste lors de
+# son introduction — le label n'existait alors sur AUCUN dépôt, faisant
+# échouer `gh issue create` pour toute issue sans REDACTEUR (l'erreur gh
+# « label not found » rejetait le fichier entier). Désormais provisionné
+# d'office sur tout nouveau projet ; les dépôts existants ont été corrigés
+# séparément (gh label create manuel, cf. rapport de clôture #648).
 LABELS = [
-    ("for-linux",   "0e8a16", "Requis — le watcher ne voit que ces issues"),
-    ("for-windows", "0e8a16", "Watcher Windows (CCW) — même principe que for-linux"),
-    ("bridge",      "1d76db", "Marque l'issue comme tâche bridge (traçabilité)"),
-    ("mode_write",  "d93f0b", "ARME le mode écriture — CCL peut modifier des fichiers"),
-    ("needs-human", "b60205", "Posé après 3 échecs — stoppe le retraitement auto"),
-    ("done",        "0e8a16", "Posé automatiquement au succès"),
-    ("notif_pc",    "fbca04", "Ajoute une notification bureau (notify-send)"),
-    ("notif_gsm",   "fbca04", "Ajoute une notification push (ntfy)"),
-    ("notif_tous",  "fbca04", "notify-send + ntfy"),
+    ("for-linux",      "0e8a16", "Requis — le watcher ne voit que ces issues"),
+    ("for-windows",    "0e8a16", "Watcher Windows (CCW) — même principe que for-linux"),
+    ("bridge",         "1d76db", "Marque l'issue comme tâche bridge (traçabilité)"),
+    ("mode_write",     "d93f0b", "ARME le mode écriture — CCL peut modifier des fichiers"),
+    ("needs-human",    "b60205", "Posé après 3 échecs — stoppe le retraitement auto"),
+    ("done",           "0e8a16", "Posé automatiquement au succès"),
+    ("notif_pc",       "fbca04", "Ajoute une notification bureau (notify-send)"),
+    ("notif_gsm",      "fbca04", "Ajoute une notification push (ntfy)"),
+    ("notif_tous",     "fbca04", "notify-send + ntfy"),
+    ("sans-redacteur", "c2b280", "Posé automatiquement — l'issue ne précisait pas REDACTEUR"),
 ]
 
 # ─── Système de couleur des projets ──────────────────────────────────────────

@@ -700,6 +700,7 @@ ni `gh` réel : `_poster_best_effort` et `_traiter_bloc` sont substitués).
 | `notif_pc` | Ajoute une notification bureau (notify-send) |
 | `notif_gsm` | Ajoute une notification push (ntfy) |
 | `notif_tous` | notify-send + ntfy |
+| `sans-redacteur` | Posé automatiquement (issue #647) quand `REDACTEUR` est absent de l'en-tête — purement informatif, voir §3.4/§17.3 |
 
 > Sans label `notif_pc` / `notif_gsm` / `notif_tous`, aucune notification
 > sonore ou push n'est déclenchée. Le bip est strictement opt-in.
@@ -3633,6 +3634,24 @@ label sur **100 % des créations de ce chemin sans exception**, un signal
 toujours vrai qui ne distinguerait jamais rien (contrairement à `issues_inbox/`
 où l'absence reste l'exception) : ajouter ce code y aurait été du code mort
 en pratique, écarté sciemment plutôt qu'ajouté sans utilité.
+
+**Régression #647 corrigée en #648** : `LABELS` de `nouveau_projet.py` (les
+labels provisionnés d'office sur chaque dépôt) n'avait pas été mis à jour par
+#647 pour y inclure `sans-redacteur` — le label n'existait donc sur AUCUN
+dépôt, faisant échouer `gh issue create` (`could not add label:
+'sans-redacteur' not found`) pour TOUTE issue sans REDACTEUR, sur tous les
+projets. Corrigé par : (1) ajout de `sans-redacteur` à `LABELS` — tout nouveau
+projet le provisionne désormais d'office ; (2) `gh label create` exécuté
+manuellement sur les 13 dépôts existants (liste du tableau §1) ; (3)
+`app.issues.creer_issue_gh()`, point d'appel commun de `gh issue create`
+partagé par `app/issues.py::envoyer()` et
+`scripts/watcher_issues_inbox.py::_creer_issue()`, retire désormais de
+lui-même un label ABSENT du dépôt cible (détecté au message d'erreur exact de
+gh) et journalise l'anomalie (`log.warning`) plutôt que de faire échouer toute
+la création — gh échouant de façon atomique avant de créer l'issue dès qu'un
+label manque, réessayer sans le label fautif ne crée jamais de doublon. Un
+label manquant, quel qu'il soit, ne peut donc plus faire rejeter un fichier
+entier. Voir `tests/test_label_manquant_648.py`.
 
 **Configuration héritée** : la clé `.conf` reste `SCRIPT_BIP` (voir §17.1
 ci-dessus et §10) — Alain doit mettre à jour manuellement le chemin dans ses

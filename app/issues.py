@@ -6,6 +6,7 @@ aux issues : aperçu de la commande gh, envoi, listes et détail.
 """
 
 import json
+import logging
 import os
 import re
 import subprocess
@@ -30,6 +31,8 @@ from watcher import (est_titre_chef, deduire_type_issue, PAUSE_ENTRE_TENTATIVES,
 # État partagé du quota GraphQL (issue #615) : rafraîchi après chaque appel gh
 # SIGNIFICATIF de ce module (création/fermeture d'issue).
 from etat_rate_limit import maj_rate_limit
+
+log = logging.getLogger(__name__)
 
 # Racine du projet (dossier parent du package app/).
 DOSSIER_SCRIPT = Path(__file__).resolve().parent.parent
@@ -281,6 +284,67 @@ def construire_labels(data: dict) -> str:
     return ",".join(labels)
 
 
+# Message d'erreur exact de gh quand un label demandé n'existe pas sur le dépôt
+# cible (vérifié par test direct, issue #648) : `gh issue create --label a,b`
+# échoue de façon ATOMIQUE — aucune issue n'est créée — dès que le PREMIER
+# label absent est rencontré, et ne rapporte jamais qu'un seul nom manquant à
+# la fois même si plusieurs labels sont absents.
+_LABEL_INTROUVABLE_RE = re.compile(r"could not add label: '([^']+)' not found")
+
+
+def creer_issue_gh(depot: str, titre: str, labels: str, chemin_body: str, *,
+                    env: dict | None = None, timeout: int = 30):
+    """Appelle `gh issue create`, en retirant automatiquement de la liste tout
+    label ABSENT du dépôt cible plutôt que de faire échouer toute la création
+    (issue #648 — régression #647 : `sans-redacteur` n'avait été ajouté à
+    aucun dépôt existant, si bien qu'une simple issue sans REDACTEUR échouait
+    entièrement avec « could not add label: 'sans-redacteur' not found »).
+
+    L'échec de gh étant atomique (constaté ci-dessus), réessayer sans le label
+    fautif ne risque jamais de créer un doublon. gh ne signalant qu'un label
+    manquant à la fois, la boucle retire les labels un par un — plafonnée au
+    nombre de labels de départ pour ne jamais tourner indéfiniment si l'échec
+    provient d'autre chose (dépôt inconnu, réseau, etc.).
+
+    Retourne (succes, resultat, labels_effectifs, labels_omis) :
+    - `resultat` : URL de l'issue créée si succès, message d'erreur sinon ;
+    - `labels_effectifs` : liste des labels réellement transmis à gh (donc
+      réellement posés en cas de succès) ;
+    - `labels_omis` : labels retirés faute d'exister sur le dépôt — à
+      journaliser par l'appelant comme anomalie (`gh label create` manquant
+      sur ce dépôt) ; toujours vide en cas de succès du premier essai."""
+    labels_courants = [lab for lab in labels.split(",") if lab]
+    labels_omis = []
+    for _ in range(len(labels_courants) + 1):
+        commande = ["gh", "issue", "create", "--repo", depot, "--title", titre]
+        if labels_courants:
+            commande += ["--label", ",".join(labels_courants)]
+        commande += ["--body-file", chemin_body]
+        try:
+            res = subprocess.run(commande, capture_output=True, text=True,
+                                  timeout=timeout, env=env)
+        except subprocess.TimeoutExpired:
+            return False, "Timeout (gh n'a pas répondu en 30s).", labels_courants, labels_omis
+        except FileNotFoundError:
+            return False, "gh introuvable dans le PATH.", labels_courants, labels_omis
+        except Exception as e:
+            return False, str(e), labels_courants, labels_omis
+        if res.returncode == 0:
+            return True, res.stdout.strip(), labels_courants, labels_omis
+        m = _LABEL_INTROUVABLE_RE.search(res.stderr or "")
+        if not m or m.group(1) not in labels_courants:
+            return (False, res.stderr.strip() or "Erreur inconnue de gh.",
+                     labels_courants, labels_omis)
+        label_absent = m.group(1)
+        log.warning(f"Label « {label_absent} » absent du dépôt {depot} — omis de "
+                    "cette création plutôt que de la faire échouer (gh label "
+                    "create manquant sur ce dépôt, cf. issue #648).")
+        labels_courants.remove(label_absent)
+        labels_omis.append(label_absent)
+    return (False, "Trop de labels manquants successifs sur ce dépôt.",
+             labels_courants, labels_omis)
+
+
 # ─── Routes Flask ──────────────────────────────────────────────────────────────
 
 def apercu():
@@ -366,15 +430,14 @@ def envoyer():
         chemin_body = f.name
 
     try:
-        res = subprocess.run(
-            ["gh", "issue", "create",
-             "--repo",      cfg.depot,
-             "--title",     titre,
-             "--label",     labels,
-             "--body-file", chemin_body],
-            capture_output=True, text=True, timeout=30
+        # gh issue create robuste à un label manquant sur le dépôt (issue #648) :
+        # un label secondaire absent (oubli de provisionnement sur ce dépôt) est
+        # omis avec une trace (log.warning) plutôt que de faire échouer toute la
+        # création — voir creer_issue_gh() ci-dessus pour le détail du mécanisme.
+        succes, resultat, labels_liste, labels_omis = creer_issue_gh(
+            cfg.depot, titre, labels, chemin_body
         )
-        if res.returncode == 0:
+        if succes:
             # Démarrage automatique du watcher (issue #202). Avec l'auto-extinction
             # après inactivité (#200/#201), le watcher du projet peut être éteint au
             # moment où l'on crée une issue : on le rallume ici pour que la tâche
@@ -389,7 +452,6 @@ def envoyer():
             # tracé par redemarrer_si_eteint via log.warning, issue #600), None = non
             # applicable (for-windows).
             watcher_demarre = None
-            labels_liste = labels.split(",")
             if "for-linux" in labels_liste:
                 from app.watchers import redemarrer_si_eteint
                 watcher_demarre, _pid, _trace = redemarrer_si_eteint(cfg)
@@ -399,7 +461,7 @@ def envoyer():
             # prochain démarrage de new_issue.py (_balayage_initial). Même
             # process → appel direct, pas de HTTP (à la différence de
             # scripts/watcher_issues_inbox.py, qui tourne à part).
-            numero = numero_depuis_url(res.stdout)
+            numero = numero_depuis_url(resultat)
             if numero is not None:
                 from app.notifications_poller import ajouter_issue_surveillee
                 ajouter_issue_surveillee(cfg.depot, numero, labels_liste)
@@ -424,14 +486,10 @@ def envoyer():
                 emettre_creation_issue(cfg.nom, numero, titre,
                                         labels=labels_liste, timing=donnees_temps)
             maj_rate_limit("app.issues.envoyer")
-            return jsonify(succes=True, url=res.stdout.strip(),
-                           watcher_demarre=watcher_demarre)
+            return jsonify(succes=True, url=resultat, watcher_demarre=watcher_demarre,
+                           labels_omis=labels_omis)
         else:
-            return jsonify(succes=False, erreur=res.stderr.strip() or "Erreur inconnue de gh.")
-    except subprocess.TimeoutExpired:
-        return jsonify(succes=False, erreur="Timeout (gh n'a pas répondu en 30s).")
-    except FileNotFoundError:
-        return jsonify(succes=False, erreur="gh introuvable dans le PATH.")
+            return jsonify(succes=False, erreur=resultat)
     except Exception as e:
         return jsonify(succes=False, erreur=str(e))
     finally:
