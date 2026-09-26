@@ -45,6 +45,11 @@ import { initialiserCcw } from '../ccw.js';
 // direct, plus par le pont) ; initJournal() ci-dessous ne branche que la
 // délégation du bouton « Vider l'affichage ».
 import { initJournal } from '../journal.js';
+// Module par fonctionnalité — onglet Configuration (refonte étape 12,
+// issue #651). chargerConfig() est appelé directement par onglets.js (import
+// direct, plus par le pont) ; initialiserConfig() ci-dessous ne branche que la
+// délégation des boutons/inputs de l'onglet et de sa modale de suppression.
+import { initialiserConfig } from '../config.js';
 
 // Délégation : les modules par fonctionnalité (onglets.js, panneau_lateral.js)
 // enregistrent leurs propres règles via dom.surAction(...) ; ceci (ré)installe
@@ -90,6 +95,12 @@ resultatsCoches.initialiser();
 // par onglets.js à l'activation de l'onglet, sans passer par ici.
 initJournal();
 
+// Onglet Configuration (issue #651, refonte web étape 12) : ne branche que les
+// boutons/inputs (Enregistrer, zone dangereuse, modale de suppression) —
+// chargerConfig() est appelé directement par onglets.js à l'activation de
+// l'onglet, sans passer par ici.
+initialiserConfig();
+
 // Activation de l'onglet par défaut (Résultats) — APPELÉE EN DERNIER,
 // volontairement : resultats.js et panneau_lateral.js se sont abonnés à
 // store.ongletActif juste au-dessus, et store.set() notifie toujours ses
@@ -110,3 +121,4 @@ console.debug('[socle] cases « traité/lu » à état serveur + copie fiable (i
 console.debug('[socle] onglet CCW sorti d\'app.js (issue #649).');
 console.debug('[socle] actions sur la ligne (needs-human/interrompre/son) actives (issue #641).');
 console.debug('[socle] onglet Journal watcher piloté par import direct (issue #650).');
+console.debug('[socle] onglet Configuration piloté par import direct (issue #651).');

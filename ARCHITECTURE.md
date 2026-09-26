@@ -414,8 +414,10 @@ Déjà sortis : `onglets.js` (bascule entre onglets, issue #626, étape 2),
 `resultats_coches.js` (case « traité/lu » à état serveur + copie fiable, issue
 #636, étape 5b), `actions_ligne.js` (actions cliquables sur la ligne d'une
 issue ouverte + son par issue, issue #641, étape 6), `ccw.js` (onglet CCW,
-pilotage du PC fixe Windows, issue #649) et `journal.js` (onglet Journal
-watcher, issue #650). Futurs modules (ex. `creation.js`, `config.js`,
+pilotage du PC fixe Windows, issue #649), `journal.js` (onglet Journal
+watcher, issue #650) et `config.js` (onglet Configuration + zone dangereuse
+de suppression de projet, issue #651, étape 12). Futurs modules (ex.
+`creation.js`, `nouveau_projet.js`) suivent le même patron,
 `nouveau_projet.js`) suivent le même patron.
 
 **Onglet Watchers supprimé (issue #626, étape 2)** : le tableau des watchers
@@ -565,7 +567,37 @@ Résultats, Journal watcher, Configuration, CCW, Nouvelle issue.
 > l'affichage », `data-action="journal-vider"`, retire l'`onclick=` inline du
 > fragment `onglet_journal.html`). Tests de logique pure (code couleur d'une
 > ligne selon son contenu) : `static/js/tests/journal.test.js`.
->
+
+> **Étape 12 réalisée — `static/js/config.js` (issue #651)** : sort d'`app.js`
+> l'onglet **Configuration** — `chargerConfig()`/`sauvegarderConfig()` et
+> l'ensemble de la **zone dangereuse** (suppression de projet, issue #587) :
+> `ouvrirSupprimerProjet()`, sa modale de confirmation (checklist des 3 cibles
+> + nom retapé, aperçu dry-run `GET /supprimer-projet/verifier/<nom>`) et la
+> soumission (`POST /supprimer-projet`). **Branchement par import direct**
+> (comme `journal.js`, étape 11) : `static/js/onglets.js` importe
+> `chargerConfig` et l'appelle directement dans `activerOnglet('config')` ;
+> `initialisationsPour('config')` ne pousse plus `'chargerConfig'`.
+> Particularité propre à cet onglet (contrairement à `journal.js`) :
+> `chargerConfig()` reste aussi appelée directement par l'ancien `app.js`
+> (`onProjetChange`, quand l'onglet est déjà actif au moment d'un changement de
+> projet) — `config.js` la publie donc AUSSI en `window.chargerConfig`, comme
+> une globale ordinaire (même patron que
+> `window.rafraichirPanneauLateralResultats`, `panneau_lateral.js`).
+> `retirerProjetDuSelecteur` (symétrique d'`ajouterProjetAuSelecteur`) **reste
+> dans `app.js`** : il manipule le sélecteur global `#projet` du bandeau
+> supérieur, pas un élément de l'onglet Configuration — `config.js` l'appelle
+> via le pont (`appelerAncien`). Le bouton global « + Nouveau projet » (même
+> bandeau) et tout son flux restent également hors périmètre de cette issue.
+> `index.js` appelle `initialiserConfig()` une fois (délégation des boutons
+> Enregistrer/Enregistrer et relancer/Supprimer ce projet, du curseur Tâches en
+> parallèle et de la modale de suppression — `data-action`, retire tous les
+> `onclick=`/`onchange=`/`oninput=` inline de `onglet_config.html` et
+> `modale_supprimer_projet.html`). Trois fonctions PURES extraites et testées
+> (`static/js/tests/config.test.js`) : `construireResumeIdentite` (résumé HTML
+> de l'identité du projet), `suppressionActivable` (les 3 cases cochées ET le
+> nom retapé à l'identique, insensible à la casse/aux espaces) et
+> `messageStatutCommitDoc` (message de fin selon le statut du commit
+> automatique de `BRIDGE_AGENT_DOC.md`, issue #645).
 > **Étape 10 réalisée — purge des fuites `localStorage`, migration terminée
 > (issue #644)** : `persistance.js` était conçu depuis l'étape 1 comme LE point
 > d'accès unique au `localStorage`, mais son propre en-tête documentait que

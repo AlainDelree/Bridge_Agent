@@ -20,21 +20,21 @@
 
       <div style="font-size:13px;color:#333;margin-bottom:8px">Cocher chaque cible avant de pouvoir confirmer :</div>
       <label style="display:block;font-size:13px;color:#333;margin-bottom:6px">
-        <input type="checkbox" class="sp-case" onchange="spMajBoutonEtat()">
+        <input type="checkbox" class="sp-case" data-action="sp-case">
         Répertoire de travail (contenu, CONTEXTE.md/specs, dépôt git local)
       </label>
       <label style="display:block;font-size:13px;color:#333;margin-bottom:6px">
-        <input type="checkbox" class="sp-case" onchange="spMajBoutonEtat()">
+        <input type="checkbox" class="sp-case" data-action="sp-case">
         Fichier <code id="sp-conf-nom"></code>
       </label>
       <label style="display:block;font-size:13px;color:#333;margin-bottom:14px">
-        <input type="checkbox" class="sp-case" onchange="spMajBoutonEtat()">
+        <input type="checkbox" class="sp-case" data-action="sp-case">
         Retrait des tableaux §2/§7 de BRIDGE_AGENT_DOC.md (régénération immédiate)
       </label>
 
       <div class="champ" style="margin-bottom:14px">
         <label>Taper « <span id="sp-nom-confirmation-attendu"></span> » pour confirmer la suppression définitive</label>
-        <input type="text" id="sp-nom-confirmation" oninput="spMajBoutonEtat()" autocomplete="off">
+        <input type="text" id="sp-nom-confirmation" data-action="sp-nom-confirmation" autocomplete="off">
       </div>
     </div>
 
@@ -42,8 +42,8 @@
     <div id="sp-message" class="message" style="display:none"></div>
 
     <div class="modal-boutons">
-      <button id="sp-fermer" onclick="fermerSupprimerProjet()">Fermer</button>
-      <button class="danger-plein" id="sp-supprimer" onclick="soumettreSupprimerProjet()" disabled>Supprimer définitivement</button>
+      <button id="sp-fermer" data-action="sp-fermer">Fermer</button>
+      <button class="danger-plein" id="sp-supprimer" data-action="sp-supprimer" disabled>Supprimer définitivement</button>
     </div>
   </div>
 </div>

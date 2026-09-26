@@ -33,6 +33,7 @@ import { store } from './socle/store.js';
 import { appelerAncien } from './socle/pont.js';
 import { surAction } from './socle/dom.js';
 import { demarrerJournal } from './journal.js';
+import { chargerConfig } from './config.js';
 
 const ONGLET_PAR_DEFAUT = 'resultats';
 
@@ -40,12 +41,12 @@ const ONGLET_PAR_DEFAUT = 'resultats';
  * Liste (pure, testable) des noms de fonctions de l'ancien app.js à appeler
  * — via le pont — pour initialiser l'onglet `nom`. Résultats n'y figure plus
  * (issue #632), Journal watcher non plus (issue #650, import direct de
- * demarrerJournal ci-dessous) : ces modules réagissent directement à
+ * demarrerJournal ci-dessous), Configuration non plus (issue #651, import
+ * direct de chargerConfig ci-dessous) : ces modules réagissent directement à
  * l'activation de leur onglet, sans passer par le pont.
  */
 export function initialisationsPour(nom) {
   const appels = [];
-  if (nom === 'config') appels.push('chargerConfig');
   if (nom === 'ccw') appels.push('ccwOuvrirOnglet');
   // L'onglet « Résultats inbox » a été supprimé (issue #639) : son contenu a
   // rejoint la liste Résultats (lignes fichier reçu/refusé + badge d'alerte) et
@@ -63,6 +64,7 @@ export function activerOnglet(nom) {
   }
   store.set('ongletActif', nom);
   if (nom === 'journal') demarrerJournal();
+  if (nom === 'config') chargerConfig();
   for (const fonction of initialisationsPour(nom)) appelerAncien(fonction);
 }
 
