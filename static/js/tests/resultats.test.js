@@ -13,6 +13,7 @@ import {
   planifierEvenementSse,
   fusionnerChargement,
   fusionnerTimingProjet,
+  construireIssueCreation,
   FENETRE_RECENTE_TIMING_MS,
 } from '../resultats.js';
 
@@ -142,6 +143,41 @@ test('badge modèle : défaut projet non-Sonnet (issue force Sonnet) → affich�
   assert.equal(r.label, 'sonnet');
   // Défaut projet manquant → « claude-sonnet-5 » implicite : Opus diffère.
   assert.equal(calculerBadgeModele('claude-opus-4-8').afficher, true);
+});
+
+// ─── construireIssueCreation (contenu enrichi de creation_issue, issue #640) ──
+// L'événement SSE creation_issue transporte désormais modele/modele_defaut
+// dans `timing` (voir app.fin_issue.emettre_creation_issue, backend) — cette
+// fonction est le point UNIQUE qui les lit côté navigateur pour construire
+// l'entrée du store d'une issue tout juste créée.
+test('construireIssueCreation : reprend modele/modele_defaut depuis timing', () => {
+  const it = construireIssueCreation('projet_test', 42, 'Une tâche', ['bridge', 'for-linux'],
+    { timeout: 300, modele: 'claude-opus-4-8', modele_defaut: 'claude-sonnet-5' });
+  assert.equal(it.projet, 'projet_test');
+  assert.equal(it.number, 42);
+  assert.equal(it.title, 'Une tâche');
+  assert.equal(it.state, 'OPEN');
+  assert.deepEqual(it.labels, ['bridge', 'for-linux']);
+  assert.equal(it.modele, 'claude-opus-4-8');
+  assert.equal(it.modele_defaut, 'claude-sonnet-5');
+});
+
+test('construireIssueCreation : modele/modele_defaut absents de timing → null (pas undefined)', () => {
+  const it = construireIssueCreation('projet_test', 42, 'Une tâche', [], { timeout: 300 });
+  assert.equal(it.modele, null);
+  assert.equal(it.modele_defaut, null);
+});
+
+test('construireIssueCreation : timing absent (émetteur non enrichi) → repli sans planter', () => {
+  const it = construireIssueCreation('projet_test', 42, 'Une tâche', [], null);
+  assert.equal(it.modele, null);
+  assert.equal(it.modele_defaut, null);
+  assert.deepEqual(it.labels, []);
+});
+
+test('construireIssueCreation : titre absent → repli sur « #numero »', () => {
+  const it = construireIssueCreation('projet_test', 42, '', null, {});
+  assert.equal(it.title, '#42');
 });
 
 // ─── planifierEvenementSse (cœur du correctif #627) ──────────────────────────

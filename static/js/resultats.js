@@ -310,15 +310,28 @@ function rendreListeComplete() {
 // Applique tous les badges d'estimation + décompte aux lignes présentes dans le
 // DOM (recalcul pur, aucun appel réseau). Appelée chaque seconde et après chaque
 // rendu. Programme, le cas échéant, le fetch unique post-dépassement (#334).
+// Met aussi à jour le badge « modèle forcé » (issue #640) d'une ligne DÉJÀ
+// construite, à partir du store `issues` — sans quoi un backfill de `modele`/
+// `modele_defaut` survenu APRÈS la construction de la ligne (ex. debut_issue
+// sur une issue déjà connue, chargerTimingProjet() → surDebutIssue()) restait
+// invisible jusqu'au prochain rendu complet (↻, changement d'onglet). Placé
+// AVANT le `return` anticipé lié à `.ligne-tempsrestant` (absent pour une
+// issue fermée) : le badge modèle, lui, reste pertinent aussi après clôture.
 export function majBadges() {
   synchroniserMiroir();
   const t0 = maintenant();
   const timing = timingCourant();
+  const issues = store.get('issues') || {};
   document.querySelectorAll('#liste-issues .ligne-issue').forEach((ligne) => {
     const cle = cleIssue(ligne.dataset.projet, ligne.dataset.numero);
     const t = timing[cle];
     const badgeEst = ligne.querySelector('.ligne-estimation');
     if (badgeEst) appliquerBadge(badgeEst, calculerBadgeEstimation(t, t0), 'ligne-estimation');
+    const badgeModele = ligne.querySelector('.badge-modele');
+    if (badgeModele) {
+      const it = issues[cle];
+      appliquerBadgeModele(badgeModele, calculerBadgeModele(it && it.modele, it && it.modele_defaut));
+    }
     const badge = ligne.querySelector('.ligne-tempsrestant');
     if (!badge) return;
     const etat = calculerBadgeTempsRestant(t, t0, { verifie: depassementVerifie.has(cle) });
@@ -338,6 +351,21 @@ function appliquerBadge(badge, etat, classeBase) {
   badge.className = etat.classe;
   badge.textContent = etat.texte;
   badge.title = etat.titre;
+}
+
+// Met à jour (sans reconstruire) le badge « modèle forcé » d'une ligne déjà
+// dans le DOM — le pendant de appliquerBadge() ci-dessus, décision déléguée à
+// calculerBadgeModele() (logique pure, testée sous Node).
+function appliquerBadgeModele(badge, decision) {
+  if (!decision || !decision.afficher) {
+    badge.style.display = 'none';
+    badge.textContent = '';
+    badge.title = '';
+    return;
+  }
+  badge.style.display = '';
+  badge.textContent = decision.label;
+  badge.title = decision.titre;
 }
 
 // ─── Chargement de la liste (initial / ↻ / rafraîchissement action) ──────────
@@ -532,6 +560,21 @@ async function surFinIssue(projet, numero) {
   else rendreListeComplete();
 }
 
+// Entrée « issues » du store pour une issue tout juste créée, à partir des
+// champs déjà connus de l'événement creation_issue (issue #634, `modele`/
+// `modele_defaut` depuis l'issue #640 — mêmes primitives que /issues-en-attente,
+// portées par `timing` depuis le backend, voir app.fin_issue.emettre_creation_issue).
+// Logique pure (testée sous Node) : `createdAt` reste hors de cette fonction
+// (horodatage non déterministe) — l'appelant l'ajoute lui-même (nowIso()).
+export function construireIssueCreation(projet, numero, titre, labels, timing) {
+  return {
+    projet, number: Number(numero), title: titre || ('#' + numero), state: 'OPEN',
+    labels: labels || [],
+    modele: (timing && timing.modele) != null ? timing.modele : null,
+    modele_defaut: (timing && timing.modele_defaut) || null,
+  };
+}
+
 // creation_issue (contrat #9a, enrichi issue #634 : projet, numero, titre,
 // labels, timing, fichier?) : fait apparaître la ligne avec ses VRAIS labels
 // et son estimation/« en file » directement depuis l'événement — labels et
@@ -544,8 +587,9 @@ async function surFinIssue(projet, numero) {
 function surCreationIssue(projet, numero, titre, labels, timing) {
   const cle = cleIssue(projet, numero);
   if (!store.get('issues')[cle]) {
-    store.ecrireIssue({ projet, number: Number(numero), title: titre || ('#' + numero),
-                        state: 'OPEN', labels: labels || [], createdAt: nowIso() });
+    store.ecrireIssue(Object.assign(
+      construireIssueCreation(projet, numero, titre, labels, timing),
+      { createdAt: nowIso() }));
   }
   if (!timingCourant()[cle]) {
     const nouveauTiming = Object.assign({}, timingCourant());

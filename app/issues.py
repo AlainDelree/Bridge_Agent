@@ -411,9 +411,16 @@ def envoyer():
                 # (donnees_temps_creation, source unique partagée avec
                 # /issues-en-attente) — le navigateur affiche ainsi la ligne
                 # avec ses vrais labels/estimation/« en file » dès l'événement,
-                # sans fetch réseau supplémentaire.
+                # sans fetch réseau supplémentaire. Enrichi aussi (issue #640)
+                # du modèle effectif/défaut — mêmes primitives que
+                # issues_en_attente() (extraire_modele_entete/
+                # modele_defaut_projet, issue #638) — sans quoi le badge
+                # « modèle forcé » restait absent jusqu'au prochain
+                # rechargement complet pour une issue créée via ce chemin.
                 from app.fin_issue import emettre_creation_issue
                 donnees_temps = donnees_temps_creation(cfg, titre, body, labels_liste)
+                donnees_temps["modele"] = extraire_modele_entete(body)
+                donnees_temps["modele_defaut"] = modele_defaut_projet(cfg)
                 emettre_creation_issue(cfg.nom, numero, titre,
                                         labels=labels_liste, timing=donnees_temps)
             maj_rate_limit("app.issues.envoyer")

@@ -129,7 +129,16 @@ def emettre_creation_issue(projet: str, numero: int, titre: str, fichier: str | 
     estimation/« en file » dès l'événement, sans aucun appel GitHub
     supplémentaire. Absents (None) → diffusés comme `[]`/`{}` (les deux
     émetteurs actuels les fournissent toujours, mais un futur appelant qui les
-    omettrait ne casse pas la sérialisation JSON)."""
+    omettrait ne casse pas la sérialisation JSON).
+
+    Depuis l'issue #640, `timing` porte aussi `modele`/`modele_defaut` (modèle
+    effectif lu dans le corps via `app.issues.extraire_modele_entete()`, et
+    défaut du projet via `app.issues.modele_defaut_projet()` — mêmes
+    primitives que `/issues-en-attente` et `/issue`, issue #638) : avant ce
+    correctif, ces deux champs n'étaient ajoutés qu'à ces routes, jamais à cet
+    événement — le badge « modèle forcé » restait absent d'une issue tout
+    juste créée jusqu'à ce que `debut_issue` ou un rechargement complet les
+    apporte."""
     _diffuser("creation_issue", {
         "projet": projet, "numero": numero, "titre": titre, "fichier": fichier,
         "labels": labels if labels is not None else [],

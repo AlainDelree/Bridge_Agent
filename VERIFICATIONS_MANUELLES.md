@@ -81,6 +81,16 @@
       (ex. `gpt-5`) n'affiche **aucun** badge et ne casse pas la ligne. Le badge
       apparaît aussi dans la **fenêtre de recherche par titre** (même rendu de
       ligne).
+- [ ] **Badge « modèle forcé » dès « en file », via `issues_inbox/`** (issue
+      #640) : déposer une issue avec `| MODELE | claude-opus-4-8 |` dans
+      `issues_inbox/` sur un projet dont le défaut est Sonnet — le badge
+      « opus » doit être visible **dès l'apparition de la ligne** (« ⏳ en
+      file »), **sans ↻ ni changement d'onglet**. Puis observer la **prise en
+      charge** par le watcher (`debut_issue`) : le badge doit **rester
+      affiché** (ou apparaître s'il ne l'était pas encore) **sans ↻**, la ligne
+      n'étant PAS reconstruite à ce moment (seuls les badges de temps le sont
+      normalement — vérifier par ex. que la sélection/case cochée de la ligne
+      n'est pas perdue).
 - [ ] **Une seule** connexion `/stream` dans l'onglet Réseau (jamais deux),
       présente même hors de l'onglet Résultats.
 - [ ] **Échec d'un projet** : si un `/issues-liste/<projet>` échoue, ses issues

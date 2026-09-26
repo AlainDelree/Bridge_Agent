@@ -75,7 +75,8 @@ from watcher import (charger_config, lire_conf, est_titre_chef,  # noqa: E402
                      valider_sous_dossier, valider_repo_cible)  # noqa: E402 (issue #567)
 from app.watchers import redemarrer_si_eteint  # noqa: E402 (issue #486, #600)
 from app.issues import (_issue_ouverte_meme_titre, formater_entete,  # noqa: E402 (issues #491, #601, #624)
-                        numero_depuis_url, donnees_temps_creation)  # (issue #634)
+                        numero_depuis_url, donnees_temps_creation,  # (issue #634)
+                        extraire_modele_entete, modele_defaut_projet)  # (issue #638, #640)
 from app.interruption import relancer_issue  # noqa: E402 (issue #516)
 import utils  # noqa: E402 (issue #635 — notifications_reseau_neutralisees)
 
@@ -921,7 +922,8 @@ def _traiter_bloc(cfg: ConfigInbox, contenu_bloc: str):
       CCL démarré (pid N) »), à ajouter au titre dans la ligne de log ;
       `resultat_gh` est la sortie de `gh issue create` (URL), pour le seul log
       console ; `labels` (liste) et `donnees_temps` (dict, voir
-      app.issues.donnees_temps_creation — issue #634) sont l'enrichissement de
+      app.issues.donnees_temps_creation — issue #634 — enrichi de `modele`/
+      `modele_defaut` depuis l'issue #640) sont l'enrichissement de
       l'événement SSE creation_issue, calculés ici pour éviter tout nouvel
       appel GitHub côté notification.
     """
@@ -979,8 +981,13 @@ def _traiter_bloc(cfg: ConfigInbox, contenu_bloc: str):
     # Enrichissement de l'événement SSE creation_issue (issue #634) : mêmes
     # données que /issues-en-attente calculerait pour cette issue, à partir de
     # ce qui est déjà connu ici (labels tout juste posés, body tout juste
-    # construit) — aucun appel GitHub de plus.
+    # construit) — aucun appel GitHub de plus. Modèle effectif/défaut (issue
+    # #640) ajoutés à la même volée, mêmes primitives que /issues-en-attente
+    # (issue #638) — sans quoi le badge « modèle forcé » restait absent d'une
+    # issue créée via issues_inbox jusqu'au prochain rechargement complet.
     donnees_temps = donnees_temps_creation(cfg_projet, champs["titre"], body, labels.split(","))
+    donnees_temps["modele"] = extraire_modele_entete(body)
+    donnees_temps["modele_defaut"] = modele_defaut_projet(cfg_projet)
     return True, champs["titre"], champs["projet"], suffixe, resultat, labels.split(","), donnees_temps
 
 

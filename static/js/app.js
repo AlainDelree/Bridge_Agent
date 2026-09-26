@@ -1355,16 +1355,20 @@ function construireLigneIssueDOM(it) {
   // (window.Bridge.resultats.calculerBadgeModele) — repli silencieux (aucun
   // badge) si le pont n'est pas encore disponible. Le badge se place APRÈS le
   // titre et AVANT les badges de temps, sans les recouvrir.
-  let badgeModeleHtml = '';
+  // Span TOUJOURS présent dans le DOM, masqué (display:none) si rien à
+  // afficher — comme .ligne-estimation/.ligne-tempsrestant ci-dessous (issue
+  // #640) : sans cette présence systématique, majBadges() n'aurait rien à
+  // retrouver via querySelector pour mettre à jour ce badge sur une ligne
+  // déjà construite (ex. backfill de modele/modele_defaut à debut_issue),
+  // et resterait contraint de reconstruire toute la ligne pour l'afficher.
   const decisionModele = (window.Bridge && window.Bridge.resultats
       && window.Bridge.resultats.calculerBadgeModele)
     ? window.Bridge.resultats.calculerBadgeModele(it.modele, it.modele_defaut)
     : { afficher: false };
-  if (decisionModele.afficher) {
-    badgeModeleHtml =
-      '<span class="badge-modele" title="' + escapeHtml(decisionModele.titre || '') + '">'
-      + escapeHtml(decisionModele.label) + '</span>';
-  }
+  const badgeModeleHtml =
+    '<span class="badge-modele"' + (decisionModele.afficher ? '' : ' style="display:none"')
+    + ' title="' + escapeHtml(decisionModele.titre || '') + '">'
+    + escapeHtml(decisionModele.label || '') + '</span>';
   ligne.innerHTML =
     // Case à cocher libre (issue #154), tout à gauche de la ligne. Le clic ne
     // doit PAS sélectionner/ouvrir l'issue (stopPropagation) ; onchange délègue
