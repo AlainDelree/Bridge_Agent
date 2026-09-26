@@ -65,7 +65,7 @@ def _enregistrer_routes(app: Flask) -> None:
     ce qui ne fonctionne qu'une fois le package app initialisé.
     """
     from app.auth import login_requis, login, login_post, logout
-    from app.projets import get_config, post_config, tester_bip
+    from app.projets import get_config, post_config
     from app.nouveau_projet import verifier_nouveau_projet, creer_nouveau_projet
     from app.supprimer_projet import verifier_supprimer_projet, executer_supprimer_projet
     from app.projet_ccw import (etat_cle_publique, rafraichir_cle_publique,
@@ -119,8 +119,6 @@ def _enregistrer_routes(app: Flask) -> None:
     app.add_url_rule("/modifier-label-notif", "modifier_label_notif", login_requis(modifier_label_notif), methods=["POST"])
     app.add_url_rule("/config/<nom_projet>", "get_config", login_requis(get_config), methods=["GET"])
     app.add_url_rule("/config/<nom_projet>", "post_config", login_requis(post_config), methods=["POST"])
-    # Tonalité du bip par projet (issue #526) : test immédiat, avant enregistrement.
-    app.add_url_rule("/tester-bip/<nom_projet>", "tester_bip", login_requis(tester_bip), methods=["POST"])
     app.add_url_rule("/nouveau-projet/verifier", "verifier_nouveau_projet", login_requis(verifier_nouveau_projet), methods=["GET"])
     app.add_url_rule("/nouveau-projet", "creer_nouveau_projet", login_requis(creer_nouveau_projet), methods=["POST"])
     # ─── Suppression de projet, côté CCL/local (issue #587) — symétrique à
@@ -174,8 +172,9 @@ def _enregistrer_routes(app: Flask) -> None:
     # ─── Pilotage du watcher spool depuis #pl-zone-extras (issue #485) ────────
     app.add_url_rule("/issues-inbox/demarrer-watcher", "demarrer_watcher_inbox_route", login_requis(demarrer_watcher_inbox_route), methods=["POST"])
     app.add_url_rule("/issues-inbox/arreter-watcher", "arreter_watcher_inbox_route", login_requis(arreter_watcher_inbox_route), methods=["POST"])
-    # ─── Interrupteur global plat/cloche du bip (issue #527), distinct de la
-    # tonalité par projet (issue #526, /tester-bip/<nom_projet> ci-dessus) ────
+    # ─── Interrupteur global plat/cloche du bip (issue #527) — la tonalité par
+    # projet (issue #526, /tester-bip/<nom_projet>) a été abandonnée et
+    # retirée à l'issue #643 ────────────────────────────────────────────────
     app.add_url_rule("/son-actif", "get_son_actif", login_requis(get_son_actif), methods=["GET"])
     app.add_url_rule("/son-actif", "post_son_actif", login_requis(post_son_actif), methods=["POST"])
     app.add_url_rule("/tester-son", "tester_son", login_requis(tester_son), methods=["POST"])

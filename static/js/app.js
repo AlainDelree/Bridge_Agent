@@ -269,10 +269,6 @@ async function chargerConfig() {
     majChampConfig('conf-INTERVALLE', cfg.intervalle || 10);
     majChampConfig('conf-MAX_ESSAIS', cfg.max_essais || 3);
     majChampConfig('conf-TIMEOUT_CLAUDE', cfg.timeout_claude || 300);
-    majChampConfig('conf-SCRIPT_BIP', cfg.script_bip || '');
-    // ?? et non || : 0 est une valeur valide (tonalité normale).
-    majChampConfig('conf-TONALITE_BIP', cfg.tonalite_bip ?? 0);
-    majChampConfig('tonalite-bip-valeur', cfg.tonalite_bip ?? 0, 'textContent');
     majChampConfig('conf-FICHIER_CONTEXTE', cfg.fichier_contexte || '');
     majChampConfig('conf-MODELE_CCL', cfg.modele_ccl || '');
     majChampConfig('conf-LOG_TAILLE_MAX_MO', cfg.log_taille_max_mo || 1);
@@ -298,8 +294,6 @@ async function sauvegarderConfig(relancer) {
     INTERVALLE:        document.getElementById('conf-INTERVALLE').value,
     MAX_ESSAIS:        document.getElementById('conf-MAX_ESSAIS').value,
     TIMEOUT_CLAUDE:    document.getElementById('conf-TIMEOUT_CLAUDE').value,
-    SCRIPT_BIP:        document.getElementById('conf-SCRIPT_BIP').value,
-    TONALITE_BIP:      document.getElementById('conf-TONALITE_BIP').value,
     FICHIER_CONTEXTE:  document.getElementById('conf-FICHIER_CONTEXTE').value,
     MODELE_CCL:        document.getElementById('conf-MODELE_CCL').value,
     LOG_TAILLE_MAX_MO: document.getElementById('conf-LOG_TAILLE_MAX_MO').value,
@@ -332,25 +326,6 @@ async function sauvegarderConfig(relancer) {
     msg.textContent += jsonW.differe
       ? ' ⏳ Watcher occupé (tâche en cours) — redémarrage différé, appliqué automatiquement à la fin de la tâche en cours.'
       : ' Watcher relancé.';
-  }
-}
-
-// Tonalité du bip (issue #526) : joue le bip avec la tonalité actuellement
-// réglée dans le curseur, SANS l'enregistrer — permet d'ajuster à l'oreille
-// avant de cliquer sur « Enregistrer ».
-async function testerBip() {
-  const nom = document.getElementById('projet').value;
-  const tonalite = document.getElementById('conf-TONALITE_BIP').value;
-  const msg = document.getElementById('msg-config');
-  try {
-    await fetch('/tester-bip/' + encodeURIComponent(nom), {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({tonalite: tonalite})
-    });
-  } catch(e) {
-    msg.textContent = 'Erreur test du bip : ' + e.message;
-    msg.className = 'message erreur'; msg.style.display = 'block';
   }
 }
 

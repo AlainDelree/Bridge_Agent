@@ -60,7 +60,6 @@ LABELS = [
 # Topic ntfy partagé par tous les projets existants (voir configs/*.conf).
 # Proposé par défaut ; l'utilisateur peut le changer pour un topic dédié.
 TOPIC_NTFY_DEFAUT = "hippocampe-ff-galerie-xyz123"
-SCRIPT_BIP_DEFAUT = "/home/alain/Bridge_Agent/scripts/bip_Cloche.py"
 
 # Modèle CCL forcé par défaut sur tout nouveau projet (voir configs/*.conf) :
 # évite tout repli silencieux vers Opus sur le plan Max. Reste modifiable
@@ -223,7 +222,6 @@ def creer_depot(depot: str, nom: str, public: bool = True) -> tuple[bool, str]:
 
 def ecrire_conf(nom: str, depot: str, rep: str, perimetre: str,
                 topic: str = TOPIC_NTFY_DEFAUT,
-                script_bip: str = SCRIPT_BIP_DEFAUT,
                 couleur: str = "") -> Path:
     """Génère configs/<nom>.conf depuis le gabarit. Renvoie le chemin écrit."""
     chemin = DOSSIER_CONFIGS / f"{nom}.conf"
@@ -233,7 +231,6 @@ def ecrire_conf(nom: str, depot: str, rep: str, perimetre: str,
         rep_travail=rep,
         perimetre=perimetre,
         topic_ntfy=topic,
-        script_bip=script_bip,
         couleur=couleur,
         modele_ccl=MODELE_CCL_DEFAUT,
     )
@@ -506,7 +503,7 @@ def mettre_a_jour_doc() -> dict:
 
 
 def creer_projet(nom: str, depot: str = "", rep: str = "", perimetre: str = "",
-                 topic: str = "", script_bip: str = "", avec_specs: bool = False,
+                 topic: str = "", avec_specs: bool = False,
                  creer_depot_si_absent: bool = True, couleur: str = "",
                  public: bool = True) -> dict:
     """Orchestrateur non interactif appelé par la route Flask. Enchaîne les
@@ -531,7 +528,6 @@ def creer_projet(nom: str, depot: str = "", rep: str = "", perimetre: str = "",
     rep = (rep or "").strip() or rep_defaut(nom)
     perimetre = (perimetre or "").strip() or rep
     topic = (topic or "").strip() or TOPIC_NTFY_DEFAUT
-    script_bip = (script_bip or "").strip() or SCRIPT_BIP_DEFAUT
     # Couleur d'accent : la couleur choisie si elle est encore libre, sinon la
     # première disponible, sinon '' (palette épuisée → repli map fixe/hash côté
     # frontend). Exclut au passage les couleurs déjà prises (issue #121).
@@ -561,7 +557,7 @@ def creer_projet(nom: str, depot: str = "", rep: str = "", perimetre: str = "",
                        "detail": f"{depot} créé ({'public' if public else 'privé'})."})
 
     # 2. Fichier configs/<nom>.conf.
-    ecrire_conf(nom, depot, rep, perimetre, topic, script_bip, couleur)
+    ecrire_conf(nom, depot, rep, perimetre, topic, couleur)
     detail_conf = f"configs/{nom}.conf créé (à partir du gabarit)."
     if couleur:
         detail_conf += f" Couleur d'accent : {couleur}."
@@ -691,7 +687,6 @@ def etape_conf(nom: str, depot: str, rep: str, perimetre: str) -> Path:
         rep_travail=rep,
         perimetre=perimetre,
         topic_ntfy=topic,
-        script_bip=SCRIPT_BIP_DEFAUT,
         couleur=couleur,
         modele_ccl=MODELE_CCL_DEFAUT,
     )
@@ -893,10 +888,6 @@ LABEL             = for-linux
 INTERVALLE        = 10
 MAX_ESSAIS        = 3
 TIMEOUT_CLAUDE    = 300
-SCRIPT_BIP        = {script_bip}
-# Décalage de tonalité du bip en demi-tons, propre à ce projet (issue #526).
-# 0 = tonalité normale ; réglable aussi depuis l'onglet Configuration.
-# TONALITE_BIP    = 0
 
 # Nombre de tâches mode_write concurrentes via git worktrees (issue #337),
 # 1-4, plafonné à 4 (issue #568). 2 = défaut ; réglable aussi depuis l'onglet

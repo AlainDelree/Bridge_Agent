@@ -249,7 +249,8 @@
       ligne « VM » et plus aucune requête `/ccw/vm-statut`** (onglet Réseau,
       F12) — route disparue côté serveur depuis #447 (issue #628).
 - [ ] Interrupteur son (Plat / Cloche) : bascule ; « Tester le son » actif
-      seulement quand une ligne est sélectionnée ; joue la tonalité du projet.
+      seulement quand une ligne est sélectionnée ; joue le timbre choisi à
+      tonalité neutre (plus de tonalité par projet, issue #643).
 - [ ] Zone extras : contrôle du watcher spool (issues_inbox) — démarrer/arrêter
       avec la modale de durée.
 - [ ] **Historique du watcher spool (issue #639)** : sous le contrôle du watcher
@@ -327,8 +328,11 @@ historique dans le panneau latéral (voir plus haut).
 ## Onglet « Configuration »
 
 - [ ] Identité (lecture seule) affichée ; paramètres éditables chargés.
-- [ ] Curseurs Tonalité du bip / Tâches en parallèle : valeur suivie ; « Tester
-      le son » joue la tonalité.
+- [ ] **Plus aucun réglage de son** (ni « Script bip », ni « Tonalité du
+      bip », ni bouton « Tester le son » — retirés à l'issue #643 ; le son se
+      règle désormais uniquement depuis le panneau latéral, interrupteur
+      global + choix par issue).
+- [ ] Curseur Tâches en parallèle : valeur suivie.
 - [ ] « Enregistrer » et « Enregistrer et relancer » fonctionnent.
 - [ ] Zone dangereuse : « Supprimer ce projet… » ouvre la modale (checklist +
       confirmation par saisie du nom).

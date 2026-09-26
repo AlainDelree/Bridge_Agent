@@ -1,17 +1,17 @@
 """Interrupteur global plat/cloche du bip (issue #527).
 
 `scripts/traitement_fin.py` lit `scripts/son_actif.txt` (une seule ligne,
-`plat` ou `cloche`) pour choisir entre `bip_plat()` et `bip()` — voir le
-docstring de ce module pour le détail des deux timbres et leur interaction
-avec `TONALITE_BIP` (réglage PAR PROJET, orthogonal à celui-ci qui est
-GLOBAL : la tonalité décale la fréquence des DEUX timbres, elle ne choisit
-pas entre eux). Avant cette issue, seule une édition manuelle du fichier
-permettait de changer de timbre ; ces routes l'exposent dans l'interface,
-à la façon de `/tester-bip/<nom_projet>` pour la tonalité (app/projets.py).
+`plat` ou `cloche`) pour choisir entre `bip_plat()` et `bip()`. Avant cette
+issue, seule une édition manuelle du fichier permettait de changer de
+timbre ; ces routes l'exposent dans l'interface.
 
-Contrairement à `TONALITE_BIP`, ce réglage n'est pas dans un `.conf` de
-projet : `son_actif.txt` pilote TOUS les projets utilisant le script partagé,
-donc ces routes ne prennent pas de `<nom_projet>` en paramètre.
+Ce réglage n'est pas dans un `.conf` de projet : `son_actif.txt` pilote TOUS
+les projets utilisant le script partagé, donc ces routes ne prennent pas de
+`<nom_projet>` en paramètre. Le réglage de tonalité PAR PROJET (`TONALITE_BIP`)
+envisagé à l'issue #526 a été abandonné au profit du choix par issue
+(#630/#637/#641/#642) et retiré de l'interface à l'issue #643 — le modèle
+son ne comporte plus que deux niveaux : l'interrupteur global ci-dessous et
+le choix par issue.
 """
 
 import sys
@@ -23,7 +23,6 @@ DOSSIER_SCRIPT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(DOSSIER_SCRIPT))
 
 import notifications  # noqa: E402
-from app.projets import projet_par_nom  # noqa: E402
 
 CHEMIN_SON_ACTIF   = DOSSIER_SCRIPT / "scripts" / "son_actif.txt"
 SCRIPT_BIP_PARTAGE = DOSSIER_SCRIPT / "scripts" / "traitement_fin.py"
@@ -64,14 +63,7 @@ def tester_son():
     """POST /tester-son — joue le bip avec le timbre ACTUELLEMENT enregistré
     dans son_actif.txt (le front écrit d'abord via POST /son-actif au clic sur
     l'interrupteur, donc ce test entend toujours le dernier choix). Tonalité
-    (issue #532) : celle du projet actif transmis par le front ({"projet":
-    <nom>}), lue dans son .conf comme le fait /tester-bip/<nom_projet> — pour
-    que ce bouton reproduise fidèlement ce qu'on entend réellement à la
-    clôture d'une issue de ce projet. Neutre (0) si aucun projet n'est
-    transmis ou introuvable (comportement inchangé)."""
-    data   = request.json or {}
-    projet = str(data.get("projet", "")).strip()
-    cfg    = projet_par_nom(projet) if projet else None
-    tonalite = cfg.tonalite_bip if cfg is not None else 0
-    notifications.bip(SCRIPT_BIP_PARTAGE, 1, tonalite=tonalite)
+    neutre (0) — comme le chemin réel du bip depuis #630, ce réglage n'est
+    plus rattaché à un projet (issue #643)."""
+    notifications.bip(SCRIPT_BIP_PARTAGE, 1, tonalite=0)
     return jsonify(succes=True)

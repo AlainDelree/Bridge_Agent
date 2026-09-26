@@ -617,9 +617,9 @@ def bip(fois=1, numero=None):
     `SCRIPT_BIP`/`TONALITE_BIP` du `.conf` (réglage par projet abandonné au
     profit du choix par issue, résolu par `traitement_fin.py::son_a_jouer()`
     à partir de `--projet`/`--numero` transmis ci-dessous). `CFG.script_bip`/
-    `CFG.tonalite_bip` restent lus et exposés à l'onglet Configuration
-    (`/config`, `/tester-bip`, non touchés par #630) mais n'influencent plus
-    ce chemin."""
+    `CFG.tonalite_bip` restent lus (tolérance d'un `.conf` existant qui porte
+    encore ces clés) mais ne sont plus exposés à l'onglet Configuration ni
+    n'influencent ce chemin (retrait de l'interface à l'issue #643)."""
     notifications.bip(SCRIPT_BIP_PARTAGE, fois, projet=CFG.nom, numero=numero)
 
 def notifier_fin_sse(numero):

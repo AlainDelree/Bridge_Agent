@@ -14,19 +14,18 @@
            connu (plus de ligne VM — VirtualBox retiré depuis #447, l'appel
            mort à /ccw/vm-statut a été supprimé par #628).
          - #pl-zone-son (issue #527) : interrupteur global plat/cloche du bip
-           + test immédiat. GLOBAL (pas par projet, contrairement à la
-           tonalité de l'onglet Configuration, issue #526) — TOUJOURS visible,
-           initialisé une seule fois au chargement (initZoneSon()) et mis à
-           jour par ses propres handlers au clic, PAS reconstruit à chaque
-           cycle de rafraichirPanneauLateralResultats (contrairement aux
-           autres zones ci-dessous) : rien ne le ferait diverger de l'état
-           réel puisque cette zone est la seule à écrire dans son_actif.txt
-           depuis l'interface. Le bouton #pl-btn-tester-son joue la tonalité
-           du projet actif (issue #532) : il est disabled par défaut (attribut
-           posé dans ce HTML) et réactivé/regrisé par majBoutonTesterSonActif()
-           à chaque changement de sélection, tant qu'aucune ligne n'est
-           sélectionnée (issue #533) — un son neutre ne correspondrait à
-           aucune notification réelle.
+           + test immédiat. GLOBAL — TOUJOURS visible, initialisé une seule
+           fois au chargement (initZoneSon()) et mis à jour par ses propres
+           handlers au clic, PAS reconstruit à chaque cycle de
+           rafraichirPanneauLateralResultats (contrairement aux autres zones
+           ci-dessous) : rien ne le ferait diverger de l'état réel puisque
+           cette zone est la seule à écrire dans son_actif.txt depuis
+           l'interface. Le bouton #pl-btn-tester-son joue le timbre GLOBAL à
+           tonalité neutre (le réglage de tonalité PAR PROJET envisagé à
+           l'issue #526 a été abandonné et retiré à l'issue #643) : il est
+           disabled par défaut (attribut posé dans ce HTML) et réactivé/
+           regrisé par majBoutonTesterSonActif() à chaque changement de
+           sélection, tant qu'aucune ligne n'est sélectionnée (issue #533).
          - #pl-zone-extras : contrôle du watcher spool (issues_inbox, issue
            #485) — rendrePanneauLateralExtras().
          - #pl-zone-actions : actions contextuelles sur l'issue sélectionnée

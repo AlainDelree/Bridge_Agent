@@ -36,17 +36,17 @@ Les DEUX niveaux sont best-effort (`etat_son_issue` comme `son_actif()`
 tolèrent fichier absent/corrompu sans jamais lever) : un bip ne doit jamais
 échouer pour une raison de résolution du son.
 
-Tonalité (issue #526, abandonnée comme réglage PAR PROJET en #630) :
-`--tonalite <demi-tons>` décale la fréquence de synthèse
-(`f_effective = f_base × 2^(demi-tons/12)`), appliqué aux DEUX sons quel que
-soit le choix ci-dessus. Depuis #630, le chemin RÉEL du bip (watcher.py,
-app/notifications_poller.py) n'appelle plus jamais ce script avec une
-tonalité autre que neutre (0) — les clés `.conf` `TONALITE_BIP`/`SCRIPT_BIP`
-ne sont plus lues sur ce chemin. `--tonalite` reste utilisé par les boutons
-de TEST de l'onglet Configuration (`/tester-bip/<projet>`, `/tester-son`),
-volontairement non touchés par #630 (retrait prévu à l'étape 8, en même
-temps que l'onglet lui-même). `--tonalite` absent ou `0` → fréquence de base
-inchangée (comportement historique).
+Tonalité (issue #526, abandonnée comme réglage PAR PROJET en #630, champs
+retirés de l'onglet Configuration à l'issue #643) : `--tonalite <demi-tons>`
+décale la fréquence de synthèse (`f_effective = f_base × 2^(demi-tons/12)`),
+appliqué aux DEUX sons quel que soit le choix ci-dessus. Le chemin RÉEL du
+bip (watcher.py, app/notifications_poller.py) n'appelle jamais ce script
+avec une tonalité autre que neutre (0) — les clés `.conf` `TONALITE_BIP`/
+`SCRIPT_BIP` ne sont plus lues sur ce chemin (tolérées si présentes dans un
+`.conf` existant, sans effet). `--tonalite` reste utilisé par le bouton de
+TEST du panneau latéral (`/tester-son`, toujours à tonalité neutre depuis
+#643 — `/tester-bip/<projet>` a été retiré). `--tonalite` absent ou `0` →
+fréquence de base inchangée (comportement historique).
 
 Usage :
     python3 traitement_fin.py                                   # un bip seul (interrupteur global)

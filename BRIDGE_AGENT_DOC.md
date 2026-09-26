@@ -2087,12 +2087,11 @@ séquentiellement dans `REP_TRAVAIL` (hors périmètre de cette issue).
   worktree dédié (issue #577) : `REP_TRAVAIL` reste libre pour Alain même
   dans ce cas. `0` = désactivé, identique à `1`.
 - **Réglage via l'interface et plafond de 4 (issue #568)** : réglable depuis
-  l'onglet Configuration de `new_issue.py` via un slider (`min="1" max="4"`,
-  sur le modèle de celui de `TONALITE_BIP`) — la valeur invalide est donc
-  physiquement impossible à sélectionner par ce chemin, sans validation
-  serveur à contourner. Le plafond de 4 est un choix délibéré : au-delà,
-  risque de contention sur CCW (Pentium G2020 dual-core) et de diluer la
-  relecture humaine des diffs sur CCL. Rien n'empêche cependant une
+  l'onglet Configuration de `new_issue.py` via un slider (`min="1" max="4"`)
+  — la valeur invalide est donc physiquement impossible à sélectionner par ce
+  chemin, sans validation serveur à contourner. Le plafond de 4 est un choix
+  délibéré : au-delà, risque de contention sur CCW (Pentium G2020 dual-core)
+  et de diluer la relecture humaine des diffs sur CCL. Rien n'empêche cependant une
   modification manuelle du `.conf` au-delà de ce plafond : `charger_config`
   plafonne alors silencieusement `CFG.max_write_parallele` à `4` pour
   l'exécution en cours (jamais de blocage total du traitement du projet
@@ -3290,8 +3289,7 @@ new_issue.py (ThinkPad) → polling gh → détecte la transition → bip/bulle/
   issue #628) : un
   sélecteur à deux positions « Plat »/« Cloche », toujours visible, et un
   bouton **« Tester le son »**. Deux routes dédiées (`app/son.py`,
-  **GLOBALES, sans `<nom_projet>`** — contrairement à `/tester-bip/<projet>`
-  ci-dessous) :
+  **GLOBALES, sans `<nom_projet>`**) :
   - `GET`/`POST /son-actif` : lit/écrit `son_actif.txt` — le clic sur une
     position écrit directement le fichier (pas de bouton « Enregistrer »
     séparé), effectif au bip suivant sans redémarrage d'aucun processus
@@ -3352,16 +3350,21 @@ new_issue.py (ThinkPad) → polling gh → détecte la transition → bip/bulle/
     (issue #630) : `watcher.py::bip()`/`notifier()` et
     `app/notifications_poller.py::_notifier_transition()` appellent
     toujours `scripts/traitement_fin.py` avec une tonalité neutre (`0`),
-    quel que soit le `.conf` du projet. Ces deux clés `.conf` restent
-    **tolérées** (résiduelles dans certains `configs/*.conf` existants,
-    ex. l'ancien `chesscoach.conf` pointant vers `scripts/bip_Cloche.py`
-    — code jamais modifié directement, retrait manuel laissé à Alain) et
-    restent lues/exposées par `/config` et `/tester-bip/<projet>`
-    (`app/projets.py`, onglet Configuration) — ces routes et
-    `nouveau_projet.py` (qui écrit encore `SCRIPT_BIP`/`TONALITE_BIP` dans
-    les nouveaux `.conf`) sont **volontairement non touchés** par #630 ;
-    leur retrait est prévu à l'étape 8, en même temps que l'onglet lui-même,
-    pour que l'interface reste cohérente entre-temps.
+    quel que soit le `.conf` du projet. **Le réglage PAR PROJET a été
+    intégralement retiré de l'interface à l'issue #643** : `TONALITE_BIP`/
+    `SCRIPT_BIP` ne sont plus éditables depuis l'onglet Configuration
+    (`CLES_EDITABLES` de `app/projets.py`), la route `/tester-bip/<projet>`
+    a été supprimée, et `nouveau_projet.py` n'écrit plus ces clés (ni de
+    référence à `scripts/bip_Cloche.py`, supprimé en #630) dans le `.conf`
+    d'un nouveau projet. Ces deux clés `.conf` restent **tolérées** dans les
+    `configs/*.conf` existants (résiduelles, ex. l'ancien `chesscoach.conf`
+    pointant vers `scripts/bip_Cloche.py` — retrait manuel laissé à Alain,
+    ces fichiers gitignorés étant hors périmètre agent, §11) :
+    `charger_config()` (`watcher.py`) continue de les lire sans erreur si
+    présentes, avec les mêmes défauts sensés si absentes. **Le modèle son ne
+    comporte donc plus que deux niveaux** : l'interrupteur GLOBAL
+    (`#pl-zone-son`, ci-dessus) et le choix PAR ISSUE (ci-dessus) — plus
+    aucune tonalité par projet.
 
 **Éviter le spam de vieilles issues au démarrage.** Deux garde-fous combinés :
 - **filtre de récence** : seules les transitions horodatées dans les
