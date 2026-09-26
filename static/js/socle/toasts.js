@@ -21,6 +21,13 @@
 const DUREE_DEFAUT_MS = 4000;
 let stylesInjectes = false;
 
+// Anti-empilement (issue #635) : une rafale de toasts IDENTIQUES (même type
+// + même texte — ex. un événement /stream best-effort reçu en boucle pour un
+// même projet/numéro) ne doit pas empiler un nouveau toast à chaque fois.
+// Le toast déjà affiché est simplement réutilisé (compteur « ×N », minuteur
+// de disparition relancé) au lieu d'en créer un second à l'identique.
+const toastsActifs = new Map(); // "type texte" → { element, compteur, minuteur }
+
 function doc() {
   if (typeof document === 'undefined') return null;
   return document;
@@ -62,10 +69,33 @@ function injecterStyles() {
   d.head.appendChild(style);
 }
 
+// Ferme et retire le toast associé à `cle` — déclaration UNIQUE au niveau du
+// module (pas recréée à chaque appel de `afficher`), pour que le minuteur
+// programmé à la création reste valide même après une mise à jour ultérieure
+// du compteur par un nouvel appel identique.
+function fermerToast(cle) {
+  const actif = toastsActifs.get(cle);
+  if (!actif) return;
+  toastsActifs.delete(cle);
+  actif.element.classList.remove('visible');
+  setTimeout(() => actif.element.remove(), 200);
+}
+
 function afficher(texte, type) {
   const d = doc();
   if (!d) { return; }
   injecterStyles();
+
+  const cle = type + ' ' + texte;
+  const actif = toastsActifs.get(cle);
+  if (actif) {
+    actif.compteur += 1;
+    actif.element.textContent = texte + ' (×' + actif.compteur + ')';
+    clearTimeout(actif.minuteur);
+    actif.minuteur = setTimeout(() => fermerToast(cle), DUREE_DEFAUT_MS);
+    return actif.element;
+  }
+
   let conteneur = d.querySelector('.socle-toasts');
   if (!conteneur) {
     conteneur = d.createElement('div');
@@ -78,12 +108,10 @@ function afficher(texte, type) {
   conteneur.appendChild(toast);
   // Forcer un reflow puis lancer la transition d'apparition.
   requestAnimationFrame(() => toast.classList.add('visible'));
-  const partir = () => {
-    toast.classList.remove('visible');
-    setTimeout(() => toast.remove(), 200);
-  };
-  setTimeout(partir, DUREE_DEFAUT_MS);
-  toast.addEventListener('click', partir);
+  const entree = { element: toast, compteur: 1, minuteur: null };
+  entree.minuteur = setTimeout(() => fermerToast(cle), DUREE_DEFAUT_MS);
+  toastsActifs.set(cle, entree);
+  toast.addEventListener('click', () => { clearTimeout(entree.minuteur); fermerToast(cle); });
   return toast;
 }
 

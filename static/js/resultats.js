@@ -143,8 +143,17 @@ export function calculerBadgeEstimation(t, maintenant) {
 // à mener — cœur du correctif de l'issue #627 : `debut_issue` recharge le
 // timing et ne passe JAMAIS par la vérification post-dépassement (#334), quelle
 // que soit la présence antérieure de l'issue.
-export function planifierEvenementSse(etat, ev) {
+// `projetsConnus` (issue #635, défense en profondeur) : si fourni, tout
+// événement dont le projet n'y figure pas est ignoré AVANT même de regarder
+// son type — un projet fictif de test (ex. tests/test_worktree_parallelisation_337.py,
+// qui exerce le vrai watcher.py) ne doit jamais déclencher de fetch/toast
+// côté Résultats, même si les notifications réseau best-effort n'ont, pour
+// une raison quelconque, pas été neutralisées côté serveur.
+export function planifierEvenementSse(etat, ev, projetsConnus) {
   const cle = cleIssue(ev.projet, ev.numero);
+  if (Array.isArray(projetsConnus) && !projetsConnus.includes(ev.projet)) {
+    return { action: 'ignorer', cle, connue: false };
+  }
   const connue = !!(etat && etat.issues && etat.issues[cle]);
   if (ev.type === 'creation_issue') return { action: 'creer', cle, connue };
   if (ev.type === 'debut_issue')    return { action: 'debut', cle, connue };
@@ -431,7 +440,7 @@ function majLigneConnue(projet, numero) {
 // ─── Traitement des événements /stream (toujours CIBLÉ) ──────────────────────
 function traiterNotif(notif) {
   if (!notif || !notif.projet || notif.numero == null) return;
-  const plan = planifierEvenementSse(store.get(), notif);
+  const plan = planifierEvenementSse(store.get(), notif, nomsProjets());
   if (plan.action === 'debut')       surDebutIssue(notif.projet, notif.numero);
   else if (plan.action === 'fin')    surFinIssue(notif.projet, notif.numero);
   else if (plan.action === 'creer')  surCreationIssue(notif.projet, notif.numero, notif.titre,

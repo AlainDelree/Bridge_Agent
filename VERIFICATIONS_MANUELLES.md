@@ -115,6 +115,16 @@
       non-régression du panneau flottant qui les recouvrait ; issue #633,
       non-régression du défilement horizontal introduit par le
       redimensionnement de la colonne titre).
+- [ ] **Aucun toast parasite pendant la suite de tests** (issue #635) : lancer
+      `python3 -m pytest tests/` (ou un script `tests/test_xxx.py` isolé,
+      ex. `test_worktree_parallelisation_337.py`) pendant que l'onglet
+      Résultats est ouvert — **aucun** toast « mise à jour impossible » ni
+      apparition/rafraîchissement de ligne pour un projet fictif
+      (`test611par`, `test576max1`, etc.).
+- [ ] **Anti-empilement des toasts** (issue #635) : provoquer plusieurs
+      erreurs identiques en rafale (ex. couper le réseau puis déclencher
+      plusieurs fois la même action en échec) — un seul toast reste affiché,
+      avec un compteur « (×N) », au lieu de s'empiler à l'écran.
 
 ## Panneau latéral (Infrastructure)
 

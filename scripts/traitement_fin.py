@@ -72,6 +72,7 @@ from pathlib import Path
 # voir notifications.py::bip()).
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import etat_son_issue  # noqa: E402
+import utils  # noqa: E402 (issue #635 — notifications_reseau_neutralisees)
 
 F     = 880     # fréquence Hz
 DUR   = 1.5     # durée secondes
@@ -170,7 +171,12 @@ def _notifier(url: str, projet: str, numero: str):
     """POST JSON {"projet", "numero"} best-effort vers new_issue.py, timeout
     court et échec silencieux — new_issue.py n'est pas toujours lancé, et ce
     canal ne doit jamais faire planter l'appelant. Partagé par
-    notifier_fin_issue et notifier_debut_issue (issue #515)."""
+    notifier_fin_issue et notifier_debut_issue (issue #515). Neutralisé
+    pendant les tests (issue #635, utils.notifications_reseau_neutralisees) :
+    un projet/numéro fictif de test ne doit jamais atteindre un new_issue.py
+    réellement lancé sur le poste."""
+    if utils.notifications_reseau_neutralisees():
+        return
     try:
         corps = json.dumps({"projet": projet, "numero": int(numero)}).encode("utf-8")
         requete = urllib.request.Request(
