@@ -11,9 +11,14 @@
 //      par type d'événement, posé sur un ancêtre stable, route les événements.
 //
 // CE QU'IL EXPOSE
+//   - $  (sel, racine?)            : querySelector.
 //   - echapperHtml(texte)          : (fonction pure, testée sous Node)
 //   - surAction(selecteur, type, gestionnaire) : enregistre une règle déléguée.
 //   - installerDelegation(racine?) : (ré)installe les écouteurs racine.
+
+export function $(selecteur, racine) {
+  return (racine || document).querySelector(selecteur);
+}
 
 /** Échappe les 5 caractères sensibles pour insertion dans du HTML. Pur. */
 export function echapperHtml(texte) {
