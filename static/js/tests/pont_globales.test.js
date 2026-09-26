@@ -89,3 +89,41 @@ test('appelerAncien : chaque nom appelé existe dans app.js ou est publié par u
     'noms passés à appelerAncien sans fonction correspondante dans app.js ni publiée '
     + 'par un module — rupture de pont (voir issue #632) : ' + inconnues.join(', '));
 });
+
+// Pont dans l'AUTRE sens (issue #652) : depuis la sortie du formulaire « Nouvelle
+// issue » dans static/js/creation.js, l'ancien app.js appelle encore certaines de
+// ses fonctions PAR LEUR NOM (chargerTemplates au changement de projet ;
+// afficherMessage pour les erreurs du bouton watcher) — elles ne sont donc plus
+// définies dans app.js et DOIVENT être publiées en globales window.* par un
+// module, sinon l'appel bare-name d'app.js lève un ReferenceError silencieux au
+// runtime. Ce garde-fou vérifie explicitement cette publication (symétrique du
+// test appelerAncien ci-dessus).
+test('globales publiées par un module pour l\'ancien app.js (issue #652) : chargerTemplates, afficherMessage', () => {
+  const RACINE_JS_2 = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+  const CHEMIN_APP = path.join(RACINE_JS_2, 'app.js');
+  const texteApp = fs.readFileSync(CHEMIN_APP, 'utf8');
+
+  const fichiersModules = listerFichiersJs(RACINE_JS_2).filter((f) => f !== CHEMIN_APP);
+  const globalesModules = new Set();
+  for (const fichier of fichiersModules) {
+    for (const nom of extraireNoms(fs.readFileSync(fichier, 'utf8'),
+      String.raw`window\.([A-Za-z_$][\w$]*)\s*=`)) {
+      globalesModules.add(nom);
+    }
+  }
+
+  // Fonctions du formulaire sorties d'app.js mais encore appelées par lui.
+  const attendues = ['chargerTemplates', 'afficherMessage'];
+  for (const nom of attendues) {
+    // Le nom est bien appelé quelque part dans app.js…
+    assert.ok(new RegExp(String.raw`\b${nom}\s*\(`).test(texteApp),
+      `app.js n'appelle plus ${nom}() — mettre à jour ce garde-fou (issue #652).`);
+    // …et n'y est plus défini (déplacé dans un module)…
+    assert.ok(!new RegExp(String.raw`function\s+${nom}\s*\(`).test(texteApp),
+      `${nom} redéfini dans app.js — le pont inverse n'a plus lieu d'être.`);
+    // …donc un module DOIT le publier en globale window.*.
+    assert.ok(globalesModules.has(nom),
+      `${nom} appelé par app.js mais publié par aucun module (window.${nom} = …) `
+      + '— rupture de pont inverse (issue #652).');
+  }
+});

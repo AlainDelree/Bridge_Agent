@@ -11,7 +11,9 @@
 //   - `/events` (cycle de vie serveur : heartbeat, shutdown) — `/stream`, lui,
 //     est ouvert et piloté par static/js/resultats.js (issue #627).
 //   - la liste des issues, le détail, les filtres, la recherche et les onglets
-//     Nouvelle issue/Journal/Configuration/CCW (pas encore sortis d'app.js).
+//     Journal/Configuration/CCW (pas encore sortis d'app.js). L'onglet
+//     « Nouvelle issue » a été sorti dans static/js/creation.js (issue #652),
+//     initialisé par import direct depuis onglets.js.
 //
 // Ordre de chargement (voir templates/fragments/scripts.html) :
 //   1. <script> Jinja : window.COULEURS_PERSISTEES / window.MIMES_IMAGE_ACCEPTES

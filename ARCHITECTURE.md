@@ -415,9 +415,10 @@ Déjà sortis : `onglets.js` (bascule entre onglets, issue #626, étape 2),
 #636, étape 5b), `actions_ligne.js` (actions cliquables sur la ligne d'une
 issue ouverte + son par issue, issue #641, étape 6), `ccw.js` (onglet CCW,
 pilotage du PC fixe Windows, issue #649), `journal.js` (onglet Journal
-watcher, issue #650) et `config.js` (onglet Configuration + zone dangereuse
-de suppression de projet, issue #651, étape 12). Futurs modules (ex.
-`creation.js`, `nouveau_projet.js`) suivent le même patron,
+watcher, issue #650), `config.js` (onglet Configuration + zone dangereuse
+de suppression de projet, issue #651, étape 12) et `creation.js` (formulaire
+« Nouvelle issue » complet, issue #652). Futurs modules (ex.
+`nouveau_projet.js`) suivent le même patron,
 `nouveau_projet.js`) suivent le même patron.
 
 **Onglet Watchers supprimé (issue #626, étape 2)** : le tableau des watchers
@@ -623,6 +624,34 @@ Résultats, Journal watcher, Configuration, CCW, Nouvelle issue.
 > `clesCacheDetailHorsProjets`) + `toutesLesEntrees()` (remplace le scan brut de
 > `resultats_coches.js::migrerLocalStorage`, seul autre accès direct trouvé au
 > grep exhaustif).
+
+> **Formulaire « Nouvelle issue » sorti — `static/js/creation.js` (issue #652)** :
+> tout l'onglet de création quitte `app.js` (~1200 lignes retirées), comportement
+> STRICTEMENT inchangé (objectif structurel). Le module regroupe :
+> `collecterFormulaire`, `envoyerIssue`, la bibliothèque de **templates** (#284),
+> la **pièce jointe image** (#191/#192), l'**envoi en lot** (#135/#505), les
+> **détecteurs d'en-tête à la frappe** (`#Titre`, `PROJET` #109, `TIMEOUT` #111,
+> `MODE` #326) + le **résumé d'en-tête** (#117), l'**aperçu**, les modales
+> (confirmation/incohérence/erreur) et la **mémorisation de `notif_pc`** (#93).
+> Les gestionnaires `onclick=`/`onchange=` inline de `onglet_creation.html`
+> (le fragment qui en portait le plus) sont remplacés par la **délégation** du
+> socle (`data-action="creation-*"`, `dom.surAction`), y compris les détecteurs
+> déclenchés sur `input` de `#corps`, enregistrés dans le même ordre qu'avant.
+> **Initialisation par IMPORT DIRECT** depuis `onglets.js` (`initCreation`,
+> idempotente, à la première activation de l'onglet) — plus par le pont ; d'où
+> `initialisationsPour('creation') === []`. Pont résiduel : `creation.js` publie
+> `window.chargerTemplates` / `window.afficherMessage` (appelées par leur nom
+> depuis `app.js` — `onProjetChange`, `lancerWatcher`) et appelle
+> `onProjetChange()` / `mettreAJourInfoProjet()` via `appelerAncien`. `notif_pc`
+> n'étant utilisée QUE par ce formulaire (le panneau latéral dérive l'état de ses
+> cases 🔔 des labels GitHub, cf. `etatsCasesNotif`), sa lecture/écriture passe
+> par la clé unique `persistance.CLES.notifPc` (déjà point d'accès depuis #644),
+> sans duplication. Fonctions PURES nouvellement testées (jusqu'ici non
+> couvertes) : `zoneEntete`, `lireChampEntete`, `retirerLigneEntete`,
+> `reconnaitreModeTexte`, `detecterIncoherenceProjet`, `decouperCorpsEnBlocs`,
+> `projetEffectifBloc`, `modeEffectifBloc` (`tests/creation.test.js`) ;
+> `pont_globales.test.js` gagne un garde-fou du **pont inverse** (globales
+> `window.*` qu'`app.js` appelle encore par leur nom).
 
 > **Note parallélisme** : HTML et JS se découpent proprement par zone. Le CSS
 > est plus contraint : la cascade impose de garder l'ordre source, donc quelques
