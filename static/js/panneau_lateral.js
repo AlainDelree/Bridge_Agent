@@ -5,7 +5,9 @@
 //   Colonne latérale (non recouvrante, voir static/css/resultats.css) affichée
 //   à côté de la liste de l'onglet Résultats : monitoring passif des watchers
 //   CCL + services CCW connus, interrupteur global du bip, contrôle du watcher
-//   spool (issues_inbox), actions contextuelles sur l'issue sélectionnée.
+//   spool (issues_inbox), actions contextuelles sur l'issue sélectionnée — dont,
+//   depuis l'issue #637 (étape 7b), le choix de son PROPRE à cette issue (voir
+//   rendreSonIssue/choisirSonIssue), en plus de l'interrupteur global.
 //   Ouvert par défaut, état mémorisé (persistance.js) et conservé d'un onglet
 //   à l'autre — contrairement à l'ancien comportement (réinitialisé à chaque
 //   entrée dans l'onglet Résultats).
@@ -44,6 +46,12 @@ const CLE_PANNEAU_OUVERT = 'bridge_panneau_lateral_ouvert';
 
 let intervalPanneauLateral = null;
 
+// Cache du dernier choix de son PAR ISSUE lu depuis le serveur (évite un GET
+// /son-issue à chaque cycle de rafraîchissement tant que la sélection ne
+// change pas — voir rendrePanneauLateralActions).
+let sonIssueSelectionCle    = null; // "projet#numero" couverte par le cache
+let sonIssueSelectionValeur = null; // 'plat' | 'cloche' | null (suit le réglage global)
+
 // ─────────────────────────────────────────────────────────────────────────────
 // LOGIQUE PURE (testée sous Node — voir static/js/tests/panneau_lateral.test.js)
 //    Aucune dépendance au DOM ni au réseau.
@@ -63,6 +71,36 @@ export function etatsCasesNotif(nomsLabels) {
     notif_pc: labels.includes('notif_pc'),
     notif_gsm: labels.includes('notif_gsm'),
     notif_tous: labels.includes('notif_tous'),
+  };
+}
+
+// Contrôle à 3 états « Son de cette issue » (zone Actions, issue #637 — étape
+// 7b), en plus de l'interrupteur GLOBAL ci-dessus (#pl-zone-son). Utilise
+// GET/POST /son-issue/<projet>/<numero> (issue #630, backend jusqu'ici sans
+// bouton). Fonctions pures testées sous Node (panneau_lateral.test.js).
+
+// Normalise la réponse de GET /son-issue/<projet>/<numero> : 'plat'/'cloche'
+// si un choix propre existe pour cette issue, sinon null (elle suit alors
+// l'interrupteur global — voir etat_son_issue.py::son_choisi).
+export function sonIssueDepuisReponse(donnees) {
+  const son = donnees && donnees.son;
+  return (son === 'plat' || son === 'cloche') ? son : null;
+}
+
+// Normalise la valeur data-valeur d'un bouton du contrôle ('', 'plat' ou
+// 'cloche') vers ce qui doit être envoyé à POST /son-issue : null retire le
+// choix propre à l'issue (elle retombe alors sur l'interrupteur global).
+export function normaliserChoixSonIssue(valeurBrute) {
+  return (valeurBrute === 'plat' || valeurBrute === 'cloche') ? valeurBrute : null;
+}
+
+// État actif de chacune des 3 options, pour le rendu — mutuellement exclusif
+// (contrairement aux cases 🔔 Notifications, indépendantes entre elles).
+export function etatsOptionsSonIssue(sonChoisi) {
+  return {
+    global: sonChoisi !== 'plat' && sonChoisi !== 'cloche',
+    plat: sonChoisi === 'plat',
+    cloche: sonChoisi === 'cloche',
   };
 }
 
@@ -106,7 +144,7 @@ async function rafraichirPanneauLateralResultats() {
   // sélection courante, sans attendre le fetch du monitoring.
   await rendrePanneauLateralMonitoring();
   await rendrePanneauLateralExtras();
-  rendrePanneauLateralActions();
+  await rendrePanneauLateralActions();
 }
 
 // ─── Lecture mutualisée de /watchers (panneau + bandeau repli REP_TRAVAIL) ──
@@ -318,13 +356,32 @@ function libelleModeIssue(nomsLabels) {
   return '📖 Lecture seule';
 }
 
-function rendrePanneauLateralActions() {
+async function rendrePanneauLateralActions() {
   const zone = dom.$('#pl-zone-actions');
   if (!zone) return;
   const { projet: nom, numero, issue: it } = appelerAncien('obtenirIssueSelectionnee') || {};
-  if (!nom || !numero) { zone.innerHTML = ''; return; }
+  if (!nom || !numero) { zone.innerHTML = ''; sonIssueSelectionCle = null; return; }
   const nomsLabels = it ? (it.labels || []).map(l => ((l && l.name) || l || '').toLowerCase()) : [];
   const ferme = !!(it && (it.state || '').toUpperCase() === 'CLOSED');
+
+  // Choix de son propre à CETTE issue (#pl-zone-actions, issue #637 — étape
+  // 7b) : une seule requête par sélection (pas une par cycle de 30s ni une
+  // par ligne — voir le cache ci-dessus), sans objet pour une issue fermée
+  // (elle a déjà bipé ou ne bipera plus).
+  if (ferme) {
+    sonIssueSelectionCle = null;
+  } else {
+    const cle = nom + '#' + numero;
+    if (cle !== sonIssueSelectionCle) {
+      try {
+        const donnees = await api.get(
+          '/son-issue/' + encodeURIComponent(nom) + '/' + encodeURIComponent(numero),
+          { silencieux: true });
+        sonIssueSelectionValeur = sonIssueDepuisReponse(donnees);
+      } catch (e) { sonIssueSelectionValeur = null; /* best-effort : suit le réglage global */ }
+      sonIssueSelectionCle = cle;
+    }
+  }
   // Même condition que l'ancien bouton « Interrompre » du détail d'issue
   // (retiré du détail par l'issue #628, cette action ne vit plus qu'ici) :
   // issue ouverte, ni done ni needs-human.
@@ -340,6 +397,9 @@ function rendrePanneauLateralActions() {
            + dom.echapperHtml(nom) + ' #' + dom.echapperHtml(numero) + '</div>';
   if (it) {
     html += '<div class="pl-mode-issue">' + libelleModeIssue(nomsLabels) + '</div>';
+  }
+  if (!ferme) {
+    html += rendreSonIssue(nom, numero, sonIssueSelectionValeur);
   }
   if (interromptible) {
     const etatsNotif = etatsCasesNotif(nomsLabels);
@@ -387,6 +447,44 @@ function rendreCheckboxNotif(nom, numero, label, libelle, coche) {
        + '<input type="checkbox"' + (coche ? ' checked' : '') + ' data-action="pl-notif-toggle" data-projet="' + dom.echapperHtml(nom)
        + '" data-numero="' + Number(numero) + '" data-label="' + label + '"> '
        + dom.echapperHtml(libelle) + '</label>';
+}
+
+// Contrôle « 🔊 Son de cette issue » (issue #637 — étape 7b) : reprend le
+// style du sélecteur global (.pl-son-segmente/.pl-son-opt, #pl-zone-son) avec
+// une option « Global » supplémentaire. Emplacement choisi : zone Actions de
+// l'issue sélectionnée, PAS la ligne dans la liste — l'étape 6 de la refonte
+// (remplacement des badges ✅/Diff/All par des actions sur la ligne, voir
+// ARCHITECTURE.md §6) n'est pas encore faite ; quand elle le sera, ce bloc
+// (logique pure ci-dessus + ce rendu) pourra être déplacé sur la ligne sans
+// changer sa logique. Voir VERIFICATIONS_MANUELLES.md pour la checklist.
+function rendreSonIssue(nom, numero, sonChoisi) {
+  const etats = etatsOptionsSonIssue(sonChoisi);
+  const bouton = (actif, valeur, libelle, titre) =>
+    '<button type="button" class="pl-son-opt' + (actif ? ' actif' : '') + '" data-action="pl-son-issue-choix"'
+    + ' data-projet="' + dom.echapperHtml(nom) + '" data-numero="' + Number(numero) + '" data-valeur="' + valeur + '"'
+    + ' title="' + dom.echapperHtml(titre) + '">' + libelle + '</button>';
+  return '<div class="pl-notifs">'
+       + '<div class="pl-notifs-titre" title="Un choix ici prime sur l’interrupteur global (zone Son du bip, ci-dessus) pour CETTE issue seulement.">'
+       + '🔊 Son de cette issue</div>'
+       + '<span class="pl-son-segmente">'
+       + bouton(etats.global, '', 'Global', 'Suit l’interrupteur global — aucun choix propre à cette issue')
+       + bouton(etats.plat, 'plat', 'Plat', 'Toujours en plat pour cette issue, quel que soit le réglage global')
+       + bouton(etats.cloche, 'cloche', 'Cloche', 'Toujours en cloche pour cette issue, quel que soit le réglage global')
+       + '</span>'
+       + '</div>';
+}
+
+async function choisirSonIssue(nom, numero, valeurBrute) {
+  const valeur = normaliserChoixSonIssue(valeurBrute);
+  const precedent = sonIssueSelectionValeur;
+  sonIssueSelectionValeur = valeur;   // optimiste : réactivité immédiate au clic
+  rendrePanneauLateralActions();
+  try {
+    await api.post('/son-issue/' + encodeURIComponent(nom) + '/' + encodeURIComponent(numero), { son: valeur });
+  } catch (e) {
+    sonIssueSelectionValeur = precedent;   // échec réseau : reviens en arrière (toast déjà affiché par api.post)
+    rendrePanneauLateralActions();
+  }
 }
 
 async function toggleLabelNotif(nom, numero, label, cb) {
@@ -510,6 +608,9 @@ function installerDelegationPanneau() {
 
   dom.surAction('[data-action="pl-notif-toggle"]', 'change',
     (e, el) => toggleLabelNotif(el.dataset.projet, Number(el.dataset.numero), el.dataset.label, el));
+
+  dom.surAction('[data-action="pl-son-issue-choix"]', 'click',
+    (e, el) => choisirSonIssue(el.dataset.projet, Number(el.dataset.numero), el.dataset.valeur));
 }
 
 /** Point d'entrée, appelé une fois par index.js. */

@@ -32,14 +32,19 @@
          - #pl-zone-actions : actions contextuelles sur l'issue sélectionnée
            (Interrompre / Relancer / Fermer — SEUL emplacement de ces actions
            depuis #628, retirées du détail d'issue qui faisait double emploi),
-           vide (donc invisible) tant qu'aucune ligne n'est sélectionnée. -->
+           vide (donc invisible) tant qu'aucune ligne n'est sélectionnée.
+           Depuis l'issue #637 (étape 7b) : contrôle « 🔊 Son de cette issue »
+           (Global / Plat / Cloche, GET/POST /son-issue/<projet>/<numero>) tant
+           que l'issue sélectionnée n'est pas fermée — prime sur l'interrupteur
+           global ci-dessus (#pl-zone-son) pour CETTE issue (infobulle sur son
+           titre). -->
     <div id="panneau-lateral-col" class="panneau-lateral-col">
       <button id="pl-toggle" class="pl-toggle" data-action="pl-toggle">📊 Infrastructure</button>
       <div id="panneau-lateral-resultats" class="panneau-lateral">
         <div id="pl-zone-monitoring"></div>
         <div id="pl-zone-son" class="pl-zone-son">
           <div class="pl-resume-titre">Son du bip</div>
-          <div class="pl-ligne">
+          <div class="pl-ligne" title="Réglage par défaut pour toutes les issues. Un choix propre à une issue (zone Actions, ci-dessous) prime sur celui-ci pour cette issue précise.">
             <span class="pl-ligne-libelle">Timbre</span>
             <span class="pl-son-segmente" id="pl-son-segmente">
               <button type="button" class="pl-son-opt" id="pl-son-opt-plat" data-action="pl-son-plat">Plat</button>

@@ -162,6 +162,27 @@
       notif_pc/gsm/tous, **Interrompre / Interrompre et relancer / Retirer
       needs-human / Fermer l'issue** — ces 4 actions n'existent plus que dans
       cette zone (issue #628, retirées du détail qui faisait double emploi).
+- [ ] **« 🔊 Son de cette issue » (issue #637, étape 7b)** : sélectionner une
+      issue **ouverte** → le bloc apparaît juste sous le mode (📖/✏️/⚠️), avec
+      3 options **Global / Plat / Cloche** (une seule active à la fois).
+      Sélectionner une issue **fermée** → le bloc **n'apparaît pas**. L'option
+      active au premier affichage correspond bien à l'état enregistré côté
+      serveur (`GET /son-issue/<projet>/<numéro>`) — vérifier en particulier
+      qu'une issue sans choix propre affiche **Global** actif. Cliquer sur
+      Plat/Cloche/Global : l'option active change **immédiatement**, un
+      **POST /son-issue/<projet>/<numéro>** part (onglet Réseau, F12) ;
+      revenir sur une autre issue puis reselectionner celle-ci → le choix a
+      bien été mémorisé. Couper le réseau (ou bloquer la requête dans
+      l'onglet Réseau) puis cliquer sur une option → un **toast d'erreur**
+      apparaît et l'option revient à son état précédent. Survoler le titre
+      « 🔊 Son de cette issue » et la ligne « Timbre » de la zone « Son du
+      bip » ci-dessus : une infobulle rappelle qu'un choix par issue prime
+      sur le réglage global, pour cette issue seulement. **Une seule requête
+      `/son-issue` par sélection** (onglet Réseau) — pas de requête répétée
+      au cycle de rafraîchissement de 30 s tant que la sélection ne change
+      pas. Clôturer une issue mise en Plat (ou Cloche) alors que le réglage
+      global est sur l'autre timbre → le bip entendu à la clôture correspond
+      bien au choix de l'issue, pas au réglage global.
 - [ ] **Cases de notification conformes aux labels réels** (issues #633,
       #634) : pour une issue portant `notif_pc` (et/ou `notif_gsm`/
       `notif_tous`), la case correspondante est **cochée dès l'apparition de

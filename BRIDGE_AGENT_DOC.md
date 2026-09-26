@@ -3215,8 +3215,8 @@ new_issue.py (ThinkPad) → polling gh → détecte la transition → bip/bulle/
   - `POST /tester-son` : joue le bip avec le timbre actuellement enregistré
     dans `son_actif.txt` (tonalité neutre, `0` — ce réglage n'est pas
     rattaché à un projet).
-- **Choix du son PAR ISSUE (issue #630), backend seul — interface aux étapes
-  7b/8.** Réglage PAR PROJET envisagé (`TONALITE_BIP`) abandonné au profit
+- **Choix du son PAR ISSUE (issue #630, backend ; interface issue #637, étape
+  7b).** Réglage PAR PROJET envisagé (`TONALITE_BIP`) abandonné au profit
   d'un choix plus fin : n'importe quelle issue peut être basculée en plat ou
   en cloche pour ELLE-MÊME, en plus de l'interrupteur global ci-dessus.
   - **Stockage** : `logs/son_issues.json` (`{projet: {numéro: "plat"|
@@ -3229,8 +3229,27 @@ new_issue.py (ThinkPad) → polling gh → détecte la transition → bip/bulle/
     `nettoyer_entrees_perimees()`.
   - **Routes** `GET`/`POST /son-issue/<nom_projet>/<numero>` (`app/son_issue.py`,
     même famille que `/son-actif` ci-dessus) : lisent/écrivent le choix
-    propre à UNE issue. Pas encore de bouton dans l'interface (#630 =
-    backend seul).
+    propre à UNE issue.
+  - **Interface (issue #637, étape 7b)** : contrôle à 3 états « 🔊 Son de
+    cette issue » (Global / Plat / Cloche) dans la zone Actions du panneau
+    latéral (`#pl-zone-actions`, sous le mode de l'issue), visible tant que
+    l'issue sélectionnée n'est pas fermée. **Emplacement choisi** : la zone
+    Actions de l'issue sélectionnée, PAS la ligne dans la liste Résultats —
+    l'étape 6 de la refonte (remplacement des badges ✅/Diff/All par des
+    actions sur la ligne, `ARCHITECTURE.md` §6) n'était pas encore faite au
+    moment de #637 ; le rendu (`rendreSonIssue`) s'appuie sur des fonctions
+    pures (`sonIssueDepuisReponse`, `normaliserChoixSonIssue`,
+    `etatsOptionsSonIssue`, testées sous Node) indépendantes du DOM, donc
+    reprenables tel quel sur la ligne le jour de l'étape 6. Une seule requête
+    `GET /son-issue` par sélection d'issue (mise en cache tant que la
+    sélection ne change pas — pas une par cycle de rafraîchissement de 30 s
+    ni par ligne, contrairement à ce qu'imposerait le contrôle sur CHAQUE
+    ligne de la liste). Mise à jour optimiste au clic (`POST /son-issue`),
+    reprise de l'état précédent + toast d'erreur (via `api.post`) en cas
+    d'échec réseau. L'interrupteur global (`#pl-zone-son`) reste inchangé
+    dans son fonctionnement ; une infobulle sur son libellé « Timbre » et sur
+    le titre du nouveau contrôle rappelle qu'un choix par issue prime sur lui
+    pour cette issue précise.
   - **Résolution au moment du bip** (`scripts/traitement_fin.py::son_a_jouer(
     projet, numéro)`) : le choix de l'issue s'il existe, sinon
     `son_actif()` (interrupteur global) — dans cet ordre, pour **les deux**

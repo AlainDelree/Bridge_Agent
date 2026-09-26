@@ -5,8 +5,10 @@ partagée avec `scripts/traitement_fin.py`, qui résout le son effectivement
 joué à la clôture) et `scripts/traitement_fin.py::main()` pour l'ordre de
 résolution (choix de l'issue, puis interrupteur global).
 
-Étape backend seule (#630) : ces routes n'ont pas encore de bouton dans
-l'interface — prévu aux étapes 7b/8 (voir ARCHITECTURE.md §6)."""
+Backend posé à l'étape #630 ; contrôle à 3 états (Global/Plat/Cloche) dans le
+panneau latéral (zone Actions de l'issue sélectionnée) depuis l'étape 7b
+(#637) — voir `static/js/panneau_lateral.js::rendreSonIssue`/`choisirSonIssue`
+et `BRIDGE_AGENT_DOC.md`."""
 
 from flask import jsonify, request
 
