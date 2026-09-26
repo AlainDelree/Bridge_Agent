@@ -318,7 +318,6 @@ async function sauvegarderConfig(relancer) {
   }
 }
 
-}
 
 // ─── Onglet Résultats : visualisation des issues ──────────────────────────
 
