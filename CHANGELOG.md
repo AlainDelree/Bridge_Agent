@@ -9,6 +9,22 @@ milliers de caractères sur une seule ligne logique, coûteux à relire et
 
 Convention d'ajout : voir §10 de `BRIDGE_AGENT_DOC.md`.
 
+## 26 septembre 2026 — issue #643
+
+Refonte interface web — étape 8 : retrait des réglages de son de l'onglet Configuration.
+
+Décision d'Alain, dès le début de la refonte : abandonner le réglage de son PAR PROJET (script bip et tonalité), déjà retiré du chemin réel du bip depuis #630 au profit du choix par issue (#630/#637/#641/#642). Cette étape retire les deux derniers champs qui l'exposaient encore dans l'interface.
+
+- **`templates/fragments/onglet_config.html`** : retrait des champs « Script bip » (`#conf-SCRIPT_BIP`) et « Tonalité du bip » (curseur `#conf-TONALITE_BIP` + bouton « Tester le son »).
+- **`static/js/app.js`** : `chargerConfig()`/`sauvegarderConfig()` ne lisent/écrivent plus `SCRIPT_BIP`/`TONALITE_BIP` ; suppression de `testerBip()`.
+- **`app/projets.py`** : `SCRIPT_BIP`/`TONALITE_BIP` retirés de `CLES_EDITABLES` (ne sont plus éditables via `post_config`, silencieusement filtrés s'ils sont soumis) ; `get_config` ne les expose plus dans sa réponse JSON ; suppression de `tester_bip()`.
+- **`app/__init__.py`** : retrait de la route `/tester-bip/<nom_projet>` et de son import.
+- **`app/son.py`** : `tester_son()` (bouton « Tester le son » du panneau latéral, interrupteur global) ne lit plus `cfg.tonalite_bip` — tonalité toujours neutre, cohérent avec le chemin réel du bip depuis #630 (cette lecture par projet était devenue un résidu trompeur : le vrai bip de fin d'issue n'en tenait déjà plus compte).
+- **`nouveau_projet.py`** : suppression de `SCRIPT_BIP_DEFAUT` (pointait vers `scripts/bip_Cloche.py`, supprimé par #630) et du paramètre `script_bip` (`ecrire_conf`, `creer_projet`, `etape_conf`) ; le gabarit `GABARIT_CONF` n'écrit plus de ligne `SCRIPT_BIP` ni le commentaire `# TONALITE_BIP = 0` dans le `.conf` d'un nouveau projet.
+- **Tolérance préservée** : `watcher.py::charger_config()` continue de lire `SCRIPT_BIP`/`TONALITE_BIP` s'ils sont présents dans un `.conf` existant (défauts sensés sinon), sans erreur ni avertissement bruyant — les `configs/*.conf` d'Alain qui portent encore ces clés (ex. l'ancien `chesscoach.conf` → `bip_Cloche.py`) continuent de fonctionner ; leur retrait manuel reste à sa discrétion (`configs/*.conf` gitignorés, hors périmètre agent, §11).
+- **Documentation** : `BRIDGE_AGENT_DOC.md` §17 (modèle son à deux niveaux uniquement — interrupteur global + choix par issue, plus de tonalité par projet) et §14 (comparaison de slider devenue obsolète) ; `VERIFICATIONS_MANUELLES.md` (onglet Configuration : plus aucun réglage de son ; panneau latéral : « Tester le son » à tonalité neutre) ; commentaires obsolètes corrigés dans `app/__init__.py`, `templates/fragments/panneau_lateral.html`, `scripts/traitement_fin.py`, `watcher.py`.
+- **Tests** : `tests/test_retrait_son_par_projet_643.py` (nouveau) — `CLES_EDITABLES` sans `SCRIPT_BIP`/`TONALITE_BIP` ; `get_config`/`post_config` tolèrent un `.conf` existant qui les porte encore, sans erreur, sans les exposer ni les modifier ; gabarit `nouveau_projet.ecrire_conf()` sans `SCRIPT_BIP`/`TONALITE_BIP`/`bip_Cloche.py` ; signature de `creer_projet()` sans `script_bip`. 86 tests pytest et 100 tests Node passent (aucune régression).
+
 ## 26 septembre 2026 — issue #642
 
 Refonte interface web — correctif étape 6 : interrompre une issue en LECTURE (capacité perdue), crayon purement informatif, infobulles.
