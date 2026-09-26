@@ -139,6 +139,39 @@ export function calculerBadgeEstimation(t, maintenant) {
                 + "une limite dure : l'issue peut légitimement durer plus longtemps." + rappel };
 }
 
+// Nom court d'un modèle pour le badge (issue #638) : « claude-opus-4-8 » →
+// « opus », « claude-haiku-4-5 » → « haiku », etc. Repli sur le nom débarrassé
+// de son préfixe « claude- » pour toute valeur non prévue (jamais vide si un
+// modèle est fourni).
+export function libelleModele(modele) {
+  const m = String(modele || '').toLowerCase();
+  if (m.includes('opus'))   return 'opus';
+  if (m.includes('haiku'))  return 'haiku';
+  if (m.includes('fable'))  return 'fable';
+  if (m.includes('sonnet')) return 'sonnet';
+  return m.replace(/^claude-/, '');
+}
+
+// Décide si une issue doit afficher le badge « modèle forcé » (issue #638) :
+// UNIQUEMENT quand son modèle EFFECTIF (champ MODELE de l'en-tête, `modele`)
+// est présent ET diffère du modèle par défaut de son projet (`modeleDefaut`).
+// Une issue sans champ MODELE (modele null/absent), ou dont le modèle forcé
+// est justement le défaut du projet, n'affiche rien de plus ({ afficher:false }).
+// Renvoie { afficher, label, titre } — logique pure, testée sous Node.
+export function calculerBadgeModele(modele, modeleDefaut) {
+  if (!modele) return { afficher: false };
+  const eff = String(modele).toLowerCase();
+  const def = String(modeleDefaut || 'claude-sonnet-5').toLowerCase();
+  if (eff === def) return { afficher: false };
+  const label = libelleModele(eff);
+  return {
+    afficher: true,
+    label,
+    titre: 'Cette issue force le modèle « ' + eff + ' », différent du modèle par '
+         + 'défaut du projet (« ' + def + ' »).',
+  };
+}
+
 // Décide, à partir de l'état courant et d'un événement /stream, l'action CIBLÉE
 // à mener — cœur du correctif de l'issue #627 : `debut_issue` recharge le
 // timing et ne passe JAMAIS par la vérification post-dépassement (#334), quelle
@@ -363,7 +396,12 @@ async function chargerTimingProjet(nom) {
     const ancienne = store.get('issues')[cle];
     if (ancienne) {
       store.ecrireIssue(Object.assign({}, ancienne,
-        { title: it.title || ancienne.title, labels: it.labels || [] }));
+        { title: it.title || ancienne.title, labels: it.labels || [],
+          // Modèle effectif + défaut projet (issue #638) : /issues-en-attente
+          // les renvoie désormais ; on les backfille pour le badge « modèle
+          // forcé », y compris sur une issue apparue via SSE sans ces champs.
+          modele: it.modele != null ? it.modele : ancienne.modele,
+          modele_defaut: it.modele_defaut || ancienne.modele_defaut }));
     }
   }
   store.set('timing', timing);
@@ -421,6 +459,9 @@ function ecrireChampsIssue(projet, numero, it) {
   store.ecrireIssue(Object.assign({}, ancienne, {
     number: it.number, title: it.title, state: it.state,
     labels: it.labels, createdAt: it.createdAt || ancienne.createdAt, projet,
+    // Modèle effectif + défaut projet (issue #638), renvoyés aussi par /issue.
+    modele: it.modele != null ? it.modele : ancienne.modele,
+    modele_defaut: it.modele_defaut || ancienne.modele_defaut,
   }));
 }
 
@@ -462,7 +503,9 @@ async function surDebutIssue(projet, numero) {
       ? liste.find(it => String(it.number) === String(numero)) : null;
     if (info) {
       store.ecrireIssue({ projet, number: info.number, title: info.title,
-                          state: 'OPEN', labels: info.labels || [], createdAt: nowIso() });
+                          state: 'OPEN', labels: info.labels || [], createdAt: nowIso(),
+                          // Modèle effectif + défaut projet (issue #638).
+                          modele: info.modele, modele_defaut: info.modele_defaut });
     }
   }
   if (!connueAvant && store.get('issues')[cle]) rendreListeComplete();
@@ -592,4 +635,7 @@ export const resultats = {
   rafraichir,
   chargerListe,
   majBadges,
+  // Exposée pour que l'ancien app.js (construireLigneIssueDOM) décide du badge
+  // « modèle forcé » d'une ligne via l'unique fonction testée (issue #638).
+  calculerBadgeModele,
 };

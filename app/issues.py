@@ -716,7 +716,7 @@ def _lister_issues_labels(depot: str, limite: int, state: str = "all"):
                  "--label", label,
                  "--state", state,
                  "--limit", str(limite),
-                 "--json",  "number,title,state,labels,createdAt"],
+                 "--json",  "number,title,state,labels,createdAt,body"],
                 capture_output=True, text=True, timeout=30
             )
         except subprocess.TimeoutExpired:
@@ -767,7 +767,9 @@ def issues_liste(nom_projet):
     issues, erreur = _lister_issues_labels(cfg.depot, limite)
     if erreur:
         return erreur
-    return jsonify(_filtrer_issues_bridge(issues))
+    # Modèle effectif (corps de chaque issue) + défaut projet (issue #638), body
+    # retiré au passage — voir _enrichir_modele.
+    return jsonify(_enrichir_modele(_filtrer_issues_bridge(issues), cfg))
 
 
 def _normaliser_recherche(texte: str) -> str:
@@ -801,10 +803,12 @@ def recherche_issues(nom_projet):
         return erreur
     toutes = _filtrer_issues_bridge(toutes)
     if not titre_cherche:
-        return jsonify(toutes)
+        return jsonify(_enrichir_modele(toutes, cfg))
     filtrees = [it for it in toutes
                 if titre_cherche in _normaliser_recherche(it.get("title", ""))]
-    return jsonify(filtrees)
+    # Modèle effectif + défaut projet (issue #638) : chaque résultat de recherche
+    # est une réplique exacte d'une ligne de l'onglet, badge modèle compris.
+    return jsonify(_enrichir_modele(filtrees, cfg))
 
 
 def issue_detail(nom_projet, numero):
@@ -823,7 +827,12 @@ def issue_detail(nom_projet, numero):
         )
         if res.returncode != 0:
             return jsonify(erreur=res.stderr.strip() or "Erreur de gh."), 502
-        return jsonify(json.loads(res.stdout or "{}"))
+        detail = json.loads(res.stdout or "{}")
+        # Modèle effectif (corps) + défaut projet (issue #638) : le détail
+        # conserve son corps (affiché tel quel), on ajoute juste les deux champs.
+        detail["modele"] = extraire_modele_entete(detail.get("body") or "")
+        detail["modele_defaut"] = modele_defaut_projet(cfg)
+        return jsonify(detail)
     except subprocess.TimeoutExpired:
         return jsonify(erreur="Timeout (gh n'a pas répondu en 30s)."), 504
     except FileNotFoundError:
@@ -923,6 +932,68 @@ def _parser_priorite(body: str) -> str:
             if len(parts) >= 3:
                 return parts[2].strip().lower()
     return "normale"
+
+
+# ─── Modèle effectif d'une issue (issue #638) ─────────────────────────────────
+# Une issue peut forcer un modèle précis via le champ « | MODELE | … | » de son
+# en-tête (§3 du DOC). L'onglet Résultats met en évidence les issues dont le
+# modèle EFFECTIF diffère du modèle par défaut du projet. Deux primitives ici,
+# réutilisées par les trois routes qui alimentent la liste Résultats
+# (/issues-liste, /issues-en-attente, /issue) :
+#   - extraire_modele_entete(body)  : modèle forcé lu DANS LE CORPS d'une issue
+#     GitHub, ou None si le champ est absent/vide/inconnu. Une primitive DÉDIÉE
+#     à la lecture depuis un corps d'issue (à la différence de
+#     watcher.extraire_modele, qui retombe sur son CFG global, et du parseur de
+#     scripts/watcher_issues_inbox.py, qui lit un fichier issues_inbox) — d'où
+#     un unique point de lecture partagé par les trois routes.
+#   - modele_defaut_projet(cfg)     : modèle par défaut RÉEL du projet.
+#
+# Valeurs reconnues : mêmes que MODELES_VALIDES de
+# scripts/watcher_issues_inbox.py et la liste §3 du DOC. Défaut global aligné
+# sur MODELE_CCL_DEFAUT de nouveau_projet.py.
+MODELES_VALIDES = {"claude-sonnet-5", "claude-opus-4-8", "claude-haiku-4-5", "claude-fable-5"}
+MODELE_DEFAUT_GLOBAL = "claude-sonnet-5"
+
+
+def extraire_modele_entete(body: str):
+    """Modèle forcé lu dans le champ « | MODELE | … | » de l'en-tête bridge du
+    corps d'une issue GitHub (issue #638).
+
+    Retourne le nom canonique (minuscules) du modèle s'il est présent ET reconnu
+    (parmi MODELES_VALIDES), sinon None : champ absent, cellule vide, ou valeur
+    invalide/inconnue → None (l'appelant n'affiche alors rien de plus). Défensif :
+    ne lève jamais, quel que soit le corps reçu. Calquée sur _parser_timeout /
+    _parser_priorite (mot-clé insensible à la casse, valeur entre le 2e et le 3e
+    « | »)."""
+    for ligne in (body or "").splitlines():
+        if "| MODELE" in ligne.upper():
+            parts = ligne.split("|")
+            if len(parts) >= 3:
+                valeur = parts[2].strip().lower()
+                if valeur in MODELES_VALIDES:
+                    return valeur
+    return None
+
+
+def modele_defaut_projet(cfg) -> str:
+    """Modèle par défaut RÉEL d'un projet (issue #638) : celui configuré dans son
+    .conf (MODELE_CCL) s'il en fixe un, sinon le défaut global MODELE_DEFAUT_GLOBAL
+    (« claude-sonnet-5 »). Une valeur par projet, pas par issue."""
+    return (getattr(cfg, "modele_ccl", "") or "").strip().lower() or MODELE_DEFAUT_GLOBAL
+
+
+def _enrichir_modele(issues: list, cfg) -> list:
+    """Ajoute à chaque issue de `issues` les champs `modele` (modèle effectif lu
+    dans son corps, None si absent/inconnu) et `modele_defaut` (défaut du projet),
+    puis retire le corps volumineux — inutile au navigateur (issue #638). Le
+    corps doit avoir été demandé à `gh` (champ json `body`). Mute et retourne la
+    liste pour l'usage chaîné des routes."""
+    defaut = modele_defaut_projet(cfg)
+    for it in issues:
+        it["modele"] = extraire_modele_entete(it.get("body") or "")
+        it["modele_defaut"] = defaut
+        it.pop("body", None)
+    return issues
 
 
 # Fenêtre transitoire (issue #588) : côté watcher.py, le commentaire "Échec
@@ -1245,6 +1316,10 @@ def issues_en_attente(nom_projet):
         # scripts/watcher_issues_inbox.py) pour enrichir l'événement SSE
         # creation_issue sans attendre ce point d'entrée.
         it.update(donnees_temps_creation(cfg, titre, body, labels, historique))
+        # Modèle effectif (corps) + défaut projet (issue #638), lus avant le pop
+        # du corps ci-dessous.
+        it["modele"] = extraire_modele_entete(body)
+        it["modele_defaut"] = modele_defaut_projet(cfg)
         # debut (issue #91) : contrairement à donnees_temps_creation() (toujours
         # None), ici l'issue est déjà connue de gh — on relit son éventuel ACK.
         it["debut"] = _debut_traitement(_commentaires_issue(cfg, it["number"]))
