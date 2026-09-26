@@ -1,25 +1,56 @@
 // actions_ligne.js — actions cliquables directement sur la ligne d'une issue
 // OUVERTE, onglet Résultats (issue #641, refonte web étape 6 — ARCHITECTURE.md
-// §6.7).
+// §6.7 ; correctif issue #642).
 //
 // POURQUOI CE MODULE
-//   Avant cette étape, une ligne ouverte affichait un préfixe purement STATIQUE
+//   Avant #641, une ligne ouverte affichait un préfixe purement STATIQUE
 //   (⚠️ needs-human, ✏️ mode_write, posé par prefixeIssue() dans app.js) : agir
 //   dessus obligeait à sélectionner l'issue puis à aller chercher l'action dans
-//   le panneau latéral (#628). Ce module rend ces deux préfixes CLIQUABLES sur
-//   la ligne elle-même :
-//     ⚠️ needs-human → « retirer needs-human » (relancerIssue(), app.js, INCHANGÉE)
-//     ✏️ mode_write   → « interrompre »         (interrompreIssue(), app.js, INCHANGÉE)
+//   le panneau latéral (#628). #641 avait rendu ⚠️ ET ✏️ cliquables — mais ✏️
+//   n'existe que sur une issue en ÉCRITURE (label mode_write) : une issue en
+//   LECTURE en cours n'avait alors plus AUCUN moyen d'être interrompue depuis
+//   sa ligne (régression signalée #642). Ce module distingue désormais deux
+//   choses bien séparées :
+//     ⚠️ needs-human            → reste cliquable, « retirer needs-human »
+//                                 (relancerIssue(), app.js, INCHANGÉE).
+//     ✏️ mode_write             → redevient PUREMENT INFORMATIF (#642) : plus
+//                                 aucun clic, juste une infobulle « Mode
+//                                 écriture en cours ».
+//     icône dédiée « interrompre » → NOUVELLE (#642), affichée sur TOUTE issue
+//                                 OUVERTE actuellement EN COURS (lecture OU
+//                                 écriture, needs-human exclu puisque déjà
+//                                 arrêtée) — basée sur le même état (`timing.
+//                                 debut`) qui déclenche aujourd'hui le décompte
+//                                 TIMEOUT actif dans resultats.js, pas sur le
+//                                 seul label mode_write. Carré vert « ✓ » au
+//                                 repos, carré rouge « ✕ » au survol (CSS pure,
+//                                 aucun état JS intermédiaire) — le clic
+//                                 déclenche directement interrompreIssue()
+//                                 (app.js, INCHANGÉE), dont le confirm() natif
+//                                 reste l'unique confirmation.
 //   Aucune route ni confirmation dupliquée : app.js appelle directement ses
 //   propres fonctions (mêmes route /interrompre ou /relancer-issue, même
 //   confirm(), même modale de résultat détaillée) — ce module ne s'occupe QUE
-//   du rendu du badge cliquable, pas de la logique métier d'interruption/relance.
+//   du rendu des badges, pas de la logique métier d'interruption/relance.
 //   S'y ajoute un contrôle compact à 3 états pour le son PROPRE à cette issue
 //   (issue #630/#637) : déplacé ici depuis la zone Actions du panneau latéral,
 //   qui ne le montrait que pour l'issue SÉLECTIONNÉE — logique pure inchangée
 //   (sonIssueDepuisReponse/normaliserChoixSonIssue/etatsOptionsSonIssue), juste
 //   déplacée de panneau_lateral.js à ce module puisque le panneau ne l'affiche
 //   plus (voir panneau_lateral.js).
+//
+// POURQUOI L'ICÔNE « INTERROMPRE » EST TOUJOURS RENDUE MASQUÉE ICI
+//   Au moment où construireLigneIssueDOM (app.js) construit une ligne, l'état
+//   `timing` (decompte TIMEOUT, source de vérité dans resultats.js/store) n'est
+//   pas forcément encore chargé (ex. tout premier rendu de page). Comme pour
+//   .ligne-estimation/.ligne-tempsrestant, l'icône est donc toujours posée dans
+//   le DOM mais masquée (display:none) à la construction, puis
+//   resultats.js::majBadges() décide de l'afficher ou non à CHAQUE recalcul
+//   (rendu complet + tick 1 s), à partir de `afficherIconeInterruption()`
+//   ci-dessous (logique pure, exportée pour être appelée depuis resultats.js
+//   ET testée sous Node ici). C'est ce qui permet à l'icône d'apparaître dès
+//   qu'une issue passe de « en file » à « en cours » (événement debut_issue)
+//   sans reconstruire toute la ligne.
 //
 // CE QUI N'EST PAS ICI
 //   - prefixeIssue() (ligne FERMÉE, ou ○/✅ statique d'une ligne ouverte sans
@@ -50,14 +81,33 @@ function normaliserNomsLabels(labels) {
   return (labels || []).map((l) => ((l && l.name) || l || '').toLowerCase());
 }
 
-// Action à proposer sur une ligne OUVERTE — même priorité que l'ex-prefixeIssue()
-// d'app.js : needs-human prime sur mode_write. null pour une ligne done seule
-// ou sans label pertinent (○/✅ restent statiques, sans action).
-export function actionLigneOuverte(labels) {
+// Préfixe informatif d'une ligne OUVERTE — même priorité que l'ex-prefixeIssue()
+// d'app.js : needs-human prime sur mode_write. 'mode_write' n'est plus une
+// ACTION depuis #642 (purement informatif, voir rendrePrefixeLigneOuverte) ;
+// null pour une ligne done seule ou sans label pertinent (○/✅ restent
+// statiques, sans action).
+export function prefixeInformatifLigneOuverte(labels) {
   const noms = normaliserNomsLabels(labels);
   if (noms.includes('needs-human')) return 'needs-human';
-  if (noms.includes('mode_write'))  return 'interrompre';
+  if (noms.includes('mode_write'))  return 'mode_write';
   return null;
+}
+
+// Faut-il afficher l'icône dédiée « interrompre » sur cette ligne OUVERTE ?
+// (issue #642 — correctif de la régression #641 : une issue en LECTURE en
+// cours n'avait plus aucun moyen d'être interrompue depuis sa ligne). Basée
+// sur le MÊME état que le décompte TIMEOUT actif de resultats.js (`timing.
+// debut` non nul = « en cours », peu importe lecture ou écriture) — jamais sur
+// le seul label mode_write :
+//   - needs-human → false (déjà arrêtée, l'action « retirer needs-human »
+//     suffit) ;
+//   - aucun timing connu, ou timing.debut absent (« en file », pas encore
+//     prise en charge, ou issue fermée dont le timing a été purgé) → false ;
+//   - sinon (en cours, lecture ou écriture, avec ou sans limite) → true.
+export function afficherIconeInterruption(labels, timing) {
+  const noms = normaliserNomsLabels(labels);
+  if (noms.includes('needs-human')) return false;
+  return !!(timing && timing.debut);
 }
 
 // Normalise la réponse de GET /son-issue/<projet>/<numero> : 'plat'/'cloche' si
@@ -109,24 +159,41 @@ export function sonConnuDansCache(cache, projet, numero) {
 // 2. RENDU (appelé par app.js::construireLigneIssueDOM via window.Bridge.actionsLigne)
 // ─────────────────────────────────────────────────────────────────────────────
 
-// Badge cliquable remplaçant ⚠️/✏️ statiques (ligne OUVERTE uniquement) — ○/✅
-// restent des caractères statiques, sans action, exactement comme rendus par
-// l'ex-prefixeIssue() pour ces cas. stopPropagation() (dans les fonctions
-// app.js appelées) empêche la sélection de la ligne au clic sur le badge.
-export function rendreBadgeActionLigne(nom, numero, labels) {
+// Préfixe de gauche d'une ligne OUVERTE (issue #642, correctif #641) : ⚠️
+// needs-human reste la SEULE action cliquable de ce préfixe (retirer
+// needs-human) ; ✏️ mode_write est désormais purement informatif (infobulle,
+// aucun onclick) — l'interruption est portée par l'icône dédiée ci-dessous,
+// quel que soit le mode. ○/✅ restent des caractères statiques, sans action,
+// exactement comme l'ex-prefixeIssue(). stopPropagation() (dans
+// retirerNeedsHumanDepuisLigne, app.js) empêche la sélection de la ligne au
+// clic sur le badge ⚠️.
+export function rendrePrefixeLigneOuverte(nom, numero, labels) {
   const noms = normaliserNomsLabels(labels);
-  const action = actionLigneOuverte(labels);
-  if (action === 'needs-human') {
+  const prefixe = prefixeInformatifLigneOuverte(labels);
+  if (prefixe === 'needs-human') {
     return '<span class="badge-action-ligne" onclick="retirerNeedsHumanDepuisLigne(event, \''
       + dom.echapperHtml(nom) + '\', ' + Number(numero) + ')"'
       + ' title="Retirer needs-human et relancer">⚠️</span>';
   }
-  if (action === 'interrompre') {
-    return '<span class="badge-action-ligne" onclick="interrompreDepuisLigne(event, \''
-      + dom.echapperHtml(nom) + '\', ' + Number(numero) + ')"'
-      + ' title="Interrompre cette issue">✏️</span>';
+  if (prefixe === 'mode_write') {
+    return '<span class="badge-mode-ecriture" title="Mode écriture en cours">✏️</span>';
   }
   return noms.includes('done') ? '✅' : '○';
+}
+
+// Icône dédiée d'interruption (issue #642) : toujours posée dans le DOM d'une
+// ligne OUVERTE mais MASQUÉE à la construction (voir docstring d'en-tête) —
+// resultats.js::majBadges() décide de l'afficher via afficherIconeInterruption().
+// Carré vert « ✓ » au repos, carré rouge « ✕ » au survol (styles resultats.css,
+// aucun état JS intermédiaire) ; le clic appelle interrompreDepuisLigne() (app.js,
+// INCHANGÉE) — même route/confirmation/modale que interrompreIssue().
+export function rendreIconeInterruption(nom, numero) {
+  return '<span class="badge-interrompre-ligne" style="display:none"'
+    + ' onclick="interrompreDepuisLigne(event, \'' + dom.echapperHtml(nom) + '\', '
+    + Number(numero) + ')" title="Interrompre l\'issue">'
+    + '<span class="badge-interrompre-ok">✓</span>'
+    + '<span class="badge-interrompre-stop">✕</span>'
+    + '</span>';
 }
 
 // Contrôle compact à 3 états (mini-segmenté, lettres + infobulle — largeur de
@@ -190,10 +257,12 @@ function resyncLignesSon() {
 
 // Point d'entrée unique appelé par construireLigneIssueDOM (app.js) pour une
 // ligne OUVERTE : déclenche le chargement du son de son projet si besoin, puis
-// rend badge d'action + contrôle de son.
+// rend préfixe informatif/⚠️ + icône d'interruption (masquée, révélée par
+// resultats.js::majBadges()) + contrôle de son.
 export function rendreActionsLigneOuverte(nom, numero, labels) {
   assurerSonsProjetCharges(nom);
-  return rendreBadgeActionLigne(nom, numero, labels)
+  return rendrePrefixeLigneOuverte(nom, numero, labels)
+       + rendreIconeInterruption(nom, numero)
        + rendreControleSonLigne(nom, numero, sonConnuDansCache(sonsParProjet, nom, numero));
 }
 

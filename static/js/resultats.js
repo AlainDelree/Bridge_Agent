@@ -29,6 +29,7 @@ import { toasts } from './socle/toasts.js';
 import { sse } from './socle/sse.js';
 import { appelerAncien } from './socle/pont.js';
 import * as persistance from './socle/persistance.js';
+import { afficherIconeInterruption } from './actions_ligne.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 1. LOGIQUE PURE (testée sous Node — voir static/js/tests/resultats.test.js)
@@ -483,6 +484,16 @@ export function majBadges() {
     if (badgeModele) {
       const it = issues[cle];
       appliquerBadgeModele(badgeModele, calculerBadgeModele(it && it.modele, it && it.modele_defaut));
+    }
+    // Icône dédiée d'interruption (issue #642) : révélée sur toute issue OUVERTE
+    // actuellement EN COURS (lecture ou écriture), à partir du même `t.debut`
+    // que le décompte TIMEOUT ci-dessous — jamais posée pour une ligne fermée
+    // (badgeInterrompre reste alors null, querySelector ne la trouvant pas).
+    const badgeInterrompre = ligne.querySelector('.badge-interrompre-ligne');
+    if (badgeInterrompre) {
+      const it = issues[cle];
+      badgeInterrompre.style.display =
+        afficherIconeInterruption((it && it.labels) || [], t) ? '' : 'none';
     }
     const badge = ligne.querySelector('.ligne-tempsrestant');
     if (!badge) return;

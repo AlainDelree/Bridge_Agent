@@ -1,11 +1,14 @@
 // Tests de logique pure des actions sur la ligne d'une issue OUVERTE (issue
-// #641, refonte web étape 6). Aucune dépendance au DOM ni au réseau — voir
-// static/js/tests/README.md pour lancer ces tests (node --test).
+// #641, refonte web étape 6 ; correctif #642 : ✏️ redevenu informatif, icône
+// dédiée d'interruption basée sur l'état TIMEOUT). Aucune dépendance au DOM ni
+// au réseau — voir static/js/tests/README.md pour lancer ces tests
+// (node --test).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-  actionLigneOuverte,
+  prefixeInformatifLigneOuverte,
+  afficherIconeInterruption,
   sonIssueDepuisReponse,
   normaliserChoixSonIssue,
   etatsOptionsSonIssue,
@@ -13,28 +16,81 @@ import {
   sonConnuDansCache,
 } from '../actions_ligne.js';
 
-// ─── actionLigneOuverte : quelle action afficher selon les labels ──────────
+// ─── prefixeInformatifLigneOuverte : quel préfixe afficher selon les labels ─
+// (issue #642 : mode_write n'est plus une ACTION — non-régression : le préfixe
+// ✏️ redevient purement informatif, mais reste posé dans les mêmes conditions
+// qu'avant #641.)
 
-test('actionLigneOuverte : needs-human → "needs-human" (prime sur tout)', () => {
-  assert.equal(actionLigneOuverte(['needs-human']), 'needs-human');
-  assert.equal(actionLigneOuverte(['mode_write', 'needs-human']), 'needs-human');
+test('prefixeInformatifLigneOuverte : needs-human → "needs-human" (prime sur tout)', () => {
+  assert.equal(prefixeInformatifLigneOuverte(['needs-human']), 'needs-human');
+  assert.equal(prefixeInformatifLigneOuverte(['mode_write', 'needs-human']), 'needs-human');
 });
 
-test('actionLigneOuverte : mode_write seul (sans needs-human) → "interrompre"', () => {
-  assert.equal(actionLigneOuverte(['mode_write']), 'interrompre');
-  assert.equal(actionLigneOuverte(['for-linux', 'mode_write']), 'interrompre');
+test('prefixeInformatifLigneOuverte : mode_write seul (sans needs-human) → "mode_write" (informatif, non cliquable)', () => {
+  assert.equal(prefixeInformatifLigneOuverte(['mode_write']), 'mode_write');
+  assert.equal(prefixeInformatifLigneOuverte(['for-linux', 'mode_write']), 'mode_write');
 });
 
-test('actionLigneOuverte : done seul, ou aucun label pertinent → null (pas d\'action)', () => {
-  assert.equal(actionLigneOuverte(['done']), null);
-  assert.equal(actionLigneOuverte(['for-linux']), null);
-  assert.equal(actionLigneOuverte([]), null);
-  assert.equal(actionLigneOuverte(undefined), null);
+test('prefixeInformatifLigneOuverte : done seul, ou aucun label pertinent → null', () => {
+  assert.equal(prefixeInformatifLigneOuverte(['done']), null);
+  assert.equal(prefixeInformatifLigneOuverte(['for-linux']), null);
+  assert.equal(prefixeInformatifLigneOuverte([]), null);
+  assert.equal(prefixeInformatifLigneOuverte(undefined), null);
 });
 
-test('actionLigneOuverte : accepte des labels objets {name} comme des chaînes', () => {
-  assert.equal(actionLigneOuverte([{ name: 'needs-human' }]), 'needs-human');
-  assert.equal(actionLigneOuverte([{ name: 'mode_write' }]), 'interrompre');
+test('prefixeInformatifLigneOuverte : accepte des labels objets {name} comme des chaînes', () => {
+  assert.equal(prefixeInformatifLigneOuverte([{ name: 'needs-human' }]), 'needs-human');
+  assert.equal(prefixeInformatifLigneOuverte([{ name: 'mode_write' }]), 'mode_write');
+});
+
+// ─── afficherIconeInterruption : quand afficher l'icône dédiée (issue #642) ─
+// Correctif de la régression #641 : une issue en LECTURE en cours doit pouvoir
+// être interrompue depuis sa ligne — basé sur `timing.debut` (même état que le
+// décompte TIMEOUT actif de resultats.js), PAS sur le seul label mode_write.
+
+test('afficherIconeInterruption : en cours en LECTURE (aucun label mode_write) → true', () => {
+  assert.equal(afficherIconeInterruption(['for-linux'], { debut: '2026-09-26T10:00:00Z' }), true);
+  assert.equal(afficherIconeInterruption([], { debut: '2026-09-26T10:00:00Z' }), true);
+});
+
+test('afficherIconeInterruption : en cours en ÉCRITURE (label mode_write) → true', () => {
+  assert.equal(afficherIconeInterruption(['mode_write'], { debut: '2026-09-26T10:00:00Z' }), true);
+});
+
+test('afficherIconeInterruption : en cours sans limite (sans_limite, debut posé) → true', () => {
+  assert.equal(
+    afficherIconeInterruption(['mode_write'], { debut: '2026-09-26T10:00:00Z', sans_limite: true }),
+    true,
+  );
+});
+
+test('afficherIconeInterruption : "en file" (timing connu mais debut absent) → false', () => {
+  assert.equal(afficherIconeInterruption(['mode_write'], { debut: null }), false);
+  assert.equal(afficherIconeInterruption([], { debut: null }), false);
+});
+
+test('afficherIconeInterruption : needs-human → false même si debut posé (déjà arrêtée)', () => {
+  assert.equal(afficherIconeInterruption(['needs-human'], { debut: '2026-09-26T10:00:00Z' }), false);
+  assert.equal(
+    afficherIconeInterruption(['mode_write', 'needs-human'], { debut: '2026-09-26T10:00:00Z' }),
+    false,
+  );
+});
+
+test('afficherIconeInterruption : aucun timing connu (issue fermée, ou pas encore chargé) → false', () => {
+  assert.equal(afficherIconeInterruption(['mode_write'], undefined), false);
+  assert.equal(afficherIconeInterruption(['mode_write'], null), false);
+});
+
+test('afficherIconeInterruption : accepte des labels objets {name} comme des chaînes', () => {
+  assert.equal(
+    afficherIconeInterruption([{ name: 'needs-human' }], { debut: '2026-09-26T10:00:00Z' }),
+    false,
+  );
+  assert.equal(
+    afficherIconeInterruption([{ name: 'mode_scratch' }], { debut: '2026-09-26T10:00:00Z' }),
+    true,
+  );
 });
 
 // ─── Son PAR ISSUE (issue #630/#637, réutilisées telles quelles) ──────────
