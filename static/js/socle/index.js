@@ -37,6 +37,9 @@ import { resultatsCoches } from '../resultats_coches.js';
 // Module par fonctionnalité — actions cliquables sur la ligne d'une issue
 // ouverte + son par issue (refonte étape 6, issue #641).
 import { actionsLigne } from '../actions_ligne.js';
+// Module par fonctionnalité — onglet CCW, pilotage du PC fixe Windows (refonte
+// web, issue #649).
+import { initialiserCcw } from '../ccw.js';
 
 // Délégation : les modules par fonctionnalité (onglets.js, panneau_lateral.js)
 // enregistrent leurs propres règles via dom.surAction(...) ; ceci (ré)installe
@@ -64,6 +67,12 @@ initialiserOnglets();
 // (voir ARCHITECTURE.md §6.7). S'abonne aussi à store.ongletActif (#632).
 initPanneauLateral();
 
+// Onglet CCW (issue #649, refonte web) : installe la délégation de clic de sa
+// zone et publie les deux globales encore appelées par l'ancien app.js
+// classique (ccwOuvrirOnglet via onglets.js, ccwRedemarrerProjet depuis
+// interrompreEtRelancer) — voir l'en-tête de ccw.js.
+initialiserCcw();
+
 // Case « traité/lu » à état serveur + copie fiable (issue #636, refonte web
 // étape 5b) : migre le localStorage hérité (idempotent), charge l'état serveur
 // des cases (un GET par projet) et resynchronise le DOM. Lancé AVANT l'activation
@@ -88,4 +97,5 @@ console.debug('[socle] Résultats piloté par le store (issue #627).');
 console.debug('[socle] panneau latéral actif (issue #628).');
 console.debug('[socle] Résultats + panneau latéral raccordés au store (issue #632).');
 console.debug('[socle] cases « traité/lu » à état serveur + copie fiable (issue #636).');
+console.debug('[socle] onglet CCW sorti d\'app.js (issue #649).');
 console.debug('[socle] actions sur la ligne (needs-human/interrompre/son) actives (issue #641).');

@@ -349,12 +349,22 @@ historique dans le panneau latéral (voir plus haut).
       `bridge_cache_detail_<projet>_*` ont disparu, et l'entrée `<projet>` a
       disparu de `bridge_filtres_resultats` (DevTools, avant/après).
 
-## Onglet « CCW »
+## Onglet « CCW » (sorti d'app.js vers `static/js/ccw.js`, issue #649)
 
-- [ ] Liste des projets CCW (Rafraîchir) ; état des services.
-- [ ] Ajouter un projet ; finaliser un projet (tokens masqués + œil).
-- [ ] Actions redémarrer/démarrer/arrêter ; nettoyer les verrous ; sortie
-      terminal des scripts distants.
+- [ ] Liste des projets CCW (bouton « Rafraîchir ») ; état des services,
+      TOPIC_NTFY (⚠ à définir / ✓ renseigné / ? inconnu).
+- [ ] Cliquer une ligne du tableau pré-sélectionne le projet dans « Finaliser »
+      — cliquer un bouton d'action de la même ligne (Redémarrer/Démarrer/
+      Arrêter) ne déclenche PAS la pré-sélection.
+- [ ] Ajouter un projet ; finaliser un projet (tokens masqués + œil 👁/🙈).
+- [ ] Actions redémarrer/démarrer/arrêter (confirmation avant redémarrer/
+      arrêter) ; nettoyer les verrous depuis le panneau latéral (confirmation) ;
+      sortie terminal des scripts distants.
+- [ ] Panneau latéral, zone « Services CCW » : liste à jour après une action
+      dans l'onglet CCW (redémarrer/démarrer/arrêter/nettoyer/ajouter/
+      finaliser) sans re-fetch SSH depuis le panneau lui-même ; boutons
+      « ↺ Relancer watcher CCW » / « 🔒 Nettoyer verrous CCW + redémarrer »
+      (issue #632) fonctionnent identiquement.
 
 ## Nouveau projet
 

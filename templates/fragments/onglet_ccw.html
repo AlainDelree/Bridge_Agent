@@ -4,7 +4,7 @@
     <!-- Section 2 : projets CCW existants -->
     <div class="titre-section" style="display:flex;align-items:center">
       <span>Projets CCW existants</span>
-      <button onclick="ccwChargerProjets()"
+      <button data-action="ccw-rafraichir"
               style="margin-left:auto;font-size:12px;padding:4px 10px">Rafraîchir</button>
     </div>
     <table style="width:100%;border-collapse:collapse" id="ccw-tableau-projets">
@@ -35,7 +35,7 @@
     </div>
     <div class="barre-envoi">
       <div style="flex:1"></div>
-      <button class="primaire" id="ccw-btn-ajouter" onclick="ccwAjouterProjet()">Créer</button>
+      <button class="primaire" id="ccw-btn-ajouter" data-action="ccw-ajouter">Créer</button>
     </div>
 
     <!-- Section 4 : finaliser un projet (TOPIC_NTFY + tokens) -->
@@ -94,7 +94,7 @@
     </div>
     <div class="barre-envoi">
       <div style="flex:1"></div>
-      <button class="primaire" id="ccw-btn-finaliser" onclick="ccwFinaliserProjet()">Finaliser</button>
+      <button class="primaire" id="ccw-btn-finaliser" data-action="ccw-finaliser">Finaliser</button>
     </div>
 
     <!-- Sortie commune (messages + terminal des scripts distants) -->

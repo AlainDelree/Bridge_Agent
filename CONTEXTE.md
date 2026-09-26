@@ -43,13 +43,11 @@ lui-même par ses propres issues (dogfooding).
   création, sinon PowerShell 5.1 plante sur les accents.
 
 ## État d'avancement (récent, cf. changelog en bas du DOC)
-- #625→#644 (refonte web) : socle `static/js/socle/` + modules par
+- #625→#649 (refonte web) : socle `static/js/socle/` + modules par
   fonctionnalité sortis d'app.js (onglets, resultats, panneau latéral,
-  resultats_coches, actions_ligne — son par issue #641/#642), communiquant
-  par le store. #643 : retrait du son PAR PROJET de Configuration. #644 :
-  migration `localStorage` terminée, `persistance.js` seul point d'accès ;
-  fuite corrigée (suppression de projet ne purgeait rien). Détail :
-  `ARCHITECTURE.md §6`.
+  resultats_coches, actions_ligne, ccw), communiquant par le store. #644 :
+  migration `localStorage` terminée, `persistance.js` seul point d'accès. #649 :
+  onglet CCW sorti vers `static/js/ccw.js`. Détail : `ARCHITECTURE.md §6`.
 - #221 (calibration TIMEOUT, 2/3) : `watcher.py` journalise `TIMEOUT_suggéré`
   à la clôture (EWMA par projet+TYPE+mode dans `logs/etat_timeout.json` +
   `logs/etat_ambiance.json` pour F_reseau/F_local) — n'affecte pas encore le

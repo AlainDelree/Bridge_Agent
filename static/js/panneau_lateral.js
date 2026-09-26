@@ -22,15 +22,20 @@
 // refonte) : la liste des issues et le détail d'une issue (listeIssuesResultats,
 // projetCourant/numeroCourant, construireHtmlIssue), les projets
 // (nomsProjetsDisponibles), les actions réseau sur une issue (interrompreIssue,
-// relancerIssue, fermerIssue, interrompreEtRelancer) et l'onglet CCW
-// (ccwChargerProjets, ccwRedemarrerProjet, ccwNettoyerVerrous). Ce module les
-// appelle via le pont (appelerAncien) — voir socle/pont.js — sans y référer en
-// dur, et expose en retour les points d'entrée qu'app.js appelle encore
+// relancerIssue, fermerIssue, interrompreEtRelancer). Ce module les appelle via
+// le pont (appelerAncien) — voir socle/pont.js — sans y référer en dur, et
+// expose en retour les points d'entrée qu'app.js appelle encore
 // (rafraichirPanneauLateralResultats, majBoutonTesterSonActif,
 // sidebarRelancerWatcherCCL) comme globales `window.*`. démarrerPanneauLateral/
 // arreterPanneauLateral, eux, ne sont plus exposés : depuis #632, ce module
 // s'abonne lui-même à store.ongletActif (voir initPanneauLateral) — personne
 // d'autre n'a jamais besoin de les appeler par leur nom.
+//
+// ONGLET CCW (issue #649, refonte web) : sorti dans static/js/ccw.js —
+// obtenirCcwProjetsConnus/ccwChargerProjets/ccwRedemarrerProjet/
+// ccwNettoyerVerrous sont désormais importés DIRECTEMENT (module ES → module
+// ES), plus via le pont — voir l'en-tête de ccw.js pour le sens inverse
+// (ccw.js → ce module, resté sur le pont pour éviter un cycle d'imports).
 //
 // MONITORING VM SUPPRIMÉ (issue #628) : l'ancien appel à /ccw/vm-statut (route
 // disparue côté serveur depuis #447, VirtualBox retiré) et le bouton
@@ -47,6 +52,9 @@ import { toasts } from './socle/toasts.js';
 import * as dom from './socle/dom.js';
 import * as persistance from './socle/persistance.js';
 import { appelerAncien } from './socle/pont.js';
+// Import direct (issue #649, plutôt que par le pont — les deux sont des
+// modules ES) : voir l'en-tête de ccw.js pour le sens inverse (pont conservé).
+import { obtenirCcwProjetsConnus, ccwChargerProjets, ccwRedemarrerProjet, ccwNettoyerVerrous } from './ccw.js';
 
 const CLE_PANNEAU_OUVERT = 'bridge_panneau_lateral_ouvert';
 
@@ -139,7 +147,7 @@ async function rendrePanneauLateralMonitoring() {
   await rafraichirWatchersPartages();
   const watchersMap       = store.get('watchers') || {};
   const noms              = appelerAncien('nomsProjetsDisponibles') || [];
-  const ccwProjetsConnus  = appelerAncien('obtenirCcwProjetsConnus') || [];
+  const ccwProjetsConnus  = obtenirCcwProjetsConnus() || [];
 
   let html = '<div class="titre-section" style="margin-top:0">Monitoring infrastructure</div>'
            + '<div class="pl-sous">Tous projets actifs — actualisé toutes les 30 s</div>';
@@ -185,7 +193,7 @@ async function rendrePanneauLateralMonitoring() {
 }
 
 async function sidebarChargerCcw() {
-  await appelerAncien('ccwChargerProjets');
+  await ccwChargerProjets();
 }
 
 // ─── Interrupteur global plat/cloche du bip (#pl-zone-son, issue #527) ─────
@@ -351,7 +359,7 @@ function rendrePanneauLateralActions() {
   // issue ouverte, ni done ni needs-human.
   const interromptible = !!it && !ferme
     && !nomsLabels.includes('done') && !nomsLabels.includes('needs-human');
-  const ccwProjetsConnus = appelerAncien('obtenirCcwProjetsConnus') || [];
+  const ccwProjetsConnus = obtenirCcwProjetsConnus() || [];
   const service = ccwProjetsConnus.find(p => (p.projet || '').toLowerCase() === nom.toLowerCase()) || null;
   const windows = nomsLabels.includes('for-windows');
   const libelleWatcherCible = windows ? 'watcher CCW' : 'watcher CCL';
@@ -517,9 +525,9 @@ function installerDelegationPanneau() {
   dom.surAction('[data-action="pl-fermer-issue"]', 'click',
     (e, el) => appelerAncien('fermerIssue', el.dataset.projet, Number(el.dataset.numero)));
   dom.surAction('[data-action="pl-ccw-relancer"]', 'click',
-    (e, el) => appelerAncien('ccwRedemarrerProjet', el.dataset.projet, el));
+    (e, el) => ccwRedemarrerProjet(el.dataset.projet, el));
   dom.surAction('[data-action="pl-ccw-nettoyer"]', 'click',
-    (e, el) => appelerAncien('ccwNettoyerVerrous', el.dataset.projet, el));
+    (e, el) => ccwNettoyerVerrous(el.dataset.projet, el));
 
   dom.surAction('[data-action="pl-notif-toggle"]', 'change',
     (e, el) => toggleLabelNotif(el.dataset.projet, Number(el.dataset.numero), el.dataset.label, el));

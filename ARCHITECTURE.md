@@ -412,10 +412,11 @@ Déjà sortis : `onglets.js` (bascule entre onglets, issue #626, étape 2),
 `resultats.js` (moteur de l'onglet Résultats, issue #627, étape 3),
 `panneau_lateral.js` (panneau latéral, issue #628, étape 4),
 `resultats_coches.js` (case « traité/lu » à état serveur + copie fiable, issue
-#636, étape 5b) et `actions_ligne.js` (actions cliquables sur la ligne d'une
-issue ouverte + son par issue, issue #641, étape 6). Futurs
-modules (ex. `creation.js`, `config.js`, `ccw.js`, `journal.js`,
-`inbox.js`, `nouveau_projet.js`) suivent le même patron.
+#636, étape 5b), `actions_ligne.js` (actions cliquables sur la ligne d'une
+issue ouverte + son par issue, issue #641, étape 6) et `ccw.js` (onglet CCW,
+pilotage du PC fixe Windows, issue #649). Futurs modules (ex. `creation.js`,
+`config.js`, `journal.js`, `inbox.js`, `nouveau_projet.js`) suivent le même
+patron.
 
 **Onglet Watchers supprimé (issue #626, étape 2)** : le tableau des watchers
 + cases à cocher + actions Lancer/Relancer/Éteindre par lot n'existent plus.
@@ -512,6 +513,45 @@ Résultats, Journal watcher, Configuration, CCW, Nouvelle issue.
 > aucune logique dupliquée. Le bouton « Interrompre et relancer (watcher CCL) »
 > du panneau latéral reste inchangé (action à l'échelle du watcher, pas de
 > l'issue seule).
+
+> **Onglet CCW réalisé — `static/js/ccw.js` (issue #649)** : sort d'`app.js`
+> l'onglet CCW (pilotage du PC fixe Windows et de ses projets via SSH/SCP,
+> routes `/ccw/*`) — `ccwMessage`, `ccwAfficherSortie`, `ccwOccupe`,
+> `ccwOuvrirOnglet`, `ccwChargerProjets`, `ccwPreselectionnerProjet`,
+> `ccwRedemarrerProjet`, `ccwDemarrerProjet`, `ccwArreterProjet`,
+> `ccwNettoyerVerrous`, `ccwAjouterProjet`, `ccwFinaliserProjet`, ainsi que
+> l'état `ccwProjetsConnus`/`obtenirCcwProjetsConnus` (issue #375, lu par le
+> panneau latéral). Appels réseau migrés vers **api** (`{silencieux:true}`,
+> l'erreur restant affichée dans la zone `#ccw-message` dédiée plutôt qu'en
+> double par un toast), confirmations natives (`confirm()`) remplacées par
+> **toasts.confirmer()**, `alert()` par **toasts**. Gestionnaires `onclick=`
+> inline retirés (fragment `onglet_ccw.html` + lignes générées du tableau des
+> projets) au profit de la délégation du socle (`dom.surAction`) : la règle de
+> pré-sélection d'une ligne ignore désormais explicitement les clics dont la
+> cible est un `<button>` (la délégation à écouteur unique du socle ne rejoue
+> pas la bulle DOM entre règles — `event.stopPropagation()`, utilisé par
+> l'ancien code, n'a ici aucun effet sur les autres règles déjà enregistrées).
+> **Couplage avec le panneau latéral (rapport #632)** : `panneau_lateral.js`
+> importe désormais DIRECTEMENT `obtenirCcwProjetsConnus`/`ccwChargerProjets`/
+> `ccwRedemarrerProjet`/`ccwNettoyerVerrous` depuis `ccw.js` (deux modules ES,
+> plus simple et plus sûr que le pont — erreur de compilation immédiate si un
+> nom disparaît). Le sens inverse (`ccw.js` doit déclencher
+> `rafraichirPanneauLateralResultats()` après un rechargement de la liste)
+> reste sur le pont : importer `panneau_lateral.js` depuis `ccw.js`
+> créerait un cycle d'imports ES, et cette fonction n'est de toute façon
+> publiée que comme globale (`window.rafraichirPanneauLateralResultats`, pour
+> l'ancien app.js) — usage du pont dans le sens module → module qu'il ne dessert
+> normalement pas, retenu ici pour éviter le cycle sans dupliquer la fonction.
+> `ccwOuvrirOnglet` et `ccwRedemarrerProjet` restent en outre publiées en
+> globales (`window.*`) : la première pour le mécanisme générique
+> `initialisationsPour('ccw')` d'`onglets.js` (inchangé, il atteint aussi bien
+> une fonction d'app.js qu'une globale publiée par un module), la seconde pour
+> l'appel direct fait par `interrompreEtRelancer()` (app.js, script classique,
+> ne peut pas importer ce module). Logique pure extraite et testée
+> (`couleurEtatCcw`, `libelleTopicCcw`, `afficherBoutonDemarrer`/
+> `afficherBoutonArreter`, `selectionRestauree`) : `static/js/tests/ccw.test.js`.
+> La case « Projet CCW » de la modale Nouveau projet (bootstrap initial,
+> `npCcw*`) est une fonctionnalité distincte, non touchée par cette étape.
 
 > **Étape 10 réalisée — purge des fuites `localStorage`, migration terminée
 > (issue #644)** : `persistance.js` était conçu depuis l'étape 1 comme LE point
