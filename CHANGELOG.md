@@ -9,6 +9,50 @@ milliers de caractères sur une seule ligne logique, coûteux à relire et
 
 Convention d'ajout : voir §10 de `BRIDGE_AGENT_DOC.md`.
 
+# CHANGELOG-651 — à fusionner dans CHANGELOG.md
+
+## 26 septembre 2026 — issue #651
+
+Refonte web, étape 12 — sortie de l'onglet Configuration d'`app.js` vers `static/js/config.js`.
+
+Dernier chantier de la refonte de l'interface web (ARCHITECTURE.md §6, procédure §6.7), en parallèle des autres onglets restants. Traite l'onglet Configuration (hors son, déjà retiré par #643).
+
+- **`static/js/config.js`** (nouveau) : `chargerConfig()`/`sauvegarderConfig()` (paramètres éditables du projet actif) et l'ensemble de la **zone dangereuse** — `ouvrirSupprimerProjet()`/`fermerSupprimerProjet()`, l'aperçu dry-run (`spChargerApercu`, `GET /supprimer-projet/verifier/<nom>`), l'activation du bouton de suppression (`spMajBoutonEtat`) et la soumission (`soumettreSupprimerProjet`, `POST /supprimer-projet`) — déplacés d'`app.js` à l'identique (garde-fous #587 inchangés : 3 cases + nom retapé). Trois fonctions PURES extraites et testées : `construireResumeIdentite` (résumé HTML de l'identité du projet), `suppressionActivable` (condition d'activation du bouton de suppression) et `messageStatutCommitDoc` (message de fin selon le statut du commit automatique de `BRIDGE_AGENT_DOC.md`, issue #645). `sauvegarderConfig`/`spChargerApercu`/`soumettreSupprimerProjet` passent désormais par `api.post`/`api.get` (au lieu de `fetch()` en dur) : une panne réseau, jusqu'ici totalement silencieuse pour `sauvegarderConfig` (aucun `try/catch` dans l'ancien code), est maintenant signalée par un toast, en plus du message inline existant.
+- **Branchement par import direct** (comme `journal.js`, issue #650, étape 11) : `static/js/onglets.js` importe `chargerConfig` et l'appelle directement dans `activerOnglet('config')` ; `initialisationsPour('config')` ne pousse plus `'chargerConfig'`. Particularité propre à cet onglet : l'ancien `app.js` (`onProjetChange`, script classique) rappelle aussi `chargerConfig()` directement quand l'onglet Configuration est déjà actif au moment d'un changement de projet (sélecteur global) — `config.js` publie donc en plus `window.chargerConfig` (même patron que `window.rafraichirPanneauLateralResultats`, `panneau_lateral.js`), pour que cet appel direct depuis un script classique continue de fonctionner.
+- **`static/js/socle/index.js`** : import de `initialiserConfig`, appelé une fois au chargement (délégation des boutons/inputs, comme les autres modules par fonctionnalité).
+- **`templates/fragments/onglet_config.html`** : retrait des `onclick="sauvegarderConfig(...)"`/`onclick="ouvrirSupprimerProjet()"`/`oninput="..."` (curseur Tâches en parallèle) inline, remplacés par `data-action="config-enregistrer"`/`"config-enregistrer-relancer"`/`"config-ouvrir-suppression"`/`"config-max-write-parallele"` (délégation du socle).
+- **`templates/fragments/modale_supprimer_projet.html`** : retrait des `onchange="spMajBoutonEtat()"` (3 cases), `oninput="spMajBoutonEtat()"` et `onclick="fermerSupprimerProjet()"`/`onclick="soumettreSupprimerProjet()"` inline, remplacés par `data-action="sp-case"`/`"sp-nom-confirmation"`/`"sp-fermer"`/`"sp-supprimer"`.
+- **`static/js/app.js`** : `majChampConfig`/`chargerConfig`/`sauvegarderConfig` et tout le bloc « Suppression de projet » (`spNomCourant`, `ouvrirSupprimerProjet`, `fermerSupprimerProjet`, `spChargerApercu`, `spMajBoutonEtat`, `spMsg`, `soumettreSupprimerProjet`) retirés — plus aucune trace de ces fonctions dans l'ancien code. `retirerProjetDuSelecteur` **reste** dans `app.js` (symétrique d'`ajouterProjetAuSelecteur`) : il manipule le sélecteur global `#projet` du bandeau supérieur, pas un élément de l'onglet Configuration — `config.js` l'appelle via le pont (`appelerAncien`).
+- **Hors périmètre, documenté et non touché** : le bouton global « + Nouveau projet » (bandeau supérieur, PAS dans l'onglet Configuration) et tout son flux (`ajouterProjetAuSelecteur`, modale « Nouveau projet », `ccwCreerProjet`…) — à traiter séparément si Alain le souhaite un jour.
+- **Tests** : `static/js/tests/config.test.js` (nouveau, 12 scénarios sur les 3 fonctions pures) ; `static/js/tests/onglets.test.js` ajusté (`initialisationsPour('config')` → `[]`) ; `static/js/tests/pont_globales.test.js` inchangé, toujours au vert (`appelerAncien('retirerProjetDuSelecteur')` toujours couvert, plus aucun appel `appelerAncien('chargerConfig')` à couvrir).
+- **`ARCHITECTURE.md`** §6.5/§6.7 : `config.js` déplacé de la liste des « futurs modules » vers les modules déjà sortis, nouveau paragraphe « Étape 12 réalisée ».
+- **`VERIFICATIONS_MANUELLES.md`** : section « Onglet Configuration » complétée (note sur le branchement par import direct + `window.chargerConfig`, vérification du rechargement au changement de projet en onglet déjà actif, et des garde-fous #587 de la zone dangereuse).
+
+Fichiers modifiés : `static/js/config.js` (nouveau), `static/js/onglets.js`, `static/js/socle/index.js`, `static/js/app.js`, `templates/fragments/onglet_config.html`, `templates/fragments/modale_supprimer_projet.html`, `static/js/tests/config.test.js` (nouveau), `static/js/tests/onglets.test.js`, `ARCHITECTURE.md`, `VERIFICATIONS_MANUELLES.md`.
+
+Tests : `node --test static/js/tests/ static/js/socle/tests/` → 144 tests, tous au vert (12 nouveaux pour `config.js`). Vérification manuelle du comportement visible (chargement/sauvegarde, suppression de projet avec ses garde-fous) laissée à Alain (VERIFICATIONS_MANUELLES.md), non rejouable en session non interactive (nécessite un navigateur).
+
+# CHANGELOG-650 — à fusionner dans CHANGELOG.md
+
+## 26 septembre 2026 — issue #650
+
+Refonte web, étape 11 — sortie de l'onglet Journal watcher d'`app.js` vers `static/js/journal.js`.
+
+Dernier chantier de la refonte de l'interface web (ARCHITECTURE.md §6, procédure §6.7), le plus petit morceau restant : l'onglet Journal watcher.
+
+- **`static/js/journal.js`** (nouveau) : `demarrerJournal()` (ouvre une connexion SSE `/journal/<projet>`, ferme la précédente si déjà ouverte, code couleur des lignes selon leur contenu — `classeLigneJournal()`, extraite en fonction pure) et `viderTerminal()`, déplacées d'`app.js`. La variable `sourceSSE`, propriété exclusive de ces deux fonctions (vérifié : aucune autre partie d'`app.js` ne la lisait), devient une variable de module (`sourceJournal`), non exposée globalement. `initJournal()` branche la délégation du bouton « Vider l'affichage ».
+- **`static/js/onglets.js`** : `demarrerJournal` importé DIRECTEMENT (plus via le pont `appelerAncien`) et appelé dans `activerOnglet('journal')` ; `initialisationsPour('journal')` ne pousse plus `'demarrerJournal'`.
+- **`static/js/socle/index.js`** : import de `initJournal`, appelé une fois au chargement (comme les autres modules par fonctionnalité).
+- **`templates/fragments/onglet_journal.html`** : retrait de l'`onclick="viderTerminal()"` inline, remplacé par `data-action="journal-vider"` (délégation du socle).
+- **`static/js/app.js`** : `demarrerJournal`/`viderTerminal`/`sourceSSE` retirés — plus aucune trace de l'onglet Journal watcher dans l'ancien code.
+- **Tests** : `static/js/tests/journal.test.js` (nouveau, logique pure de `classeLigneJournal`) ; `static/js/tests/onglets.test.js` ajusté (`initialisationsPour('journal')` → `[]`) ; `static/js/tests/pont_globales.test.js` inchangé, toujours au vert (plus aucun appel `appelerAncien('demarrerJournal')` à couvrir).
+- **`ARCHITECTURE.md`** §6.5/§6.7 : `journal.js` déplacé de la liste des « futurs modules » vers les modules déjà sortis, nouveau paragraphe « Étape 11 réalisée ».
+- **`VERIFICATIONS_MANUELLES.md`** : section « Onglet Journal watcher » complétée (note sur le branchement par import direct + vérification de la fermeture propre de la connexion SSE au changement de projet/onglet).
+
+Fichiers modifiés : `static/js/journal.js` (nouveau), `static/js/onglets.js`, `static/js/socle/index.js`, `static/js/app.js`, `templates/fragments/onglet_journal.html`, `static/js/tests/journal.test.js` (nouveau), `static/js/tests/onglets.test.js`, `ARCHITECTURE.md`, `VERIFICATIONS_MANUELLES.md`.
+
+Tests : `node --test static/js/tests/` (110 tests) et `node --test static/js/socle/tests/` (29 tests) → tous au vert. Vérification manuelle du comportement visible (journal en direct, réinitialisation au changement de projet) laissée à Alain (VERIFICATIONS_MANUELLES.md), non rejouable en session non interactive (nécessite un navigateur).
+
 # CHANGELOG-649 — à fusionner dans CHANGELOG.md
 
 ## 26 septembre 2026 — issue #649
