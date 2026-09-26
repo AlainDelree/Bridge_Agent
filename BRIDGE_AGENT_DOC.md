@@ -269,34 +269,57 @@ Lancement : `python3 scripts/watcher_issues_inbox.py` (boucle continue),
 en dehors du cycle de vie de `watcher.py` (générique, par projet) puisqu'il
 ne traite pas des issues GitHub existantes mais alimente leur création.
 
-### 3.8 Onglet « Résultats inbox » de `new_issue.py`
+### 3.8 Suivi inbox fusionné dans l'onglet Résultats (issue #639)
 
-Nouvel onglet dans l'interface web, alimenté par la route
-**`GET /issues-inbox/etat`** (`app/issues_inbox.py`, pure lecture disque —
-aucun appel `gh`, aucune dépendance à un watcher en cours d'exécution) :
+> **Historique.** Un onglet séparé « Résultats inbox » a existé de l'issue #483
+> à l'issue #636. Il a été **supprimé (issue #639, refonte web étape 9b)** et son
+> contenu utile réparti dans l'onglet Résultats et le panneau latéral. La route
+> serveur **`GET /issues-inbox/etat`** (`app/issues_inbox.py`, pure lecture
+> disque — aucun appel `gh`) est **inchangée** ; seul son affichage a bougé.
 
+Le suivi des dépôts `issues_inbox/` se fait désormais **dans la liste Résultats
+elle-même**, alimenté à la fois par trois événements SSE `/stream` (issue #631,
+étape 9a) et par le polling `/issues-inbox/etat` :
+
+- **Lignes en direct** (`static/js/resultats.js`, événements SSE) : au dépôt d'un
+  fichier, une ligne **« 📥 fichier reçu : <nom> »** apparaît en tête de la liste
+  (événement `fichier_recu`), **sans** case à cocher ni badges de temps. Chaque
+  issue créée depuis ce fichier (`creation_issue`, qui porte le nom du fichier)
+  **remplace** cette ligne par la ligne d'issue normale (uniquement pour la 1ʳᵉ
+  création d'un fichier multi-issues ; les suivantes s'ajoutent sans doublon).
+  Chaque bloc refusé (`fichier_refuse`) transforme la ligne « reçu » — ou, à
+  défaut, insère directement — une **ligne rouge « ✕ fichier refusé : <nom> —
+  <motif> »** (repli « refusé, motif indisponible »). Un lot multi-blocs
+  partiellement refusé produit donc une ligne rouge distincte par bloc refusé.
+- **Exclusion propre** : ces lignes sont rendues en `.ligne-fichier` (jamais
+  `.ligne-issue`) et **absentes de `store.issues`** — elles échappent donc
+  nativement aux filtres, au quota d'affichage, aux pastilles, à la case à
+  cocher / « Cocher tout » / « Tout à zéro » et au badge modèle.
 - **Alarme** pilotée **uniquement** par l'état du dossier
-  `issues_inbox/rejected/` — non vide → badge 🚨 clignotant sur l'onglet
-  lui-même (visible même hors de cette vue) + bandeau rouge dans le panneau ;
-  vide → aucun indicateur. Volontairement **pas** de parsing de log pour cette
-  décision (§ Tâche demandée de l'issue #483) : l'état du dossier est la
-  seule source de vérité, plus simple et plus fiable qu'un état dérivé du log.
-- **Zone détail** : tableau des fichiers présents dans `rejected/` (nom +
-  date de dépôt), et un historique **purement informatif** des dernières
-  lignes de `logs/issues_inbox.log` — celui-ci n'influence jamais l'alarme.
-- **Rafraîchissement** : `rafraichirInbox()` (`static/js/app.js`) tourne en
-  polling continu (7s) indépendamment de l'onglet actif, pour que le badge
-  reste à jour même quand un autre onglet est ouvert ; bouton « Rafraîchir »
-  pour un rafraîchissement immédiat.
+  `issues_inbox/rejected/` (via `/issues-inbox/etat`) — non vide → badge 🚨
+  clignotant, désormais porté par **l'onglet Résultats** (visible même hors de
+  cette vue). Volontairement **pas** de parsing de log pour cette décision
+  (§ Tâche demandée de l'issue #483).
+- **Reconstruction au rechargement** : les lignes en direct sont **éphémères**
+  (perdues au F5), sauf les fichiers **encore rejetés** — le polling
+  `/issues-inbox/etat` (7s, `static/js/resultats.js`, continu quel que soit
+  l'onglet actif) **reconstitue une ligne rouge par fichier de `rejetes`** et la
+  **purge** dès que le fichier quitte `rejected/` (traité/nettoyé à la main).
+- **Historique** des dernières lignes de `logs/issues_inbox.log` : déplacé dans
+  le **panneau latéral** (`static/js/panneau_lateral.js`), sous le contrôle du
+  watcher spool, dans un repli discret « Historique récent » (`<details>` fermé
+  par défaut) — même source `/issues-inbox/etat`, purement informatif.
 
 ### 3.9 Workflow utilisateur final
 
 1. Claude Chat (ou Alain) dépose un fichier `.txt` dans `issues_inbox/`.
 2. Le watcher le détecte au cycle de polling suivant, crée l'issue GitHub
    (mêmes labels/en-tête que le formulaire web), supprime le fichier, journalise.
-3. Alain voit le statut dans l'onglet « Résultats inbox » de `new_issue.py`.
+3. Alain voit le statut **dans la liste Résultats** de `new_issue.py` (ligne
+   « fichier reçu » puis issue, ou ligne rouge « fichier refusé » — issue #639).
 4. Un fichier rejeté reste visible dans `issues_inbox/rejected/` — alarme
-   allumée tant qu'il n'est pas corrigé/supprimé à la main.
+   (badge 🚨 sur l'onglet Résultats) allumée et ligne rouge reconstituée au
+   rechargement tant qu'il n'est pas corrigé/supprimé à la main.
 
 ### 3.10 Pilotage du watcher depuis le panneau Infrastructure (issue #485)
 

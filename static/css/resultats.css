@@ -75,6 +75,17 @@
 .ligne-issue{display:flex;align-items:center;gap:9px;padding:9px 14px;cursor:pointer;
   font-size:13px;line-height:1.45;border-bottom:1px solid #f0efea;transition:background .12s}
 .ligne-issue:last-child{border-bottom:none}
+/* Lignes « fichier reçu / refusé » (issue #639) : fusion de l'ancien onglet
+   « Résultats inbox » dans la liste Résultats. Ce sont des lignes ÉPHÉMÈRES, PAS
+   des .ligne-issue — donc hors filtres/pastilles/case à cocher/quota. Insérées
+   en tête, elles doivent se remarquer sans envahir : ni case à cocher ni badge.
+   - reçu   : discret (fond gris pâle), le temps que l'issue soit créée ;
+   - refusé : rouge net et persistant (motif au survol via l'attribut title). */
+.ligne-fichier{display:flex;align-items:center;gap:9px;padding:9px 14px;
+  font-size:13px;line-height:1.45;border-bottom:1px solid #f0efea;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ligne-fichier-recu{background:#f4f3ee;color:#555;font-style:italic}
+.ligne-fichier-refuse{background:#f8d7da;color:#721c24;font-weight:600}
 /* Case à cocher libre par résultat (issue #154) : repère visuel personnel, sans
    logique métier. Petite case tout à gauche de la ligne, curseur pointeur, ne
    rétrécit pas. L'état est persisté côté navigateur (localStorage). */

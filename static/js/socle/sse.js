@@ -79,6 +79,20 @@ function surEvenementIssue(e) {
   } catch { /* données non-JSON ignorées */ }
 }
 
+// /stream émet aussi (issue #639, fusion « Résultats inbox » dans Résultats) :
+//   fichier_recu   : { fichier }
+//   fichier_refuse : { fichier, titre?, motif }
+// Ces événements ne concernent pas une issue précise (pas de projet/numéro) :
+// ils sont notés dans une tranche DÉDIÉE du store (derniereNotifFichier), à
+// laquelle le module Résultats (static/js/resultats.js) est abonné pour
+// insérer/transformer les lignes « fichier reçu / refusé » de la liste.
+function surEvenementFichier(e) {
+  try {
+    const donnees = JSON.parse(e.data);
+    store.set('derniereNotifFichier', { ...donnees, type: e.type });
+  } catch { /* données non-JSON ignorées */ }
+}
+
 function surShutdown() {
   store.set('serveurArrete', true);
 }
@@ -88,6 +102,8 @@ export const sse = {
     debut_issue: surEvenementIssue,
     fin_issue: surEvenementIssue,
     creation_issue: surEvenementIssue,
+    fichier_recu: surEvenementFichier,
+    fichier_refuse: surEvenementFichier,
   }),
   events: creerCanalSse('/events', {
     shutdown: surShutdown,

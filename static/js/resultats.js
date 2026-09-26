@@ -255,15 +255,123 @@ export function fusionnerTimingProjet(ancienTiming, nom, liste, issuesConnues, m
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// 1bis. LIGNES « FICHIER REÇU / REFUSÉ » (issue #639 — fusion de l'ancien onglet
+//    « Résultats inbox » dans la liste Résultats). Logique PURE, testée sous Node
+//    (voir static/js/tests/resultats_fichiers.test.js).
+//
+//    MODÈLE : un tableau ordonné d'entrées, affichées EN TÊTE de la liste
+//    Résultats (au-dessus des issues), chacune :
+//      { fichier, statut:'recu'|'refuse', motif?, titre?, source:'sse'|'etat' }
+//    - `source:'sse'`  : ligne VIVANTE, issue d'un événement /stream
+//      (fichier_recu / fichier_refuse / creation_issue) — éphémère, jamais
+//      reconstituée au rechargement de page.
+//    - `source:'etat'` : ligne ROUGE RECONSTITUÉE depuis /issues-inbox/etat
+//      (fichiers encore dans `rejetes`), pour ne pas perdre l'info au F5 ;
+//      recalculée à chaque lecture (purge quand le fichier quitte `rejetes`).
+//    Ces entrées ne sont JAMAIS des issues : rendues en `.ligne-fichier` (pas
+//    `.ligne-issue`) et absentes de store.issues, elles sont donc exclues
+//    proprement des filtres, pastilles, case à cocher, « cocher tout » et badge
+//    modèle (tous adossés à `.ligne-issue` / listeIssuesResultats).
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Repli de motif quand fichier_refuse (ou /issues-inbox/etat) n'en fournit pas.
+export const MOTIF_INDISPONIBLE = 'refusé, motif indisponible';
+
+// fichier_recu : insère une ligne « reçu » en tête si aucune n'existe déjà pour
+// ce fichier (idempotent — un même fichier_recu réémis ne double pas la ligne).
+export function appliquerFichierRecu(lignes, fichier) {
+  if (!fichier) return (lignes || []).slice();
+  if ((lignes || []).some(l => l.fichier === fichier && l.statut === 'recu')) {
+    return lignes.slice();
+  }
+  return [{ fichier, statut: 'recu', source: 'sse' }, ...(lignes || [])];
+}
+
+// creation_issue (fichier multi-issues compris) : la PREMIÈRE création pour ce
+// fichier retire sa ligne « reçu » (la vraie ligne d'issue, gérée par ailleurs,
+// la remplace) ; les créations suivantes du même fichier ne retirent plus rien
+// (la ligne « reçu » a déjà disparu) — pas de doublon.
+export function appliquerCreationFichier(lignes, fichier) {
+  const src = (lignes || []).slice();
+  if (!fichier) return src;
+  const i = src.findIndex(l => l.fichier === fichier && l.statut === 'recu');
+  if (i < 0) return src;
+  return src.slice(0, i).concat(src.slice(i + 1));
+}
+
+// fichier_refuse : transforme la ligne « reçu » du fichier en ligne rouge (même
+// position) si elle existe, sinon insère une nouvelle ligne rouge en tête. Pour
+// un lot multi-blocs partiellement refusé, chaque bloc refusé après le premier
+// n'a plus de ligne « reçu » à transformer et produit donc sa PROPRE ligne
+// rouge distincte des issues créées par les autres blocs.
+export function appliquerFichierRefuse(lignes, fichier, titre, motif) {
+  const src = (lignes || []).slice();
+  if (!fichier) return src;
+  const entree = { fichier, statut: 'refuse', motif: motif || MOTIF_INDISPONIBLE,
+                   titre: titre || null, source: 'sse' };
+  const i = src.findIndex(l => l.fichier === fichier && l.statut === 'recu');
+  if (i < 0) return [entree, ...src];
+  src[i] = entree;
+  return src;
+}
+
+// Reconstruction/purge des lignes rouges depuis /issues-inbox/etat.rejetes.
+// Les lignes SSE (source 'sse') sont CONSERVÉES telles quelles ; les lignes
+// 'etat' sont entièrement recalculées : une ligne 'etat' n'est (re)créée que
+// pour un fichier encore rejeté n'ayant PAS déjà une ligne rouge (sse ou etat
+// venant d'être ajoutée) — donc pas de doublon avec une ligne SSE en direct —
+// et disparaît dès que le fichier ne figure plus dans `rejetes` (fichier traité
+// manuellement / nettoyé). `rejetes` = [{nom, date, motif?}].
+export function reconcilierRejetes(lignes, rejetes) {
+  const nonEtat = (lignes || []).filter(l => l.source !== 'etat');
+  const dejaRefuse = new Set(nonEtat.filter(l => l.statut === 'refuse').map(l => l.fichier));
+  const ajouts = [];
+  for (const r of (rejetes || [])) {
+    const nom = r && r.nom;
+    if (!nom || dejaRefuse.has(nom)) continue;
+    dejaRefuse.add(nom);   // un même nom présent deux fois dans rejetes → une seule ligne
+    ajouts.push({ fichier: nom, statut: 'refuse', motif: r.motif || MOTIF_INDISPONIBLE,
+                  titre: null, source: 'etat' });
+  }
+  return nonEtat.concat(ajouts);
+}
+
+// Descriptif visuel d'une ligne « fichier » (classe CSS + texte + title),
+// analogue à calculerBadge* : logique pure, sans DOM. La classe commence
+// TOUJOURS par « ligne-fichier » et ne contient JAMAIS « ligne-issue » — c'est
+// ce qui exclut ces lignes des filtres/pastilles/case à cocher (tous adossés à
+// `.ligne-issue`). `texte` est du texte brut (posé via textContent, jamais
+// innerHTML : aucun risque d'injection depuis un nom de fichier ou un motif).
+export function descriptionLigneFichier(entree) {
+  if (entree && entree.statut === 'refuse') {
+    const motif = entree.motif || MOTIF_INDISPONIBLE;
+    return {
+      classe: 'ligne-fichier ligne-fichier-refuse',
+      texte: '✕ fichier refusé : ' + entree.fichier + ' — ' + motif,
+      titre: motif,
+    };
+  }
+  return {
+    classe: 'ligne-fichier ligne-fichier-recu',
+    texte: '📥 fichier reçu : ' + (entree ? entree.fichier : ''),
+    titre: 'Fichier déposé dans issues_inbox/, en cours de traitement',
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // 2. ORCHESTRATION NAVIGATEUR (DOM + réseau + store)
 //    Rien de ce qui suit ne s'exécute à l'import ; tout part d'initialiser().
 // ─────────────────────────────────────────────────────────────────────────────
 
 const DELAI_FETCH_DEPASSEMENT_MS = 15000;   // marge laissée au watcher (issue #334)
 
+const POLL_INBOX_MS = 7000;                 // cadence de /issues-inbox/etat (issue #639)
+
 let initialFait = false;                    // le chargement initial (unique) a-t-il eu lieu ?
 let ongletActif = false;
 let intervalTick = null;                    // recalcul 1 s des badges (client seul, aucun réseau)
+let intervalInbox = null;                   // poll /issues-inbox/etat (badge + lignes rejetées, issue #639)
+let lignesFichier = [];                     // lignes « fichier reçu/refusé » (issue #639), en tête de la liste
 const fetchDepassementProgramme = new Set();// clés dont le fetch unique #334 est déjà programmé
 const depassementVerifie = new Set();       // clés confirmées encore ouvertes après le fetch #334
 
@@ -301,10 +409,54 @@ function synchroniserMiroir() {
 // Rendu COMPLET de la liste (chargement initial, ↻, apparition d'une ligne) :
 // délègue le rendu DOM à l'ancien code (appliquerListeIssues), qui reste seul
 // responsable du markup d'une ligne (case à cocher, badges ✅/Diff/All, etc.).
+// appliquerListeIssues vide #liste-issues (innerHTML='') puis le reconstruit :
+// on RÉINSÈRE ensuite les lignes « fichier reçu/refusé » en tête (issue #639),
+// que ce rendu vient d'effacer.
 function rendreListeComplete() {
   const liste = trier(listeCourante());
   appelerAncien('__resultatsSetTiming', timingCourant());
   appelerAncien('appliquerListeIssues', liste, nomsProjets());  // → rendreListeIssues → majBadges()
+  rendreLignesFichier();
+}
+
+// ─── Lignes « fichier reçu / refusé » (issue #639) ───────────────────────────
+// Construit l'élément DOM d'UNE ligne fichier depuis son descriptif pur
+// (descriptionLigneFichier). Texte posé via textContent (jamais innerHTML) :
+// un nom de fichier ou un motif ne peut donc pas injecter de markup.
+function construireLigneFichierDOM(entree) {
+  const desc = descriptionLigneFichier(entree);
+  const div = document.createElement('div');
+  div.className = desc.classe;
+  div.dataset.fichier = entree.fichier;
+  div.title = desc.titre;
+  div.textContent = desc.texte;
+  return div;
+}
+
+// (Ré)insère les lignes fichier EN TÊTE de #liste-issues, au-dessus des issues.
+// Idempotent : retire d'abord les lignes fichier déjà présentes. Ces lignes
+// n'étant pas des `.ligne-issue`, elles échappent nativement aux filtres, au
+// quota d'affichage, aux pastilles et à la case à cocher.
+function rendreLignesFichier() {
+  const zone = document.getElementById('liste-issues');
+  if (!zone) return;
+  zone.querySelectorAll('.ligne-fichier').forEach(el => el.remove());
+  if (!lignesFichier.length) return;
+  // S'il n'y a aucune issue, appliquerListeIssues a posé le message « Aucune
+  // issue à afficher » : on le retire puisque la liste n'est plus vide.
+  const vide = zone.querySelector('.issue-vide');
+  if (vide) vide.remove();
+  const premier = zone.firstChild;   // 1re issue (ou null si liste vide) — insertion avant elle
+  for (const entree of lignesFichier) {
+    zone.insertBefore(construireLigneFichierDOM(entree), premier);
+  }
+}
+
+// Badge d'alerte sur l'onglet Résultats (issue #639, déplacé de l'ancien onglet
+// « Résultats inbox ») : visible tant qu'au moins un fichier est rejeté.
+function majBadgeAlarme(alarme) {
+  const badge = document.getElementById('badge-alarme-inbox');
+  if (badge) badge.style.display = alarme ? '' : 'none';
 }
 
 // Applique tous les badges d'estimation + décompte aux lignes présentes dans le
@@ -513,10 +665,25 @@ function traiterNotif(notif) {
   if (plan.action === 'debut')       surDebutIssue(notif.projet, notif.numero);
   else if (plan.action === 'fin')    surFinIssue(notif.projet, notif.numero);
   else if (plan.action === 'creer')  surCreationIssue(notif.projet, notif.numero, notif.titre,
-                                                        notif.labels, notif.timing);
+                                                        notif.labels, notif.timing, notif.fichier);
   // Le panneau latéral (issue #375) s'abonne lui-même à 'derniereNotifIssue'
   // (voir panneau_lateral.js) — plus de communication de module à module par
   // le pont ici (issue #632).
+}
+
+// Traitement des événements /stream « fichier » (issue #639), sans projet ni
+// numéro : fichier_recu et fichier_refuse. Notés dans store.derniereNotifFichier
+// par sse.js ; on met à jour les lignes fichier puis on les réaffiche.
+function traiterNotifFichier(notif) {
+  if (!notif || !notif.fichier) return;
+  if (notif.type === 'fichier_recu') {
+    lignesFichier = appliquerFichierRecu(lignesFichier, notif.fichier);
+  } else if (notif.type === 'fichier_refuse') {
+    lignesFichier = appliquerFichierRefuse(lignesFichier, notif.fichier, notif.titre, notif.motif);
+  } else {
+    return;
+  }
+  rendreLignesFichier();
 }
 
 // debut_issue : recharge le timing CIBLÉ de cette issue (le décompte démarre) et
@@ -584,8 +751,12 @@ export function construireIssueCreation(projet, numero, titre, labels, timing) {
 // tant que `gh issue list` n'avait pas encore indexé la nouvelle issue, sa
 // réponse ne la contenait pas et purgeait le placeholder « en file » déjà
 // affiché — c'est ce décalage qui faisait disparaître le badge.
-function surCreationIssue(projet, numero, titre, labels, timing) {
+function surCreationIssue(projet, numero, titre, labels, timing, fichier) {
   const cle = cleIssue(projet, numero);
+  // Fusion inbox (issue #639) : la PREMIÈRE création issue d'un fichier reçu
+  // retire sa ligne « fichier reçu » (la vraie ligne d'issue ci-dessous la
+  // remplace) ; les créations suivantes du même fichier n'y touchent plus.
+  if (fichier) lignesFichier = appliquerCreationFichier(lignesFichier, fichier);
   if (!store.get('issues')[cle]) {
     store.ecrireIssue(Object.assign(
       construireIssueCreation(projet, numero, titre, labels, timing),
@@ -605,6 +776,35 @@ function surCreationIssue(projet, numero, titre, labels, timing) {
     store.set('timing', nouveauTiming);
   }
   rendreListeComplete();
+}
+
+// ─── Polling /issues-inbox/etat (issue #639, repris de l'ancien app.js) ──────
+// Tourne EN CONTINU dès l'amorçage (indépendant de l'onglet actif) pour que le
+// badge d'alerte de l'onglet Résultats reste à jour même hors de cette vue.
+// N'est PLUS la source des lignes en direct (fichier_recu/fichier_refuse, qui
+// viennent des événements SSE) : il ne sert qu'au badge d'alerte, à la
+// reconstruction/purge des lignes rouges des fichiers encore rejetés, et à
+// exposer l'état inbox (store.issuesInbox) pour le panneau latéral.
+async function rafraichirInbox() {
+  let data;
+  try {
+    data = await api.get('/issues-inbox/etat', { silencieux: true });
+  } catch (e) { return; }   // best-effort : le badge garde son dernier état connu
+  if (!data) return;
+  store.set('issuesInbox', {
+    alarme: !!data.alarme,
+    rejetes: data.rejetes || [],
+    historique: data.historique || [],
+  });
+  majBadgeAlarme(!!data.alarme);
+  lignesFichier = reconcilierRejetes(lignesFichier, data.rejetes || []);
+  rendreLignesFichier();
+}
+
+function demarrerInbox() {
+  rafraichirInbox();
+  if (intervalInbox) clearInterval(intervalInbox);
+  intervalInbox = setInterval(rafraichirInbox, POLL_INBOX_MS);
 }
 
 // ─── Cycle de vie de l'onglet (aucun rechargement réseau à l'activation) ─────
@@ -653,6 +853,9 @@ function initialiser() {
   persistance.supprimer(persistance.CLES.largeurTitre);
   // Abonnement aux notifications /stream (déposées dans le store par sse.js).
   store.abonnerCle('derniereNotifIssue', (notif) => traiterNotif(notif));
+  // Événements /stream « fichier » (issue #639) : lignes « fichier reçu/refusé »
+  // dans la liste Résultats, sans passer par une issue.
+  store.abonnerCle('derniereNotifFichier', (notif) => traiterNotifFichier(notif));
   // Activation/désactivation de l'onglet Résultats : abonnement direct au
   // store (issue #632), plus d'appel via le pont depuis onglets.js — cet
   // abonnement doit être posé AVANT que index.js n'active l'onglet par défaut
@@ -664,6 +867,9 @@ function initialiser() {
   });
   // UNIQUE connexion /stream (permanente, comme l'ancien code depuis #515).
   sse.stream.connecter();
+  // Polling /issues-inbox/etat (issue #639) : badge d'alerte + reconstruction
+  // des lignes rejetées, en continu quel que soit l'onglet actif.
+  demarrerInbox();
 }
 
 // Objet publié sous window.Bridge.resultats (via installerPont dans index.js) :

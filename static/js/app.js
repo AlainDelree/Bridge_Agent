@@ -184,8 +184,10 @@ function appliquerAccentProjet(nom) {
 // chargerListeIssues/demarrerTempsRestant/demarrerPanneauLateral (Résultats,
 // canal SSE demarrerStreamFinIssue permanent depuis #515, cf. plus bas),
 // demarrerJournal, chargerConfig, ccwOuvrirOnglet (pas de polling — chaque
-// requête déclenche des appels SSH coûteux), rafraichirInbox (badge tenu à
-// jour par le polling continu du bas de ce fichier même hors de cette vue).
+// requête déclenche des appels SSH coûteux). L'onglet « Résultats inbox » et son
+// rafraichirInbox ont été retirés d'ici (issue #639) : le polling
+// /issues-inbox/etat (badge d'alerte + lignes rejetées) vit désormais dans
+// static/js/resultats.js, et l'historique dans le panneau latéral.
 
 // reinitialiserTimeout : un changement de projet MANUEL (sélecteur, chargement
 // initial, ajouterProjetAuSelecteur) doit recharger le timeout par défaut du
@@ -3967,54 +3969,12 @@ async function lancerWatcher() {
 })();
 setInterval(verifierStatut, 5000);
 
-// ─── Onglet « Résultats inbox » (issue #483) ──────────────────────────────
-// État du watcher_issues_inbox (scripts/watcher_issues_inbox.py), lu depuis
-// /issues-inbox/etat (aucun appel gh — pure lecture disque côté serveur).
-// L'alarme (badge sur l'onglet + bandeau) est pilotée UNIQUEMENT par l'état
-// (vide/non-vide) de issues_inbox/rejected/, jamais par l'historique de log —
-// ce polling tourne en continu, indépendamment de l'onglet actif, pour que le
-// badge reste à jour même quand un autre onglet est ouvert.
-function formaterDateInbox(epochSecondes) {
-  try {
-    return new Date(epochSecondes * 1000).toLocaleString('fr-FR');
-  } catch(e) {
-    return '';
-  }
-}
-
-async function rafraichirInbox() {
-  try {
-    const rep = await fetch('/issues-inbox/etat');
-    if (!rep.ok) return;
-    const data = await rep.json();
-
-    const badge = document.getElementById('badge-alarme-inbox');
-    const bandeau = document.getElementById('alarme-inbox');
-    const sansAlarme = document.getElementById('inbox-sans-alarme');
-    if (badge)      badge.style.display = data.alarme ? '' : 'none';
-    if (bandeau)     bandeau.style.display = data.alarme ? 'block' : 'none';
-    if (sansAlarme)  sansAlarme.style.display = data.alarme ? 'none' : 'block';
-
-    const corps = document.getElementById('corps-inbox-rejetes');
-    if (corps) {
-      corps.innerHTML = (data.rejetes || []).map(r =>
-        '<tr><td>' + escapeHtml(r.nom) + '</td><td>' + formaterDateInbox(r.date) + '</td></tr>'
-      ).join('') || '<tr><td colspan="2" style="color:#999;padding:6px 0">Aucun fichier rejeté.</td></tr>';
-    }
-
-    const historique = document.getElementById('inbox-historique');
-    if (historique) {
-      historique.textContent = (data.historique && data.historique.length)
-        ? data.historique.join('\n')
-        : '(aucun historique pour le moment)';
-    }
-  } catch(e) {
-    // Best-effort, silencieux : le badge garde son dernier état connu plutôt
-    // qu'une erreur bruyante sur un simple polling d'arrière-plan.
-  }
-}
-rafraichirInbox();
-setInterval(rafraichirInbox, 7000);
+// ─── Onglet « Résultats inbox » : SUPPRIMÉ (issue #639) ────────────────────
+// L'ancien polling /issues-inbox/etat (badge d'alerte + tableau des fichiers
+// rejetés + historique) a quitté app.js : le badge d'alerte et la
+// reconstruction des lignes rouges des fichiers rejetés vivent désormais dans
+// static/js/resultats.js (polling continu identique, 7s), l'historique du
+// watcher spool dans le panneau latéral (static/js/panneau_lateral.js).
 
 // ─── Indicateur de rate limit GitHub GraphQL (issue #607) ─────────────────
 // Pilule compacte du bandeau supérieur, TOUJOURS visible quel que soit
