@@ -9,6 +9,24 @@ milliers de caractères sur une seule ligne logique, coûteux à relire et
 
 Convention d'ajout : voir §10 de `BRIDGE_AGENT_DOC.md`.
 
+# CHANGELOG-647 — à fusionner dans CHANGELOG.md
+
+## 26 septembre 2026 — issue #647
+
+Avertissement visible (non bloquant) quand une issue arrive sans champ REDACTEUR.
+
+Besoin d'Alain : dans les conversations Claude Chat longues (plusieurs projets abordés sans changer de session), Claude Chat peut rédiger une issue sans indiquer `REDACTEUR` (issue #599) — l'absence totale de signal fait qu'Alain ne s'en aperçoit pas. `REDACTEUR` reste optionnel, sans changement de comportement (rétrocompatibilité volontairement conservée) : ce correctif ajoute un simple **signal visuel**, jamais un blocage.
+
+- **`watcher.py`** : nouvelle constante `LABEL_SANS_REDACTEUR = "sans-redacteur"`, aux côtés des autres labels du protocole partagé.
+- **`scripts/watcher_issues_inbox.py::construire_labels()`** : pose ce label sur l'issue créée **uniquement** quand `REDACTEUR` est absent de l'en-tête (cas déjà accepté par `valider_redacteur()`, qui renvoie `(True, "")` pour ce cas). `REDACTEUR` présent (cohérent ou non — l'incohérence a son propre traitement, rejet vers `rejected/`, inchangé) → jamais posé. Garde anti-doublon si le label est déjà demandé manuellement via le champ `LABELS` de l'en-tête.
+- **`app/issues.py::envoyer()` (formulaire web) : volontairement NON modifié.** Ce chemin ne propose aucun champ `REDACTEUR` — `construire_labels(data)` n'en lit jamais depuis `data` du formulaire. Y appliquer la même logique aurait posé le label sur 100 % des créations de ce chemin sans exception (Alain tapant directement dans le navigateur, jamais Claude Chat) : un signal toujours vrai ne distinguant jamais rien, donc du code mort en pratique — écarté sciemment, documenté dans `BRIDGE_AGENT_DOC.md` §17.3.
+- **Badge « sans REDACTEUR » (onglet Résultats)** : nouvelle fonction pure `calculerBadgeSansRedacteur(labels)` dans `static/js/resultats.js`, même patron que le badge « modèle forcé » (#638) — enrichissement à partir des labels déjà connus (aucun appel GitHub supplémentaire), span toujours présent dans le DOM (masqué si rien à afficher), rafraîchi à chaque tick par `majBadges()`. Réutilise `normaliserNomsLabels()` (désormais exportée par `static/js/actions_ligne.js`) plutôt que de dupliquer la normalisation objet/chaîne des labels GitHub. Pastille ambrée discrète (`.badge-sans-redacteur`, `static/css/resultats.css`), infobulle « Créée sans REDACTEUR », placée juste après le badge modèle dans `static/js/app.js` (construction de la ligne). Exposée sous `window.Bridge.resultats.calculerBadgeSansRedacteur`.
+- **Documentation** : `BRIDGE_AGENT_DOC.md` §3.4 (pose du label côté validation) et §17.3 (badge côté navigateur, y compris le choix de ne pas modifier le formulaire web) ; `VERIFICATIONS_MANUELLES.md` (nouvelle case à cocher sous le badge modèle #638).
+
+Fichiers modifiés : `watcher.py`, `scripts/watcher_issues_inbox.py`, `static/js/actions_ligne.js`, `static/js/resultats.js`, `static/js/app.js`, `static/css/resultats.css`, `static/js/tests/resultats.test.js`, `BRIDGE_AGENT_DOC.md`, `VERIFICATIONS_MANUELLES.md`, `tests/test_label_sans_redacteur_647.py` (nouveau).
+
+Tests : `python3 -m pytest tests/test_label_sans_redacteur_647.py` (6 scénarios, dont le chemin complet `traiter_fichier()`) + non-régression `tests/test_champ_redacteur_599.py`/`tests/test_modele_effectif_638.py`/`tests/test_creation_issue_enrichie_634.py` — tous au vert. `node --test static/js/tests/` — 104/104 OK (dont les 4 nouveaux scénarios `calculerBadgeSansRedacteur`). `py_compile` sur tous les fichiers Python touchés = OK.
+
 ## 26 septembre 2026 — issue #646
 
 Refonte interface web — étape 11 (finale) : balayage final.
