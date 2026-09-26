@@ -157,20 +157,37 @@
       (déplacés dans le panneau latéral, puis sur la ligne — voir ci-dessous et
       §« Actions directes sur la ligne ») — ne doivent apparaître **qu'une seule
       fois**.
-- [ ] **Actions directes sur la ligne (issue #641, refonte web étape 6)** : sur
-      une ligne **OUVERTE** portant `needs-human`, le badge **⚠️** est
-      cliquable (curseur, léger fond au survol) — cliquer retire directement le
+- [ ] **Actions directes sur la ligne (issue #641, refonte web étape 6 ;
+      correctif #642)** : sur une ligne **OUVERTE** portant `needs-human`, le
+      badge **⚠️** est cliquable (curseur, léger fond au survol, infobulle
+      **« Retirer needs-human et relancer »**) — cliquer retire directement le
       label et relance **sans sélectionner l'issue ni ouvrir le panneau** (même
       route `/relancer-issue`, même confirmation que l'ancien bouton « Retirer
-      needs-human » du panneau). Sur une ligne ouverte en `mode_write` **sans**
-      `needs-human`, le badge **✏️** est cliquable → clic **interrompt** (même
-      confirmation détaillée + modale de résultat que l'ancien bouton
-      « Interrompre l'issue » du panneau) — le clic **ne sélectionne pas** la
-      ligne (`stopPropagation`). Une ligne ouverte sans ces labels garde son
-      préfixe **○**/**✅** statique, non cliquable. Une ligne **FERMÉE** — y
-      compris fermée+`done`+`needs-human` (cas rare) — garde le préfixe
-      statique inchangé et les badges ✅/Diff/All habituels, jamais d'action
-      cliquable.
+      needs-human » du panneau). Sur une ligne ouverte en `mode_write`, le
+      préfixe **✏️** est désormais **purement informatif** (issue #642 —
+      correctif de la régression #641) : infobulle **« Mode écriture en
+      cours »**, **plus aucun clic**, curseur normal. Une ligne ouverte sans
+      ces labels garde son préfixe **○**/**✅** statique, non cliquable. Une
+      ligne **FERMÉE** — y compris fermée+`done`+`needs-human` (cas rare) —
+      garde le préfixe statique inchangé et les badges ✅/Diff/All habituels,
+      jamais d'action cliquable.
+- [ ] **Icône dédiée d'interruption, en LECTURE comme en ÉCRITURE (issue
+      #642)** : sur toute ligne **OUVERTE** dont l'issue est actuellement **EN
+      COURS** (même état que le décompte ⏳ affiché à droite — pas « en
+      file »), un petit carré **VERT « ✓ »** apparaît après le préfixe/⚠️/✏️,
+      **que l'issue soit en LECTURE (aucun label mode_write) ou en ÉCRITURE**.
+      Survoler le carré le fait passer au **ROUGE « ✕ »** (infobulle
+      **« Interrompre l'issue »**) ; cliquer déclenche la **même confirmation
+      détaillée + même modale de résultat** que l'ancien bouton « Interrompre
+      l'issue » du panneau (même route `/interrompre`) — le clic **ne
+      sélectionne pas** la ligne (`stopPropagation`). Vérifier concrètement
+      qu'une issue en **LECTURE** en cours peut être interrompue **seule**
+      depuis sa ligne, **sans** passer par « Interrompre et relancer (watcher
+      CCL) » et **sans** arrêter le reste du watcher (les autres issues du
+      projet restent en file, pas relancées). Le carré est **absent** pour une
+      issue « en file » (pas encore prise en charge, badge ⏳ « en file ») et
+      pour une issue **needs-human** (déjà arrêtée — seule l'action ⚠️
+      s'applique). Une ligne **FERMÉE** n'affiche jamais ce carré.
 - [ ] **Son de cette issue, sur la ligne (déplacé du panneau, issue #641)** :
       toute ligne **ouverte** porte, après le badge d'action, un mini contrôle
       à 3 lettres **G / P / C** (Global / Plat / Cloche), une seule active à la

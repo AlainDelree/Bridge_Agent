@@ -486,6 +486,26 @@ Résultats, Journal watcher, Configuration, CCW, Nouvelle issue.
 > distincte, jamais demandée sur la ligne). Tests de logique pure :
 > `static/js/tests/actions_ligne.test.js`.
 
+> **Correctif étape 6 (issue #642)** : #641 avait rendu ✏️ mode_write cliquable
+> pour interrompre — mais cette action existe aussi pour une issue en LECTURE
+> (sans le label mode_write), qui n'avait alors plus aucun moyen d'être
+> interrompue depuis sa ligne (régression). Correctif : ✏️ redevient PUREMENT
+> INFORMATIF (infobulle « Mode écriture en cours », plus de clic) ; une icône
+> DÉDIÉE d'interruption (carré vert ✓ au repos, rouge ✕ au survol, pur CSS)
+> s'affiche désormais sur toute issue OUVERTE actuellement EN COURS — lecture
+> OU écriture — à partir de `afficherIconeInterruption(labels, timing)`
+> (`actions_ligne.js`), basée sur le MÊME état (`timing.debut`) que le décompte
+> TIMEOUT actif de `resultats.js`, jamais sur le seul label mode_write. Comme ce
+> `timing` n'est pas toujours connu au moment de la construction de la ligne,
+> l'icône est toujours posée masquée (`display:none`) puis révélée par
+> `resultats.js::majBadges()` à chaque recalcul (import direct de la fonction
+> pure d'`actions_ligne.js`) — même patron que `.ligne-tempsrestant`/
+> `.ligne-estimation`. Le clic appelle directement `interrompreDepuisLigne()` →
+> `interrompreIssue()` (app.js, INCHANGÉES) : même route/confirm()/modale,
+> aucune logique dupliquée. Le bouton « Interrompre et relancer (watcher CCL) »
+> du panneau latéral reste inchangé (action à l'échelle du watcher, pas de
+> l'issue seule).
+
 > **Note parallélisme** : HTML et JS se découpent proprement par zone. Le CSS
 > est plus contraint : la cascade impose de garder l'ordre source, donc quelques
 > règles partagées (`button`, `.message`, primitives) vivent dans `base.css` /

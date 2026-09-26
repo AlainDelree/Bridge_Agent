@@ -115,11 +115,12 @@
 .ligne-issue.selectionnee{background:var(--bg-sel);font-weight:600}
 .ligne-issue.selectionnee:hover{background:var(--bg-sel)}
 /* Largeur fixe (issue #401) : le nombre d'icônes (préfixe type/OS, badges
-   ✏️/✅/⚠️/○, Diff/All) varie d'une ligne à l'autre, ce qui décalait le début
-   du titre. min-width (et non width, pour ne jamais tronquer les badges dans
-   le cas rare — chef/ouvrier + for-windows + mode_write+done+Diff+All — le
-   plus large) fige cette zone : tous les titres démarrent à la même position
-   horizontale, les icônes restant alignées à gauche (flex-start par défaut). */
+   ✏️/✅/⚠️/○, icône dédiée d'interruption (#642), Diff/All) varie d'une ligne à
+   l'autre, ce qui décalait le début du titre. min-width (et non width, pour ne
+   jamais tronquer les badges dans le cas rare — chef/ouvrier + for-windows +
+   mode_write+interruption+done+Diff+All — le plus large) fige cette zone :
+   tous les titres démarrent à la même position horizontale, les icônes
+   restant alignées à gauche (flex-start par défaut). */
 .ligne-issue .ligne-gauche{display:inline-flex;align-items:center;gap:6px;flex-shrink:0;
   min-width:130px}
 .ligne-issue .ligne-badges{font-size:13px;white-space:nowrap}
@@ -139,10 +140,30 @@
 .ligne-issue .badge-copie-diff:hover{background:#e8f1f8}
 .ligne-issue .pastille-ligne{width:9px;height:9px;border-radius:50%;flex-shrink:0}
 /* Badge d'action sur une ligne OUVERTE (issue #641, refonte web étape 6) :
-   remplace le préfixe statique ⚠️/✏️ — même émplacement/taille, juste cliquable
-   (léger fond au survol, sans grossir le caractère). */
+   remplace le préfixe statique ⚠️ needs-human — même émplacement/taille, juste
+   cliquable (léger fond au survol, sans grossir le caractère). */
 .ligne-issue .badge-action-ligne{cursor:pointer;border-radius:3px;padding:0 1px}
 .ligne-issue .badge-action-ligne:hover{background:#eee}
+/* ✏️ mode_write (issue #642) : redevenu purement INFORMATIF (plus de clic
+   d'interruption depuis #641) — même taille que les autres préfixes, curseur
+   par défaut, seule l'infobulle porte l'information. */
+.ligne-issue .badge-mode-ecriture{cursor:default}
+/* Icône dédiée d'interruption (issue #642) : affichée sur toute ligne OUVERTE
+   actuellement EN COURS (lecture ou écriture — voir actions_ligne.js::
+   afficherIconeInterruption), masquée par défaut (display:none inline, posé
+   par actions_ligne.js) et révélée par resultats.js::majBadges(). Petit carré
+   VERT « ✓ » au repos (issue en cours, rien à signaler) ; au survol, bascule en
+   carré ROUGE « ✕ » (avertissement avant le clic, qui déclenche directement
+   interrompreIssue() — son confirm() natif reste l'unique confirmation, aucun
+   second état JS à gérer ici). */
+.ligne-issue .badge-interrompre-ligne{display:inline-flex;align-items:center;
+  justify-content:center;width:14px;height:14px;border-radius:3px;background:#2e8b57;
+  color:#fff;font-size:9px;font-weight:700;line-height:1;cursor:pointer;
+  vertical-align:middle;margin-left:2px;user-select:none}
+.ligne-issue .badge-interrompre-ligne .badge-interrompre-stop{display:none}
+.ligne-issue .badge-interrompre-ligne:hover{background:#c0392b}
+.ligne-issue .badge-interrompre-ligne:hover .badge-interrompre-ok{display:none}
+.ligne-issue .badge-interrompre-ligne:hover .badge-interrompre-stop{display:inline}
 /* Contrôle compact « son de cette issue » (G/P/C, issue #630/#637) déplacé de
    la zone Actions du panneau latéral à la ligne elle-même (étape 6, #641) :
    mini-segmenté à 3 lettres + infobulle, calibré pour peser le moins possible

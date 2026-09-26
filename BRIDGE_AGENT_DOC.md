@@ -1730,18 +1730,25 @@ indéfiniment ni sacrifier les autres issues en file pour le même watcher
 (elles restent ouvertes sur GitHub, simplement en attente tant que le
 watcher n'est pas relancé manuellement).
 
-**Ce que fait le bouton.** Sur toute ligne OUVERTE en `mode_write` (sans
-`needs-human`) de l'onglet Résultats, le badge **✏️** est cliquable
-(directement sur la ligne, depuis l'issue #641, refonte web étape 6 — un
-temps dans le panneau latéral Infrastructure, issue #628, puis dans le détail
-avant #628) : cliquer dessus **interrompt cette issue**, avec la même
-confirmation détaillée et la même modale de résultat qu'auparavant
-(contrairement à « Interrompre et fermer », #144, qui ferme l'issue,
-celui-ci ne fait que la sortir du circuit — bouton « Interrompre et
-relancer » toujours dans le panneau latéral). `interrompreIssue()`
-(`static/js/app.js`, appelée directement par le clic sur le badge, voir
-`static/js/actions_ligne.js::rendreBadgeActionLigne`) appelle `POST
-/interrompre` (`app/interruption.py::route_interrompre`), qui pose
+**Ce que fait le bouton.** Sur toute ligne OUVERTE actuellement **EN COURS**
+(lecture OU écriture — `needs-human` exclu, déjà arrêtée) de l'onglet
+Résultats, une icône dédiée (carré **vert ✓** au repos, **rouge ✕** au survol)
+est affichée directement sur la ligne (issue #641, refonte web étape 6, puis
+détachée du préfixe ✏️ par l'issue #642 — un temps dans le panneau latéral
+Infrastructure, issue #628, puis dans le détail avant #628) : cliquer dessus
+**interrompt cette issue**, avec la même confirmation détaillée et la même
+modale de résultat qu'auparavant (contrairement à « Interrompre et fermer »,
+#144, qui ferme l'issue, celui-ci ne fait que la sortir du circuit — bouton
+« Interrompre et relancer » toujours dans le panneau latéral). Jusqu'à l'issue
+#642, cette action n'apparaissait sur la ligne que si l'issue portait le label
+`mode_write` (badge ✏️ alors cliquable) : une issue en **LECTURE** en cours
+n'avait donc plus aucun moyen d'être interrompue seule depuis sa ligne — l'icône
+dédiée, basée sur le même état que le décompte TIMEOUT actif (`timing.debut`,
+pas sur le seul label `mode_write`), corrige cette régression ; ✏️ redevient
+purement informatif (infobulle « Mode écriture en cours »). `interrompreIssue()`
+(`static/js/app.js`, appelée directement par le clic sur l'icône, voir
+`static/js/actions_ligne.js::rendreIconeInterruption`/`afficherIconeInterruption`)
+appelle `POST /interrompre` (`app/interruption.py::route_interrompre`), qui pose
 **toujours** le label `needs-human` et poste un commentaire `⛔ Interrompu
 via new_issue.py` (trace GitHub, quel que soit le résultat des étapes
 techniques qui suivent), puis exécute selon le label de l'issue
@@ -1792,7 +1799,7 @@ là par #641) : sans fetch réseau supplémentaire, le label vient des données
 déjà en mémoire (`listeIssuesResultats`/`it.labels` de la ligne). Un clic
 (après confirmation) appelle `relancerIssue()` (`static/js/app.js`, appelée
 directement par le clic sur le badge, voir
-`static/js/actions_ligne.js::rendreBadgeActionLigne`) → `POST
+`static/js/actions_ligne.js::rendrePrefixeLigneOuverte`) → `POST
 /relancer-issue` (`app/interruption.py::route_relancer`), qui :
 
 - retire le label `needs-human` côté GitHub (`gh issue edit --remove-label`,
