@@ -348,6 +348,16 @@ historique dans le panneau latéral (voir plus haut).
       (il quitte `rejected/`) puis attendre un cycle de polling → la ligne rouge
       **disparaît** (purge). Les lignes « fichier reçu » **ne sont PAS**
       reconstituées au rechargement (éphémères).
+- [ ] **Disparition automatique d'une ligne reçue en direct** (issue #663) :
+      un fichier refusé **pendant que l'onglet est déjà ouvert** (ligne rouge
+      apparue via l'événement SSE `fichier_refuse`, sans rechargement) se
+      referme lui aussi tout seul, **sans recharger la page**, dès que le
+      fichier quitte `issues_inbox/rejected/` (traité/retiré) — au prochain
+      cycle de polling `/issues-inbox/etat` (7 s), même comportement qu'une
+      ligne reconstituée au rechargement. Pas besoin d'un F5 d'entretien.
+      Vérifier aussi qu'une ligne **tout juste refusée** ne clignote pas :
+      elle reste affichée sans interruption jusqu'à ce que le fichier soit
+      effectivement retiré du disque.
 - [ ] **Lot multi-blocs mixte** (un fichier contenant plusieurs blocs, certains
       valides, certains invalides) → chaque bloc créé devient sa **ligne d'issue**,
       chaque bloc refusé produit sa **propre ligne rouge distincte** ; aucune

@@ -335,15 +335,23 @@ export function appliquerFichierRefuse(lignes, fichier, titre, motif) {
 }
 
 // Reconstruction/purge des lignes rouges depuis /issues-inbox/etat.rejetes.
-// Les lignes SSE (source 'sse') sont CONSERVÉES telles quelles ; les lignes
-// 'etat' sont entièrement recalculées : une ligne 'etat' n'est (re)créée que
-// pour un fichier encore rejeté n'ayant PAS déjà une ligne rouge (sse ou etat
-// venant d'être ajoutée) — donc pas de doublon avec une ligne SSE en direct —
-// et disparaît dès que le fichier ne figure plus dans `rejetes` (fichier traité
-// manuellement / nettoyé). `rejetes` = [{nom, date, motif?}].
+// Une ligne de statut 'refuse' — SANS DISTINCTION de source ('sse' ou 'etat')
+// — disparaît dès que son fichier ne figure plus dans `rejetes` (traité/
+// nettoyé manuellement) : la bannière se referme donc d'elle-même, sans
+// recharger la page (issue #663 ; avant cela, seule une ligne 'etat' était
+// purgée, une ligne 'sse' restait affichée jusqu'au rechargement complet).
+// Une ligne 'etat' n'est (re)créée que pour un fichier encore rejeté n'ayant
+// PAS déjà de ligne rouge survivante (sse ou etat) — donc pas de doublon avec
+// une ligne SSE en direct. Pas de course critique sur un fichier tout juste
+// refusé : watcher_issues_inbox.py déplace le fichier vers rejected/ AVANT
+// d'émettre l'événement SSE fichier_refuse (cf. _rejeter), donc `rejetes` le
+// liste déjà au prochain cycle de polling (POLL_INBOX_MS) — la ligne SSE
+// fraîchement affichée y survit intacte. Les lignes 'recu' (statut ≠ 'refuse')
+// ne sont jamais concernées par cette purge. `rejetes` = [{nom, date, motif?}].
 export function reconcilierRejetes(lignes, rejetes) {
-  const nonEtat = (lignes || []).filter(l => l.source !== 'etat');
-  const dejaRefuse = new Set(nonEtat.filter(l => l.statut === 'refuse').map(l => l.fichier));
+  const nomsRejetes = new Set((rejetes || []).map(r => r && r.nom).filter(Boolean));
+  const conservees = (lignes || []).filter(l => l.statut !== 'refuse' || nomsRejetes.has(l.fichier));
+  const dejaRefuse = new Set(conservees.filter(l => l.statut === 'refuse').map(l => l.fichier));
   const ajouts = [];
   for (const r of (rejetes || [])) {
     const nom = r && r.nom;
@@ -352,7 +360,7 @@ export function reconcilierRejetes(lignes, rejetes) {
     ajouts.push({ fichier: nom, statut: 'refuse', motif: r.motif || MOTIF_INDISPONIBLE,
                   titre: null, source: 'etat' });
   }
-  return nonEtat.concat(ajouts);
+  return conservees.concat(ajouts);
 }
 
 // Descriptif visuel d'une ligne « fichier » (classe CSS + texte + title),
