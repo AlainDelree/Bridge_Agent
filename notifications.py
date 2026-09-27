@@ -91,7 +91,13 @@ def notifier_bureau(nom_projet: str, titre: str, message: str,
 def notifier_ntfy(url_ntfy: str, titre: str, message: str,
                   priorite: str = "default", log: logging.Logger = _log_defaut):
     """Notification push sur le topic ntfy (téléphone).
-    priorite : 'min', 'low', 'default', 'high', 'urgent'."""
+    priorite : 'min', 'low', 'default', 'high', 'urgent'.
+    TOPIC_NTFY est facultatif (issue #667) : url_ntfy vide (aucun topic
+    configuré) → aucune requête réseau tentée, aucune erreur journalisée
+    (au plus un log.debug), pas un échec réel."""
+    if not url_ntfy:
+        log.debug("TOPIC_NTFY non configuré — notification ntfy ignorée.")
+        return
     try:
         subprocess.run(
             ["curl", "-s",
