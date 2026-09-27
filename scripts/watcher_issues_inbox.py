@@ -842,6 +842,31 @@ def _ecrire_motif_rejet(cible: Path, detail: str) -> None:
         log.warning(f"Sidecar de motif non écrit pour {cible.name} : {e}")
 
 
+def purger_motifs_orphelins(cfg: ConfigInbox) -> int:
+    """Supprime tout sidecar `rejected/.motifs/<nom>.motif` dont le fichier
+    rejeté associé (`rejected/<nom>`) n'existe plus (issue #662) — par
+    exemple après une suppression manuelle depuis l'explorateur de fichiers,
+    en dehors de tout mécanisme applicatif. Purge silencieuse et purement
+    ménagère : aucun effet observable côté interface ou `/issues-inbox/etat`
+    (qui ignore déjà ce sous-dossier, cf. etat_inbox()), aucune ligne de log.
+    Absence ou vacuité de `rejected/.motifs/` : ne plante pas, retourne 0.
+    Retourne le nombre de sidecars purgés (informatif, utilisé par les tests)."""
+    dossier_motifs = cfg.rejected_dir / DOSSIER_MOTIFS
+    if not dossier_motifs.is_dir():
+        return 0
+    nb_purges = 0
+    for chemin_motif in dossier_motifs.glob(f"*{SUFFIXE_MOTIF}"):
+        nom_rejete = chemin_motif.name[:-len(SUFFIXE_MOTIF)]
+        if (cfg.rejected_dir / nom_rejete).exists():
+            continue
+        try:
+            chemin_motif.unlink()
+            nb_purges += 1
+        except OSError as e:
+            log.warning(f"Purge du sidecar orphelin {chemin_motif.name} échouée : {e}")
+    return nb_purges
+
+
 def _deplacer_vers_rejected(cfg: ConfigInbox, chemin: Path, detail: str) -> Path | None:
     """Déplace seul, sans journaliser (issue #508) : un lot dont TOUS les blocs
     ont échoué a déjà journalisé chaque motif individuellement (une ligne par
@@ -1136,6 +1161,7 @@ def boucle(cfg: ConfigInbox, once: bool = False, duree_min: int = 0) -> None:
 
     while True:
         traiter_dossier(cfg)
+        purger_motifs_orphelins(cfg)
         if once:
             return
         if echeance_monotone is not None and time.monotonic() >= echeance_monotone:
