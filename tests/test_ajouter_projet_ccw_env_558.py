@@ -1,24 +1,34 @@
 #!/usr/bin/env python3
-"""Test de non-régression — issue #558 : `ajouter_projet_ccw.ps1` échouait à
-réappliquer les tokens existants (`AppEnvironmentExtra`) lors d'une relance
-sur un projet déjà finalisé.
+"""Test de non-régression — issues #558/#658/#659 : cohérence de la méthode
+utilisée pour poser `AppEnvironmentExtra` via `nssm set` sur les services
+NSSM CCW, dans les 3 scripts du dépôt qui la construisent.
 
-Cause réelle (confirmée par lecture du code, pas supposée) : la ligne de
-réapplication faisait `nssm set $NomService AppEnvironmentExtra @envExtra`
-— le splat PowerShell (`@`) d'un tableau de lignes `KEY=VALUE` fait recevoir
-à `nssm.exe` chaque entrée comme un argument SÉPARÉ au lieu d'une unique
-valeur multi-lignes, d'où l'erreur nssm « Environment should comprise
-strings of the form KEY=VALUE. ». Les DEUX autres endroits du dépôt qui
-posent `AppEnvironmentExtra` (`mettre_a_jour_tokens_ccw.ps1`,
-`creer_projet_ccw_complet.ps1`) construisent au contraire UNE SEULE chaîne,
-les paires étant séparées par un saut de ligne `` `n`` — c'est ce pattern qui
-fonctionne avec nssm (cf. BRIDGE_AGENT_DOC.md, « piège connu »).
+Historique (voir issue #659 pour le détail complet) : l'issue #558 avait
+diagnostiqué qu'un tableau PowerShell SPLATTÉ (`@variable`) passé à
+`nssm set … AppEnvironmentExtra` était fautif, et avait « corrigé » ceci en
+joignant les entrées en UNE SEULE chaîne séparée par un saut de ligne `` `n``
+— mais SANS reproduire le bug sur un nssm réel (lecture du code seule,
+jamais testé avec une ligne PATH, absente du service à l'époque). L'issue
+#658 (27/09/2026, PC fixe réel, nssm 2.24) a ensuite constaté empiriquement
+l'INVERSE pour une valeur contenant des espaces (PATH, ex. « Program
+Files ») : la chaîne unique jointe par `` `n`` ne pose PAS de ligne PATH
+effective, alors que des ARGUMENTS SÉPARÉS (un par ligne) fonctionnent bien
+— y compris pour cette valeur à espaces, donc a fortiori pour des tokens qui
+n'en ont pas.
+
+Issue #659 retient donc les arguments séparés comme SEULE méthode dans tout
+le dépôt, dans les 3 scripts qui posent `AppEnvironmentExtra` :
+`ajouter_projet_ccw.ps1`, `mettre_a_jour_tokens_ccw.ps1` (déjà aligné par
+#658) et `creer_projet_ccw_complet.ps1`. Ce test vérifie :
+  - qu'aucun des 3 ne joint plus les entrées en une chaîne unique via
+    `[string]::Join("`n", …)` avant `nssm set … AppEnvironmentExtra` ;
+  - qu'aucun des 3 ne passe un tableau splatté (`@variable`) à
+    `nssm set … AppEnvironmentExtra` (ambiguïté à éviter, cf. #659) ;
+  - que chacun passe bien PLUSIEURS arguments scalaires distincts à
+    `nssm set … AppEnvironmentExtra`.
 
 Ce test est une analyse STATIQUE du texte des scripts (pas d'exécution
-PowerShell ni nssm réels — indisponibles sous Linux) : il aurait détecté la
-régression avant le test réel sur `rummikub` en repérant le splat `@envExtra`
-passé directement à `nssm set … AppEnvironmentExtra`, et il garde la
-cohérence entre les 3 scripts qui manipulent ce paramètre.
+PowerShell ni nssm réels — indisponibles sous Linux).
 
 Exécution :  python3 tests/test_ajouter_projet_ccw_env_558.py
 Sortie      :  code 0 si tous les scénarios passent, 1 sinon.
@@ -31,105 +41,118 @@ from pathlib import Path
 RACINE = Path(__file__).resolve().parent.parent
 DOSSIER_PS = RACINE / "provisioning" / "windows"
 
-# Motif du bug #558 : un identifiant splatté (@nomVariable) passé comme valeur
-# à `nssm set … AppEnvironmentExtra`. Volontairement large (n'importe quel nom
-# de variable) pour attraper toute régression future, pas seulement $envExtra.
-MOTIF_SPLAT_BUG = re.compile(
+# Les 3 scripts qui posent AppEnvironmentExtra via nssm set, avec leur chemin.
+SCRIPTS = {
+    "ajouter_projet_ccw.ps1": DOSSIER_PS / "ajouter_projet_ccw.ps1",
+    "mettre_a_jour_tokens_ccw.ps1": DOSSIER_PS / "mettre_a_jour_tokens_ccw.ps1",
+    "creer_projet_ccw_complet.ps1": RACINE / "creer_projet_ccw_complet.ps1",
+}
+
+# Motif du bug #558 (tableau splatté @variable passé à nssm set … AppEnvironmentExtra).
+MOTIF_SPLAT = re.compile(
     r"nssm\s+set\s+\S+\s+AppEnvironmentExtra\s+@\w+", re.IGNORECASE
 )
 
-# Motif du pattern correct : une SEULE variable scalaire (pas de `@` en tête)
-# passée en valeur à `nssm set … AppEnvironmentExtra`.
-MOTIF_SCALAIRE_OK = re.compile(
-    r"nssm\s+set\s+\S+\s+AppEnvironmentExtra\s+\$\w+\s*(\||$)", re.MULTILINE
+# Motif de l'ancien pattern #558 (chaîne unique construite par jointure `n).
+MOTIF_JOIN_CHAINE_UNIQUE = re.compile(r'\[string\]::Join\(\s*"`n"')
+
+# Motif du pattern retenu par #659 : AU MOINS DEUX arguments scalaires ($xxx,
+# pas de @) distincts à la suite de AppEnvironmentExtra sur la même commande.
+MOTIF_ARGS_SEPARES = re.compile(
+    r"nssm\s+set\s+\S+\s+AppEnvironmentExtra\s+\$\w+(\[\d+\])?\s+\$\w+(\[\d+\])?",
+    re.IGNORECASE,
 )
 
 
-def _lire(nom_fichier: str) -> str:
-    chemin = DOSSIER_PS / nom_fichier
+def _lire(chemin: Path) -> str:
     assert chemin.is_file(), f"script introuvable : {chemin}"
     return chemin.read_text(encoding="utf-8-sig")
 
 
-def scenario_ajouter_projet_pas_de_splat():
-    """`ajouter_projet_ccw.ps1` ne doit JAMAIS passer un tableau splatté
-    (`@variable`) comme valeur de AppEnvironmentExtra à nssm — c'est
-    exactement le bug #558."""
-    texte = _lire("ajouter_projet_ccw.ps1")
-    trouve = MOTIF_SPLAT_BUG.findall(texte)
-    assert not trouve, f"splat @variable détecté sur AppEnvironmentExtra : {trouve}"
+def scenario_pas_de_splat():
+    """Aucun des 3 scripts ne doit passer un tableau splatté (`@variable`)
+    à `nssm set … AppEnvironmentExtra` — c'est le bug #558 originel."""
+    for nom, chemin in SCRIPTS.items():
+        texte = _lire(chemin)
+        trouve = MOTIF_SPLAT.findall(texte)
+        assert not trouve, f"{nom} : splat @variable détecté sur AppEnvironmentExtra : {trouve}"
     return {}
 
 
-def scenario_ajouter_projet_reapplique_une_chaine_unique():
-    """La réapplication des tokens préservés doit passer une SEULE chaîne
-    scalaire à `nssm set … AppEnvironmentExtra` (le fix #558)."""
-    texte = _lire("ajouter_projet_ccw.ps1")
-    assert MOTIF_SCALAIRE_OK.search(texte), (
-        "aucune réapplication de AppEnvironmentExtra via une variable "
-        "scalaire trouvée — le fix #558 a-t-il régressé ?"
+def scenario_pas_de_chaine_unique_jointe():
+    """Aucun des 3 scripts ne doit plus construire une chaîne UNIQUE jointe
+    par `` `n`` pour AppEnvironmentExtra — pattern #558 invalidé par #658/#659
+    (ne pose pas de ligne PATH effective avec nssm 2.24, cf. issue #659)."""
+    for nom, chemin in SCRIPTS.items():
+        texte = _lire(chemin)
+        assert not MOTIF_JOIN_CHAINE_UNIQUE.search(texte), (
+            f"{nom} : construction par [string]::Join(\"`n\", …) encore présente — "
+            "pattern #558 invalidé par #659, à remplacer par des arguments séparés"
+        )
+    return {}
+
+
+def scenario_args_separes_partout():
+    """Chacun des 3 scripts doit passer PLUSIEURS arguments scalaires
+    distincts à `nssm set … AppEnvironmentExtra` (seule méthode retenue,
+    issue #659)."""
+    for nom, chemin in SCRIPTS.items():
+        texte = _lire(chemin)
+        assert MOTIF_ARGS_SEPARES.search(texte), (
+            f"{nom} : aucun appel « nssm set … AppEnvironmentExtra $a $b » "
+            "(arguments séparés) trouvé — le pattern #659 a-t-il régressé ?"
+        )
+    return {}
+
+
+def scenario_ajouter_projet_retrouve_path_par_cle():
+    """`ajouter_projet_ccw.ps1` doit retrouver PATH/GH_TOKEN/CLAUDE_CODE_OAUTH_TOKEN
+    par clé (pas par position) avant réapplication — l'ordre/le nombre de
+    lignes préservées varie selon l'historique du service (PATH absent avant
+    #658)."""
+    texte = _lire(SCRIPTS["ajouter_projet_ccw.ps1"])
+    assert "'PATH', 'GH_TOKEN', 'CLAUDE_CODE_OAUTH_TOKEN'" in texte, (
+        "reconstruction par clé (PATH/GH_TOKEN/CLAUDE_CODE_OAUTH_TOKEN) introuvable"
     )
-    return {}
-
-
-def scenario_ajouter_projet_construit_avec_saut_de_ligne():
-    """La chaîne reconstruite avant réapplication doit joindre les entrées
-    avec un saut de ligne `` `n`` (comme les 2 autres scripts qui posent
-    AppEnvironmentExtra) — un simple espace ou une virgule corromprait les
-    tokens (cf. piège documenté pour mettre_a_jour_tokens_ccw.ps1)."""
-    texte = _lire("ajouter_projet_ccw.ps1")
-    assert re.search(r'\[string\]::Join\(\s*"`n"\s*,\s*\$envExtra\s*\)', texte), (
-        "construction de la chaîne AppEnvironmentExtra introuvable ou "
-        "n'utilise plus le séparateur `n attendu"
-    )
-    return {}
-
-
-def scenario_coherence_mettre_a_jour_tokens():
-    """`mettre_a_jour_tokens_ccw.ps1` (référence qui a toujours fonctionné)
-    n'utilise pas non plus de splat — garde-fou de cohérence."""
-    texte = _lire("mettre_a_jour_tokens_ccw.ps1")
-    assert not MOTIF_SPLAT_BUG.findall(texte)
-    assert re.search(r"nssm\s+set\s+\$NomService\s+AppEnvironmentExtra\s+\$envExtra\s*\|", texte)
-    return {}
-
-
-def scenario_coherence_creer_projet_complet():
-    """`creer_projet_ccw_complet.ps1` (autre poseur de AppEnvironmentExtra,
-    hors provisioning/windows) n'utilise pas non plus de splat."""
-    chemin = RACINE / "creer_projet_ccw_complet.ps1"
-    assert chemin.is_file(), f"script introuvable : {chemin}"
-    texte = chemin.read_text(encoding="utf-8-sig")
-    assert not MOTIF_SPLAT_BUG.findall(texte)
-    assert re.search(r"nssm\s+set\s+\$NomService\s+AppEnvironmentExtra\s+\$nouvelExtra\s*\|", texte)
     return {}
 
 
 def scenario_le_bug_aurait_ete_detecte_sur_l_ancien_code():
-    """Contrôle négatif : le motif de détection du bug matche bien sur le
+    """Contrôle négatif : le motif de détection du splat matche bien sur le
     texte de l'ANCIENNE ligne fautive (issue #558), pour prouver que ce test
-    n'est pas vide de sens — il aurait échoué AVANT le fix."""
+    n'est pas vide de sens."""
     ancienne_ligne = 'nssm set $NomService AppEnvironmentExtra @envExtra | Out-Null'
-    assert MOTIF_SPLAT_BUG.search(ancienne_ligne), (
-        "le motif de détection ne repère pas l'ancien bug — test inutile"
+    assert MOTIF_SPLAT.search(ancienne_ligne), (
+        "le motif de détection ne repère pas l'ancien bug #558 — test inutile"
+    )
+    return {}
+
+
+def scenario_le_motif_de_jointure_aurait_ete_detecte():
+    """Contrôle négatif : le motif de détection de la chaîne unique jointe
+    matche bien sur le texte de l'ANCIEN pattern #558 (celui remplacé par
+    #659), pour prouver que ce test n'est pas vide de sens."""
+    ancienne_ligne = '$envExtraChaine = [string]::Join("`n", $envExtra)'
+    assert MOTIF_JOIN_CHAINE_UNIQUE.search(ancienne_ligne), (
+        "le motif de détection ne repère pas l'ancien pattern #558 — test inutile"
     )
     return {}
 
 
 def main():
     tests = [
-        ("ajouter_projet_ccw.ps1 : pas de splat @variable sur AppEnvironmentExtra (bug #558)",
-         scenario_ajouter_projet_pas_de_splat),
-        ("ajouter_projet_ccw.ps1 : réapplication via une chaîne scalaire unique",
-         scenario_ajouter_projet_reapplique_une_chaine_unique),
-        ("ajouter_projet_ccw.ps1 : chaîne construite avec [string]::Join(\"`n\", ...)",
-         scenario_ajouter_projet_construit_avec_saut_de_ligne),
-        ("mettre_a_jour_tokens_ccw.ps1 : cohérence, pas de splat",
-         scenario_coherence_mettre_a_jour_tokens),
-        ("creer_projet_ccw_complet.ps1 : cohérence, pas de splat",
-         scenario_coherence_creer_projet_complet),
-        ("contrôle négatif : le motif détecte bien l'ancien code fautif",
+        ("pas de splat @variable sur AppEnvironmentExtra dans les 3 scripts (bug #558)",
+         scenario_pas_de_splat),
+        ("plus de chaîne unique jointe par `n pour AppEnvironmentExtra (invalidé par #658/#659)",
+         scenario_pas_de_chaine_unique_jointe),
+        ("arguments séparés utilisés partout pour AppEnvironmentExtra (méthode #659)",
+         scenario_args_separes_partout),
+        ("ajouter_projet_ccw.ps1 : retrouve PATH/GH_TOKEN/CLAUDE_CODE_OAUTH_TOKEN par clé",
+         scenario_ajouter_projet_retrouve_path_par_cle),
+        ("contrôle négatif : le motif détecte bien l'ancien splat fautif (#558)",
          scenario_le_bug_aurait_ete_detecte_sur_l_ancien_code),
+        ("contrôle négatif : le motif détecte bien l'ancien pattern de jointure (#558)",
+         scenario_le_motif_de_jointure_aurait_ete_detecte),
     ]
     echecs = 0
     for nom, fn in tests:
