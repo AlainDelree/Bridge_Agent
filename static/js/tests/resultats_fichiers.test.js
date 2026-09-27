@@ -120,10 +120,24 @@ test('reconcilierRejetes : ne double pas une ligne SSE déjà présente', () => 
   assert.equal(lignes[0].source, 'sse');     // la ligne SSE est conservée telle quelle
 });
 
-test('reconcilierRejetes : conserve les lignes SSE, ne purge que les « etat »', () => {
+// ─── issue #663 : une ligne « sse » se referme désormais toute seule ────────
+test('reconcilierRejetes : purge une ligne SSE refusée dont le fichier a quitté rejetes', () => {
+  const sse = appliquerFichierRefuse([], 'live.md', 'T', 'motif live');
+  const lignes = reconcilierRejetes(sse, []);   // live.md retiré de rejected/ entre-temps
+  assert.deepEqual(lignes, []);
+});
+
+test('reconcilierRejetes : conserve une ligne SSE refusée tant que son fichier reste dans rejetes', () => {
+  const sse = appliquerFichierRefuse([], 'live.md', 'T', 'motif live');
+  const lignes = reconcilierRejetes(sse, [{ nom: 'live.md', date: 1, motif: 'via disque' }]);
+  assert.equal(lignes.length, 1);
+  assert.equal(lignes[0].source, 'sse');
+});
+
+test('reconcilierRejetes : une ligne « reçu » (statut recu) n\'est jamais purgée', () => {
   const sse = appliquerFichierRecu([], 'encours.md');   // ligne « reçu » vivante
   const lignes = reconcilierRejetes(sse, []);
-  assert.deepEqual(lignes, sse);   // rien à reconstruire, ligne SSE intacte
+  assert.deepEqual(lignes, sse);   // rien à reconstruire, ligne « reçu » intacte
 });
 
 // ─── descriptionLigneFichier : contrat d'EXCLUSION (classe + texte) ──────────
