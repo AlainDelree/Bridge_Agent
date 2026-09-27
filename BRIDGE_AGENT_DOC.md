@@ -3208,6 +3208,15 @@ new_issue.py (ThinkPad) → polling gh → détecte la transition → bip/bulle/
   dépendance à l'objet `CFG` de `watcher.py` ni à Flask (tout leur est passé en
   argument). Importé par **les deux** programmes. `watcher.py` conserve des
   enveloppes minces qui délèguent à ce module — ses sites d'appel sont inchangés.
+  `TOPIC_NTFY` est **facultatif** dans le `.conf` (issue #667, ne fait plus
+  partie de `CHAMPS_REQUIS`) : `Config.url_ntfy` renvoie alors une chaîne
+  vide plutôt qu'une URL invalide (`https://ntfy.sh/`), et `notifier_ntfy()`
+  détecte cette chaîne vide en tête de fonction pour sauter l'envoi
+  **proprement** — aucune requête réseau tentée, au plus un `log.debug`,
+  jamais un `log.error`/`log.warning` (ce n'est pas un échec). Se renseigne
+  à tout moment via l'onglet Configuration pour activer ce canal sur un
+  projet donné, sans qu'aucun redémarrage du watcher au-delà de celui déjà
+  requis pour tout changement de `.conf` ne soit nécessaire.
 - **Poller `app/notifications_poller.py`** : thread démon lancé par
   `new_issue.py` (à côté du heartbeat). Toutes les `BRIDGE_NOTIF_INTERVALLE`
   secondes (défaut **60 s**), il vérifie une **liste d'issues surveillées**

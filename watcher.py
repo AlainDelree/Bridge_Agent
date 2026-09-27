@@ -394,9 +394,9 @@ class Config:
     nom: str             # identifiant court sans espaces (journal, préfixe notif, prompt)
     depot: str           # ex. "AlainDelree/Bridge_Agent"
     rep_travail: Path    # répertoire de travail de Claude Code pour CE projet
-    topic_ntfy: str      # topic ntfy pour les push téléphone
 
     # Optionnels (défauts sensés)
+    topic_ntfy: str       = ""     # topic ntfy pour les push téléphone (issue #667) ; vide = notifications ntfy désactivées, aucun envoi ni erreur
     label: str            = "for-linux"
     intervalle: int       = 10
     max_essais: int       = 3
@@ -423,6 +423,12 @@ class Config:
 
     @property
     def url_ntfy(self) -> str:
+        """URL ntfy complète, ou chaîne vide si TOPIC_NTFY n'est pas renseigné
+        (champ facultatif depuis l'issue #667) — signale l'absence de
+        notification configurée plutôt qu'une URL invalide comme
+        'https://ntfy.sh/'."""
+        if not self.topic_ntfy:
+            return ""
         return f"https://ntfy.sh/{self.topic_ntfy}"
 
     @property
@@ -441,7 +447,7 @@ class Config:
         return "agent Windows" if platform.system() == "Windows" else "agent Linux"
 
 
-CHAMPS_REQUIS = ("NOM", "DEPOT", "REP_TRAVAIL", "TOPIC_NTFY")
+CHAMPS_REQUIS = ("NOM", "DEPOT", "REP_TRAVAIL")
 
 
 def lire_conf(chemin: Path) -> dict:
@@ -491,7 +497,7 @@ def charger_config(chemin: Path) -> Config:
         nom         = brut["NOM"],
         depot       = brut["DEPOT"],
         rep_travail = Path(brut["REP_TRAVAIL"]).expanduser(),
-        topic_ntfy  = brut["TOPIC_NTFY"],
+        topic_ntfy  = brut.get("TOPIC_NTFY", ""),
         label       = brut.get("LABEL") or "for-linux",
         intervalle     = entier("INTERVALLE", 10),
         max_essais     = entier("MAX_ESSAIS", 3),

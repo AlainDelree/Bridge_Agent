@@ -64,10 +64,6 @@ LABELS = [
 # garde que ce qui combine ces couleurs avec configs/*.conf (couleurs_utilisees/
 # couleurs_disponibles ci-dessous).
 
-# Topic ntfy partagé par tous les projets existants (voir configs/*.conf).
-# Proposé par défaut ; l'utilisateur peut le changer pour un topic dédié.
-TOPIC_NTFY_DEFAUT = "hippocampe-ff-galerie-xyz123"
-
 # Modèle CCL forcé par défaut sur tout nouveau projet (voir configs/*.conf) :
 # évite tout repli silencieux vers Opus sur le plan Max. Reste modifiable
 # à la main dans le .conf après génération (issue #489).
@@ -228,7 +224,7 @@ def creer_depot(depot: str, nom: str, public: bool = True) -> tuple[bool, str]:
 
 
 def ecrire_conf(nom: str, depot: str, rep: str, perimetre: str,
-                topic: str = TOPIC_NTFY_DEFAUT,
+                topic: str = "",
                 couleur: str = "") -> Path:
     """Génère configs/<nom>.conf depuis le gabarit. Renvoie le chemin écrit."""
     chemin = DOSSIER_CONFIGS / f"{nom}.conf"
@@ -534,7 +530,7 @@ def creer_projet(nom: str, depot: str = "", rep: str = "", perimetre: str = "",
     depot = (depot or "").strip() or depot_defaut(nom)
     rep = (rep or "").strip() or rep_defaut(nom)
     perimetre = (perimetre or "").strip() or rep
-    topic = (topic or "").strip() or TOPIC_NTFY_DEFAUT
+    topic = (topic or "").strip()
     # Couleur d'accent : la couleur choisie si elle est encore libre, sinon la
     # première disponible, sinon '' (palette épuisée → repli map fixe/hash côté
     # frontend). Exclut au passage les couleurs déjà prises (issue #121).
@@ -695,7 +691,7 @@ def etape_repertoire(nom: str) -> tuple[str, str]:
 
 def etape_conf(nom: str, depot: str, rep: str, perimetre: str) -> Path:
     titre("4. Fichier configs/<nom>.conf")
-    topic = demander("Topic ntfy", TOPIC_NTFY_DEFAUT)
+    topic = demander("Topic ntfy (facultatif — laisser vide pour désactiver les notifications ntfy)", "")
     # Couleur d'accent : proposer la première libre par défaut, laisser choisir
     # parmi les couleurs non encore utilisées (issue #121).
     couleur = etape_couleur()
@@ -885,10 +881,15 @@ GABARIT_CONF = """# configs/{nom}.conf
 NOM         = {nom}
 DEPOT       = {depot}
 REP_TRAVAIL = {rep_travail}
-TOPIC_NTFY  = {topic_ntfy}
 
 # ─── Périmètre CCL (dossiers autorisés, séparés par des virgules) ─────────────
 PERIMETRE   = {perimetre}
+
+# ─── Notifications push ntfy (facultatif ; vide = désactivées, issue #667) ────
+# Topic ntfy dédié à ce projet. Laisser vide : aucune notification ntfy n'est
+# envoyée (ni erreur journalisée). Renseignable à tout moment via l'onglet
+# Configuration pour activer ce canal.
+TOPIC_NTFY  = {topic_ntfy}
 
 # ─── Sauvegarde avant modification (mode écriture) ────────────────────────────
 CMD_BACKUP  = git add -A && git commit -m "avant-<description>" --allow-empty
