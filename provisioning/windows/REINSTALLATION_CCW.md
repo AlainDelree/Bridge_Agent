@@ -62,11 +62,55 @@ précédente) :
 .\provisionner.ps1
 ```
 
-Installe Git, GitHub CLI, Python 3, PyInstaller (winget) et Claude Code
-(installeur natif), clone `Bridge_Agent` en lecture seule dans
+**winget n'est PAS un prérequis** (depuis l'issue #658, réinstallation réelle
+du 27/09/2026 menée avec Alain). Sur l'édition Windows 11 IoT Enterprise LTSC
+du PC fixe CCW, le bootstrap de winget (App Installer) échoue systématiquement
+dès sa toute première étape : le paquet dépend du framework
+`Microsoft.VCLibs.140.00` (sans le suffixe `.UWPDesktop`), pour lequel aucune
+source de téléchargement autonome fiable n'a été trouvée. `provisionner.ps1`
+installe donc désormais Git, GitHub CLI et Python 3.12 par **téléchargement
+direct des installeurs officiels de chaque éditeur** (Git : dernier
+`git-for-windows/git` GitHub Releases ; GitHub CLI : dernier `.msi` `cli/cli` ;
+Python : installeur `python.org`), NSSM par archive `.zip` autonome
+(`nssm.cc`), et OpenSSL par un installeur autonome équivalent au paquet winget
+précédemment utilisé (Shining Light Productions) — winget reste utilisable
+pour OpenSSL en repli optionnel (`-TenterWinget`), mais aucune étape
+obligatoire n'en dépend plus. Le script installe aussi PyInstaller (pip) et
+Claude Code (installeur natif), désactive Windows Update (décision du
+27/09/2026, suite à un plantage `ucrtbase.dll` causé par une mise à jour
+cumulative), clone `Bridge_Agent` en lecture seule dans
 `C:\CCW\Bridge_Agent`, génère la paire de clés de bootstrap « Projet CCW »
 (voir étape 8 ci-dessous), écrit `configs\ccw.conf` (avec un placeholder
-`TOPIC_NTFY`) et enregistre le service Windows `CCW-Watcher` via NSSM.
+`TOPIC_NTFY`) et enregistre le service Windows `CCW-Watcher` via NSSM — avec
+son `PATH` complet posé dans `AppEnvironmentExtra` (machine + `.local\bin` du
+compte de service + `WindowsApps`), sans quoi le service ne verrait ni
+`claude.exe` ni les autres exécutables installés en per-user.
+
+Un mode `-DryRun` (alias `-WhatIf`) affiche toutes les actions prévues sans
+rien exécuter — utile pour relire le script avant la prochaine vraie
+réinstallation (~tous les 3 mois) : `.\provisionner.ps1 -DryRun`.
+
+Le script demande le mot de passe du compte de service en saisie masquée
+(`Read-Host -AsSecureString`) : cela fonctionne aussi bien en session
+interactive locale qu'**en session SSH** — contrairement à l'ancienne
+implémentation (`Get-Credential`), qui ouvrait une fenêtre graphique
+invisible et bloquait le script silencieusement, sans erreur visible, quand
+il était lancé depuis SSH (constaté le 27/09/2026).
+
+À la fin de son exécution, le script termine par un résumé complet
+(logiciels installés + versions, service créé, `PATH` posé, étapes
+manuelles restantes) et un **rappel explicite** : un compte déjà ouvert
+avant cette installation ne voit pas le nouveau `PATH` avant reconnexion —
+fermer/rouvrir la session (ou, mieux, redémarrer la machine) avant de
+considérer le provisioning terminé.
+
+> ⚠️ **Collage de scripts multi-lignes via SSH.** Coller un long bloc
+> PowerShell multi-lignes directement dans une session SSH mélange parfois
+> l'ordre des lignes (constaté à plusieurs reprises le 27/09/2026). Pour tout
+> script de dépannage improvisé pendant une réinstallation, préférer
+> l'écrire dans un fichier `.ps1` via `Set-Content` puis l'exécuter avec
+> `-File`, plutôt que de coller un bloc multi-lignes directement dans le
+> prompt.
 
 ### 5. Renseigner le topic ntfy et poser les tokens
 
@@ -78,8 +122,10 @@ le topic réel), puis lancer :
 ```
 
 Le script demande `GH_TOKEN` puis `CLAUDE_CODE_OAUTH_TOKEN` en saisie
-masquée, les applique au service via `nssm set … AppEnvironmentExtra`, et
-redémarre `CCW-Watcher`.
+masquée, reconstruit **aussi** la ligne `PATH` (issue #658 — sans elle, le
+`nssm set … AppEnvironmentExtra` de ce script écraserait celle posée par
+`provisionner.ps1`, privant à nouveau le service de `claude.exe`), applique
+les trois lignes au service, et redémarre `CCW-Watcher`.
 
 ### 6. Vérifier que le service tourne
 
@@ -176,10 +222,11 @@ stade** : cette étape ne fait que poser la paire de clés elle-même).
     ssh -i ~/.ssh/ccl_ccw AlainW@<ip> type C:\CCW\cles_bootstrap\bootstrap_publique.pem
     ```
 
-Génération via `openssl.exe` (déjà présent : embarqué par Git pour Windows,
-sous-dossier `usr\bin`) plutôt que `.NET` natif ou `age` — voir le
-commentaire détaillé en tête de la section correspondante dans
-`provisionner.ps1` pour la justification complète du choix.
+Génération via `openssl.exe`, installé par `provisionner.ps1` (installeur
+autonome officiel Shining Light Productions depuis l'issue #658, winget en
+repli optionnel) plutôt que `.NET` natif ou `age` — voir le commentaire
+détaillé en tête de la section correspondante dans `provisionner.ps1` pour la
+justification complète du choix.
 
 > ⚠️ **La clé privée ne survit PAS à une réinstallation.** Comme le reste de
 > l'état local du PC fixe, `C:\CCW\cles_bootstrap\` disparaît avec le disque

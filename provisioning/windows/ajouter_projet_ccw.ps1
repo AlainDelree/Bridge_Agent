@@ -4,8 +4,9 @@
   Généralisation multi-projets de CCW, sur le modèle des watchers CCL côté
   Linux : chaque projet a son propre clone, son propre config et son propre
   service NSSM. Là où provisionner.ps1 met en place l'agent CCW lui-même
-  (bootstrap winget + Claude Code + service CCW-Watcher pour Bridge_Agent),
-  CE script ajoute un projet SUPPLÉMENTAIRE une fois l'outillage déjà installé :
+  (Git/gh/Python/NSSM/OpenSSL + Claude Code + service CCW-Watcher pour
+  Bridge_Agent — sans dépendre de winget depuis l'issue #658), CE script
+  ajoute un projet SUPPLÉMENTAIRE une fois l'outillage déjà installé :
   il ne réinstalle rien, il se contente de cloner, configurer et enregistrer un
   service dédié.
 

@@ -13,11 +13,24 @@
        lisant dans un fichier « clé=valeur » poussé par l'appelant. Ce second
        mode permet à l'onglet CCW (interface web, Linux) de poser les tokens à
        distance via guestcontrol sans saisie manuelle dans la VM.
-    2. Reconstruit la chaîne AppEnvironmentExtra
-       « GH_TOKEN=…`nCLAUDE_CODE_OAUTH_TOKEN=… », le saut de ligne `n séparant
-       les deux valeurs. ATTENTION : un simple espace entre elles corrompt
-       silencieusement GH_TOKEN (constaté : erreur « Bad credentials »). Ce
-       script supprime ce risque de syntaxe.
+    2. Reconstruit AppEnvironmentExtra comme TROIS lignes distinctes : PATH
+       (machine + <CompteService>\.local\bin + WindowsApps), GH_TOKEN,
+       CLAUDE_CODE_OAUTH_TOKEN — issue #658, point 1. AVANT cette issue, la
+       ligne PATH posée par provisionner.ps1 lors du provisioning initial
+       était PERDUE ici, puisque « nssm set … AppEnvironmentExtra » REMPLACE
+       toute la valeur au lieu de l'étendre : un service recréé sans PATH ne
+       voit alors ni claude.exe ni les autres exécutables per-user, même si
+       la session interactive du même compte les trouve sans problème. Le
+       PATH est donc reconstruit ICI À NEUF (pas préservé tel quel : il peut
+       avoir changé depuis le provisioning, ex. nouvelle installation entre
+       temps) plutôt qu'écrasé. ATTENTION séparateur : constaté le 27/09/2026
+       — une chaîne UNIQUE avec des `n comme séparateur ENTRE les lignes ne
+       fonctionne PAS avec « nssm set » ; chaque ligne doit être un argument
+       SÉPARÉ (nssm set $Nom AppEnvironmentExtra $ligne1 $ligne2 $ligne3).
+       NB : ceci contredit le commentaire « BUG #558 » d'ajouter_projet_ccw.ps1
+       (chaîne unique jointe par `n, pattern non retesté depuis) — à
+       réconcilier dans une issue dédiée si le nouveau pattern est confirmé
+       plus largement.
     3. Applique via « nssm set CCW-Watcher AppEnvironmentExtra … » puis
        redémarre le service (« nssm restart CCW-Watcher »).
     4. Attend quelques secondes, puis affiche les 10 dernières lignes de
@@ -57,7 +70,13 @@ param(
     # Secondes d'attente avant lecture des logs (laisser le watcher démarrer).
     [int]$DelaiSecondes = 6,
     # Nombre de lignes de log à afficher pour confirmation.
-    [int]$NbLignesLog = 10
+    [int]$NbLignesLog = 10,
+    # Compte Windows sous lequel tourne le service (NSSM ObjectName) — même
+    # défaut que provisionner.ps1. Utilisé pour reconstruire la ligne PATH de
+    # AppEnvironmentExtra (issue #658, point 1) : .local\bin et WindowsApps du
+    # compte de service, sans lesquels le service ne verrait ni claude.exe ni
+    # les autres exécutables per-user.
+    [string]$CompteService = 'AlainW'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -136,30 +155,45 @@ if ([string]::IsNullOrWhiteSpace($FichierTokens)) {
 }
 
 # ---------------------------------------------------------------------------
-# 2. Construction de la chaîne AppEnvironmentExtra.
-#    Le saut de ligne `n entre les deux paires est IMPÉRATIF (un espace
-#    corrompt GH_TOKEN → « Bad credentials »). On travaille en clair le
-#    strict minimum, sans jamais afficher la chaîne.
+# 2. Construction des TROIS lignes de AppEnvironmentExtra (PATH, GH_TOKEN,
+#    CLAUDE_CODE_OAUTH_TOKEN) — issue #658, point 1.
+#
+#    PATH reconstruit À NEUF (pas préservé depuis l'ancienne valeur) : « nssm
+#    set … AppEnvironmentExtra » REMPLACE toute la valeur au lieu de
+#    l'étendre, donc sans cette ligne le service perdrait tout accès à
+#    claude.exe et aux autres exécutables per-user — constaté le 27/09/2026.
+#
+#    Chaque ligne est un argument SÉPARÉ passé à « nssm set » (voir plus bas) :
+#    une chaîne UNIQUE avec des `n comme séparateur ne fonctionne PAS
+#    (constaté le 27/09/2026 — contredit le commentaire « BUG #558 »
+#    d'ajouter_projet_ccw.ps1, à réconcilier séparément si confirmé plus
+#    largement). On travaille en clair le strict minimum, sans jamais
+#    afficher les valeurs.
 # ---------------------------------------------------------------------------
 if ([string]::IsNullOrWhiteSpace($gh) -or [string]::IsNullOrWhiteSpace($oauth)) {
     Avert 'Une des deux valeurs est vide (ou absente du fichier) — abandon, aucun changement appliqué.'
     exit 1
 }
 
-$envExtra = "GH_TOKEN=$gh`nCLAUDE_CODE_OAUTH_TOKEN=$oauth"
+$cheminLocalBin = "C:\Users\$CompteService\.local\bin"
+$cheminWindowsApps = "C:\Users\$CompteService\AppData\Local\Microsoft\WindowsApps"
+$pathMachine = [System.Environment]::GetEnvironmentVariable('Path', 'Machine')
+$lignePath  = "PATH=$pathMachine;$cheminLocalBin;$cheminWindowsApps"
+$ligneGh    = "GH_TOKEN=$gh"
+$ligneOauth = "CLAUDE_CODE_OAUTH_TOKEN=$oauth"
 
 # ---------------------------------------------------------------------------
 # 3. Application via NSSM puis redémarrage du service.
 # ---------------------------------------------------------------------------
 try {
-    Info "Écriture de AppEnvironmentExtra sur « $NomService »…"
-    nssm set $NomService AppEnvironmentExtra $envExtra | Out-Null
+    Info "Écriture de AppEnvironmentExtra sur « $NomService » (PATH + GH_TOKEN + CLAUDE_CODE_OAUTH_TOKEN)…"
+    nssm set $NomService AppEnvironmentExtra $lignePath $ligneGh $ligneOauth | Out-Null
 
     Info "Redémarrage du service « $NomService »…"
     nssm restart $NomService | Out-Null
 } finally {
     # Effacer les copies en clair de la mémoire dès que possible.
-    $gh = $null; $oauth = $null; $envExtra = $null
+    $gh = $null; $oauth = $null; $lignePath = $null; $ligneGh = $null; $ligneOauth = $null
     [System.GC]::Collect()
 }
 
