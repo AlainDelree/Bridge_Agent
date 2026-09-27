@@ -142,12 +142,21 @@ Ok "CLAUDE_CODE_OAUTH_TOKEN OK."
 # PATH complet + dossier claude.exe explicite (LE fix du probleme Scrabble :
 # un service NSSM demarre au boot n'herite pas forcement du PATH utilisateur
 # ou vit claude.exe sous %USERPROFILE%\.local\bin).
+#
+# Reconciliation issue #659 : une chaine UNIQUE jointe par `n (ci-dessous
+# jusqu'a #659) ne pose PAS de ligne PATH effective sur nssm 2.24 (constate
+# le 27/09/2026, issue #658) - PATH contient des espaces (ex. "Program
+# Files"), contrairement aux tokens. Seule methode retenue dans tout le
+# depot : chaque ligne comme argument nssm SEPARE (meme pattern que
+# mettre_a_jour_tokens_ccw.ps1 et ajouter_projet_ccw.ps1).
 $pathActuel = $env:PATH
-$nouvelExtra = "GH_TOKEN=$ghTokenPlain`nCLAUDE_CODE_OAUTH_TOKEN=$claudeTokenPlain`nPATH=$pathActuel;$CheminClaude"
+$lignePath  = "PATH=$pathActuel;$CheminClaude"
+$ligneGh    = "GH_TOKEN=$ghTokenPlain"
+$ligneOauth = "CLAUDE_CODE_OAUTH_TOKEN=$claudeTokenPlain"
 
 Write-Host ""
 Info "Ecriture de AppEnvironmentExtra (avec PATH incluant $CheminClaude)..."
-nssm set $NomService AppEnvironmentExtra $nouvelExtra | Out-Null
+nssm set $NomService AppEnvironmentExtra $lignePath $ligneGh $ligneOauth | Out-Null
 
 Info "Redemarrage du service $NomService ..."
 nssm restart $NomService | Out-Null

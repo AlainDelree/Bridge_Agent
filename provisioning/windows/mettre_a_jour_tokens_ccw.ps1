@@ -27,10 +27,12 @@
        — une chaîne UNIQUE avec des `n comme séparateur ENTRE les lignes ne
        fonctionne PAS avec « nssm set » ; chaque ligne doit être un argument
        SÉPARÉ (nssm set $Nom AppEnvironmentExtra $ligne1 $ligne2 $ligne3).
-       NB : ceci contredit le commentaire « BUG #558 » d'ajouter_projet_ccw.ps1
-       (chaîne unique jointe par `n, pattern non retesté depuis) — à
-       réconcilier dans une issue dédiée si le nouveau pattern est confirmé
-       plus largement.
+       Réconcilié avec l'ancien commentaire « BUG #558 » d'ajouter_projet_ccw.ps1
+       par l'issue #659 : ce fix #558 avait été appliqué par seule lecture du
+       code (jamais reproduit sur nssm réel, jamais testé avec une ligne PATH,
+       absente d'AppEnvironmentExtra à l'époque) — les arguments séparés sont
+       désormais la SEULE méthode dans tout le dépôt (ajouter_projet_ccw.ps1 et
+       creer_projet_ccw_complet.ps1 alignés pareil).
     3. Applique via « nssm set CCW-Watcher AppEnvironmentExtra … » puis
        redémarre le service (« nssm restart CCW-Watcher »).
     4. Attend quelques secondes, puis affiche les 10 dernières lignes de

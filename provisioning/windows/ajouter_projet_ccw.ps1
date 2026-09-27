@@ -257,17 +257,45 @@ nssm set $NomService AppStdout        $LogService
 nssm set $NomService AppStderr        $LogService
 
 # Réappliquer les tokens préservés (AppEnvironmentExtra) lus avant le remove, pour
-# que la relance n'efface pas les tokens déjà posés (issue #181). BUG #558 : passer
-# $envExtra splatté (@envExtra) fait recevoir à nssm.exe chaque entrée KEY=valeur
-# comme un argument SÉPARÉ, au lieu d'une unique valeur multi-lignes — nssm échoue
-# alors avec « Environment should comprise strings of the form KEY=VALUE ». Comme
-# mettre_a_jour_tokens_ccw.ps1 et creer_projet_ccw_complet.ps1 (seul pattern qui
-# fonctionne avec nssm), les entrées doivent être jointes en UNE SEULE chaîne, avec
-# un saut de ligne `n comme séparateur, avant d'être passées à nssm set.
+# que la relance n'efface pas les tokens déjà posés (issue #181).
+#
+# Réconciliation issue #658 / #659 (contradiction avec l'ancien fix #558) : le fix
+# #558 (chaîne unique jointe par `n, ci-dessous jusqu'à #659) avait été appliqué
+# par SEULE lecture du code, jamais reproduit sur nssm réel (cf. clôture #558 :
+# l'étape « reproduire le bug » de la tâche n'a pas été faite) — et n'a jamais été
+# testé avec une ligne PATH (qui contient des espaces, ex. « Program Files »),
+# absente d'AppEnvironmentExtra à l'époque. #658 a lui constaté, sur ce PC fixe et
+# cette version de nssm (2.24), qu'une chaîne unique jointe par `n ne pose PAS de
+# ligne PATH effective, alors que des arguments SÉPARÉS (un par ligne) fonctionnent
+# — y compris pour cette valeur à espaces, donc a fortiori pour des tokens qui n'en
+# ont pas. C'est ce pattern (arguments séparés), déjà utilisé par
+# mettre_a_jour_tokens_ccw.ps1 (post-#658), qui est retenu ici comme SEULE méthode
+# dans tout le dépôt (voir aussi creer_projet_ccw_complet.ps1, aligné pareil).
+#
+# $envExtra peut contenir 0 à 3 lignes selon l'historique du service (PATH n'existe
+# que depuis #658) : on retrouve PATH / GH_TOKEN / CLAUDE_CODE_OAUTH_TOKEN par clé
+# plutôt que par position, puis on les repasse à nssm comme autant d'arguments
+# distincts (pas de tableau splatté @-variable : nombre d'arguments fixé
+# explicitement pour rester sans ambiguïté).
 if ($tokensPreserve) {
-    $envExtraChaine = [string]::Join("`n", $envExtra)
-    nssm set $NomService AppEnvironmentExtra $envExtraChaine | Out-Null
-    Info "Tokens existants réappliqués (AppEnvironmentExtra préservé) — relance sans perte."
+    $parCle = @{}
+    foreach ($ligne in $envExtra) {
+        $idx = $ligne.IndexOf('=')
+        if ($idx -gt 0) { $parCle[$ligne.Substring(0, $idx)] = $ligne }
+    }
+    $lignesAReappliquer = @('PATH', 'GH_TOKEN', 'CLAUDE_CODE_OAUTH_TOKEN') |
+        Where-Object { $parCle.ContainsKey($_) } |
+        ForEach-Object { $parCle[$_] }
+
+    switch ($lignesAReappliquer.Count) {
+        1 { nssm set $NomService AppEnvironmentExtra $lignesAReappliquer[0] | Out-Null }
+        2 { nssm set $NomService AppEnvironmentExtra $lignesAReappliquer[0] $lignesAReappliquer[1] | Out-Null }
+        3 { nssm set $NomService AppEnvironmentExtra $lignesAReappliquer[0] $lignesAReappliquer[1] $lignesAReappliquer[2] | Out-Null }
+        default { Avert "Aucune ligne PATH/GH_TOKEN/CLAUDE_CODE_OAUTH_TOKEN reconnue parmi les valeurs préservées — rien réappliqué." }
+    }
+    if ($lignesAReappliquer.Count -gt 0) {
+        Info "Tokens existants réappliqués (AppEnvironmentExtra préservé, $($lignesAReappliquer.Count) ligne(s)) — relance sans perte."
+    }
 }
 
 # Démarrer immédiatement (le service repartira ensuite seul à chaque boot).
