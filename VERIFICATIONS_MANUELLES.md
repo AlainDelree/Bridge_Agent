@@ -432,6 +432,12 @@ plus d'`onclick=`/`onchange=`/`oninput=` inline.)*
 - [ ] Cliquer une ligne du tableau pré-sélectionne le projet dans « Finaliser »
       — cliquer un bouton d'action de la même ligne (Redémarrer/Démarrer/
       Arrêter) ne déclenche PAS la pré-sélection.
+- [ ] Changer de projet dans « Finaliser » (clic sur une ligne du tableau OU
+      sélection directe dans le menu déroulant) vide les trois champs (topic,
+      GH_TOKEN, CLAUDE_CODE_OAUTH_TOKEN) — un token d'un projet précédent ne
+      doit jamais rester affiché pour un autre projet (issue #666).
+- [ ] Finaliser un projet vide aussi le champ TOPIC_NTFY (en plus des deux
+      tokens, déjà vidés) après soumission, succès ou échec (issue #666).
 - [ ] Ajouter un projet ; finaliser un projet (tokens masqués + œil 👁/🙈).
 - [ ] Actions redémarrer/démarrer/arrêter (confirmation avant redémarrer/
       arrêter) ; nettoyer les verrous depuis le panneau latéral (confirmation) ;

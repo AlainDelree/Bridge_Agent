@@ -213,6 +213,18 @@ export async function ccwChargerProjets() {
   }
 }
 
+// Remet à zéro les trois champs de la section « Finaliser » (topic + les deux
+// tokens) : après une soumission (succès ou échec, les tokens ne doivent
+// jamais rester affichés en clair) ou dès que le projet sélectionné change
+// (issue #666 — sinon un token resté affiché pour l'ancien projet pourrait
+// être posé par erreur sur le nouveau si Alain clique « Finaliser » sans
+// remarquer le changement).
+export function ccwViderChampsFinalisation() {
+  document.getElementById('ccw-fin-topic').value = '';
+  document.getElementById('ccw-fin-gh').value    = '';
+  document.getElementById('ccw-fin-oauth').value = '';
+}
+
 // Confort : un clic sur une ligne du tableau « Projets CCW existants »
 // pré-sélectionne ce projet dans le <select> de la section « Finaliser ».
 function ccwPreselectionnerProjet(nom) {
@@ -221,7 +233,11 @@ function ccwPreselectionnerProjet(nom) {
   // Ne sélectionne que si l'option existe réellement dans le <select>.
   const options = selectFin.options;
   for (let i = 0; i < options.length; i++) {
-    if (options[i].value === nom) { selectFin.value = nom; break; }
+    if (options[i].value === nom) {
+      selectFin.value = nom;
+      ccwViderChampsFinalisation();
+      break;
+    }
   }
 }
 
@@ -410,14 +426,12 @@ async function ccwFinaliserProjet() {
     } else {
       ccwMessage('ccw-message', j.erreur || 'Échec de la finalisation.', 'erreur');
     }
-    // Effacer les champs de tokens dès la réponse reçue (ne pas les laisser en clair).
-    document.getElementById('ccw-fin-gh').value    = '';
-    document.getElementById('ccw-fin-oauth').value = '';
+    // Effacer topic + tokens dès la réponse reçue (ne pas les laisser affichés).
+    ccwViderChampsFinalisation();
     ccwChargerProjets();
   } catch (e) {
     ccwMessage('ccw-message', 'Erreur réseau : ' + e.message, 'erreur');
-    document.getElementById('ccw-fin-gh').value    = '';
-    document.getElementById('ccw-fin-oauth').value = '';
+    ccwViderChampsFinalisation();
   } finally {
     ccwOccupe('ccw-btn-finaliser', false);
   }
@@ -440,6 +454,9 @@ function installerDelegationCcw() {
     if (e.target.closest('button')) return;
     ccwPreselectionnerProjet(el.dataset.projet);
   });
+  // Sélection directe dans le menu déroulant (issue #666) : même remise à
+  // zéro que la préselection par clic sur une ligne, ci-dessus.
+  dom.surAction('#ccw-fin-nom', 'change', () => ccwViderChampsFinalisation());
   dom.surAction('[data-action="ccw-redemarrer"]', 'click',
     (e, el) => ccwRedemarrerProjet(el.dataset.projet, el));
   dom.surAction('[data-action="ccw-demarrer"]', 'click',

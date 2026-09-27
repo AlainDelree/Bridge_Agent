@@ -10,6 +10,7 @@ import {
   afficherBoutonDemarrer,
   afficherBoutonArreter,
   selectionRestauree,
+  ccwViderChampsFinalisation,
 } from '../ccw.js';
 
 // ─── couleurEtatCcw ─────────────────────────────────────────────────────────
@@ -59,4 +60,26 @@ test('selectionRestauree : conserve la sélection si le projet existe toujours',
 test('selectionRestauree : repasse au placeholder si le projet a disparu', () => {
   assert.equal(selectionRestauree(['alchess', 'scrabble'], 'ecole'), '');
   assert.equal(selectionRestauree([], ''), '');
+});
+
+// ─── ccwViderChampsFinalisation (issue #666) ───────────────────────────────
+// DOM minimal (pas de vrai navigateur) : trois éléments <input>/<select>
+// factices, seul .value compte pour cette fonction.
+
+test('ccwViderChampsFinalisation : vide topic + GH_TOKEN + OAUTH_TOKEN', () => {
+  const champs = {
+    'ccw-fin-topic': { value: 'ancien-topic' },
+    'ccw-fin-gh':    { value: 'ancien-gh-token' },
+    'ccw-fin-oauth': { value: 'ancien-oauth-token' },
+  };
+  const documentPrecedent = global.document;
+  global.document = { getElementById: (id) => champs[id] };
+  try {
+    ccwViderChampsFinalisation();
+    assert.equal(champs['ccw-fin-topic'].value, '');
+    assert.equal(champs['ccw-fin-gh'].value, '');
+    assert.equal(champs['ccw-fin-oauth'].value, '');
+  } finally {
+    global.document = documentPrecedent;
+  }
 });
