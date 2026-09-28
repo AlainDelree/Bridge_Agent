@@ -200,31 +200,16 @@ def _lister_worktrees_actifs(cfg) -> list:
     return resultat
 
 
-def _neutraliser_relance_systemd(cfg) -> dict:
-    """Empêche systemd --user de relancer automatiquement le watcher après le
-    SIGKILL de son arbre de process ci-dessus (issue #596). Depuis #596, le
-    watcher tourne sous `watcher@<projet>.service` avec `Restart=on-failure` :
-    une terminaison par signal (le SIGKILL qui précède) est vue par systemd
-    comme un crash à relancer, ce qui contredirait le contrat de #323 — « le
-    watcher n'est JAMAIS relancé automatiquement après une interruption,
-    relance manuelle requise ». `systemctl --user stop` est un arrêt
-    DÉLIBÉRÉ du point de vue de systemd : il n'active jamais la politique
-    Restart=, que le process soit déjà mort ou non. Best-effort : l'absence
-    de `systemctl` ou de l'unité (watcher lancé hors systemd, ou service
-    jamais installé pour ce projet) ne doit jamais faire échouer
-    l'interruption elle-même."""
-    unite = f"watcher@{cfg.nom}"
-    try:
-        r = subprocess.run(["systemctl", "--user", "stop", unite],
-                            capture_output=True, text=True, timeout=10)
-    except (OSError, subprocess.TimeoutExpired) as e:
-        return {"etape": "neutraliser_relance_systemd", "statut": "rien_a_faire",
-                "message": f"systemctl indisponible ({e}) — watcher probablement lancé hors systemd."}
-    if r.returncode == 0:
-        return {"etape": "neutraliser_relance_systemd", "statut": "succes",
-                "message": "Unité systemd arrêtée (aucune relance automatique)."}
-    return {"etape": "neutraliser_relance_systemd", "statut": "rien_a_faire",
-            "message": (r.stderr or r.stdout or "unité non installée ou déjà inactive").strip()}
+# Étape "neutraliser_relance_systemd" retirée (issue #682) : elle empêchait
+# systemd --user (unité `watcher@<projet>.service`, `Restart=on-failure`,
+# issue #596) de voir le SIGKILL de l'arbre ci-dessus comme un crash à
+# relancer, ce qui aurait contredit le contrat de #323 (« le watcher n'est
+# JAMAIS relancé automatiquement après une interruption »). Depuis #682, le
+# watcher n'est plus supervisé par aucun service au cycle de vie propre
+# (Popen direct, détaché, sans dépendance à systemd — inexistant sous
+# Windows) : rien ne peut plus le relancer de son propre chef après un
+# SIGKILL, sur aucun des deux OS. Le contrat de #323 est donc respecté sans
+# action supplémentaire ici — aucun équivalent Popen à cette étape.
 
 
 def interrompre_linux(cfg) -> list:
@@ -284,8 +269,6 @@ def interrompre_linux(cfg) -> list:
         etapes.append({"etape": "reverification_verrou", "statut": "echec",
                         "message": "Sautée : suppression non tentée."})
         return etapes
-
-    etapes.append(_neutraliser_relance_systemd(cfg))
 
     verrou = _chemin_verrou(cfg.rep_travail)
     try:

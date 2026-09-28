@@ -5,21 +5,33 @@ cycle de vie des watchers : démarrage, arrêt, détection du PID et les routes
 Flask utilisées par le panneau latéral Infrastructure et l'onglet Configuration
 de l'interface (l'onglet « Watchers » dédié a été supprimé, issue #626).
 
-Démarrage/arrêt via systemd --user (issue #596) : demarrer_watcher()/
-arreter_watcher() appellent `systemctl --user start|restart|stop
-watcher@<projet>` (unité définie dans systemd/watcher@.service, installée par
-installer_services.sh) plutôt que de gérer le process directement
-(subprocess.Popen / SIGTERM), pour survivre à un crash (Restart=on-failure)
-et à un redémarrage du ThinkPad. watcher_actif() reste basé sur le fichier PID
-(logs/watcher-<nom>.pid) — désormais publié par watcher.py lui-même à son
-démarrage, quel que soit son mode de lancement (terminal, systemd, ou cet
-appel) — ce qui laisse inchangés les autres consommateurs de ce fichier
-(watcher.py::detecter_conflit_watcher/_compter_watchers_actifs,
-app.interruption.interrompre_linux).
+Démarrage/arrêt par lancement direct (issue #682, remplace systemd --user
+#596) : demarrer_watcher()/arreter_watcher() lancent/arrêtent le process
+`watcher.py` directement (subprocess.Popen / SIGTERM), sans dépendance à
+systemd — inexistant sous Windows, cible du plan hybride CCL/CCW. Watcher
+« local » (ce fichier) = `new_issue.py` et le watcher tournent sur la même
+machine, lancé à la demande ; distinct du watcher « délégué » (mécanisme CCW,
+`app/ccw.py`, autre machine physique pilotée en SSH — inchangé). Même
+principe déjà en place pour le watcher spool (`app/issues_inbox.py`,
+`demarrer_watcher_inbox`/`arreter_watcher_inbox`, issue #485), repris ici tel
+quel. Rien à superviser côté OS : l'auto-extinction après inactivité
+(`DELAI_INACTIVITE_MIN`, watcher.py) et le fichier PID suffisent à tout le
+cycle de vie — aucun `Restart=on-failure` en cas de crash, à la différence de
+l'ancien service systemd (limite assumée : un crash réel du watcher n'est
+plus relancé automatiquement, relance manuelle requise, cf. panneau
+Infrastructure).
+watcher_actif() reste basé sur le fichier PID (logs/watcher-<nom>.pid) —
+publié par watcher.py lui-même à son démarrage, quel que soit son mode de
+lancement (terminal ou cet appel) — ce qui laisse inchangés les autres
+consommateurs de ce fichier (watcher.py::detecter_conflit_watcher/
+_compter_watchers_actifs, app.interruption.interrompre_linux).
 """
 
 import logging
+import os
+import signal
 import subprocess
+import sys
 import threading
 import time
 from pathlib import Path
@@ -30,7 +42,8 @@ from flask import jsonify, request
 # « from watcher import ») ; on l'importe donc avant watcher.
 from app.projets import lister_projets, projet_par_nom
 from app.auth import login_requis  # noqa: F401 (exporté pour l'enregistrement des routes)
-from watcher import Config, _pid_vivant, taches_en_cours as _taches_en_cours_watcher
+from watcher import (Config, DOSSIER_SCRIPT, _pid_vivant,
+                      taches_en_cours as _taches_en_cours_watcher)
 
 log = logging.getLogger(__name__)
 
@@ -112,35 +125,89 @@ def repli_rep_travail(cfg: Config, taches: list[dict] | None = None) -> bool:
     return any(t["mode"] == "ecriture" and t["rep"] == rep_travail for t in taches)
 
 
+def _arreter_pid(pid: int) -> None:
+    """SIGTERM best-effort sur un PID — cross-plateforme (issue #682) :
+    `os.kill(pid, signal.SIGTERM)` sous Windows appelle `TerminateProcess`
+    (pas de vrai signal POSIX là-bas, mais l'API Python l'accepte quand même,
+    cf. doc `os.kill`) au lieu du couple `CREATE_NEW_PROCESS_GROUP` +
+    `GenerateConsoleCtrlEvent` réservé à `CTRL_BREAK_EVENT`/`CTRL_C_EVENT`
+    (watcher.py, `_nettoyer_arbre_claude`, cas différent : arrêt propre d'un
+    sous-process `claude`, pas terminaison directe). watcher.py n'installe
+    aucun gestionnaire pour SIGTERM (seul `KeyboardInterrupt`/SIGINT est géré
+    pour l'arrêt manuel en terminal) : la terminaison est donc immédiate des
+    deux côtés, sans étape de nettoyage interne — même brutalité qu'un
+    `systemctl --user stop` côté systemd. Ne tue PAS la descendance
+    éventuelle (tâche `claude` en cours) : à la différence de l'ancien
+    `systemctl --user stop`/`restart`, qui tuait tout le cgroup du service
+    sans distinction (issue #609, incident relecture_bridge #73) — ce point
+    n'est plus un souci ici puisque demarrer_watcher_ou_differer() continue
+    de différer tout redémarrage forcé tant qu'une tâche tourne (inchangé).
+    Un arrêt manuel (bouton « Arrêter ») pendant une tâche en cours laisse
+    désormais le process `claude` en cours orphelin plutôt que de le tuer
+    aussi — l'interruption ciblée d'UNE tâche reste le rôle du bouton
+    « Interrompre cette issue » (app/interruption.py, arbre de process
+    complet via /proc), pas de ce bouton-ci."""
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except OSError:
+        pass
+
+
 def demarrer_watcher(cfg: Config, forcer: bool = True) -> tuple[bool, int | None]:
-    """Lance (ou relance) le watcher du projet via `systemctl --user`
-    (issue #596). Si forcer=False et qu'un watcher tourne déjà, retourne
-    (False, pid_existant) sans y toucher. Si forcer=True, l'unité est
-    redémarrée (démarrée si elle était éteinte) — `systemctl restart`
-    fonctionne aussi bien sur une unité déjà active qu'inactive.
-    Retourne (redemarré, pid) ; pid peut être None si watcher.py n'a pas
-    encore publié son fichier PID au terme du court sondage ci-dessous
-    (démarrage anormalement lent), sans que ce soit un échec pour autant."""
+    """Lance (ou relance) le watcher du projet par lancement direct
+    (`subprocess.Popen`, issue #682 — remplace `systemctl --user` #596,
+    inexistant sous Windows). Si forcer=False et qu'un watcher tourne déjà,
+    retourne (False, pid_existant) sans y toucher. Si forcer=True et qu'un
+    watcher tourne déjà, il est arrêté (SIGTERM + court délai pour lui
+    laisser le temps de libérer son fichier PID, même principe que
+    app/issues_inbox.py::demarrer_watcher_inbox) avant le nouveau lancement.
+
+    Détaché du process appelant (new_issue.py) : `start_new_session=True`
+    côté POSIX (même pattern que app/issues_inbox.py, watcher.py::
+    lancer_claude), `CREATE_NEW_PROCESS_GROUP` côté Windows (flag déjà
+    utilisé par watcher.py::lancer_claude — rien de nouveau à inventer à ce
+    niveau). stdout/stderr redirigés en ajout vers le journal habituel du
+    projet (cfg.fichier_log) : watcher.py gère lui-même sa rotation via son
+    propre logger (RotatingFileHandler) sur ce même fichier, donc ceci ne
+    capture que ce qui y échapperait (traceback non attrapée avant que le
+    logger soit configuré, etc.) — écriture en ajout (`O_APPEND`) donc sans
+    conflit avec les écritures du logger.
+
+    Retourne (redemarré, pid) : pid est TOUJOURS celui du process fraîchement
+    lancé (`proc.pid`, connu immédiatement, contrairement à l'ancien sondage
+    du fichier PID nécessaire quand systemd gérait le process sans nous en
+    donner le PID directement) — watcher.py republiera lui-même ce même PID
+    dans logs/watcher-<nom>.pid dès son propre démarrage (issue #596,
+    inchangé), sans effet puisque la valeur est identique."""
     actif, pid_ancien = watcher_actif(cfg)
     if actif and not forcer:
         return False, pid_ancien
 
-    unite  = f"watcher@{cfg.nom}"
-    action = "restart" if actif else "start"
-    subprocess.run(["systemctl", "--user", action, unite],
-                    check=True, capture_output=True, text=True, timeout=15)
+    if actif and pid_ancien:
+        _arreter_pid(pid_ancien)
+        time.sleep(0.8)
 
-    # watcher.py publie son PID dès son démarrage (issue #596) — court
-    # sondage pour laisser à systemd + Python le temps de le faire.
+    chemin_config = DOSSIER_SCRIPT / "configs" / f"{cfg.nom}.conf"
+    if not chemin_config.exists():
+        raise FileNotFoundError(f"Config introuvable : {chemin_config}")
+
     pid_file = chemin_pid(cfg)
-    for _ in range(30):
-        if pid_file.exists():
-            try:
-                return True, int(pid_file.read_text().strip())
-            except ValueError:
-                pass
-        time.sleep(0.1)
-    return True, None
+    pid_file.parent.mkdir(parents=True, exist_ok=True)
+
+    kwargs_popen = dict(cwd=DOSSIER_SCRIPT)
+    if os.name == "nt":
+        kwargs_popen["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
+    else:
+        kwargs_popen["start_new_session"] = True
+
+    with open(cfg.fichier_log, "a", encoding="utf-8") as f_log:
+        proc = subprocess.Popen(
+            [sys.executable, str(DOSSIER_SCRIPT / "watcher.py"), "--config", str(chemin_config)],
+            stdout=f_log, stderr=f_log, **kwargs_popen,
+        )
+
+    pid_file.write_text(str(proc.pid))
+    return True, proc.pid
 
 
 def demarrer_watcher_ou_differer(cfg: Config, forcer: bool) -> tuple[str, int | None]:
@@ -185,8 +252,9 @@ def surveiller_redemarrages_differes():
     les redémarrages mémorisés par demarrer_watcher_ou_differer() dès que la
     tâche qui les bloquait se termine — sondée à chaque passage, jamais
     supposée terminée après un délai fixe. Best-effort : une exception isolée
-    (systemctl, projet supprimé entre-temps...) est journalisée et n'empêche
-    ni la sonde suivante ni le traitement des autres projets différés."""
+    (échec de lancement, projet supprimé entre-temps...) est journalisée et
+    n'empêche ni la sonde suivante ni le traitement des autres projets
+    différés."""
     while True:
         time.sleep(INTERVALLE_SURVEILLANCE_DIFFERE)
         with _verrou_differes:
@@ -220,11 +288,13 @@ def redemarrer_si_eteint(cfg: Config, *, tracer: bool = False) -> tuple[bool | N
 
     Garde for-linux : PAS internalisée ici. Dans app/issues.py et
     app/interruption.py, la garde ne porte pas sur le fait que ce mécanisme
-    (systemctl --user, Linux-only par construction depuis #596) puisse
-    s'appliquer, mais sur le ROUTAGE de l'issue traitée — labels for-linux/
-    for-windows (#164) décidant si CETTE issue relève bien du watcher CCL
-    local plutôt que de CCW. C'est une décision propre à l'appelant (qui a
-    accès aux labels de l'issue), pas à ce helper (qui ne reçoit qu'un cfg de
+    (lancement direct du watcher **local**, portable Linux/Windows depuis
+    #682) puisse s'appliquer, mais sur le ROUTAGE de l'issue traitée —
+    labels for-linux/for-windows (#164) décidant si CETTE issue relève bien
+    du watcher local (CCL, ou son pendant Windows une fois adopté) plutôt
+    que du watcher **délégué** (CCW, autre machine physique pilotée en SSH,
+    inchangé par #682). C'est une décision propre à l'appelant (qui a accès
+    aux labels de l'issue), pas à ce helper (qui ne reçoit qu'un cfg de
     projet et n'a aucune notion de labels) : elle reste à ces 2 sites,
     inchangée. Les 3 autres sites ne l'ont jamais eue car ils visent toujours
     un watcher for-linux par construction (projet bridge_agent lui-même, ou
@@ -253,22 +323,14 @@ def redemarrer_si_eteint(cfg: Config, *, tracer: bool = False) -> tuple[bool | N
 
 
 def arreter_watcher(cfg: Config) -> tuple[bool, str]:
-    """Arrête le watcher du projet via `systemctl --user stop` (issue #596) —
-    un arrêt délibéré de ce point de vue pour systemd, qui ne déclenche donc
-    jamais `Restart=on-failure` de watcher@<projet>.service (à la différence
-    d'un SIGKILL externe, cf. app.interruption._neutraliser_relance_systemd).
-    Retourne (succès, message)."""
+    """Arrête le watcher du projet par SIGTERM direct (issue #682, remplace
+    `systemctl --user stop` #596 — voir _arreter_pid pour la portée exacte,
+    notamment vis-à-vis d'une tâche `claude` en cours). Retourne (succès,
+    message)."""
     actif, pid = watcher_actif(cfg)
     if not actif:
         return False, "watcher déjà inactif"
-    unite = f"watcher@{cfg.nom}"
-    try:
-        subprocess.run(["systemctl", "--user", "stop", unite],
-                        check=True, capture_output=True, text=True, timeout=15)
-    except subprocess.CalledProcessError as e:
-        return False, (e.stderr or str(e)).strip()
-    except subprocess.TimeoutExpired:
-        return False, "délai dépassé (systemctl --user stop)"
+    _arreter_pid(pid)
     chemin_pid(cfg).unlink(missing_ok=True)
     return True, f"watcher arrêté (pid {pid})"
 
