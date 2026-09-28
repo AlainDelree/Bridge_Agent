@@ -20,6 +20,7 @@ toujours jamais poussé automatiquement.
 """
 
 import re
+import shutil
 import subprocess
 import sys
 import unicodedata
@@ -205,8 +206,8 @@ def depot_defaut(nom: str) -> str:
 
 
 def rep_defaut(nom: str) -> str:
-    """Répertoire de travail CCL proposé par défaut."""
-    return f"/home/alain/{nom.capitalize()}"
+    """Répertoire de travail CCL proposé par défaut (dépend de l'OS)."""
+    return str(Path.home() / nom.capitalize())
 
 
 def depot_existe(depot: str) -> bool:
@@ -936,7 +937,7 @@ def main() -> None:
     print("\033[1m═══ Bridge_Agent — Nouveau projet ═══\033[0m")
     print("Création ou installation d'un projet dans le bridge inter-agents.")
 
-    if subprocess.run(["which", "gh"], capture_output=True).returncode != 0:
+    if shutil.which("gh") is None:
         sys.exit("❌ La commande `gh` (GitHub CLI) est requise mais introuvable.")
 
     nom = etape_nom()
