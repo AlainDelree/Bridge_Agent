@@ -641,22 +641,31 @@ function mettreAJourBoutonEnvoi() {
   btn.style.borderColor   = couleur;
 }
 
-// Détection de « #Titre: … » en première ligne du corps.
-// Permet de coller titre + corps en un seul copier-coller dans le champ #corps :
-// si la première ligne commence par « #Titre: » (insensible à la casse, espaces
-// tolérés après « : »), on déplace ce qui suit dans #titre et on retire cette
-// ligne du corps. Le champ #titre reste éditable normalement ; taper directement
-// dedans ne déclenche aucun comportement automatique (l'écouteur est sur #corps).
+// Détection de « #Titre: … » n'importe où dans la zone d'en-tête du corps
+// (issue #679 — auparavant limitée à la toute première ligne, incohérent avec
+// detecterProjetDansCorps/TIMEOUT qui, via lireChampEntete, cherchent déjà
+// n'importe où). Permet de coller titre + corps en un seul copier-coller dans
+// le champ #corps, y compris quand l'en-tête tabulaire (PROJET/REDACTEUR/MODE)
+// précède #Titre: (convention par ailleurs valide côté issues_inbox/) : si une
+// ligne de la zone d'en-tête (zoneEntete, issue #512) commence par « #Titre: »
+// (insensible à la casse, espaces tolérés après « : »), on déplace ce qui suit
+// dans #titre et on retire cette ligne du corps. Le champ #titre reste
+// éditable normalement ; taper directement dedans ne déclenche aucun
+// comportement automatique (l'écouteur est sur #corps).
+//
+// Pas de garde-fou « valeur inchangée » façon detecterProjetDansCorps : la
+// ligne #Titre: est toujours retirée du corps dès qu'elle est trouvée (pas de
+// notion de valeur « inconnue » qui la laisserait en place), donc elle ne peut
+// pas être redétectée telle quelle au prochain passage — une correction
+// manuelle du champ #titre n'est ainsi jamais écrasée par la frappe suivante.
 function detecterTitreDansCorps() {
   const corpsEl = document.getElementById('corps');
   // En mode lot (2+ blocs « #Titre: »), cette détection mono-titre n'a plus de
   // sens : c'est envoyerLot qui traite chaque bloc avec son propre titre. On la
   // neutralise tant que le lot est détecté (issue #135).
   if (enModeLot()) return;
-  const valeur  = corpsEl.value;
-  const finLigne      = valeur.indexOf('\n');
-  const premiereLigne = finLigne === -1 ? valeur : valeur.slice(0, finLigne);
-  const m = premiereLigne.match(/^#titre:\s*(.*)$/i);
+  const valeur = corpsEl.value;
+  const m = zoneEntete(valeur).match(/^#titre:\s*(.*)$/im);
   if (!m) return;
 
   // Mémorise le mode courant : la détection ne touche pas au mode, mais on
@@ -664,8 +673,22 @@ function detecterTitreDansCorps() {
   const modeAvant = document.querySelector('input[name=mode]:checked').value;
 
   document.getElementById('titre').value = m[1].trim();
-  // Supprime la première ligne (et son saut de ligne) du corps.
-  corpsEl.value = finLigne === -1 ? '' : valeur.slice(finLigne + 1);
+
+  // Retire la ligne #Titre: trouvée, où qu'elle soit dans le corps — même
+  // logique que retirerLigneEntete (issue #512) pour ne pas laisser de ligne
+  // vide si #Titre: est entouré d'une ligne vide, que ce soit avant ou après
+  // l'en-tête tabulaire. zoneEntete(valeur) étant un préfixe exact de valeur,
+  // m.index reste valide tel quel dans valeur.
+  const debut = m.index;
+  let fin = valeur.indexOf('\n', debut);
+  if (fin === -1) fin = valeur.length;
+  if (valeur[fin] === '\n') {
+    corpsEl.value = valeur.slice(0, debut) + valeur.slice(fin + 1);
+  } else if (debut > 0 && valeur[debut - 1] === '\n') {
+    corpsEl.value = valeur.slice(0, debut - 1) + valeur.slice(fin);
+  } else {
+    corpsEl.value = valeur.slice(0, debut) + valeur.slice(fin);
+  }
 
   const modeApres = document.querySelector('input[name=mode]:checked').value;
   if (modeApres !== modeAvant) mettreAJourBoutonEnvoi();
@@ -890,9 +913,10 @@ function mettreAJourResumeEntete() {
 // ─── Envoi en lot de plusieurs issues (issue #135) ────────────────────────
 // Un seul copier-coller peut contenir PLUSIEURS blocs « #Titre: … » à la
 // suite : chacun devient une issue indépendante, envoyée en séquence sans
-// validation intermédiaire. On généralise detecterTitreDansCorps, qui ne
-// traite QUE la première ligne, en appliquant la même règle à CHAQUE ligne
-// « #Titre: » (insensible à la casse, en début de ligne).
+// validation intermédiaire. On généralise detecterTitreDansCorps (qui, depuis
+// #679, ne traite qu'UNE seule occurrence de « #Titre: », n'importe où dans la
+// zone d'en-tête) en appliquant la même règle à CHAQUE ligne « #Titre: », sur
+// tout le corps, insensible à la casse, en début de ligne.
 
 // Découpe le corps en blocs, un par ligne « #Titre: ». Chaque bloc va de son
 // « #Titre: » jusqu'au « #Titre: » suivant (exclu) ou la fin du corps ; on en
