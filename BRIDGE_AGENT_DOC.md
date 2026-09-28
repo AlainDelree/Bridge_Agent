@@ -142,7 +142,7 @@ puis le corps. Champs d'en-tête reconnus, tous optionnels sauf `PROJET` :
 | Champ       | Rôle                                                                |
 |-------------|----------------------------------------------------------------------|
 | `PROJET`    | **Obligatoire** — doit correspondre à `configs/<PROJET>.conf`        |
-| `REDACTEUR` | Optionnel — nom du projet depuis le contexte duquel Claude Chat a rédigé l'issue (`bridge_agent`, `scrabble`, `relecture_bridge`, etc.). Validé pour cohérence avec `PROJET` (issue #599, voir §3.4) — absent, aucune validation (rétrocompatibilité). |
+| `REDACTEUR` | Optionnel — nom du projet depuis le contexte duquel Claude Chat a rédigé l'issue (`bridge_agent`, `scrabble`, `relecture_bridge`, etc.). Validé pour cohérence avec `PROJET` (issue #599, voir §3.4) — absent, aucune validation (rétrocompatibilité). Ne remplace jamais `PROJET` : pour une issue `for-windows` passant par le canal CCW, seul `REDACTEUR` vaut `bridge_agent`, `PROJET` reste le projet réellement concerné (issue #665). |
 | `TIMEOUT`   | Nombre (secondes, suffixe `s` toléré) — sinon défaut du projet       |
 | `MODELE`    | Doit être une valeur reconnue (`claude-sonnet-5`, etc.) si fourni    |
 | `MODE`      | Reconnu de façon tolérante (§5) — absent/non reconnu → `lecture`     |
@@ -227,6 +227,26 @@ tout autre traitement (avant même la vérification du titre) :
    passe toujours par le canal central `bridge_agent`, quel que soit le
    `PROJET` réellement ciblé par le build) — noter que le cas
    `for-windows` + `REDACTEUR == PROJET` est déjà couvert par la règle 1.
+
+   **Attention — cette règle ne porte QUE sur `REDACTEUR`, jamais sur
+   `PROJET` (issue #665).** `PROJET` ne devient **JAMAIS** `bridge_agent` du
+   seul fait qu'une issue passe par le canal CCW — seul `REDACTEUR` le
+   devient. `PROJET` désigne toujours le projet réellement concerné par la
+   tâche (c'est lui qui choisit la file de traitement) ; `REDACTEUR` désigne
+   seulement le contexte de rédaction. Les deux champs ne sont pas
+   interchangeables. Exemple typique, une issue `for-windows` de build
+   Actualise :
+
+   ```
+   | PROJET     | actualise    |   ← le projet réellement concerné, jamais bridge_agent ici
+   | REDACTEUR  | bridge_agent |   ← uniquement ce champ prend « bridge_agent » (canal CCW)
+   ```
+
+   Mettre `PROJET = bridge_agent` sur une telle issue passerait la
+   validation (règle 1 : `REDACTEUR == PROJET`) mais l'enverrait dans la file
+   de `bridge_agent` au lieu de celle d'`actualise` — erreur constatée en
+   usage réel sur #661 et #664. `PROJET = bridge_agent` n'est correct que si
+   la tâche porte réellement sur le dépôt bridge_agent lui-même.
 3. Tout autre cas → rejet, même sort que les autres validations ci-dessus,
    avec un message explicite indiquant la discordance (`REDACTEUR` ≠
    `PROJET`) — fichier déplacé dans `issues_inbox/rejected/`, ligne
@@ -807,7 +827,7 @@ Le watcher lit ces champs dans le tableau markdown de l'en-tête :
 | `FICHIER_CONTEXTE` | ex. chemin relatif | Fichier additionnel fourni en contexte à CCL pour cette issue (modifiable via l'onglet Configuration, voir §12) |
 | `SUITE_DE` | ex. `#5` | Indique que cette issue fait suite à l'issue #N (discussion ou tâche complémentaire). Absent = issue inédite. |
 | `RELANCE` | ex. `#612` | **Spécifique à `issues_inbox/`** (issue #516, voir §3.14) — présent, détourne le fichier déposé vers la correction/relance de l'issue #N déjà ouverte (`TIMEOUT`/`MODELE` du fichier fusionnés dans son corps, `needs-human` retiré) plutôt que de créer une nouvelle issue. N'a aucun effet une fois l'issue créée — lu uniquement au dépôt du fichier, jamais par `watcher.py`. |
-| `REDACTEUR` | ex. `bridge_agent` | **Spécifique à `issues_inbox/`** (issue #599, voir §3.4) — optionnel, nom du projet depuis le contexte duquel Claude Chat a rédigé l'issue. Validé pour cohérence avec `PROJET` avant création (`REDACTEUR == PROJET`, ou label `for-windows` + `REDACTEUR == bridge_agent` pour le canal CCW) ; discordance → rejet vers `rejected/`. Absent = aucune validation. Lu uniquement au dépôt du fichier, jamais par `watcher.py`. |
+| `REDACTEUR` | ex. `bridge_agent` | **Spécifique à `issues_inbox/`** (issue #599, voir §3.4) — optionnel, nom du projet depuis le contexte duquel Claude Chat a rédigé l'issue. Validé pour cohérence avec `PROJET` avant création (`REDACTEUR == PROJET`, ou label `for-windows` + `REDACTEUR == bridge_agent` pour le canal CCW — dans ce dernier cas seul `REDACTEUR` vaut `bridge_agent`, `PROJET` reste le projet réellement concerné, ex. `actualise`, jamais `bridge_agent` du seul fait du canal CCW, issue #665) ; discordance → rejet vers `rejected/`. Absent = aucune validation. Lu uniquement au dépôt du fichier, jamais par `watcher.py`. |
 | `COMPLEXITE` | `rapide` / `court` / `normal` / `lourd` | 4e dimension de la clé EWMA de calibration TIMEOUT (issue #434, voir §19), estimée par Claude Chat au moment de rédiger l'issue. Absent ou valeur non reconnue = `normal` (défaut, ~300s). CCL/CCW doit l'inclure dans les issues chef/ouvrier qu'il crée (voir `consignes/globales.md`) ; pour les issues de Claude Chat, c'est géré côté doc/prompt. |
 | `RESEAU` | `oui` ou `non` | Tag réseau pour la calibration TIMEOUT (issue #220/#435, voir §19) : `oui` = issue impliquant de lourdes opérations réseau (téléchargements, builds avec fetch, etc.), `non` = issue purement locale. Lu par `_detecter_tag_reseau(body)`. Absent ou valeur non reconnue = `None` (F ignoré, facteur d'ambiance neutre). Optionnel (voir `consignes/globales.md`). |
 
