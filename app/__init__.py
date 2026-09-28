@@ -5,6 +5,7 @@ Fabrique create_app() : instancie Flask et pose l'état partagé dans app.config
 """
 
 import os
+from datetime import timedelta
 from pathlib import Path
 
 from flask import Flask
@@ -13,6 +14,25 @@ from flask import Flask
 # statiques (extraits à l'étape 1 du refactoring) vivent à la racine, pas dans
 # app/ : on pointe Flask explicitement vers ces dossiers.
 RACINE = Path(__file__).resolve().parent.parent
+
+# Fichier de persistance de SECRET_KEY (gitignoré, cf. .gitignore) — issue #676 :
+# une clé régénérée à chaque lancement de new_issue.py invalidait tous les
+# cookies de session existants à chaque redémarrage.
+FICHIER_SECRET_KEY = RACINE / "configs" / "secret_key.bin"
+
+
+def _cle_secrete_persistante() -> bytes:
+    """Relit la clé de signature des cookies de session dans configs/secret_key.bin
+    si elle existe déjà, sinon la génère une seule fois et l'y écrit (permissions
+    restreintes au propriétaire). Une clé stable entre redémarrages permet aux
+    sessions de survivre aux relances fréquentes de l'interface (issue #676)."""
+    if FICHIER_SECRET_KEY.exists():
+        return FICHIER_SECRET_KEY.read_bytes()
+    FICHIER_SECRET_KEY.parent.mkdir(parents=True, exist_ok=True)
+    cle = os.urandom(32)
+    FICHIER_SECRET_KEY.write_bytes(cle)
+    os.chmod(FICHIER_SECRET_KEY, 0o600)
+    return cle
 
 
 def create_app() -> Flask:
@@ -30,11 +50,16 @@ def create_app() -> Flask:
         static_folder=str(RACINE / "static"),
     )
 
-    # Clé de signature des cookies de session régénérée à chaque démarrage : les
-    # sessions ne survivent pas à un redémarrage (acceptable) mais la clé n'est
-    # jamais figée dans le code source — un cookie session['authentifie'] ne peut
-    # donc pas être forgé à partir du dépôt.
-    app.config["SECRET_KEY"] = os.urandom(32)
+    # Clé de signature des cookies de session persistée dans configs/secret_key.bin
+    # (gitignoré) : stable entre redémarrages de new_issue.py, jamais figée dans le
+    # code source — un cookie session['authentifie'] ne peut donc pas être forgé à
+    # partir du dépôt (issue #676).
+    app.config["SECRET_KEY"] = _cle_secrete_persistante()
+    # Session valable 30 jours au maximum (posée session.permanent = True à
+    # l'authentification, app/auth.py login_post()) : compromis entre la
+    # friction de reconnexion en mode --externe et l'exposition réseau réelle
+    # de ce mode (issue #676).
+    app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(days=30)
 
     # État partagé (anciennes variables globales de new_issue.py).
     app.config["MODE_EXTERNE"]   = False   # login exigé uniquement en --externe

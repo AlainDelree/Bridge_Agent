@@ -60,6 +60,7 @@ def login_post():
     saisi = request.form.get("mot_de_passe", "")
     if hashlib.sha256(saisi.encode("utf-8")).hexdigest() == mot_de_passe:
         session["authentifie"] = True
+        session.permanent = True  # cookie valable PERMANENT_SESSION_LIFETIME (issue #676)
         session.pop("echecs", None)
         return redirect(url_for("index"))
 

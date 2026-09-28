@@ -24,3 +24,7 @@ configs/ccw_bootstrap_publique.pem
 # `configs/*.conf` ci-dessus (état, pas du code), à la différence près
 # qu'il était encore suivi par erreur (issue #646, balayage final).
 scripts/son_actif.txt
+# Clé de signature des cookies de session Flask, persistée pour que les
+# sessions survivent aux redémarrages fréquents de new_issue.py (issue #676) —
+# secrète, jamais committée, régénérée localement si absente.
+configs/secret_key.bin
