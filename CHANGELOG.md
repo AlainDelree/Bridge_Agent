@@ -9,6 +9,62 @@ milliers de caractères sur une seule ligne logique, coûteux à relire et
 
 Convention d'ajout : voir §10 de `BRIDGE_AGENT_DOC.md`.
 
+## #683 — point de rupture CSS pour écran plafonné ~1360×768 (poste fixe CCW)
+
+Le PC fixe CCW est plafonné matériellement à 1360×768 (Intel HD Graphics
+Ivy Bridge/G2020, aucun pilote plus récent disponible, câble VGA —
+confirmé le 28/09/2026, remplacement prévu sous 1-2 mois mais l'interface
+doit rester utilisable en attendant). À cette résolution, l'interface
+n'avait qu'un seul point de rupture CSS existant, à `max-width:900px`
+(`static/css/resultats.css`, issue #628/#633), trop étroit pour couvrir
+1360px : la barre du haut, les onglets et le panneau latéral
+« Infrastructure » se chevauchaient.
+
+Deux nouveaux blocs `@media (max-width:1400px)`, dédiés et distincts du
+`900px` existant (aucune touche à ce dernier, comportement mobile/tablette
+inchangé) :
+- `static/css/resultats.css` : `.resultats-layout{flex-direction:column}`,
+  `.panneau-lateral-col{width:100%}`, `.panneau-lateral{width:auto}` —
+  mêmes règles que le repli 900px, le panneau latéral Infrastructure passe
+  sous le corps de l'onglet Résultats au lieu d'à côté.
+- `static/css/base.css` : `.entete{flex-wrap:wrap}` et
+  `.onglets{flex-wrap:wrap}` (+ `row-gap`) — la barre du haut (projet,
+  boutons Nouveau projet/Lancer le watcher/Quitter) et les onglets
+  (Résultats/Journal watcher/Configuration/CCW/Nouvelle issue) s'empilent
+  proprement sur plusieurs lignes au lieu de déborder ou de forcer un
+  défilement horizontal.
+
+Seuil choisi à 1400px (marge au-dessus de 1360px pour absorber la
+scrollbar verticale du navigateur) plutôt qu'exactement 1360px. Vérifié
+par capture d'écran Playwright (serveur de dev local, sans configs de
+projet dans ce worktree isolé) : à 1360×768 le panneau passe bien sous le
+contenu sans chevauchement ; à 1600px de large le comportement d'origine
+(panneau à côté) est inchangé — pas de régression sur écran large.
+Aucune refonte visuelle : uniquement ces deux points de rupture ciblés,
+réversibles en supprimant les blocs `@media` ajoutés.
+
+## #665 — docs(bridge_agent_doc): PROJET reste le projet réellement ciblé même quand REDACTEUR=bridge_agent (canal CCW)
+
+`BRIDGE_AGENT_DOC.md` : la règle 2 de « Cohérence `REDACTEUR` / `PROJET` »
+(§3.4) — `for-windows` + `REDACTEUR == bridge_agent` valide « quel que soit
+le `PROJET` réellement ciblé » — pouvait se lire comme si `PROJET` devait lui
+aussi valoir `bridge_agent` sur le canal CCW. Erreur constatée deux fois en
+usage réel (#661, #664 : issues de build Actualise routées dans la file de
+`bridge_agent`).
+
+- §3.4 : ajout, juste après la règle 2, d'un avertissement explicite
+  (« `PROJET` ne devient JAMAIS `bridge_agent` du seul fait qu'une issue passe
+  par le canal CCW — seul `REDACTEUR` le devient ») et d'un exemple d'en-tête
+  contrastant les deux champs (`PROJET = actualise`, `REDACTEUR =
+  bridge_agent`), avec rappel que `PROJET = bridge_agent` passerait la
+  validation (règle 1) tout en envoyant l'issue dans la mauvaise file.
+- §3.1 (tableau des champs d'en-tête `issues_inbox/`, ligne `REDACTEUR`) et
+  §17.3 (tableau des champs d'en-tête, ligne `REDACTEUR`) : même précision
+  ajoutée en une phrase, ces deux résumés reprenant la règle du canal CCW
+  sans distinguer les deux champs.
+
+Purement documentaire, aucun changement de code.
+
 ## #682 — cycle de vie des watchers locaux à la demande (Popen), sans systemd, portable Linux/Windows
 
 Suite au diagnostic du chantier hybride (28/09/2026) : le cycle de vie des
