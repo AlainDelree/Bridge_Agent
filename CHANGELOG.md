@@ -9,6 +9,25 @@ milliers de caractères sur une seule ligne logique, coûteux à relire et
 
 Convention d'ajout : voir §10 de `BRIDGE_AGENT_DOC.md`.
 
+## #677 — doc(ccw): section « Repérer et nettoyer les worktrees orphelins » dans REINSTALLATION_CCW.md
+
+Suite à #669 (lecture seule, avait produit le texte prêt à coller sans
+l'appliquer) : ajout de l'étape `### 9.` dans
+`provisioning/windows/REINSTALLATION_CCW.md`, juste après l'étape 8 et
+avant le `---` séparant la procédure Windows du prérequis Linux
+`cifs-utils`. Reprend le texte proposé par #669 tel quel (repérage via
+`git worktree list`, nettoyage via `worktree remove --force` +
+`worktree prune` + `branch -d`/`-D`, avertissement sur la perte de
+données non commitées/mergées, renvoi vers `WORKTREES.md`).
+
+Précision ajoutée par rapport au texte de #669 (demandée explicitement
+dans #677) : un encadré `> ⚠️` en tête de la section indique qu'elle
+concerne surtout les clones qui **survivent** à la réinstallation (ex.
+le `REP_TRAVAIL` d'un projet dédié) — si le clone est entièrement refait
+par `provisionner.ps1` (`C:\CCW\Bridge_Agent`, disque effacé à l'étape
+1), `.git/worktrees` repart de zéro avec le nouveau clone et il n'y a
+aucun orphelin local à nettoyer de ce côté.
+
 ## 28 septembre 2026 — issue #676
 
 Interface web : la clé de signature des cookies de session (`SECRET_KEY`) est désormais **persistée** dans `configs/secret_key.bin` (gitignoré, permissions 0600) au lieu d'être régénérée à chaque lancement de `new_issue.py` — c'était la vraie cause de la reconnexion systématique en mode `--externe`, puisque `new_issue.py` n'est pas un service permanent. Générée une seule fois (`app/__init__.py::_cle_secrete_persistante`), relue sinon. `PERMANENT_SESSION_LIFETIME` fixé à 30 jours et `session.permanent = True` posé à l'authentification réussie (`app/auth.py::login_post`) : une session survit désormais aux redémarrages fréquents de l'interface, sans devenir illimitée.
