@@ -2240,16 +2240,16 @@ def _lister_projets_connus() -> list[Config]:
 def _watcher_actif(cfg: Config) -> bool:
     """Vrai si un watcher tourne pour ce projet. Équivalent local de
     app.watchers.watcher_actif() : lit le fichier PID et sonde le processus
-    (os.kill(pid, 0) ne tue pas, il vérifie l'existence)."""
+    via _pid_vivant (issue #673 — cross-plateforme, os.kill(pid, 0) seul
+    n'est pas portable Windows : le signal 0 y vaut CTRL_C_EVENT)."""
     pid_file = DOSSIER_LOGS / f"watcher-{cfg.nom}.pid"
     if not pid_file.exists():
         return False
     try:
         pid = int(pid_file.read_text().strip())
-        os.kill(pid, 0)
-        return True
-    except (OSError, ProcessLookupError, ValueError):
+    except (OSError, ValueError):
         return False
+    return _pid_vivant(pid)
 
 
 def _compter_watchers_actifs() -> int:
