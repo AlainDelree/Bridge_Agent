@@ -888,19 +888,20 @@ $CheminCleBootstrapPublique = Assurer-ClesBootstrap
 
 # ---------------------------------------------------------------------------
 # 8. Écriture de configs\ccw.conf.
-#    REP_TRAVAIL pointe vers C:\CCW_Share, un chemin LOCAL au PC fixe
-#    (issue #446, suite #447) — plus de partage réseau VirtualBox.
+#    REP_TRAVAIL pointe vers $RepDepot (C:\CCW\Bridge_Agent), le clone du
+#    dépôt déjà utilisé plus haut dans le script — cohérent avec le modèle
+#    multi-projets actif et Get-CheminsProjetCcw (ccw-commun.psm1). Avant
+#    l'issue #670, une valeur figée C:\CCW_Share (héritée de l'ancien
+#    modèle CCW unifié, issue #231, abandonné) était déconnectée de
+#    $RepDepot et provoquait un REP_TRAVAIL erroné à chaque provisioning.
 #    TOPIC_NTFY est un placeholder à renseigner (comme le mot de passe phase 1).
 # ---------------------------------------------------------------------------
 $RepConfigs = Join-Path $RepDepot 'configs'
 $CheminConf = Join-Path $RepConfigs 'ccw.conf'
 
-# Répertoire de travail local au PC fixe. Remplace l'ancien chemin UNC
-# \\VBOXSVR\CCW_Share (partage réseau VirtualBox, phase 1, creer_vm_ccw.py) :
-# un chemin local est accessible normalement à n'importe quel compte, y
-# compris $CompteService — plus besoin de contourner un lecteur automonté
-# invisible depuis un compte de service (issue #446, suite #447).
-$RepTravail = "C:\CCW_Share"
+# Répertoire de travail = le clone du dépôt ($RepDepot), pas un partage
+# séparé — voir issue #670 (suite #668).
+$RepTravail = $RepDepot
 
 $contenuConf = @"
 # configs/ccw.conf — Config du watcher pour l'agent Claude Code Windows (CCW).
@@ -910,7 +911,7 @@ $contenuConf = @"
 NOM         = ccw
 DEPOT       = $Depot
 LABEL       = for-windows
-# REP_TRAVAIL : chemin local au PC fixe (C:\CCW_Share, issue #446/#450).
+# REP_TRAVAIL : clone du dépôt, local au PC fixe (issue #670, suite #668).
 REP_TRAVAIL = $RepTravail
 
 # ─── ntfy ─────────────────────────────────────────────────────────────────────
