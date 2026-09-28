@@ -9,6 +9,29 @@ milliers de caractères sur une seule ligne logique, coûteux à relire et
 
 Convention d'ajout : voir §10 de `BRIDGE_AGENT_DOC.md`.
 
+## #673 — fix(watcher): _watcher_actif() réutilise _pid_vivant() au lieu de os.kill(pid, 0)
+
+`watcher.py` : `_watcher_actif()` (ligne ~2240) sondait la vivacité d'un
+process watcher via `os.kill(pid, 0)`, idiome purement POSIX. Sous Windows,
+le signal `0` correspond à `CTRL_C_EVENT` dans l'API Win32 — `os.kill(pid, 0)`
+y envoie un vrai Ctrl+C via `GenerateConsoleCtrlEvent` : sur son propre pid
+(cas de `_compter_watchers_actifs()`, qui teste tous les projets connus y
+compris le projet courant) le process s'auto-interrompt
+(`KeyboardInterrupt` → `sys.exit(0)` dans `main()`) — crash silencieux
+observé 3 fois le 28/09/2026 sur CCW-Watcher (bridge_agent) ; sur le pid
+d'un autre projet, `GenerateConsoleCtrlEvent` échoue avec
+`OSError: [WinError 87]` (cause très probable de l'erreur repérée le
+27/09/2026 sur CCW-Watcher-Actualise, non diagnostiquée jusqu'ici).
+
+La fonction sœur `_pid_vivant()` (issue #584) gérait déjà correctement les
+deux plateformes (`os.kill(pid, 0)` sur POSIX, `OpenProcess` en droits
+minimaux sur Windows) mais n'était pas réutilisée ici. `_watcher_actif()`
+délègue désormais à `_pid_vivant()` : plus aucun appel direct à
+`os.kill(pid, 0)`, comportement inchangé sur Linux, plus de faux Ctrl+C ni
+de WinError 87 sur Windows. Repli identique dans les 4 cas testés
+manuellement (pas de fichier PID, PID vivant, PID mort, PID invalide) ;
+aucun test automatisé dédié à `_watcher_actif()` n'existait au préalable.
+
 ## 28 septembre 2026 — issue #671
 
 `provisioning/windows/` : ajout de **`REINSTALLATION_WINDOWS.md`** (issue #671), procédure autonome en amont de `REINSTALLATION_CCW.md` — celui-ci ne couvrait le provisioning CCW (SSH, `provisionner.ps1`, tokens) qu'à partir d'un Windows déjà installé, son étape 1 se limitant à une phrase renvoyant à `autounattend.xml` (en réalité réservé à la VM `CCW-Build`, pas au PC fixe physique). Le nouveau document couvre : fabrication de la clé USB bootable (Rufus en mode normal — partition unique FAT32 vérifiée par `lsblk -f` le 28/09/2026, pas Ventoy — ISO officielle Windows 11 IoT Enterprise LTSC via evalcenter Microsoft), boot BIOS/UEFI sur ce PC fixe, cas standard vs réparation en place (limite « conserver les fichiers personnels » seulement, rencontrée le 27/09/2026 faute de clé USB à jour — issue #658), et désactivation complète et durable de Windows Update au niveau système (service `wuauserv`, stratégie/registre `NoAutoUpdate`, tâches planifiées `UpdateOrchestrator`) suite au plantage `ucrtbase.dll` du 27/09/2026 — à distinguer de la désactivation limitée au provisioning faite par `provisionner.ps1`. `REINSTALLATION_CCW.md` étape 1 mise à jour pour y renvoyer en préalable.
