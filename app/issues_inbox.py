@@ -27,10 +27,12 @@ from pathlib import Path
 from flask import jsonify, request
 
 DOSSIER_SCRIPT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(DOSSIER_SCRIPT))
 sys.path.insert(0, str(DOSSIER_SCRIPT / "scripts"))
 
 from watcher_issues_inbox import (charger_config_inbox, DEFAUT_CHEMIN_CONFIG,  # noqa: E402
                                   DOSSIER_MOTIFS, SUFFIXE_MOTIF)
+from watcher import _pid_vivant  # noqa: E402
 
 # Nombre de lignes d'historique renvoyées à l'onglet (le fichier lui-même est
 # déjà borné à MAX_LOG_LINES par le watcher — cf. ConfigInbox.max_log_lines).
@@ -49,15 +51,16 @@ CHEMIN_ECHEANCE = DOSSIER_SCRIPT / "logs" / "watcher-issues_inbox.echeance"
 # ─── Gestion du processus ──────────────────────────────────────────────────
 
 def watcher_inbox_actif() -> tuple[bool, int | None]:
-    """Retourne (actif, pid) — même logique que app/watchers.py::watcher_actif."""
+    """Retourne (actif, pid) — même logique que app/watchers.py::watcher_actif, via
+    watcher._pid_vivant (sonde cross-plateforme POSIX/Windows, issue #584) plutôt
+    qu'un `os.kill(pid, 0)` inline."""
     if not CHEMIN_PID.exists():
         return False, None
     try:
         pid = int(CHEMIN_PID.read_text().strip())
-        os.kill(pid, 0)   # lève OSError si le processus est mort
-        return True, pid
-    except (OSError, ProcessLookupError, ValueError):
+    except ValueError:
         return False, None
+    return (True, pid) if _pid_vivant(pid) else (False, None)
 
 
 def _temps_restant_s():
