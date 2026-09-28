@@ -9,6 +9,16 @@ milliers de caractères sur une seule ligne logique, coûteux à relire et
 
 Convention d'ajout : voir §10 de `BRIDGE_AGENT_DOC.md`.
 
+## Issue #681 — rep_defaut() sensible à l'OS + which→shutil.which dans nouveau_projet.py
+
+`nouveau_projet.py` : `rep_defaut()` utilise désormais `Path.home() / nom.capitalize()`
+au lieu du chemin `/home/alain/...` câblé en dur — résout correctement sous
+Windows comme sous Linux. La détection de `gh` (ligne ~939) utilise désormais
+`shutil.which("gh")` au lieu de `subprocess.run(["which", "gh"], ...)`, alignée
+sur le pattern déjà utilisé ailleurs dans le dépôt (`app/tunnel.py`,
+`app/projet_ccw.py`, `watcher.py`, `provisioning/windows/*.py`). Comportement
+inchangé sous Linux.
+
 ## #680 — refactor: déduplique _pid_vivant vers la version cross-platform de watcher.py
 
 Diagnostic du chantier « Bridge_Agent hybride » : `app/interruption.py`
