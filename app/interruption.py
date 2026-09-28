@@ -40,7 +40,7 @@ from app.ccw import (
 # « from watcher import »), mais on s'assure ici aussi de l'ordre d'import.
 DOSSIER_SCRIPT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(DOSSIER_SCRIPT))
-from watcher import _chemin_verrou, DOSSIER_LOGS  # noqa: E402
+from watcher import _chemin_verrou, _pid_vivant, DOSSIER_LOGS  # noqa: E402
 
 LABEL_NEEDS_HUMAN         = "needs-human"
 COMMENTAIRE_INTERRUPTION  = "⛔ Interrompu via new_issue.py"
@@ -163,14 +163,6 @@ def _lister_arbre(pid_racine: int) -> list:
     return resultat
 
 
-def _pid_vivant(pid: int) -> bool:
-    try:
-        os.kill(pid, 0)
-        return True
-    except OSError:
-        return False
-
-
 def _reaper_best_effort(pid: int) -> None:
     """Tente de récupérer (waitpid non bloquant) un pid qui serait un enfant
     DIRECT du process Flask courant — cas du process watcher, lancé par
@@ -243,10 +235,10 @@ def interrompre_linux(cfg) -> list:
     if pid_file.exists():
         try:
             candidat = int(pid_file.read_text().strip())
-            os.kill(candidat, 0)
+        except ValueError:
+            candidat = None
+        if candidat is not None and _pid_vivant(candidat):
             pid_watcher = candidat
-        except (OSError, ValueError):
-            pid_watcher = None
 
     arbre = _lister_arbre(pid_watcher) if pid_watcher else []
 

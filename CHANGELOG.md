@@ -9,6 +9,108 @@ milliers de caractères sur une seule ligne logique, coûteux à relire et
 
 Convention d'ajout : voir §10 de `BRIDGE_AGENT_DOC.md`.
 
+## Issue #681 — rep_defaut() sensible à l'OS + which→shutil.which dans nouveau_projet.py
+
+`nouveau_projet.py` : `rep_defaut()` utilise désormais `Path.home() / nom.capitalize()`
+au lieu du chemin `/home/alain/...` câblé en dur — résout correctement sous
+Windows comme sous Linux. La détection de `gh` (ligne ~939) utilise désormais
+`shutil.which("gh")` au lieu de `subprocess.run(["which", "gh"], ...)`, alignée
+sur le pattern déjà utilisé ailleurs dans le dépôt (`app/tunnel.py`,
+`app/projet_ccw.py`, `watcher.py`, `provisioning/windows/*.py`). Comportement
+inchangé sous Linux.
+
+## #680 — refactor: déduplique _pid_vivant vers la version cross-platform de watcher.py
+
+Diagnostic du chantier « Bridge_Agent hybride » : `app/interruption.py`
+(fonction locale `_pid_vivant`) et `app/issues_inbox.py`
+(`watcher_inbox_actif`) réimplémentaient chacune la sonde « ce PID est-il
+vivant ? » via un `os.kill(pid, 0)` POSIX-only, dupliquant et masquant
+`watcher._pid_vivant` (cross-plateforme POSIX/Windows, issue #584) — même
+risque que celui corrigé dans `watcher.py` lui-même pour `_watcher_actif`
+(issue #673). `app/watchers.py::watcher_actif` utilisait déjà la version
+partagée depuis l'issue #617, servant de modèle pour cette dédup.
+
+Fix : les deux modules importent désormais `_pid_vivant` depuis `watcher`
+(comme `app/watchers.py`) et l'utilisent à la place de leur `os.kill(pid, 0)`
+local :
+- `app/interruption.py` : suppression de la fonction locale `_pid_vivant`
+  (lignes ~166-171) ; le `os.kill(candidat, 0)` inline de
+  `interrompre_linux()` (détection du PID du watcher à interrompre) est
+  également remplacé par un appel à `_pid_vivant`, même test dupliqué au
+  même endroit.
+- `app/issues_inbox.py::watcher_inbox_actif` : même substitution, plus
+  `sys.path.insert(0, str(DOSSIER_SCRIPT))` ajouté (la racine du dépôt,
+  contenant `watcher.py`, n'était pas garantie sur `sys.path` avant cet
+  import — seul `scripts/` l'était).
+
+Recherche exhaustive (`grep -rn "os.kill(pid" --include="*.py"`) : aucune
+autre réimplémentation trouvée hors `watcher.py` lui-même et les fichiers de
+test (qui simulent des process pour leurs scénarios, pas une sonde
+générique). Comportement Linux inchangé (mêmes tests passés :
+test_relancer_watcher_574, test_champ_relance_516,
+test_evenements_issues_inbox_631, test_verrou_refus_precoce_584,
+test_nettoyage_arbre_247, test_orphelin_verrou_perime_322) ; ces deux points
+deviennent automatiquement sûrs côté Windows sans logique supplémentaire.
+
+## #679 — fix(web): détecte #Titre: n'importe où dans le corps collé (comme PROJET/TIMEOUT)
+
+Dans l'onglet « Nouvelle issue » (`static/js/creation.js`),
+`detecterTitreDansCorps()` ne reconnaissait `#Titre:` que sur la toute
+première ligne du corps collé (`premiereLigne = valeur.slice(0, finLigne)`
+testée seule), contrairement à `detecterProjetDansCorps()` (PROJET) et à la
+détection TIMEOUT qui, via `lireChampEntete`, cherchent déjà n'importe où
+dans `zoneEntete(corps)` (25 premières lignes, issue #512). Un texte collé
+avec l'en-tête (PROJET/REDACTEUR/MODE) placé avant `#Titre:` — convention par
+ailleurs valide côté `issues_inbox/` pour une issue seule — pré-remplissait
+donc bien PROJET et TIMEOUT mais pas le titre.
+
+Fix : `detecterTitreDansCorps()` cherche désormais `/^#titre:\s*(.*)$/im`
+dans `zoneEntete(valeur)` au lieu de la seule première ligne, puis retire la
+ligne trouvée avec la même logique que `retirerLigneEntete` (gestion de la
+ligne vide adjacente, issue #512) au lieu du simple découpage sur le premier
+`\n`. Le cas déjà géré (titre en première ligne, sans en-tête devant) reste
+identique — vérifié par un test manuel (regex+retrait rejoués hors DOM).
+
+Pas de garde-fou « valeur inchangée » ajouté (contrairement à
+`detecterProjetDansCorps`) : la ligne `#Titre:` est toujours retirée du corps
+une fois trouvée, donc jamais redétectée telle quelle au passage suivant —
+une correction manuelle du champ Titre n'est ainsi jamais écrasée.
+
+`decouperCorpsEnBlocs` (mode lot, issue #135) n'est pas concerné : il
+cherchait déjà `#Titre:` sur tout le corps via une regex globale
+(`/^#titre:/gim`) — seul son commentaire de tête, qui renvoyait à l'ancien
+comportement de `detecterTitreDansCorps`, a été mis à jour pour rester exact.
+
+Fichier touché : `static/js/creation.js`. Suite de tests JS existante
+(`static/js/tests/creation.test.js`, 24 tests) rejouée sans régression —
+`detecterTitreDansCorps` n'étant pas exportée (dépend du DOM), sa nouvelle
+logique a été vérifiée hors DOM par un script Node ad hoc reproduisant
+regex + retrait de ligne sur trois cas (en-tête avant #Titre:, titre en
+1re ligne sans en-tête, aucun #Titre:).
+
+## #677 — doc(ccw): section « Repérer et nettoyer les worktrees orphelins » dans REINSTALLATION_CCW.md
+
+Suite à #669 (lecture seule, avait produit le texte prêt à coller sans
+l'appliquer) : ajout de l'étape `### 9.` dans
+`provisioning/windows/REINSTALLATION_CCW.md`, juste après l'étape 8 et
+avant le `---` séparant la procédure Windows du prérequis Linux
+`cifs-utils`. Reprend le texte proposé par #669 tel quel (repérage via
+`git worktree list`, nettoyage via `worktree remove --force` +
+`worktree prune` + `branch -d`/`-D`, avertissement sur la perte de
+données non commitées/mergées, renvoi vers `WORKTREES.md`).
+
+Précision ajoutée par rapport au texte de #669 (demandée explicitement
+dans #677) : un encadré `> ⚠️` en tête de la section indique qu'elle
+concerne surtout les clones qui **survivent** à la réinstallation (ex.
+le `REP_TRAVAIL` d'un projet dédié) — si le clone est entièrement refait
+par `provisionner.ps1` (`C:\CCW\Bridge_Agent`, disque effacé à l'étape
+1), `.git/worktrees` repart de zéro avec le nouveau clone et il n'y a
+aucun orphelin local à nettoyer de ce côté.
+
+## 28 septembre 2026 — issue #676
+
+Interface web : la clé de signature des cookies de session (`SECRET_KEY`) est désormais **persistée** dans `configs/secret_key.bin` (gitignoré, permissions 0600) au lieu d'être régénérée à chaque lancement de `new_issue.py` — c'était la vraie cause de la reconnexion systématique en mode `--externe`, puisque `new_issue.py` n'est pas un service permanent. Générée une seule fois (`app/__init__.py::_cle_secrete_persistante`), relue sinon. `PERMANENT_SESSION_LIFETIME` fixé à 30 jours et `session.permanent = True` posé à l'authentification réussie (`app/auth.py::login_post`) : une session survit désormais aux redémarrages fréquents de l'interface, sans devenir illimitée.
+
 ## #673 — fix(watcher): _watcher_actif() réutilise _pid_vivant() au lieu de os.kill(pid, 0)
 
 `watcher.py` : `_watcher_actif()` (ligne ~2240) sondait la vivacité d'un

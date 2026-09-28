@@ -248,6 +248,47 @@ justification complète du choix.
 > la nouvelle clé publique récupérée côté CCL. Ne pas soumettre une case
 > « Projet CCW » juste avant une réinstallation planifiée du PC fixe.
 
+### 9. Repérer et nettoyer les worktrees orphelins
+
+Le nettoyage des worktrees `mode_write` (cf. `WORKTREES.md`) n'est **jamais**
+automatique : ni `watcher.py` ni les scripts de réinstallation ne suppriment
+un worktree ou sa branche `worktree-issue-<N>`. Après une réinstallation, des
+worktrees orphelins peuvent donc traîner sur les clones concernés (tâche
+interrompue par la réinstallation, répertoire frère
+`<REP_TRAVAIL>/../<NOM_PROJET>-issue<N>` disparu alors que la métadonnée git
+subsiste, ou l'inverse). Ce nettoyage reste **manuel**.
+
+> ⚠️ Cette section concerne surtout les clones qui **survivent** à la
+> réinstallation (ex. le `REP_TRAVAIL` d'un projet dédié, non touché par
+> `provisionner.ps1`). Si le clone est entièrement refait par
+> `provisionner.ps1` (`C:\CCW\Bridge_Agent`, disque effacé à l'étape 1),
+> `.git/worktrees` repart de zéro avec le nouveau clone : il n'y a alors
+> aucun orphelin local à nettoyer de ce côté.
+
+**Repérer** — dans chaque clone concerné (`C:\CCW\Bridge_Agent` et le
+`REP_TRAVAIL` de chaque projet dédié recréé à l'étape 7) :
+
+```powershell
+git -C <REP_TRAVAIL> worktree list
+```
+
+Toute ligne autre que `REP_TRAVAIL` lui-même est un worktree secondaire ; une
+mention `prunable` signale un worktree dont le répertoire n'existe plus sur
+le disque.
+
+**Nettoyer** — après avoir vérifié que la branche ne contient rien à
+récupérer (`git log master..worktree-issue-<N>`) :
+
+```powershell
+git -C <REP_TRAVAIL> worktree remove --force <chemin>   # répertoire encore présent
+git -C <REP_TRAVAIL> worktree prune                     # entrées "prunable" (répertoire déjà disparu)
+git -C <REP_TRAVAIL> branch -d worktree-issue-<N>       # -D si jamais mergée et abandonnée
+```
+
+> ⚠️ `--force` et `branch -D` jettent définitivement les modifications non
+> commitées ou non mergées : relire `git log`/`git status` du worktree avant.
+> Voir aussi `WORKTREES.md` (« Worktree orphelin ») pour le contexte complet.
+
 ---
 
 ## Prérequis côté Linux (ThinkPad) — `cifs-utils`
