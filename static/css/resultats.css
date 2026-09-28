@@ -271,6 +271,17 @@
   .resultats-layout{flex-direction:column}
   .panneau-lateral-col{width:100%}
 }
+/* Repli écran plafonné ~1360px (poste fixe, matériel non mis à niveau —
+   issue #683) : mêmes règles qu'au repli 900px ci-dessus (panneau latéral
+   sous le corps plutôt qu'à côté), déclenchées plus tôt pour ce cas précis.
+   Point de rupture DÉDIÉ et distinct du 900px pour rester réversible sans
+   toucher au comportement mobile/tablette existant — supprimer ce bloc
+   suffit à revenir en arrière. */
+@media (max-width:1400px){
+  .resultats-layout{flex-direction:column}
+  .panneau-lateral-col{width:100%}
+  .panneau-lateral{width:auto}
+}
 /* Panneau latéral de monitoring de l'onglet Résultats (issue #375→#377,
    refonte overlay lisible #380, colonne non recouvrante #628) : colonne
    basculée par #pl-toggle — monitoring passif des watchers (une ligne par

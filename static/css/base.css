@@ -74,3 +74,13 @@ textarea{width:100%;padding:10px;border:1px solid #ddd;border-radius:6px;
 .radio-groupe,.case-groupe{display:flex;gap:18px;flex-wrap:wrap;padding:4px 0}
 .radio-groupe label,.case-groupe label{font-size:13px;display:flex;align-items:center;gap:6px;cursor:pointer}
 .badge-alerte{font-size:11px;padding:2px 7px;border-radius:4px;background:#fff3cd;color:#856404;margin-left:4px}
+/* Repli écran plafonné ~1360px (poste fixe, matériel non mis à niveau —
+   issue #683) : la barre du haut (entête + boutons) s'empile proprement sur
+   plusieurs lignes au lieu de déborder, et les onglets passent à la ligne
+   plutôt que de se chevaucher/sortir du cadre. Voir aussi le repli
+   symétrique dans resultats.css (panneau latéral Infrastructure). Point de
+   rupture dédié, ciblé, réversible en supprimant ce bloc. */
+@media (max-width:1400px){
+  .entete{flex-wrap:wrap;row-gap:6px}
+  .onglets{flex-wrap:wrap;row-gap:4px}
+}
