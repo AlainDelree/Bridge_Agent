@@ -1063,7 +1063,16 @@ la même opération, en plus du point ci-dessus :
   Claude Chat dépose ce contenu dans un fichier `.txt` sous `issues_inbox/`
   (§3) — jamais en le présentant pour copier-coller manuel dans le formulaire
   web `new_issue.py` (voir §20 pour les usages restants, légitimes mais
-  distincts, de ce formulaire).
+  distincts, de ce formulaire). **Si aucun outil fichier (`bash`,
+  `create_file`, etc.) n'est disponible dans la conversation en cours** —
+  donc impossible de produire ce `.txt` — Claude Chat ne bascule **jamais**
+  silencieusement vers le formulaire web comme repli de sa propre
+  initiative, même en s'appuyant sur son statut de méthode de backup légitime
+  (§20) pour se justifier : il le signale explicitement à Alain (« je n'ai
+  pas d'outil fichier dans cette conversation ») et lui demande comment
+  procéder (issue #685, suite à un cas constaté sur le projet Rummikub où
+  l'ambiguïté entre §11 et §20 a conduit à présenter le texte en clair de
+  bonne foi).
 - **Mode par défaut** : lecture seule. N'armer `mode_write` que si la tâche
   demande explicitement une modification de fichier.
 - **Scripts PowerShell (`.ps1`) : BOM UTF-8 obligatoire dès la création.**
@@ -4112,7 +4121,12 @@ dont le corps a été saisi dans le formulaire (frappe manuelle par Alain,
 par exemple). C'est le même format que celui attendu par le watcher
 `issues_inbox` (§3.3) pour les fichiers `.txt` que Claude Chat y dépose —
 Claude Chat ne doit en revanche jamais produire ce texte pour qu'Alain le
-copie-colle ici :
+copie-colle ici. **Ce formulaire reste un repli légitime, mais c'est à
+Alain de décider de l'utiliser — jamais à Claude Chat d'y basculer de sa
+propre initiative** : si l'outil fichier manque dans la conversation en
+cours (§11), Claude Chat le signale et demande la marche à suivre plutôt
+que de présenter le texte en clair en invoquant ce formulaire comme
+justification (issue #685) :
 
 ```
 #Titre: Titre court et actionnable
