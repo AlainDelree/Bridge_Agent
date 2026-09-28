@@ -19,10 +19,18 @@ réinstallation, pas la paire de clés côté CCL.
 
 ### 1. Réinstallation Windows
 
-Réinstaller Windows sur le PC fixe en utilisant la réponse d'installation
-automatisée `autounattend.xml` de ce dossier (voir les commentaires en tête
-du fichier pour les valeurs à adapter avant usage, notamment le mot de
-passe administrateur).
+**Voir `REINSTALLATION_WINDOWS.md` (ce dossier)** pour la procédure complète
+en amont de cette étape : fabrication de la clé USB bootable (source de
+l'ISO, outil recommandé), boot BIOS/UEFI sur ce PC fixe, cas standard vs
+réparation en place (limite « conserver les fichiers personnels »
+seulement), et désactivation complète et durable de Windows Update au
+niveau système (service + stratégie/registre + tâches planifiées) — à ne
+pas confondre avec la désactivation faite par `provisionner.ps1` à l'étape
+4 ci-dessous, qui n'agit qu'au niveau de son propre provisioning.
+
+`autounattend.xml` de ce dossier n'intervient PAS dans cette étape : il est
+réservé au provisioning automatisé de la VM `CCW-Build`
+(`creer_vm_ccw.py`), pas à la réinstallation physique du PC fixe.
 
 ### 2. Configurer l'accès SSH depuis CCL
 
