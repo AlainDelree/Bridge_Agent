@@ -9,6 +9,10 @@ milliers de caractères sur une seule ligne logique, coûteux à relire et
 
 Convention d'ajout : voir §10 de `BRIDGE_AGENT_DOC.md`.
 
+## 28 septembre 2026 — issue #676
+
+Interface web : la clé de signature des cookies de session (`SECRET_KEY`) est désormais **persistée** dans `configs/secret_key.bin` (gitignoré, permissions 0600) au lieu d'être régénérée à chaque lancement de `new_issue.py` — c'était la vraie cause de la reconnexion systématique en mode `--externe`, puisque `new_issue.py` n'est pas un service permanent. Générée une seule fois (`app/__init__.py::_cle_secrete_persistante`), relue sinon. `PERMANENT_SESSION_LIFETIME` fixé à 30 jours et `session.permanent = True` posé à l'authentification réussie (`app/auth.py::login_post`) : une session survit désormais aux redémarrages fréquents de l'interface, sans devenir illimitée.
+
 ## #673 — fix(watcher): _watcher_actif() réutilise _pid_vivant() au lieu de os.kill(pid, 0)
 
 `watcher.py` : `_watcher_actif()` (ligne ~2240) sondait la vivacité d'un
