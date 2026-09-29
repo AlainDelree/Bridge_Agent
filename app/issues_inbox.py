@@ -82,6 +82,9 @@ def demarrer_watcher_inbox(duree_min: int = 0) -> tuple[bool, int]:
     actif, pid_ancien = watcher_inbox_actif()
     if actif and pid_ancien:
         try:
+            # SIGTERM (15) sûr sous Windows : routé par CPython vers
+            # TerminateProcess(), hors du piège os.kill(pid, 0)/CTRL_C_EVENT
+            # (issue #682) qui ne concerne que le signal 0. Ne pas retoucher.
             os.kill(pid_ancien, signal.SIGTERM)
             time.sleep(0.8)
         except OSError:
@@ -93,12 +96,16 @@ def demarrer_watcher_inbox(duree_min: int = 0) -> tuple[bool, int]:
     if duree_min > 0:
         cmd += ["--duree-min", str(duree_min)]
 
-    proc = subprocess.Popen(
-        cmd,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        start_new_session=True,
-    )
+    # Détachement du process lancé — même pattern que watcher.py::lancer_claude
+    # (issue D, app/watchers.py) : start_new_session=True est POSIX-only et lève
+    # sous Windows, où CREATE_NEW_PROCESS_GROUP isole le routage Ctrl+Break.
+    kwargs_popen = dict(stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    if os.name == "nt":
+        kwargs_popen["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
+    else:
+        kwargs_popen["start_new_session"] = True
+
+    proc = subprocess.Popen(cmd, **kwargs_popen)
     CHEMIN_PID.write_text(str(proc.pid))
     if duree_min > 0:
         CHEMIN_ECHEANCE.write_text(str(time.time() + duree_min * 60))
@@ -113,6 +120,8 @@ def arreter_watcher_inbox() -> tuple[bool, str]:
     if not actif:
         return False, "watcher déjà inactif"
     try:
+        # SIGTERM (15) sûr sous Windows : voir commentaire équivalent dans
+        # demarrer_watcher_inbox() ci-dessus (issue #682).
         os.kill(pid, signal.SIGTERM)
         CHEMIN_PID.unlink(missing_ok=True)
         CHEMIN_ECHEANCE.unlink(missing_ok=True)
