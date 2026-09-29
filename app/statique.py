@@ -20,6 +20,7 @@ Deux aides exposées aux gabarits Jinja (enregistrées dans create_app) :
 """
 
 import json
+import platform
 from pathlib import Path
 
 from flask import url_for
@@ -75,7 +76,18 @@ def importmap_socle() -> str:
     return json.dumps({"imports": imports}, ensure_ascii=False)
 
 
+def favicon_svg() -> str:
+    """Chemin (relatif à static/) du favicon SVG à servir, selon l'OS courant :
+    variante bleue (#0078D4) sous Windows pour distinguer l'onglet de new_issue.py
+    quand il tourne nativement sur le PC Windows, rouge (existant) sous Linux/autre
+    (issue #687)."""
+    if platform.system() == "Windows":
+        return "img/favicon-windows.svg"
+    return "img/favicon.svg"
+
+
 def enregistrer_aides_statiques(app) -> None:
-    """Publie url_statique et importmap_socle comme globales Jinja."""
+    """Publie url_statique, importmap_socle et favicon_svg comme globales Jinja."""
     app.jinja_env.globals["url_statique"] = url_statique
     app.jinja_env.globals["importmap_socle"] = importmap_socle
+    app.jinja_env.globals["favicon_svg"] = favicon_svg
