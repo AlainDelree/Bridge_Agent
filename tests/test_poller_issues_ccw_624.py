@@ -11,11 +11,13 @@ qui réutilise déjà `_debut_traitement` sans mock, exercé ici pour de vrai) :
 
 - remplissage de la liste surveillée : balayage initial (`_balayage_initial`,
   tous les projets configurés, pas seulement ceux dont le `.conf` porte
-  `LABEL=for-windows`) et ajout direct (`ajouter_issue_surveillee`), filtré
-  par `BRIDGE_NOTIF_SCOPE` (défaut `for-windows`) ;
+  `LABEL=for-windows`) et ajout direct (`ajouter_issue_surveillee`) —
+  couvrant depuis #693 TOUJOURS les deux labels bridge (`for-linux` ET
+  `for-windows`), `BRIDGE_NOTIF_SCOPE` ne restreignant plus que le bip ;
 - retrait de la liste dès la transition terminale (done/needs-human) détectée,
   avec l'anti-spam au démarrage (aucune notification pour une transition déjà
-  présente à l'amorçage) et le filtre de récence conservés ;
+  présente à l'amorçage), le filtre de récence, et le filtrage du bip par
+  `BRIDGE_NOTIF_SCOPE` (`_bip_dans_la_portee`, issue #693) conservés ;
 - détection de la prise en charge (ACK), en réutilisant réellement
   `app.issues._debut_traitement` (pas de duplication de la logique) ;
 - liste vide → AUCUN appel gh à ce cycle (`_gh_view_issue`/`_commentaires_issue`
@@ -80,16 +82,30 @@ def _reinitialiser():
 
 # ─── Scénarios : remplissage de la liste ───────────────────────────────────
 
-def scenario_ajout_direct_filtre_scope():
-    """ajouter_issue_surveillee respecte BRIDGE_NOTIF_SCOPE (défaut
-    for-windows) : une issue for-windows est ajoutée, une issue for-linux ne
-    l'est pas — sans distinction de projet (contrairement à l'ancien
-    _projets_dans_la_portee, filtré sur le .conf, cf. #614/#621)."""
+def scenario_ajout_direct_toujours_les_deux_labels():
+    """ajouter_issue_surveillee surveille désormais TOUJOURS les deux labels
+    bridge (for-linux ET for-windows), quel que soit BRIDGE_NOTIF_SCOPE
+    (issue #693 : la SURVEILLANCE — liste + SSE — s'aligne sur
+    app.issues._lister_issues_labels(), qui fusionne déjà les deux labels
+    pour le chargement manuel ; seul SCOPE continue de restreindre le BIP,
+    voir scenario_transition_hors_scope_bip_mais_sse_quand_meme)."""
     _reinitialiser()
     assert poller.ajouter_issue_surveillee("AlainDelree/Demo", 1, ["bridge", "for-windows"]) is True
     assert ("AlainDelree/Demo", 1) in poller._ISSUES_SURVEILLEES
-    assert poller.ajouter_issue_surveillee("AlainDelree/Demo", 2, ["bridge", "for-linux"]) is False
-    assert ("AlainDelree/Demo", 2) not in poller._ISSUES_SURVEILLEES
+    assert poller.ajouter_issue_surveillee("AlainDelree/Demo", 2, ["bridge", "for-linux"]) is True
+    assert ("AlainDelree/Demo", 2) in poller._ISSUES_SURVEILLEES
+
+
+def scenario_ajout_direct_scope_off_exclut_tout():
+    """SCOPE == "off" reste le seul cas qui exclut une issue de la liste
+    surveillée (issue #693) — en pratique déjà court-circuité plus tôt par
+    surveiller_transitions(), mais ajouter_issue_surveillee() peut aussi être
+    appelée en direct via la route /notifier-issue-a-surveiller."""
+    _reinitialiser()
+    with Patch(poller, "SCOPE", "off"):
+        assert poller.ajouter_issue_surveillee("AlainDelree/Demo", 1, ["for-windows"]) is False
+        assert poller.ajouter_issue_surveillee("AlainDelree/Demo", 2, ["for-linux"]) is False
+    assert poller._ISSUES_SURVEILLEES == {}
 
 
 def scenario_ajout_direct_idempotent():
@@ -105,8 +121,9 @@ def scenario_ajout_direct_idempotent():
 
 def scenario_balayage_initial_tous_projets():
     """_balayage_initial() interroge TOUS les projets configurés (pas
-    seulement ceux dont le .conf porte LABEL=for-windows, bug #614/#621) et
-    ajoute chaque issue for-windows ouverte retournée par gh."""
+    seulement ceux dont le .conf porte LABEL=for-windows, bug #614/#621) et,
+    pour chacun, les DEUX labels bridge (issue #693 : plus seulement SCOPE —
+    miroir de app.issues._lister_issues_labels)."""
     _reinitialiser()
     projets = [_cfg("alpha", "AlainDelree/Alpha"), _cfg("beta", "AlainDelree/Beta")]
     appels = []
@@ -115,6 +132,8 @@ def scenario_balayage_initial_tous_projets():
         appels.append((depot, label, state))
         if depot == "AlainDelree/Alpha" and label == "for-windows":
             return [{"number": 42, "labels": [{"name": "for-windows"}]}]
+        if depot == "AlainDelree/Beta" and label == "for-linux":
+            return [{"number": 7, "labels": [{"name": "for-linux"}]}]
         return []
 
     with Patch(poller, "lister_projets", lambda: projets), \
@@ -122,18 +141,21 @@ def scenario_balayage_initial_tous_projets():
         poller._balayage_initial()
 
     assert ("AlainDelree/Alpha", 42) in poller._ISSUES_SURVEILLEES
-    assert ("AlainDelree/Beta", 42) not in poller._ISSUES_SURVEILLEES
-    # Un appel par (projet, label dans la portée) — SCOPE=for-windows par
-    # défaut → un seul label demandé, pour CHAQUE projet.
-    assert appels == [("AlainDelree/Alpha", "for-windows", "open"),
+    assert ("AlainDelree/Beta", 7) in poller._ISSUES_SURVEILLEES
+    # Un appel par (projet, label) — les DEUX labels bridge, pour CHAQUE
+    # projet, quel que soit SCOPE (issue #693).
+    assert appels == [("AlainDelree/Alpha", "for-linux", "open"),
+                       ("AlainDelree/Alpha", "for-windows", "open"),
+                       ("AlainDelree/Beta", "for-linux", "open"),
                        ("AlainDelree/Beta", "for-windows", "open")]
 
 
 # ─── Scénarios : retrait après transition terminale ────────────────────────
 
 def scenario_transition_done_retire_et_notifie():
-    """Une issue surveillée qui se ferme avec `done` est notifiée (bip/bulle/
-    ntfy + SSE fin_issue) puis RETIRÉE de la liste — hors amorçage."""
+    """Une issue surveillée qui se ferme avec `done` (et le label de portée
+    par défaut, `for-windows`) est notifiée (bip/bulle/ntfy + SSE fin_issue)
+    puis RETIRÉE de la liste — hors amorçage."""
     _reinitialiser()
     cfg = _cfg()
     poller.ajouter_issue_surveillee(cfg.depot, 10, ["for-windows"])
@@ -141,7 +163,8 @@ def scenario_transition_done_retire_et_notifie():
     notifs, sse_fin = [], []
 
     def faux_gh_view(depot, numero, champs):
-        return {"state": "CLOSED", "title": "Titre", "labels": [{"name": "done"}],
+        return {"state": "CLOSED", "title": "Titre",
+                "labels": [{"name": "done"}, {"name": "for-windows"}],
                 "closedAt": _iso(5), "updatedAt": _iso(5)}
 
     with Patch(poller, "_gh_view_issue", faux_gh_view), \
@@ -154,6 +177,37 @@ def scenario_transition_done_retire_et_notifie():
     assert (cfg.depot, 10) not in poller._ISSUES_SURVEILLEES
     assert sse_fin == [(cfg.nom, 10)]
     assert len(notifs) == 1
+
+
+def scenario_transition_hors_scope_bip_mais_sse_quand_meme():
+    """Cœur du fix #693 : une issue `for-linux` est surveillée (SCOPE par
+    défaut = for-windows n'exclut plus la SURVEILLANCE) et sa transition
+    `done` déclenche bien le SSE fin_issue (rafraîchissement automatique de
+    l'onglet Résultats), mais AUCUN bip/bulle/ntfy — anti-doublon avec le
+    watcher local (_bip_dans_la_portee), qui reste limité à `for-windows` par
+    défaut."""
+    _reinitialiser()
+    cfg = _cfg()
+    poller.ajouter_issue_surveillee(cfg.depot, 15, ["for-linux"])
+    assert (cfg.depot, 15) in poller._ISSUES_SURVEILLEES
+
+    notifs, sse_fin = [], []
+
+    def faux_gh_view(depot, numero, champs):
+        return {"state": "CLOSED", "title": "Titre",
+                "labels": [{"name": "done"}, {"name": "for-linux"}],
+                "closedAt": _iso(5), "updatedAt": _iso(5)}
+
+    with Patch(poller, "_gh_view_issue", faux_gh_view), \
+         Patch(poller, "projet_par_depot", lambda depot: cfg), \
+         Patch(notifications, "notifier", lambda *a, **k: notifs.append((a, k))), \
+         Patch(traitement_fin, "notifier_fin_issue", lambda p, n: sse_fin.append((p, n))), \
+         Patch(etat_rate_limit, "maj_rate_limit", lambda origine: None):
+        poller._cycle(premier_passage=False)
+
+    assert (cfg.depot, 15) not in poller._ISSUES_SURVEILLEES
+    assert sse_fin == [(cfg.nom, 15)]
+    assert notifs == []
 
 
 def scenario_transition_a_lamorcage_pas_de_notification():
@@ -293,10 +347,12 @@ def scenario_liste_vide_aucun_appel_gh():
 
 def main():
     tests = [
-        ("ajout direct filtré par BRIDGE_NOTIF_SCOPE", scenario_ajout_direct_filtre_scope),
+        ("ajout direct : toujours les deux labels bridge (issue #693)", scenario_ajout_direct_toujours_les_deux_labels),
+        ("ajout direct : SCOPE=off exclut tout", scenario_ajout_direct_scope_off_exclut_tout),
         ("ajout direct idempotent (ack_connu préservé)", scenario_ajout_direct_idempotent),
-        ("balayage initial : tous les projets, pas seulement LABEL=for-windows", scenario_balayage_initial_tous_projets),
+        ("balayage initial : tous les projets ET les deux labels (issue #693)", scenario_balayage_initial_tous_projets),
         ("transition done → notifiée puis retirée", scenario_transition_done_retire_et_notifie),
+        ("transition hors SCOPE : SSE quand même, bip filtré (issue #693)", scenario_transition_hors_scope_bip_mais_sse_quand_meme),
         ("transition déjà présente à l'amorçage → retirée sans notifier", scenario_transition_a_lamorcage_pas_de_notification),
         ("transition trop ancienne → retirée sans notifier", scenario_transition_trop_ancienne_ignoree),
         ("ACK détectée (réutilise _debut_traitement) → SSE debut_issue, une fois", scenario_ack_detectee_pousse_debut_issue),

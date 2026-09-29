@@ -63,20 +63,47 @@ Les alertes intermédiaires d'issues critiques (une par tentative ratée) ne son
 PAS répliquées ici : ce ne sont pas des transitions d'état d'issue mais des
 signaux transitoires propres au watcher, difficiles à détecter par polling.
 
-Anti-doublon (issue #187, point 4)
-----------------------------------
-Ce poller et watcher.py peuvent tous deux notifier. Pour éviter qu'Alain
-reçoive deux fois le même signal, deux réglages se combinent :
+Portée de la LISTE surveillée == portée du chargement manuel (issue #693)
+--------------------------------------------------------------------------
+`_balayage_initial()`/`ajouter_issue_surveillee()` surveillent désormais
+TOUJOURS les deux labels bridge (`for-linux` ET `for-windows`), pour le dépôt
+de chaque projet configuré — exactement comme `app.issues._lister_issues_labels()`
+le fait déjà pour le chargement manuel (`issues_liste`/`recherche_issues`,
+issue #479/#183). Avant #693, `BRIDGE_NOTIF_SCOPE` restreignait aussi CETTE
+liste à un seul label : une issue créée directement (`gh issue create`, hors
+formulaire/`issues_inbox/`) avec l'autre label ne rejoignait la liste
+surveillée qu'au balayage initial suivant AU MIEUX (limite documentée
+ci-dessous), et si son label ne correspondait pas à `BRIDGE_NOTIF_SCOPE` de
+l'instance, elle n'y entrait JAMAIS — incohérence avec la liste manuelle, qui
+montre toujours les deux labels. Résultat : le rafraîchissement automatique
+SSE (`fin_issue`/`debut_issue`, §17.3) se déclenche désormais pour TOUTE issue
+bridge (des deux labels), quelle que soit `BRIDGE_NOTIF_SCOPE`. Seul
+`BRIDGE_NOTIF_SCOPE=off` coupe entièrement la surveillance (court-circuité par
+`surveiller_transitions()`, voir plus bas).
+
+Anti-doublon (issue #187, point 4 ; portée du BIP seule depuis #693)
+----------------------------------------------------------------------
+Ce poller et watcher.py peuvent tous deux notifier (bip/bulle/ntfy). Pour
+éviter qu'Alain reçoive deux fois le même signal, deux réglages se combinent :
   • côté watcher : `NOTIFIER_LOCAL = false` dans le .conf coupe la notification
     locale du watcher (à poser sur la VM CCW, et sur CCL si l'on bascule en
     centralisation complète) ;
-  • côté poller  : la portée `BRIDGE_NOTIF_SCOPE` restreint les issues
-    surveillées (`for-windows` par défaut : uniquement les issues CCW, celles
-    justement invisibles à Alain aujourd'hui).
+  • côté poller  : la portée `BRIDGE_NOTIF_SCOPE` restreint désormais
+    UNIQUEMENT le bip/bulle/ntfy effectivement émis par ce poller
+    (`_bip_dans_la_portee()`, appelée dans `_traiter_transition`) —
+    `for-windows` par défaut : uniquement les issues CCW, celles justement
+    invisibles à Alain aujourd'hui. La SURVEILLANCE (liste + SSE) n'est plus
+    filtrée par cette portée depuis #693 (voir ci-dessus) : seul le bip reste
+    à un seul label par défaut, pas le rafraîchissement de l'onglet.
 Le défaut livré (`for-windows` + watcher CCL laissé notifiant) est donc SANS
-régression ni doublon : CCL notifie via son watcher (déjà fonctionnel), CCW
-notifie via ce poller. Pour la centralisation complète recommandée (option a),
-voir BRIDGE_AGENT_DOC.md §17.
+régression ni doublon de BIP : CCL notifie via son watcher (déjà
+fonctionnel, y compris son propre SSE — `watcher.py::notifier_fin_sse`), CCW
+notifie (bip) via ce poller. Le SSE de ce poller peut désormais se déclencher
+UNE SECONDE FOIS, un peu plus tard, pour une issue for-linux déjà traitée
+(et déjà rafraîchie) par le watcher local — sans conséquence audible
+(rafraîchissement silencieux et idempotent de l'onglet Résultats), c'est le
+compromis accepté pour garantir la cohérence avec la liste manuelle. Pour la
+centralisation complète recommandée (option a), voir BRIDGE_AGENT_DOC.md §17.
 
 Garde-fous conservés (issue #624)
 ----------------------------------
@@ -128,6 +155,8 @@ RECENCE_MIN  = int(os.environ.get("BRIDGE_NOTIF_RECENCE_MIN", "30"))  # fenêtre
 ESPACEMENT_S = float(os.environ.get("BRIDGE_NOTIF_ESPACEMENT", "2"))  # délai entre deux issues surveillées (issue #190 : étaler les appels gh au lieu d'une rafale groupée)
 SCOPE        = os.environ.get("BRIDGE_NOTIF_SCOPE", "for-windows").strip().lower()
 # SCOPE : "for-windows" (défaut, CCW seul) | "for-linux" | "all" | "off"
+# Depuis #693 : ne restreint plus que le BIP (_bip_dans_la_portee) — la liste
+# surveillée et le SSE couvrent toujours les deux labels, "off" excepté.
 
 LABEL_DONE        = "done"
 LABEL_NEEDS_HUMAN = "needs-human"
@@ -217,27 +246,41 @@ def _labels_de(issue: dict) -> list[str]:
 
 
 def _dans_la_portee(labels: list[str]) -> bool:
-    """Une issue portant ces labels entre-t-elle dans la portée configurée
-    (SCOPE) ? Utilisée à l'ajout à la liste surveillée (ajouter_issue_surveillee)
-    — SCOPE=off n'est jamais atteint ici, court-circuité plus haut."""
+    """Une issue portant ces labels entre-t-elle dans la portée SURVEILLÉE ?
+    Depuis #693, alignée sur `app.issues._lister_issues_labels()` : les deux
+    labels bridge (`for-linux`, `for-windows`) sont toujours surveillés — seul
+    `SCOPE == "off"` désactive tout (déjà court-circuité par
+    `surveiller_transitions()`, mais aussi vérifié ici : `ajouter_issue_surveillee()`
+    peut être appelée en direct, hors de cette boucle, via la route
+    `POST /notifier-issue-a-surveiller`)."""
+    if SCOPE == "off":
+        return False
+    return "for-linux" in labels or "for-windows" in labels
+
+
+def _labels_scope() -> list[str]:
+    """Labels GitHub à demander à gh pour le balayage initial (issue #624,
+    élargi #693) : toujours les deux labels bridge, miroir de
+    `app.issues._lister_issues_labels()` — sauf `SCOPE == "off"`."""
+    if SCOPE == "off":
+        return []
+    return ["for-linux", "for-windows"]
+
+
+def _bip_dans_la_portee(labels: list[str]) -> bool:
+    """Cette issue a-t-elle le droit de déclencher un BIP/bulle/ntfy depuis CE
+    poller (anti-doublon, issue #624 ; portée réduite au seul bip par #693) ?
+    Ancienne logique de `_dans_la_portee()` avant #693 — la SURVEILLANCE
+    (liste + SSE) couvre désormais toujours les deux labels, mais le bip reste
+    limité à une plateforme par défaut pour ne pas dupliquer la notification
+    déjà émise localement par watcher.py (voir docstring de module)."""
     if SCOPE == "all":
         return True
     if SCOPE == "for-windows":
         return "for-windows" in labels
     if SCOPE == "for-linux":
         return "for-linux" in labels
-    return False
-
-
-def _labels_scope() -> list[str]:
-    """Label(s) GitHub à demander à gh pour le balayage initial (issue #624)
-    — miroir de `_dans_la_portee()`, mais retourne les libellés à interroger
-    plutôt que de filtrer une liste de labels déjà connue."""
-    if SCOPE == "all":
-        return ["for-windows", "for-linux"]
-    if SCOPE in ("for-windows", "for-linux"):
-        return [SCOPE]
-    return []  # SCOPE=off déjà court-circuité par surveiller_transitions()
+    return False  # SCOPE == "off" : jamais atteint (surveiller_transitions() coupe tout avant)
 
 
 # ─── Liste des issues surveillées (issue #624, remplace le balayage par
@@ -365,7 +408,10 @@ def _traiter_transition(cfg, numero: int, issue: dict, type_transition: str,
         titre = issue.get("title") or ""
         labels = _labels_de(issue)
         _log(f"transition {type_transition} — {cfg.nom} #{numero} '{titre}' — labels={labels}")
-        _notifier_transition(cfg, numero, titre, labels, type_transition)
+        if _bip_dans_la_portee(labels):
+            _notifier_transition(cfg, numero, titre, labels, type_transition)
+        else:
+            _log(f"bip hors portée ({SCOPE}) — {cfg.nom} #{numero} — SSE fin_issue quand même.")
         traitement_fin.notifier_fin_issue(cfg.nom, numero)
     _retirer_issue_surveillee(depot, numero)
 
