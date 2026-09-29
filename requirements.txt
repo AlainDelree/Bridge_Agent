@@ -1,0 +1,8 @@
+# Dépendances Python propres à new_issue.py / app/ (interface web Flask,
+# port 5100) — issue #690. watcher.py n'en a besoin d'aucune (bibliothèque
+# standard uniquement, cf. CONTEXTE.md) : ce fichier ne le concerne pas.
+#
+# Versions minimales vérifiées le 29/09/2026 (celles déjà en service sur le
+# ThinkPad) — pas de plafond haut volontaire, aucune contrainte connue.
+flask>=3.1
+werkzeug>=3.1
