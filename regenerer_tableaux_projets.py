@@ -190,7 +190,8 @@ def _git_doc(racine: Path, *args: str,
             timeout: float = TIMEOUT_GIT_DOC_LOCAL) -> subprocess.CompletedProcess:
     try:
         return subprocess.run(["git", *args], cwd=racine,
-                              capture_output=True, text=True, timeout=timeout)
+                              capture_output=True, text=True,
+                              encoding="utf-8", errors="replace", timeout=timeout)
     except subprocess.TimeoutExpired:
         return subprocess.CompletedProcess(
             args=["git", *args], returncode=124, stdout="",

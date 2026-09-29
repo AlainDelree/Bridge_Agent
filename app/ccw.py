@@ -136,7 +136,8 @@ def _copier(hote: str, utilisateur: str, cle_privee: str, source_local: Path, ti
     """Pousse un fichier de l'hôte vers C:/Windows/Temp du PC fixe (scp)."""
     cible = f"{utilisateur}@{hote}:{DEST_DIR_DISTANT}"
     cmd = ["scp", "-i", cle_privee, *OPTIONS_SSH, str(source_local), cible]
-    return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+    return subprocess.run(cmd, capture_output=True, text=True,
+                           encoding="utf-8", errors="replace", timeout=timeout)
 
 
 def _executer_ps(hote: str, utilisateur: str, cle_privee: str,

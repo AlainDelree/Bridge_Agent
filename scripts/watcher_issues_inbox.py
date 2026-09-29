@@ -575,7 +575,8 @@ def _recuperer_issue(depot: str, numero: int):
         res = subprocess.run(
             ["gh", "issue", "view", str(numero), "--repo", depot,
              "--json", "number,state,body,title,labels"],
-            capture_output=True, text=True, timeout=30,
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=30,
         )
         if res.returncode != 0:
             detail = (res.stderr or res.stdout or "").strip()
@@ -644,7 +645,8 @@ def _modifier_corps_gh(depot: str, numero: int, corps: str) -> tuple[bool, str]:
     try:
         res = subprocess.run(
             ["gh", "issue", "edit", str(numero), "--repo", depot, "--body-file", chemin_body],
-            capture_output=True, text=True, timeout=30,
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=30,
         )
         if res.returncode == 0:
             return True, ""

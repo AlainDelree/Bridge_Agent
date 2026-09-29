@@ -53,7 +53,8 @@ def _confs():
 def _gh_json(args):
     """Appel gh renvoyant du JSON (liste/objet), ou None en cas d'échec."""
     try:
-        out = subprocess.run(["gh", *args], capture_output=True, text=True, timeout=60)
+        out = subprocess.run(["gh", *args], capture_output=True, text=True,
+                              encoding="utf-8", errors="replace", timeout=60)
         if out.returncode != 0:
             return None
         return json.loads(out.stdout or "null")

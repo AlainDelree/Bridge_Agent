@@ -65,7 +65,7 @@ def executer(cmd, passwordfile, dry_run=False):
     print("  $ " + " ".join(affichage))
     if dry_run:
         return 0
-    res = subprocess.run(cmd, text=True)
+    res = subprocess.run(cmd, text=True, encoding="utf-8", errors="replace")
     return res.returncode
 
 
