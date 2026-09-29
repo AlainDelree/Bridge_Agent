@@ -2924,7 +2924,10 @@ def lancer_claude(numero: int, titre: str, body: str, dry_run: bool,
                   cwd: Path = None,
                   verrou: Path = None,
                   chemin_scratch: Path = None,
-                  chemin_worktree: Path = None) -> tuple[bool, str]:
+                  chemin_worktree: Path = None,
+                  tentative: int = 1,
+                  max_tentatives: int = None,
+                  tete_avant_traitement: str = None) -> tuple[bool, str]:
     """
     Lance Claude Code en mode non-interactif sur une issue.
 
@@ -2965,6 +2968,19 @@ def lancer_claude(numero: int, titre: str, body: str, dry_run: bool,
     CHANGELOG-<N>.md) — `cwd` porte déjà le répertoire RÉEL du subprocess
     (worktree ou REP_TRAVAIL). None = traitement hors worktree (comportement
     inchangé, aucun bloc injecté).
+
+    tentative / max_tentatives / tete_avant_traitement (issue #689) : numéro
+    de la tentative en cours (1 = première), nombre max d'essais prévu (None
+    si critique = illimité) et SHA de HEAD dans `cwd`/`chemin_worktree` capturé
+    AVANT la toute première tentative de ce traitement. À partir de la
+    tentative 2, ces trois valeurs permettent d'injecter dans le prompt une
+    clause qui explique à CCL qu'il n'est pas le premier passage sur cette
+    issue et que des commits déjà présents (absents de `tete_avant_traitement`)
+    proviennent très probablement de sa propre tentative précédente, tuée par
+    le TIMEOUT juste après avoir fini — à vérifier plutôt qu'à refaire, et à
+    signaler comme telle dans le rapport final plutôt que comme une
+    « exécution antérieure » non identifiée. Valeurs par défaut (tentative=1,
+    reste à None) : aucun bloc injecté, comportement inchangé.
 
     Retourne (succès, sortie).
     """
@@ -3104,6 +3120,37 @@ fichier, n'exécute aucune commande modifiant l'état du système ou du dépôt.
             f"intégrera CHANGELOG-{numero}.md dans CHANGELOG.md avant le push.\n"
         )
 
+    # Bloc rang de tentative (issue #689) : injecté à partir de la 2e tentative
+    # pour ce même traitement (une tentative 1 tuée par le TIMEOUT juste après
+    # avoir fini laisse ses commits dans le worktree/REP_TRAVAIL — confirmé sur
+    # #687). Sans ce bloc, la tentative suivante découvre ce travail déjà fait
+    # mais ne peut pas l'attribuer avec certitude à sa propre tentative
+    # précédente : elle le décrit alors comme une « exécution antérieure »
+    # ambiguë. Le rappeler explicitement ici lève l'ambiguïté.
+    bloc_tentative = ""
+    if tentative >= 2:
+        rang_txt = f"{tentative}/{max_tentatives}" if max_tentatives else f"{tentative}"
+        clause_head = (
+            f" (absents du commit {tete_avant_traitement[:12]}, HEAD d'avant traitement)"
+            if tete_avant_traitement else ""
+        )
+        bloc_tentative = f"""
+⚠️ CECI EST LA TENTATIVE {rang_txt} SUR CETTE MÊME ISSUE #{numero}.
+Une ou plusieurs tentatives précédentes ont déjà tourné sur ce même
+traitement, dans ce même répertoire ({cwd_effectif}). Si tu trouves ici des
+commits déjà présents et en rapport avec cette issue{clause_head}, il s'agit
+très probablement de TA PROPRE tentative précédente : elle a fini son travail
+(commit inclus) mais a dépassé le TIMEOUT de peu et a été tuée avant de
+pouvoir le rapporter — PAS une exécution sans rapport ni un travail d'un tiers.
+Dans ce cas :
+- VÉRIFIE ce travail déjà fait (qualité, complétude par rapport à la tâche
+  demandée) plutôt que de le refaire depuis zéro ;
+- complète-le seulement si nécessaire (ex. rapport de clôture manquant) ;
+- dans ton rapport final, dis EXPLICITEMENT qu'il s'agit très probablement de
+  ta tentative précédente pour cette même issue (dépassement du TIMEOUT après
+  succès), pas d'une « exécution antérieure » non identifiée.
+"""
+
     if prompt_perso is not None:
         prompt = prompt_perso
     else:
@@ -3114,7 +3161,7 @@ TITRE : {titre}
 
 BODY :
 {body}
-{bloc_contexte}{bloc_consignes}{clause_perimetre}{bloc_worktree}{garde_fou}
+{bloc_contexte}{bloc_consignes}{clause_perimetre}{bloc_worktree}{bloc_tentative}{garde_fou}
 Instructions :
 1. Lis attentivement la tâche demandée
 2. Effectue le travail demandé (dans les limites du mode ci-dessus)
@@ -4414,11 +4461,12 @@ def _preparer_lecture_active(numero: int, mode: str, dry_run: bool,
 
 
 def _demarrer_traitement(numero: int, mode: str, mode_txt: str, dry_run: bool,
-                          cwd_effectif: Path) -> tuple[bool, float, int, dict | None]:
+                          cwd_effectif: Path) -> tuple[bool, float, int, dict | None, str | None]:
     """Tout ce qui précède la première tentative `lancer_claude` : détection
     RELANCE, ACK, rafraîchissement SSE, départ du chrono, sonde pre-flight
-    token et empreinte configs/*.conf. Retourne (est_relance, debut_traitement,
-    nb_projets_actifs_debut, empreinte_configs_avant)."""
+    token, empreinte configs/*.conf et SHA de HEAD avant traitement. Retourne
+    (est_relance, debut_traitement, nb_projets_actifs_debut,
+    empreinte_configs_avant, tete_avant_traitement)."""
     # Détection RELANCE (champ RELANCE, issue #516) AVANT l'ACK courante
     # (issue #592) : un commentaire d'échec définitif déjà présent dans
     # l'historique de l'issue signale que le worktree peut contenir du
@@ -4464,22 +4512,42 @@ def _demarrer_traitement(numero: int, mode: str, mode_txt: str, dry_run: bool,
         _empreinte_configs() if (mode != MODE_LECTURE and not dry_run) else None
     )
 
-    return est_relance, debut_traitement, nb_projets_actifs_debut, empreinte_configs_avant
+    # SHA de HEAD avant la toute première tentative (issue #689) : seul le
+    # mode écriture produit des commits, donc seul lui a besoin de cette
+    # référence pour permettre à une tentative ≥2 de reconnaître le travail
+    # (commits) d'une tentative précédente tuée par le TIMEOUT — voir le bloc
+    # de prompt correspondant dans lancer_claude. Best-effort : None si hors
+    # dépôt git ou en dry-run (aucun lancement réel de claude).
+    tete_avant_traitement = (
+        _tete_git(cwd_effectif) if (mode == MODE_ECRITURE and not dry_run) else None
+    )
+
+    return (est_relance, debut_traitement, nb_projets_actifs_debut,
+            empreinte_configs_avant, tete_avant_traitement)
 
 
 def _executer_une_tentative(numero: int, titre: str, body: str, dry_run: bool, mode: str,
                              timeout: int, modele: str, perimetre_effectif: str,
                              cwd_effectif: Path, verrou, chemin_scratch: Path | None,
                              chemin_worktree: Path | None, empreinte_configs_avant: dict | None,
-                             tentative: int) -> tuple[bool, str]:
+                             tentative: int, max_tentatives: int | None = None,
+                             tete_avant_traitement: str | None = None) -> tuple[bool, str]:
     """Une tentative `lancer_claude`, garde-fou de format de clôture (#581) et
     restauration best-effort des configs/*.conf modifiés (#318/#327).
+
+    max_tentatives / tete_avant_traitement (issue #689) : simplement transmis
+    à `lancer_claude` — voir sa docstring pour le rôle de ces deux valeurs
+    (clause « tentative précédente probable » injectée dans le prompt à
+    partir de la tentative 2).
+
     Retourne (succes, sortie)."""
     succes, sortie = lancer_claude(numero, titre, body, dry_run, mode,
                                    timeout, modele,
                                    perimetre=perimetre_effectif, cwd=cwd_effectif,
                                    verrou=verrou, chemin_scratch=chemin_scratch,
-                                   chemin_worktree=chemin_worktree)
+                                   chemin_worktree=chemin_worktree,
+                                   tentative=tentative, max_tentatives=max_tentatives,
+                                   tete_avant_traitement=tete_avant_traitement)
 
     # Garde-fou de format (issue #581) : le prompt standard impose un
     # rapport de clôture marqué par ✅ ou ❌ (« Réponds avec ce format
@@ -4854,8 +4922,14 @@ def _traiter_issue_synchrone(issue: dict, dry_run: bool, chemin_worktree: Path |
         if not ok:
             return
 
-        est_relance, debut_traitement, nb_projets_actifs_debut, empreinte_configs_avant = \
+        est_relance, debut_traitement, nb_projets_actifs_debut, empreinte_configs_avant, \
+            tete_avant_traitement = \
             _demarrer_traitement(numero, mode, mode_txt, dry_run, cwd_effectif)
+
+        # None si critique (essais illimités) : voir le bloc de prompt "rang
+        # de tentative" dans lancer_claude, qui affiche alors juste "N" sans
+        # dénominateur.
+        max_tentatives = None if critique else CFG.max_essais
 
         tentative = 0
         while True:
@@ -4865,7 +4939,8 @@ def _traiter_issue_synchrone(issue: dict, dry_run: bool, chemin_worktree: Path |
             succes, sortie = _executer_une_tentative(
                 numero, titre, body, dry_run, mode, timeout, modele,
                 perimetre_effectif, cwd_effectif, verrou, chemin_scratch,
-                chemin_worktree, empreinte_configs_avant, tentative)
+                chemin_worktree, empreinte_configs_avant, tentative,
+                max_tentatives, tete_avant_traitement)
 
             if _verifier_violation_scratch(numero, titre, labels, cwd_effectif, statut_rep_travail_avant):
                 return
