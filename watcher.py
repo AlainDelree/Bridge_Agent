@@ -595,9 +595,12 @@ def _forcer_utf8(flux):
 
 def configurer_logs(cfg: Config):
     cfg.fichier_log.parent.mkdir(parents=True, exist_ok=True)
-    # Portabilité Windows : force l'UTF-8 sur les flux console repris par le
-    # StreamHandler (et par NSSM côté CCW). Le FileHandler, lui, reçoit déjà
-    # encoding="utf-8" à sa construction.
+    # Portabilité Windows : force l'UTF-8 sur stdout/stderr, repris tels quels
+    # par le filet de sécurité de app/watchers.py::demarrer_watcher() (avant
+    # ce point) et par NSSM côté CCW. Le FileHandler, lui, reçoit déjà
+    # encoding="utf-8" à sa construction. Pas de StreamHandler ici (#698) :
+    # il ferait doublon avec le FileHandler puisque stdout/stderr sont déjà
+    # redirigés vers cfg.fichier_log par le process parent.
     _forcer_utf8(sys.stdout)
     _forcer_utf8(sys.stderr)
     handler_fichier = JournalRotatifDate(
@@ -611,7 +614,6 @@ def configurer_logs(cfg: Config):
         format="%(asctime)s [%(levelname)s] %(message)s",
         handlers=[
             handler_fichier,
-            logging.StreamHandler(sys.stdout),
         ],
     )
 
