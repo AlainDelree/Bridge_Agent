@@ -58,7 +58,8 @@ def _ajouter_label_gh(depot: str, numero: int, label: str) -> tuple[str, str]:
     try:
         res = subprocess.run(
             ["gh", "issue", "edit", str(numero), "--repo", depot, "--add-label", label],
-            capture_output=True, text=True, timeout=30,
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=30,
         )
         if res.returncode == 0:
             return "succes", f"Label « {label} » posé."
@@ -75,7 +76,8 @@ def _retirer_label_gh(depot: str, numero: int, label: str) -> tuple[str, str]:
     try:
         res = subprocess.run(
             ["gh", "issue", "edit", str(numero), "--repo", depot, "--remove-label", label],
-            capture_output=True, text=True, timeout=30,
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=30,
         )
         if res.returncode == 0:
             return "succes", f"Label « {label} » retiré."
@@ -92,7 +94,8 @@ def _commenter_gh(depot: str, numero: int, message: str) -> tuple[str, str]:
     try:
         res = subprocess.run(
             ["gh", "issue", "comment", str(numero), "--repo", depot, "--body", message],
-            capture_output=True, text=True, timeout=30,
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=30,
         )
         if res.returncode == 0:
             return "succes", "Commentaire posté."

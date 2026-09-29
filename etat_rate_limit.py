@@ -71,7 +71,8 @@ def _interroger_gh(timeout_s: float) -> tuple[dict | None, str | None]:
     try:
         res = subprocess.run(
             ["gh", "api", "rate_limit", "--jq", ".resources.graphql"],
-            capture_output=True, text=True, timeout=timeout_s,
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=timeout_s,
         )
         if res.returncode != 0:
             return None, (res.stderr or res.stdout or "erreur gh inconnue").strip()

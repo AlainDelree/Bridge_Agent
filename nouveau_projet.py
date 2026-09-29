@@ -130,7 +130,7 @@ def gh(*args: str, capture: bool = True) -> subprocess.CompletedProcess:
     return subprocess.run(
         ["gh", *args],
         capture_output=capture,
-        text=True,
+        text=True, encoding="utf-8", errors="replace",
     )
 
 
@@ -422,7 +422,8 @@ def initialiser_git(rep: str, depot: str) -> dict:
     def _git(*args: str, timeout: float = TIMEOUT_GIT_LOCAL) -> subprocess.CompletedProcess:
         try:
             return subprocess.run(["git", *args], cwd=rep_path,
-                                  capture_output=True, text=True, timeout=timeout)
+                                  capture_output=True, text=True,
+                                  encoding="utf-8", errors="replace", timeout=timeout)
         except subprocess.TimeoutExpired:
             return subprocess.CompletedProcess(
                 args=["git", *args], returncode=124, stdout="",

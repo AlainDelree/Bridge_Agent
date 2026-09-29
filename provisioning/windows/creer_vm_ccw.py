@@ -70,14 +70,16 @@ def executer(cmd, dry_run=False, verifier=True):
     print("  $ " + " ".join(cmd))
     if dry_run:
         return None
-    return subprocess.run(cmd, check=verifier, text=True)
+    return subprocess.run(cmd, check=verifier, text=True,
+                           encoding="utf-8", errors="replace")
 
 
 def vm_existe(nom):
     """Vrai si une VM de ce nom est déjà enregistrée dans VirtualBox."""
     res = subprocess.run(
         ["VBoxManage", "list", "vms"],
-        capture_output=True, text=True, check=True,
+        capture_output=True, text=True, encoding="utf-8", errors="replace",
+        check=True,
     )
     # Chaque ligne ressemble à :  "CCW-Build" {uuid}
     return any(f'"{nom}"' in ligne for ligne in res.stdout.splitlines())
@@ -90,7 +92,8 @@ def chemin_disque(nom_vm, dry_run=False):
         return os.path.join("<VBox_default_machine_folder>", nom_vm, NOM_DISQUE)
     res = subprocess.run(
         ["VBoxManage", "list", "systemproperties"],
-        capture_output=True, text=True, check=True,
+        capture_output=True, text=True, encoding="utf-8", errors="replace",
+        check=True,
     )
     dossier_machines = None
     for ligne in res.stdout.splitlines():

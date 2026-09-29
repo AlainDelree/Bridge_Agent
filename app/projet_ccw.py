@@ -114,7 +114,8 @@ def rafraichir_cle_publique():
         res = subprocess.run(
             ["scp", "-i", cle_privee, *OPTIONS_SSH,
              f"{utilisateur}@{hote}:{CHEMIN_CLE_PUBLIQUE_DISTANT}", chemin_tmp],
-            capture_output=True, text=True, timeout=TIMEOUT_SSH_CLE,
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=TIMEOUT_SSH_CLE,
         )
     except subprocess.TimeoutExpired:
         return jsonify(succes=False,
@@ -250,7 +251,8 @@ def _creer_issue_gh(cfg, titre: str, labels: str, corps: str) -> dict:
              "--title",     titre,
              "--label",     labels,
              "--body-file", chemin_body],
-            capture_output=True, text=True, timeout=TIMEOUT_GH,
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=TIMEOUT_GH,
         )
         if res.returncode != 0:
             return {"succes": False, "erreur": res.stderr.strip() or "Erreur inconnue de gh."}
@@ -281,7 +283,8 @@ def _commenter_issue_gh(depot: str, numero: int, message: str) -> bool:
     try:
         res = subprocess.run(
             ["gh", "issue", "comment", str(numero), "--repo", depot, "--body-file", chemin_body],
-            capture_output=True, text=True, timeout=TIMEOUT_GH,
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=TIMEOUT_GH,
         )
         return res.returncode == 0
     except subprocess.SubprocessError:
