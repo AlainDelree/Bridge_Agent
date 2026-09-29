@@ -321,7 +321,7 @@ def creer_issue_gh(depot: str, titre: str, labels: str, chemin_body: str, *,
             commande += ["--label", ",".join(labels_courants)]
         commande += ["--body-file", chemin_body]
         try:
-            res = subprocess.run(commande, capture_output=True, text=True,
+            res = subprocess.run(commande, capture_output=True, text=True, encoding="utf-8", errors="replace",
                                   timeout=timeout, env=env)
         except subprocess.TimeoutExpired:
             return False, "Timeout (gh n'a pas répondu en 30s).", labels_courants, labels_omis
@@ -388,7 +388,7 @@ def _issue_ouverte_meme_titre(cfg, titre: str):
              "--state", "open",
              "--limit", "200",
              "--json",  "number,title"],
-            capture_output=True, text=True, timeout=30
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30
         )
         if res.returncode != 0:
             return None
@@ -610,7 +610,7 @@ def _publier_piece_jointe(rep: Path, cfg, tmp_chemin: str, chemin_relatif: str,
     try:
         res_fetch = subprocess.run(
             ["git", "-C", str(rep), "fetch", "origin", NOM_BRANCHE_PIECES_JOINTES],
-            capture_output=True, text=True, timeout=60
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60
         )
     except subprocess.TimeoutExpired:
         return jsonify(succes=False, erreur="Timeout du fetch git (branche "
@@ -622,7 +622,7 @@ def _publier_piece_jointe(rep: Path, cfg, tmp_chemin: str, chemin_relatif: str,
     if res_fetch.returncode == 0:
         res_rev = subprocess.run(
             ["git", "-C", str(rep), "rev-parse", "FETCH_HEAD"],
-            capture_output=True, text=True, timeout=10
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10
         )
         if res_rev.returncode == 0 and res_rev.stdout.strip():
             parent_sha = res_rev.stdout.strip()
@@ -631,7 +631,7 @@ def _publier_piece_jointe(rep: Path, cfg, tmp_chemin: str, chemin_relatif: str,
     try:
         res_hash = subprocess.run(
             ["git", "-C", str(rep), "hash-object", "-w", "--", tmp_chemin],
-            capture_output=True, text=True, timeout=30
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30
         )
         if res_hash.returncode != 0:
             return jsonify(succes=False,
@@ -652,7 +652,7 @@ def _publier_piece_jointe(rep: Path, cfg, tmp_chemin: str, chemin_relatif: str,
         if parent_sha:
             res_read = subprocess.run(
                 ["git", "-C", str(rep), "read-tree", parent_sha],
-                capture_output=True, text=True, timeout=30, env=env_index
+                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30, env=env_index
             )
             if res_read.returncode != 0:
                 return jsonify(succes=False,
@@ -660,14 +660,14 @@ def _publier_piece_jointe(rep: Path, cfg, tmp_chemin: str, chemin_relatif: str,
         res_upd = subprocess.run(
             ["git", "-C", str(rep), "update-index", "--add", "--cacheinfo",
              f"100644,{blob_sha},{chemin_relatif}"],
-            capture_output=True, text=True, timeout=30, env=env_index
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30, env=env_index
         )
         if res_upd.returncode != 0:
             return jsonify(succes=False,
                            erreur=f"git update-index a échoué : {res_upd.stderr.strip()}"), 500
         res_tree = subprocess.run(
             ["git", "-C", str(rep), "write-tree"],
-            capture_output=True, text=True, timeout=30, env=env_index
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30, env=env_index
         )
         if res_tree.returncode != 0:
             return jsonify(succes=False,
@@ -685,7 +685,7 @@ def _publier_piece_jointe(rep: Path, cfg, tmp_chemin: str, chemin_relatif: str,
         args_commit += ["-p", parent_sha]
     args_commit += ["-m", f"Pièce jointe issue : {nom_fichier}"]
     try:
-        res_commit = subprocess.run(args_commit, capture_output=True, text=True, timeout=30)
+        res_commit = subprocess.run(args_commit, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30)
         if res_commit.returncode != 0:
             return jsonify(succes=False,
                            erreur=f"git commit-tree a échoué : {res_commit.stderr.strip()}"), 500
@@ -701,7 +701,7 @@ def _publier_piece_jointe(rep: Path, cfg, tmp_chemin: str, chemin_relatif: str,
         res_push = subprocess.run(
             ["git", "-C", str(rep), "push", "origin",
              f"{commit_sha}:refs/heads/{NOM_BRANCHE_PIECES_JOINTES}"],
-            capture_output=True, text=True, timeout=120
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120
         )
         if res_push.returncode != 0:
             return jsonify(
@@ -782,7 +782,7 @@ def _lister_issues_labels(depot: str, limite: int, state: str = "all"):
                  "--state", state,
                  "--limit", str(limite),
                  "--json",  "number,title,state,labels,createdAt,body"],
-                capture_output=True, text=True, timeout=30
+                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30
             )
         except subprocess.TimeoutExpired:
             return None, (jsonify(erreur="Timeout (gh n'a pas répondu en 30s)."), 504)
@@ -888,7 +888,7 @@ def issue_detail(nom_projet, numero):
             ["gh", "issue", "view", str(numero),
              "--repo", cfg.depot,
              "--json", "number,title,body,state,labels,comments,createdAt,closedAt"],
-            capture_output=True, text=True, timeout=30
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30
         )
         if res.returncode != 0:
             return jsonify(erreur=res.stderr.strip() or "Erreur de gh."), 502
@@ -939,7 +939,7 @@ def diff_commit(nom_projet, hash_commit):
         res = subprocess.run(
             ["git", "-C", str(cfg.rep_travail), "show",
              "--no-color", "--stat", "--patch", hash_commit, "--"],
-            capture_output=True, text=True, timeout=30
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30
         )
         if res.returncode != 0:
             # Commit inconnu du dépôt (ex. backup pas encore poussé/abandonné) :
@@ -1127,7 +1127,7 @@ def _commentaires_issue(cfg, numero) -> list:
             ["gh", "issue", "view", str(numero),
              "--repo", cfg.depot,
              "--json", "comments"],
-            capture_output=True, text=True, timeout=30
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30
         )
         if res.returncode != 0:
             return []
@@ -1335,7 +1335,7 @@ def issues_en_attente(nom_projet):
                  "--label", label,
                  "--state", "open",
                  "--json",  "number,title,labels,body"],
-                capture_output=True, text=True, timeout=30
+                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30
             )
             if res.returncode != 0:
                 return jsonify(erreur=res.stderr.strip() or "Erreur de gh."), 502
@@ -1404,7 +1404,7 @@ def annuler_issue(nom_projet, numero):
             ["gh", "issue", "close", str(numero),
              "--repo",    cfg.depot,
              "--comment", commentaire],
-            capture_output=True, text=True, timeout=30
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30
         )
         if res.returncode == 0:
             maj_rate_limit("app.issues.annuler_issue")
@@ -1453,7 +1453,7 @@ def modifier_label_notif():
             ["gh", "issue", "edit", str(numero),
              "--repo", cfg.depot,
              option,   label],
-            capture_output=True, text=True, timeout=30
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30
         )
         if res.returncode == 0:
             return jsonify(succes=True)
@@ -1486,7 +1486,7 @@ def fermer_issue(nom_projet, numero):
             ["gh", "issue", "close", str(numero),
              "--repo",    cfg.depot,
              "--comment", commentaire],
-            capture_output=True, text=True, timeout=30
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30
         )
         if res.returncode == 0:
             maj_rate_limit("app.issues.fermer_issue")
