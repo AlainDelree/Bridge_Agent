@@ -90,14 +90,18 @@ Info 'Dépendances Python installées.'
 
 # ---------------------------------------------------------------------------
 # 2. Règle de pare-feu entrante pour le port de new_issue.py.
+#    Le nom vérifié (Get-NetFirewallRule -DisplayName) et le nom créé
+#    (New-NetFirewallRule -DisplayName) DOIVENT être rigoureusement
+#    identiques (issue #691 : un ancien -Name interne divergeait du
+#    -DisplayName réellement posé, cassant l'idempotence).
 # ---------------------------------------------------------------------------
-$NomRegle = "Bridge-Agent-new_issue-In-TCP-$Port"
-if (-not (Get-NetFirewallRule -Name $NomRegle -ErrorAction SilentlyContinue)) {
-    Info "Ajout de la règle pare-feu $NomRegle (TCP/$Port entrant)…"
-    New-NetFirewallRule -Name $NomRegle -DisplayName "Bridge Agent new_issue.py ($Port/tcp)" `
+$NomRegle = "Bridge Agent new_issue.py ($Port/tcp)"
+if (-not (Get-NetFirewallRule -DisplayName $NomRegle -ErrorAction SilentlyContinue)) {
+    Info "Ajout de la règle pare-feu '$NomRegle' (TCP/$Port entrant)…"
+    New-NetFirewallRule -DisplayName $NomRegle `
         -Enabled True -Direction Inbound -Protocol TCP -Action Allow -LocalPort $Port | Out-Null
 } else {
-    Info "Règle pare-feu $NomRegle déjà présente."
+    Info "Règle pare-feu '$NomRegle' déjà présente."
 }
 
 # ---------------------------------------------------------------------------
