@@ -2591,6 +2591,32 @@ _PROCESS_ACCES_JOB = _PROCESS_SET_QUOTA | _PROCESS_TERMINATE
 # de moindre privilège que _PROCESS_ACCES_JOB ci-dessus.
 _PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
 
+# ─── Job Object PERSISTANT (issue #695) ─────────────────────────────────────
+# Distinct du job transitoire ci-dessus (créé/fermé à chaque tâche claude,
+# jamais nommé) : celui-ci est créé UNE FOIS au démarrage du watcher
+# (_preparer_job_persistant_windows, appelée depuis main()), nommé de façon
+# déterministe (nom_job_watcher_windows) et jamais fermé explicitement — il
+# doit rester ouvrable PAR NOM depuis un AUTRE process (new_issue.py /
+# app/interruption.py) tout au long de la vie du watcher, pour lister et
+# tuer l'arbre complet (lui + toute sa descendance, claude compris par
+# héritage de Job) au moment d'un « Interrompre », sans dépendre de /proc
+# (absent sous Windows) ni de CreateToolhelp32Snapshot.
+_JOB_OBJECT_ASSIGN_PROCESS = 0x0001
+_JOB_OBJECT_QUERY          = 0x0004
+_JOB_OBJECT_TERMINATE      = 0x0008
+_JobObjectBasicProcessIdList = 3
+# Marge large : arbre watcher + claude + descendance de claude — bien
+# au-delà de ce qu'une seule tâche peut réalistement engendrer.
+_CAPACITE_PID_JOB_PERSISTANT = 512
+
+
+class _JOBOBJECT_BASIC_PROCESS_ID_LIST(ctypes.Structure):
+    _fields_ = [
+        ("NumberOfAssignedProcesses", ctypes.wintypes.DWORD),
+        ("NumberOfProcessIdsInList", ctypes.wintypes.DWORD),
+        ("ProcessIdList", ctypes.c_size_t * _CAPACITE_PID_JOB_PERSISTANT),
+    ]
+
 
 class _JOBOBJECT_BASIC_LIMIT_INFORMATION(ctypes.Structure):
     _fields_ = [
@@ -2657,6 +2683,30 @@ def _declarer_prototypes_kernel32_windows():
 
     k32.CloseHandle.restype = wt.BOOL
     k32.CloseHandle.argtypes = (wt.HANDLE,)
+
+    # Job persistant nommé (issue #695) : auto-assignation du watcher à son
+    # propre démarrage (GetCurrentProcess, pseudo-handle — jamais à fermer),
+    # puis ouverture PAR NOM/liste des PID/terminaison depuis un AUTRE
+    # process (app/interruption.py).
+    k32.GetCurrentProcess.restype = wt.HANDLE
+    k32.GetCurrentProcess.argtypes = ()
+
+    k32.OpenJobObjectW.restype = wt.HANDLE
+    k32.OpenJobObjectW.argtypes = (wt.DWORD, wt.BOOL, wt.LPCWSTR)
+
+    k32.QueryInformationJobObject.restype = wt.BOOL
+    k32.QueryInformationJobObject.argtypes = (
+        wt.HANDLE, ctypes.c_int, wt.LPVOID, wt.DWORD, ctypes.POINTER(wt.DWORD))
+
+    k32.TerminateJobObject.restype = wt.BOOL
+    k32.TerminateJobObject.argtypes = (wt.HANDLE, wt.UINT)
+
+    # Chemin de l'exécutable d'un PID étranger, en repli de cmdline (absente
+    # sous Windows sans CreateToolhelp32Snapshot/WMI — voir
+    # app.interruption._cmdline_windows).
+    k32.QueryFullProcessImageNameW.restype = wt.BOOL
+    k32.QueryFullProcessImageNameW.argtypes = (
+        wt.HANDLE, wt.DWORD, wt.LPWSTR, ctypes.POINTER(wt.DWORD))
 
 
 if os.name == "nt":
@@ -2732,6 +2782,69 @@ def _preparer_job_windows(pid: int):
             pass
         return None
     return job
+
+
+def nom_job_watcher_windows(nom_projet: str) -> str:
+    """Nom déterministe (namespace de session par défaut, pas de préfixe
+    Local\\/Global\\ : watcher et new_issue.py tournent dans la même session
+    utilisateur) de l'objet Job PERSISTANT représentant l'arbre COMPLET du
+    watcher `nom_projet` — lui-même + toute sa descendance (claude, et ses
+    propres enfants, par héritage de Job). Utilisé à la création
+    (_preparer_job_persistant_windows, côté watcher.py) et à la réouverture
+    (app/interruption.py, AUTRE process — issue #695) : DOIT rester
+    identique des deux côtés."""
+    return f"BridgeAgentWatcher_{nom_projet}"
+
+
+def _preparer_job_persistant_windows(nom_projet: str) -> None:
+    """Windows uniquement — appelée une seule fois, au démarrage du watcher
+    (voir main(), garde `os.name == "nt"`), AVANT tout lancement de claude.
+    Crée l'objet Job NOMMÉ de ce watcher (nom_job_watcher_windows) et s'y
+    auto-assigne (GetCurrentProcess — pseudo-handle valide uniquement dans
+    CE process, jamais à fermer).
+
+    Toute la descendance ultérieure du watcher (claude, et sa propre
+    descendance) en hérite AUTOMATIQUEMENT dès sa création (héritage de Job
+    Windows — aucun code supplémentaire requis), y compris les process
+    séparément assignés à leur propre job transitoire pour #249
+    (_preparer_job_windows) : depuis Windows 8, un process peut appartenir à
+    plusieurs jobs imbriqués simultanément, celui-ci devenant alors
+    l'ancêtre de la hiérarchie plutôt qu'un remplaçant.
+
+    Différence structurante avec _preparer_job_windows (par tâche claude,
+    kill-on-close, anonyme, fermé par _nettoyer_arbre_claude) : celui-ci est
+    NOMMÉ et n'est JAMAIS fermé explicitement — il doit rester ouvrable par
+    son nom depuis app/interruption.py (AUTRE process, new_issue.py) tout au
+    long de la vie du watcher, pour lister (QueryInformationJobObject) puis
+    tuer (TerminateJobObject) l'arbre complet au moment d'un « Interrompre »
+    (issue #695). Pas de flag KILL_ON_JOB_CLOSE ici : la terminaison passe
+    par TerminateJobObject (agit immédiatement sur tous les membres, sans
+    devoir fermer/dupliquer de handle entre processus), jamais par une
+    fermeture de handle.
+
+    Best-effort, comme le reste de l'infra Job (#249/#251) : un échec est
+    journalisé mais ne bloque JAMAIS le démarrage du watcher — seul le
+    bouton Interrompre en pâtirait (repli documenté dans
+    app.interruption : au minimum le PID du watcher, lu depuis son fichier
+    PID, reste arrêtable directement)."""
+    nom = nom_job_watcher_windows(nom_projet)
+    job = ctypes.windll.kernel32.CreateJobObjectW(None, nom)
+    if not job:
+        log.warning(
+            f"Objet Job Windows persistant « {nom} » non créé pour le "
+            f"watcher « {nom_projet} » : le bouton Interrompre ne pourra "
+            f"lister/tuer que le process watcher lui-même, pas sa "
+            f"descendance (issue #695)."
+        )
+        return
+    soi = ctypes.windll.kernel32.GetCurrentProcess()
+    if not ctypes.windll.kernel32.AssignProcessToJobObject(job, soi):
+        log.warning(
+            f"Échec d'auto-assignation du watcher « {nom_projet} » à son "
+            f"objet Job Windows persistant « {nom} » : le bouton Interrompre "
+            f"ne pourra lister/tuer que le process watcher lui-même, pas sa "
+            f"descendance (issue #695)."
+        )
 
 
 def _nettoyer_arbre_claude(proc: subprocess.Popen, job_windows=None) -> None:
@@ -5183,6 +5296,12 @@ def main():
     pid_file = DOSSIER_LOGS / f"watcher-{CFG.nom}.pid"
     pid_file.parent.mkdir(parents=True, exist_ok=True)
     pid_file.write_text(str(os.getpid()))
+
+    # Job Object persistant (issue #695) : AVANT tout lancement de claude,
+    # pour que sa descendance en hérite dès sa création — voir
+    # _preparer_job_persistant_windows. Sans effet/appel sous Linux.
+    if os.name == "nt":
+        _preparer_job_persistant_windows(CFG.nom)
 
     intervalle = args.interval if args.interval is not None else CFG.intervalle
 
