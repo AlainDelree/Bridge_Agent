@@ -19,6 +19,8 @@ basename de REP_TRAVAIL — ces trois chaînes peuvent diverger (voir
 §"résolution des identités" de l'issue #323).
 """
 
+import ctypes
+import ctypes.wintypes
 import ntpath
 import os
 import signal
