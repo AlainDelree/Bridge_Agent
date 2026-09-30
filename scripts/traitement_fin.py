@@ -15,15 +15,15 @@ directement par watcher.py::notifier_debut_sse (pas via ce script, pas de bip
 associé à un démarrage), il partage seulement l'infrastructure `_notifier` de
 ce module.
 
-Choix du son (issue #498, affiné #630) : `main()` décide entre `bip_plat()`
-(440 Hz, sinusoïde plate) et `bip()` (880 Hz, cloche à enveloppe exponentielle
-décroissante ; voir #437 et sa révocation) selon DEUX niveaux, dans cet
-ordre :
+Choix du son (issue #498, affiné #630, option silence #699) : `main()` décide
+entre `bip_plat()` (440 Hz, sinusoïde plate), `bip()` (880 Hz, cloche à
+enveloppe exponentielle décroissante ; voir #437 et sa révocation) et aucun
+bip du tout, selon DEUX niveaux, dans cet ordre :
   1. **choix PAR ISSUE** (`--projet` + `--numero` fournis) : lu dans
      `logs/son_issues.json` via `etat_son_issue.son_choisi()` — voir
      `app/son_issue.py` pour les routes GET/POST qui l'alimentent (issue
-     #630, backend seul pour l'instant, pas encore de bouton dans
-     l'interface) ;
+     #630). `"silence"` (#699) coupe le bip pour CETTE issue précise sans
+     toucher à l'interrupteur global ni aux autres canaux (ntfy, SSE) ;
   2. sinon, **interrupteur GLOBAL** `scripts/son_actif.txt` (une seule ligne,
      `plat` ou `cloche`, issue #498) — pilote le son pour TOUTES les issues
      sans choix propre. Fichier absent, illisible, ou valeur non reconnue →
@@ -212,9 +212,10 @@ def main():
                         help="Décalage de tonalité en demi-tons (issue #526), 0 = neutre")
     args = parser.parse_args()
 
-    if son_a_jouer(args.projet, args.numero) == "cloche":
+    son = son_a_jouer(args.projet, args.numero)
+    if son == "cloche":
         bip(args.tonalite)
-    else:
+    elif son != "silence":
         bip_plat(args.tonalite)
 
     if args.projet and args.numero:

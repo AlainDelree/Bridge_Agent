@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """
-etat_son_issue.py — choix du son (plat/cloche) PAR ISSUE (issue #630).
+etat_son_issue.py — choix du son (plat/cloche/silence) PAR ISSUE (issue #630,
+option silence ajoutée #699).
 
 Contexte : l'interrupteur GLOBAL plat/cloche (`scripts/son_actif.txt`, issues
 #498/#527) reste la règle par défaut. Cette issue ajoute la possibilité de
@@ -39,7 +40,7 @@ CHEMIN_ETAT   = Path(__file__).resolve().parent / "logs" / "son_issues.json"
 CHEMIN_VERROU = CHEMIN_ETAT.with_suffix(".lock")
 
 DELAI_VERROU_S      = 2.0   # attente max pour obtenir le verrou avant d'abandonner
-SONS_VALIDES         = ("plat", "cloche")
+SONS_VALIDES         = ("plat", "cloche", "silence")
 MARGE_CONSERVATION_N = 50   # nombre d'issues récentes conservées par projet (nettoyage)
 
 
@@ -120,7 +121,7 @@ def definir_son(projet: str, numero: int, son: str | None) -> tuple[bool, str | 
     retire (`son` None ou vide → l'interrupteur global reprend la main pour
     cette issue). Retourne (succes, erreur)."""
     if son is not None and son not in SONS_VALIDES:
-        return False, f"Valeur invalide (attendu 'plat', 'cloche' ou null) : {son!r}"
+        return False, f"Valeur invalide (attendu 'plat', 'cloche', 'silence' ou null) : {son!r}"
 
     donnees = _lire()
     cle_projet = str(projet)

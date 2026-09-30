@@ -483,8 +483,8 @@ Résultats, Journal watcher, Configuration, CCW, Nouvelle issue.
 > ligne (retirer needs-human, interrompre) — `interrompreIssue()`/
 > `relancerIssue()` (`app.js`) restent la SEULE implémentation (même route,
 > même confirmation, même modale) : la ligne les appelle directement, sans
-> duplication. S'y ajoute un contrôle compact « G/P/C » pour le son PROPRE à
-> l'issue (#630/#637), dont les fonctions pures ont été **déplacées** (pas
+> duplication. S'y ajoute un contrôle compact « G/P/C/S » (S=Silence, #699)
+> pour le son PROPRE à l'issue (#630/#637), dont les fonctions pures ont été **déplacées** (pas
 > dupliquées) depuis `panneau_lateral.js` : `sonIssueDepuisReponse`,
 > `normaliserChoixSonIssue`, `etatsOptionsSonIssue`. Chargement réseau du son :
 > une SEULE requête `GET /son-issue/<projet>` (nouvelle route groupée) par

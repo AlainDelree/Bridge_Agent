@@ -103,6 +103,10 @@ test('sonIssueDepuisReponse : {son: "cloche"} → "cloche"', () => {
   assert.equal(sonIssueDepuisReponse({ son: 'cloche' }), 'cloche');
 });
 
+test('sonIssueDepuisReponse : {son: "silence"} → "silence" (issue #699)', () => {
+  assert.equal(sonIssueDepuisReponse({ son: 'silence' }), 'silence');
+});
+
 test('sonIssueDepuisReponse : réponse absente/vide/valeur inconnue → null', () => {
   assert.equal(sonIssueDepuisReponse(null), null);
   assert.equal(sonIssueDepuisReponse(undefined), null);
@@ -110,25 +114,28 @@ test('sonIssueDepuisReponse : réponse absente/vide/valeur inconnue → null', (
   assert.equal(sonIssueDepuisReponse({ son: 'autre-chose' }), null);
 });
 
-test('normaliserChoixSonIssue : "plat"/"cloche" inchangés, "" et valeur inattendue → null', () => {
+test('normaliserChoixSonIssue : "plat"/"cloche"/"silence" inchangés, "" et valeur inattendue → null', () => {
   assert.equal(normaliserChoixSonIssue('plat'), 'plat');
   assert.equal(normaliserChoixSonIssue('cloche'), 'cloche');
+  assert.equal(normaliserChoixSonIssue('silence'), 'silence');
   assert.equal(normaliserChoixSonIssue(''), null);
   assert.equal(normaliserChoixSonIssue('autre-chose'), null);
   assert.equal(normaliserChoixSonIssue(undefined), null);
 });
 
-test('etatsOptionsSonIssue : un seul état actif à la fois, "Global" par défaut', () => {
-  assert.deepEqual(etatsOptionsSonIssue(null), { global: true, plat: false, cloche: false });
-  assert.deepEqual(etatsOptionsSonIssue('plat'), { global: false, plat: true, cloche: false });
-  assert.deepEqual(etatsOptionsSonIssue('cloche'), { global: false, plat: false, cloche: true });
+test('etatsOptionsSonIssue : un seul état actif à la fois, "Global" par défaut (issue #699 : 4e état "silence")', () => {
+  assert.deepEqual(etatsOptionsSonIssue(null), { global: true, plat: false, cloche: false, silence: false });
+  assert.deepEqual(etatsOptionsSonIssue('plat'), { global: false, plat: true, cloche: false, silence: false });
+  assert.deepEqual(etatsOptionsSonIssue('cloche'), { global: false, plat: false, cloche: true, silence: false });
+  assert.deepEqual(etatsOptionsSonIssue('silence'), { global: false, plat: false, cloche: false, silence: true });
 });
 
 // ─── Cache du son par projet (GET /son-issue/<projet> en bloc, issue #641) ─
 
-test('fusionnerSonsProjet : ne retient que les valeurs "plat"/"cloche"', () => {
-  const cache = fusionnerSonsProjet({}, 'bridge_agent', { 630: 'cloche', 631: 'plat', 632: 'autre', 633: null });
-  assert.deepEqual(cache, { bridge_agent: { '630': 'cloche', '631': 'plat' } });
+test('fusionnerSonsProjet : ne retient que les valeurs "plat"/"cloche"/"silence"', () => {
+  const cache = fusionnerSonsProjet({}, 'bridge_agent',
+    { 630: 'cloche', 631: 'plat', 632: 'autre', 633: null, 634: 'silence' });
+  assert.deepEqual(cache, { bridge_agent: { '630': 'cloche', '631': 'plat', '634': 'silence' } });
 });
 
 test('fusionnerSonsProjet : REMPLACE le projet concerné, conserve les autres', () => {

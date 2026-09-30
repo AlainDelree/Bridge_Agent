@@ -77,6 +77,14 @@ def test_definir_puis_lire():
         assert etat_son_issue.son_choisi("autre_projet", 630) is None
 
 
+def test_definir_silence_puis_lire():
+    # issue #699 : "silence" est une valeur SONS_VALIDES comme "plat"/"cloche".
+    with _Etat():
+        ok, erreur = etat_son_issue.definir_son("bridge_agent", 630, "silence")
+        assert ok is True and erreur is None
+        assert etat_son_issue.son_choisi("bridge_agent", 630) == "silence"
+
+
 def test_definir_valeur_invalide_refusee():
     with _Etat():
         ok, erreur = etat_son_issue.definir_son("bridge_agent", 630, "trompette")
@@ -173,6 +181,43 @@ def test_son_a_jouer_repli_sur_global_sans_projet_ni_numero():
         assert traitement_fin.son_a_jouer(None, None) == "cloche"
 
 
+def test_son_a_jouer_silence_prioritaire_sur_global():
+    # issue #699 : "silence" est un choix PAR ISSUE comme "plat"/"cloche",
+    # prioritaire sur l'interrupteur global — ne coupe QUE cette issue.
+    with _Etat(), _SonGlobal("cloche"):
+        etat_son_issue.definir_son("bridge_agent", 630, "silence")
+        assert traitement_fin.son_a_jouer("bridge_agent", 630) == "silence"
+        # Une autre issue du même projet n'est pas affectée.
+        assert traitement_fin.son_a_jouer("bridge_agent", 631) == "cloche"
+
+
+def test_main_silence_ne_joue_aucun_bip_mais_notifie_quand_meme():
+    # issue #699 : "silence" coupe uniquement le bip audible — le canal SSE
+    # (notifier_fin_issue) reste appelé normalement (ntfy non couvert ici,
+    # géré par un autre module — voir notifications_poller.py).
+    with _Etat(), _SonGlobal("cloche"):
+        etat_son_issue.definir_son("bridge_agent", 630, "silence")
+
+        appels_bip = []
+        appels_notif = []
+        ancien_bip, ancien_bip_plat = traitement_fin.bip, traitement_fin.bip_plat
+        ancien_notif, ancien_argv = traitement_fin.notifier_fin_issue, sys.argv
+        traitement_fin.bip = lambda *a, **k: appels_bip.append("cloche")
+        traitement_fin.bip_plat = lambda *a, **k: appels_bip.append("plat")
+        traitement_fin.notifier_fin_issue = lambda p, n: appels_notif.append((p, n))
+        sys.argv = ["traitement_fin.py", "--projet", "bridge_agent", "--numero", "630"]
+        try:
+            traitement_fin.main()
+        finally:
+            traitement_fin.bip = ancien_bip
+            traitement_fin.bip_plat = ancien_bip_plat
+            traitement_fin.notifier_fin_issue = ancien_notif
+            sys.argv = ancien_argv
+
+        assert appels_bip == []
+        assert appels_notif == [("bridge_agent", "630")]
+
+
 def test_sons_projet_regroupe_par_projet_valeurs_valides_seules():
     with _Etat():
         etat_son_issue.definir_son("bridge_agent", 630, "cloche")
@@ -241,6 +286,7 @@ def main() -> int:
     tests = [
         ("son_choisi — absent par défaut", test_son_choisi_absent_par_defaut),
         ("definir_son puis son_choisi — écriture/lecture isolées par projet+numéro", test_definir_puis_lire),
+        ("definir_son — 'silence' (#699) accepté puis relu", test_definir_silence_puis_lire),
         ("definir_son — valeur invalide refusée", test_definir_valeur_invalide_refusee),
         ("definir_son(None) — retire le choix, idempotent", test_definir_none_retire_le_choix),
         ("nettoyer_projet — purge tout, un seul projet touché", test_nettoyer_projet_purge_tout_et_seulement_ce_projet),
@@ -248,6 +294,8 @@ def main() -> int:
         ("son_a_jouer — choix de l'issue prioritaire sur l'interrupteur global", test_son_a_jouer_choix_issue_prioritaire_sur_global),
         ("son_a_jouer — repli sur l'interrupteur global sans choix propre", test_son_a_jouer_repli_sur_global_sans_choix_propre),
         ("son_a_jouer — repli sur l'interrupteur global sans projet/numéro", test_son_a_jouer_repli_sur_global_sans_projet_ni_numero),
+        ("son_a_jouer — silence (#699) prioritaire sur l'interrupteur global, par issue seule", test_son_a_jouer_silence_prioritaire_sur_global),
+        ("main() — silence (#699) ne joue aucun bip, notifie quand même", test_main_silence_ne_joue_aucun_bip_mais_notifie_quand_meme),
         ("sons_projet — regroupe par projet, valeurs valides seules", test_sons_projet_regroupe_par_projet_valeurs_valides_seules),
         ("sons_projet — projet sans entrée → {}", test_sons_projet_projet_sans_entree),
         ("route GET /son-issue/<projet> — regroupé", test_route_get_sons_projet),

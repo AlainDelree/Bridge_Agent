@@ -36,9 +36,9 @@ def get_sons_projet(nom_projet):
 
 def post_son_issue(nom_projet, numero):
     """POST /son-issue/<nom_projet>/<numero> — enregistre le choix ({"son":
-    "plat"|"cloche"}) pour CETTE issue seule. `{"son": null}` (ou absent)
-    retire le choix propre à l'issue — elle retombe alors sur l'interrupteur
-    global."""
+    "plat"|"cloche"|"silence"}) pour CETTE issue seule. `{"son": null}` (ou
+    absent) retire le choix propre à l'issue — elle retombe alors sur
+    l'interrupteur global."""
     try:
         numero_int = int(numero)
     except (TypeError, ValueError):

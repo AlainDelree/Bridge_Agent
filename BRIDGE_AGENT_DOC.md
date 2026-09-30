@@ -3368,8 +3368,10 @@ new_issue.py (ThinkPad) → polling gh → détecte la transition → bip/bulle/
     même famille que `/son-actif` ci-dessus) : lisent/écrivent le choix
     propre à UNE issue.
   - **Interface (issue #637, étape 7b ; déplacée sur la ligne par l'issue
-    #641, étape 6)** : contrôle compact à 3 états « G / P / C » (Global /
-    Plat / Cloche) directement sur CHAQUE ligne OUVERTE de la liste Résultats
+    #641, étape 6 ; 4e option Silence ajoutée #699)** : contrôle compact à 4
+    états « G / P / C / S » (Global / Plat / Cloche / Silence — coupe le bip
+    pour cette seule issue, sans toucher aux autres canaux de notification)
+    directement sur CHAQUE ligne OUVERTE de la liste Résultats
     (`static/js/actions_ligne.js::rendreControleSonLigne`), plus dans le
     panneau latéral. Les fonctions pures posées à #637
     (`sonIssueDepuisReponse`, `normaliserChoixSonIssue`, `etatsOptionsSonIssue`,

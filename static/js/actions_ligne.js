@@ -32,9 +32,10 @@
 //   propres fonctions (mêmes route /interrompre ou /relancer-issue, même
 //   confirm(), même modale de résultat détaillée) — ce module ne s'occupe QUE
 //   du rendu des badges, pas de la logique métier d'interruption/relance.
-//   S'y ajoute un contrôle compact à 3 états pour le son PROPRE à cette issue
-//   (issue #630/#637) : déplacé ici depuis la zone Actions du panneau latéral,
-//   qui ne le montrait que pour l'issue SÉLECTIONNÉE — logique pure inchangée
+//   S'y ajoute un contrôle compact à 4 états pour le son PROPRE à cette issue
+//   (issue #630/#637, option Silence #699) : déplacé ici depuis la zone Actions
+//   du panneau latéral, qui ne le montrait que pour l'issue SÉLECTIONNÉE —
+//   logique pure inchangée
 //   (sonIssueDepuisReponse/normaliserChoixSonIssue/etatsOptionsSonIssue), juste
 //   déplacée de panneau_lateral.js à ce module puisque le panneau ne l'affiche
 //   plus (voir panneau_lateral.js).
@@ -118,22 +119,26 @@ export function afficherIconeInterruption(labels, timing) {
 // panneau_lateral.js (issue #637) à l'étape 6 (#641).
 export function sonIssueDepuisReponse(donnees) {
   const son = donnees && donnees.son;
-  return (son === 'plat' || son === 'cloche') ? son : null;
+  return (son === 'plat' || son === 'cloche' || son === 'silence') ? son : null;
 }
 
-// Normalise la valeur data-valeur d'un bouton du contrôle ('', 'plat' ou
-// 'cloche') vers ce qui doit être envoyé à POST /son-issue : null retire le
-// choix propre à l'issue (elle retombe alors sur l'interrupteur global).
+// Normalise la valeur data-valeur d'un bouton du contrôle ('', 'plat',
+// 'cloche' ou 'silence') vers ce qui doit être envoyé à POST /son-issue :
+// null retire le choix propre à l'issue (elle retombe alors sur
+// l'interrupteur global).
 export function normaliserChoixSonIssue(valeurBrute) {
-  return (valeurBrute === 'plat' || valeurBrute === 'cloche') ? valeurBrute : null;
+  return (valeurBrute === 'plat' || valeurBrute === 'cloche' || valeurBrute === 'silence')
+    ? valeurBrute : null;
 }
 
-// État actif de chacune des 3 options, pour le rendu — mutuellement exclusif.
+// État actif de chacune des 4 options, pour le rendu — mutuellement exclusif
+// (issue #699 : ajout de "silence", coupe le bip pour cette issue seule).
 export function etatsOptionsSonIssue(sonChoisi) {
   return {
-    global: sonChoisi !== 'plat' && sonChoisi !== 'cloche',
+    global: sonChoisi !== 'plat' && sonChoisi !== 'cloche' && sonChoisi !== 'silence',
     plat: sonChoisi === 'plat',
     cloche: sonChoisi === 'cloche',
+    silence: sonChoisi === 'silence',
   };
 }
 
@@ -144,7 +149,7 @@ export function etatsOptionsSonIssue(sonChoisi) {
 export function fusionnerSonsProjet(cache, projet, sonsBruts) {
   const propres = {};
   Object.entries(sonsBruts || {}).forEach(([numero, son]) => {
-    if (son === 'plat' || son === 'cloche') propres[String(numero)] = son;
+    if (son === 'plat' || son === 'cloche' || son === 'silence') propres[String(numero)] = son;
   });
   return { ...(cache || {}), [projet]: propres };
 }
@@ -154,7 +159,7 @@ export function fusionnerSonsProjet(cache, projet, sonsBruts) {
 export function sonConnuDansCache(cache, projet, numero) {
   const parProjet = (cache && cache[projet]) || {};
   const valeur = parProjet[String(numero)];
-  return (valeur === 'plat' || valeur === 'cloche') ? valeur : null;
+  return (valeur === 'plat' || valeur === 'cloche' || valeur === 'silence') ? valeur : null;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -198,9 +203,10 @@ export function rendreIconeInterruption(nom, numero) {
     + '</span>';
 }
 
-// Contrôle compact à 3 états (mini-segmenté, lettres + infobulle — largeur de
-// ligne contrainte, issue #633) : G(lobal) / P(lat) / C(loche). Remplace le
-// contrôle textuel (« Global »/« Plat »/« Cloche ») du panneau, retiré de là.
+// Contrôle compact à 4 états (mini-segmenté, lettres + infobulle — largeur de
+// ligne contrainte, issue #633) : G(lobal) / P(lat) / C(loche) / S(ilence,
+// issue #699). Remplace le contrôle textuel (« Global »/« Plat »/« Cloche »)
+// du panneau, retiré de là.
 function boutonSonLigne(actif, valeur, lettre, titre, nom, numero) {
   return '<button type="button" class="ligne-son-opt' + (actif ? ' actif' : '') + '"'
     + ' onclick="choisirSonIssueDepuisLigne(event, \'' + dom.echapperHtml(nom) + '\', '
@@ -212,7 +218,8 @@ function boutonsSonLigne(nom, numero, sonChoisi) {
   const etats = etatsOptionsSonIssue(sonChoisi);
   return boutonSonLigne(etats.global, '', 'G', 'Son de cette issue : suit le réglage global — clic pour changer', nom, numero)
        + boutonSonLigne(etats.plat, 'plat', 'P', 'Son de cette issue : Plat — clic pour changer', nom, numero)
-       + boutonSonLigne(etats.cloche, 'cloche', 'C', 'Son de cette issue : Cloche — clic pour changer', nom, numero);
+       + boutonSonLigne(etats.cloche, 'cloche', 'C', 'Son de cette issue : Cloche — clic pour changer', nom, numero)
+       + boutonSonLigne(etats.silence, 'silence', 'S', 'Son de cette issue : Silence — clic pour changer', nom, numero);
 }
 
 export function rendreControleSonLigne(nom, numero, sonChoisi) {
