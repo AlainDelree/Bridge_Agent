@@ -911,7 +911,11 @@ function construireLigneIssueDOM(it) {
     + '<span class="pastille-ligne" style="background:' + couleur + '"></span>'
     + '</span>'
     + '<span class="ligne-texte">#' + escapeHtml(numero) + ' — '
-    + escapeHtml(it.title) + ' [' + etat + ']</span>'
+    + escapeHtml(it.title) + '</span>'
+    // Suffixe [fermé]/[ouvert] sorti du span tronqué (issue #700) : span
+    // distinct avec flex-shrink:0 (resultats.css) pour ne jamais disparaître
+    // derrière l'ellipsis d'un titre long.
+    + '<span class="ligne-etat">[' + etat + ']</span>'
     // Badge « modèle forcé » (issue #638) : entre le titre et les badges de
     // temps, présent aussi pour les issues fermées (rien pour la majorité).
     + badgeModeleHtml

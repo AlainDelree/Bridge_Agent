@@ -102,11 +102,14 @@
    Le survol/sélection restent prioritaires (fond porté plus bas) et le titre y
    redevient bien lisible (le barré est retiré pour ne pas gêner la lecture). */
 .ligne-issue.resultat-traite{background:#e5e3dc}
-.ligne-issue.resultat-traite .ligne-texte{color:#8d8a82;text-decoration:line-through}
+.ligne-issue.resultat-traite .ligne-texte,.ligne-issue.resultat-traite .ligne-etat{
+  color:#8d8a82;text-decoration:line-through}
 .ligne-issue.resultat-traite .ligne-date{color:#b0ada4 !important}
 .ligne-issue:hover{background:var(--bg-hover)}
-.ligne-issue.resultat-traite:hover .ligne-texte{color:#444;text-decoration:none}
-.ligne-issue.resultat-traite.selectionnee .ligne-texte{color:#2a2a28;text-decoration:none}
+.ligne-issue.resultat-traite:hover .ligne-texte,.ligne-issue.resultat-traite:hover .ligne-etat{
+  color:#444;text-decoration:none}
+.ligne-issue.resultat-traite.selectionnee .ligne-texte,
+.ligne-issue.resultat-traite.selectionnee .ligne-etat{color:#2a2a28;text-decoration:none}
 .ligne-issue.selectionnee{background:var(--bg-sel);font-weight:600}
 .ligne-issue.selectionnee:hover{background:var(--bg-sel)}
 /* Largeur fixe (issue #401) : le nombre d'icônes (préfixe type/OS, badges
@@ -183,6 +186,11 @@
    jamais de la liste, panneau latéral ouvert ou fermé. */
 .ligne-issue .ligne-texte{flex:1;min-width:0;overflow:hidden;
   text-overflow:ellipsis;white-space:nowrap;font-size:14px}
+/* Suffixe [fermé]/[ouvert] sorti du span tronqué ci-dessus (issue #700) :
+   span dédié juste après le titre, flex-shrink:0 pour ne jamais être rogné
+   par l'ellipsis même quand le titre est long — seul .ligne-texte se
+   tronque, [fermé]/[ouvert] reste toujours visible en fin de ligne. */
+.ligne-issue .ligne-etat{flex-shrink:0;font-size:14px;white-space:nowrap}
 /* Badge « modèle forcé » (issue #638) : pastille discrète (ex. « opus ») signalant
    une issue dont le MODELE de l'en-tête diffère du défaut de son projet. Placé
    entre le titre et les badges de temps ; flex-shrink:0 pour ne jamais être
