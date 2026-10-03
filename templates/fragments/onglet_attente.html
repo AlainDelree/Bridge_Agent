@@ -1,0 +1,11 @@
+  <!-- ─── Onglet « En attente » : issues mises de côté par le champ ATTENTE ─
+       (issue #713 côté serveur, interface issue #714). Alain seul juge si la
+       CONDITION affichée est remplie — « Lancer » ne vérifie rien. Rendu
+       entièrement piloté par static/js/attente.js (chargement à l'ouverture
+       de l'onglet + après chaque action + quand le compteur du badge change
+       pendant que l'onglet est ouvert). -->
+  <div id="panneau-attente" class="panneau">
+    <div id="attente-liste" class="liste-attente">
+      <div class="issue-vide">Aucune issue en attente</div>
+    </div>
+  </div>

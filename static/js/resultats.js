@@ -882,6 +882,10 @@ async function rafraichirInbox() {
     alarme: !!data.alarme,
     rejetes: data.rejetes || [],
     historique: data.historique || [],
+    // Badge de l'onglet « En attente » (issue #713/#714) : consommé par
+    // static/js/attente.js via un abonnement à cette même tranche — pas de
+    // second polling dédié (même sondage que l'alarme ci-dessus).
+    nbEnAttente: data.nb_en_attente || 0,
   });
   majBadgeAlarme(!!data.alarme);
   lignesFichier = reconcilierRejetes(lignesFichier, data.rejetes || []);

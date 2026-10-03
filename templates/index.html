@@ -16,6 +16,7 @@
 <link rel="stylesheet" href="{{ url_statique('css/modales.css') }}">
 <link rel="stylesheet" href="{{ url_statique('css/recherche-interruption.css') }}">
 <link rel="stylesheet" href="{{ url_statique('css/inbox.css') }}">
+<link rel="stylesheet" href="{{ url_statique('css/attente.css') }}">
 </head>
 <body>
 <div class="fenetre">
@@ -29,6 +30,8 @@
   {% include "fragments/onglet_creation.html" %}
 
   {% include "fragments/onglet_resultats.html" %}
+
+  {% include "fragments/onglet_attente.html" %}
 
   {% include "fragments/onglet_config.html" %}
 

@@ -1,0 +1,26 @@
+/* attente.css : onglet « En attente » (issue #714 — interface du champ
+   d'en-tête ATTENTE d'issues_inbox/, issue #713). Une carte par élément :
+   pastille couleur projet + titre + date, condition mise en évidence,
+   actions Lancer/Supprimer. Disposition en colonne unique (flex-wrap sur
+   l'en-tête de chaque ligne), sans tableau ni défilement horizontal —
+   contrainte 1360×768 (voir issue #714, § contraintes connues). */
+.liste-attente{display:flex;flex-direction:column;gap:10px}
+.ligne-attente{border:1px solid #e0dfda;border-radius:8px;padding:12px 14px;background:#fff}
+.attente-entete{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.attente-entete .pastille-ligne{width:9px;height:9px;border-radius:50%;flex-shrink:0}
+.attente-titre{font-weight:600;font-size:14px}
+.attente-projet{font-size:12px;color:#888}
+.attente-date{margin-left:auto;font-size:11px;color:#9a978f;white-space:nowrap}
+/* Condition bien lisible (§ décision : « c'est elle qui dit à Alain quand
+   lancer ») : même traitement visuel que .np-rappel-git (encart ambré). */
+.attente-condition{margin-top:8px;padding:8px 10px;border-radius:6px;background:#fff3cd;
+  border-left:4px solid #f0ad4e;color:#5a4a00;font-size:13px;line-height:1.4;
+  word-break:break-word}
+.attente-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:10px}
+/* Badge compteur sur l'onglet (issue #714) : visible seulement si > 0 (voir
+   decisionBadgeAttente, static/js/attente.js), même gabarit que
+   .pastille-notif (resultats.css) mais posé inline après le libellé plutôt
+   qu'en position absolue. */
+.badge-attente{display:inline-block;margin-left:6px;min-width:16px;height:16px;
+  padding:0 5px;border-radius:9px;background:#c0392b;color:#fff;font-size:11px;
+  font-weight:700;line-height:16px;text-align:center}

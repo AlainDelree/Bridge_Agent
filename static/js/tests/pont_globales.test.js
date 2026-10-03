@@ -32,7 +32,7 @@ const RACINE_JS = path.resolve(ICI, '..');            // static/js
 const CHEMIN_APP_JS = path.join(RACINE_JS, 'app.js');
 
 // Onglets réels (voir templates/fragments/onglets.html, data-onglet="…").
-const NOMS_ONGLETS = ['resultats', 'inbox', 'journal', 'config', 'ccw', 'creation'];
+const NOMS_ONGLETS = ['resultats', 'attente', 'inbox', 'journal', 'config', 'ccw', 'creation'];
 
 function listerFichiersJs(dossier) {
   const trouves = [];

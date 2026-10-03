@@ -5,6 +5,14 @@
     <div class="onglet actif" data-onglet="resultats">Résultats
       <span id="badge-alarme-inbox" class="badge-alarme-inbox" style="display:none" title="Des fichiers issues_inbox/rejected/ attendent une correction manuelle">🚨</span>
     </div>
+    <!-- Onglet « En attente » (issue #714, suite #713) : issues mises de côté
+         par le champ d'en-tête ATTENTE, juste après Résultats. Badge =
+         nombre d'éléments en attente, visible seulement si > 0 (voir
+         static/js/attente.js, qui suit le sondage déjà en place de
+         /issues-inbox/etat plutôt que d'ouvrir un polling dédié). -->
+    <div class="onglet" data-onglet="attente">En attente
+      <span id="badge-attente" class="badge-attente" style="display:none"></span>
+    </div>
     <div class="onglet" data-onglet="journal">Journal watcher</div>
     <div class="onglet" data-onglet="config">Configuration</div>
     <div class="onglet" data-onglet="ccw">CCW</div>

@@ -52,6 +52,11 @@ import { initJournal } from '../journal.js';
 // direct, plus par le pont) ; initialiserConfig() ci-dessous ne branche que la
 // délégation des boutons/inputs de l'onglet et de sa modale de suppression.
 import { initialiserConfig } from '../config.js';
+// Module par fonctionnalité — onglet « En attente » (issue #714, suite
+// #713) : liste/Lancer/Supprimer des issues mises de côté par le champ
+// ATTENTE. Pas d'entrée dans onglets.js::initialisationsPour — ce module
+// s'abonne directement à store.ongletActif, comme resultats.js (issue #632).
+import { initAttente } from '../attente.js';
 
 // Délégation : les modules par fonctionnalité (onglets.js, panneau_lateral.js)
 // enregistrent leurs propres règles via dom.surAction(...) ; ceci (ré)installe
@@ -102,6 +107,13 @@ initJournal();
 // chargerConfig() est appelé directement par onglets.js à l'activation de
 // l'onglet, sans passer par ici.
 initialiserConfig();
+
+// Onglet « En attente » (issue #714) : installe la délégation Lancer/
+// Supprimer et les abonnements (activation d'onglet + compteur du badge,
+// voir attente.js). Appelé AVANT l'activation de l'onglet par défaut, comme
+// resultats.initialiser() ci-dessus, pour recevoir la notification initiale
+// de store.ongletActif.
+initAttente();
 
 // Activation de l'onglet par défaut (Résultats) — APPELÉE EN DERNIER,
 // volontairement : resultats.js et panneau_lateral.js se sont abonnés à

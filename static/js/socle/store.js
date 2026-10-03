@@ -100,7 +100,11 @@ const socle = creerStore({
   filtres: { projetsActifs: [], ouvriers: false },
   projets: [],           // [{nom, depot, couleur, …}]
   watchers: {},          // { nomProjet: {pid, actif, …} }
-  issuesInbox: { alarme: false, rejetes: [], historique: '' },
+  // nbEnAttente (issue #713/#714) : nombre d'éléments mis de côté par le
+  // champ ATTENTE, relu depuis /issues-inbox/etat à chaque cycle de
+  // rafraichirInbox() (resultats.js) — source du badge de l'onglet « En
+  // attente » (static/js/attente.js), sans polling dédié supplémentaire.
+  issuesInbox: { alarme: false, rejetes: [], historique: '', nbEnAttente: 0 },
   son: 'plat',           // 'plat' | 'cloche' (interrupteur global du bip)
   rateLimit: null,       // { restant, limite, pourcent, etat } | null
   ongletActif: 'resultats', // nom de l'onglet actif (voir static/js/onglets.js)

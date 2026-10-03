@@ -799,6 +799,18 @@ d'événements, qui risquerait d'être manqué (cf. #705).
 périmètre de #713** : l'onglet qui affiche ces éléments côté interface (issue
 suivante, 2/2) et toute vérification automatique de la condition.
 
+**Onglet « En attente » (issue #714, 2/2)** : juste après Résultats
+(`templates/fragments/onglet_attente.html`, module dédié
+`static/js/attente.js`). Une ligne par élément — titre, pastille couleur du
+projet, date de dépôt, et la **condition mise en évidence** (c'est elle qui
+dit à Alain quand lancer) — avec « Lancer » (rejoint le circuit normal, sans
+changement d'onglet automatique) et « Supprimer » (confirmation requise,
+suppression définitive, aucun archivage). Badge sur l'onglet = `nb_en_attente`
+ci-dessus, visible seulement si > 0, relu du même sondage que le panneau
+« Watcher spool » (`rafraichirInbox`, `static/js/resultats.js`) — pas de
+polling dédié ; la liste se recharge si l'onglet est ouvert quand ce compteur
+change.
+
 Voir `tests/test_champ_attente_713.py` pour les fonctions pures, le watcher
 avec dossiers temporaires et les trois routes (aucun accès réseau ni `gh`
 réel).
