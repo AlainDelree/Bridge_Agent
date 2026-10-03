@@ -114,7 +114,9 @@ def _enregistrer_routes(app: Flask) -> None:
                                notifier_fichier_recu, notifier_creation_issue, notifier_fichier_refuse)
     from app.notifications_poller import route_surveiller_issue
     from app.issues_inbox import (etat_inbox, demarrer_watcher_inbox_route,
-                                  arreter_watcher_inbox_route)
+                                  arreter_watcher_inbox_route,
+                                  issues_attente_liste, issues_attente_lancer,
+                                  issues_attente_supprimer)
     from app.son import get_son_actif, post_son_actif, tester_son
     from app.son_issue import get_son_issue, post_son_issue, get_sons_projet
     from app.rate_limit import rate_limit
@@ -197,6 +199,10 @@ def _enregistrer_routes(app: Flask) -> None:
     # ─── Pilotage du watcher spool depuis #pl-zone-extras (issue #485) ────────
     app.add_url_rule("/issues-inbox/demarrer-watcher", "demarrer_watcher_inbox_route", login_requis(demarrer_watcher_inbox_route), methods=["POST"])
     app.add_url_rule("/issues-inbox/arreter-watcher", "arreter_watcher_inbox_route", login_requis(arreter_watcher_inbox_route), methods=["POST"])
+    # ─── Issues en attente — champ ATTENTE (issue #713) ────────────────────
+    app.add_url_rule("/issues-attente", "issues_attente_liste", login_requis(issues_attente_liste), methods=["GET"])
+    app.add_url_rule("/issues-attente/lancer", "issues_attente_lancer", login_requis(issues_attente_lancer), methods=["POST"])
+    app.add_url_rule("/issues-attente/supprimer", "issues_attente_supprimer", login_requis(issues_attente_supprimer), methods=["POST"])
     # ─── Interrupteur global plat/cloche du bip (issue #527) — la tonalité par
     # projet (issue #526, /tester-bip/<nom_projet>) a été abandonnée et
     # retirée à l'issue #643 ────────────────────────────────────────────────

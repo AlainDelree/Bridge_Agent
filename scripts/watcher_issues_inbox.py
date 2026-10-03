@@ -36,6 +36,15 @@ validation (rétrocompatibilité avec les issues existantes). Depuis l'issue
 label `sans-redacteur` sur l'issue créée — signal purement visuel côté onglet
 Résultats (badge, ne bloque jamais rien), voir construire_labels().
 
+Champ ATTENTE (issue #713) : `| ATTENTE | <condition> |` optionnel dans
+l'en-tête met tout le bloc de côté AVANT toute validation/création — déplacé
+(mono-issue) ou écrit à part (bloc d'un lot) dans issues_inbox/en_attente/,
+jamais créé sur GitHub. Alain juge lui-même si la condition est remplie
+(AUCUNE vérification automatique) puis relance via `POST /issues-attente/
+lancer` (app/issues_inbox.py), qui retire le champ et renvoie le fichier dans
+issues_inbox/ pour un traitement normal. Voir lire_condition_attente()/
+retirer_champ_attente() et §3.16 de BRIDGE_AGENT_DOC.md.
+
 Après création réussie de l'issue, le watcher CCL du projet concerné
 (`watcher.py --config configs/<projet>.conf`) est démarré automatiquement
 s'il n'est pas déjà actif (issue #486, mode « dépose et oublie ») — via
@@ -196,6 +205,14 @@ class ConfigInbox:
     def fichier_log(self) -> Path:
         return DOSSIER_SCRIPT / "logs" / "issues_inbox.log"
 
+    @property
+    def en_attente_dir(self) -> Path:
+        """Sous-dossier `en_attente/` du dossier d'entrée (issue #713) —
+        toujours dérivé d'`inbox_dir`, pas une clé `.conf` séparée comme
+        `REJECTED_DIR` : contrairement à ce dernier, rien ne justifie de
+        pouvoir le déplacer ailleurs."""
+        return self.inbox_dir / "en_attente"
+
 
 def charger_config_inbox(chemin: Path) -> ConfigInbox:
     """Charge configs/watcher_issues_inbox.conf s'il existe ; sinon retourne les
@@ -295,8 +312,18 @@ TITRE_RE = re.compile(r"^#Titre:\s*(.*)$", re.IGNORECASE | re.MULTILINE)
 # REPO_CIBLE ci-dessus, jamais réinséré dans construire_body (pas un format
 # supporté pour la création d'issue). Absent → rétrocompatible, aucune
 # validation (issues existantes sans ce champ).
+# ATTENTE (issue #713) : champ optionnel — texte libre de la condition qui
+# retarde l'issue (ex. « après la fusion de l'étape C »). Présent dans cette
+# liste uniquement pour que sa ligne soit nettoyée de `corps` comme les
+# autres (y compris une valeur VIDE, cf. valeurs["ATTENTE"] ci-dessous, pour
+# ne jamais laisser une ligne d'en-tête orpheline dans le corps créé) : la
+# décision de mise en attente elle-même se prend bien plus tôt, sur le bloc
+# BRUT, via lire_condition_attente() — avant même d'appeler extraire_champs()
+# — puisqu'un bloc mis en attente n'est jamais validé ni créé (voir
+# traiter_fichier). Un bloc qui atteint réellement extraire_champs() a donc
+# toujours un champ ATTENTE vide ou absent.
 CHAMPS_ENTETE = ("PROJET", "REDACTEUR", "TIMEOUT", "MODELE", "MODE", "LABELS",
-                  "RELANCE", "SOUS_DOSSIER", "REPO_CIBLE")
+                  "RELANCE", "SOUS_DOSSIER", "REPO_CIBLE", "ATTENTE")
 
 
 def extraire_champs(contenu: str) -> dict:
@@ -328,9 +355,31 @@ def extraire_champs(contenu: str) -> dict:
         "relance_brut": valeurs["RELANCE"],
         "sous_dossier_brut": valeurs["SOUS_DOSSIER"],
         "repo_cible_brut":   valeurs["REPO_CIBLE"],
+        "attente_brut": valeurs["ATTENTE"],
         "titre":        titre,
         "corps":        reste.strip("\n"),
     }
+
+
+# ─── Champ ATTENTE — mise de côté avant création (issue #713) : deux
+# fonctions pures sur un bloc BRUT (fichier mono-issue entier, ou un bloc d'un
+# lot), réutilisant lire_champ_entete/retirer_ligne_entete telles quelles
+# (même fenêtre ZONE_ENTETE_LIGNES, même tolérance de casse que les autres
+# champs). Appelées AVANT extraire_champs() — voir traiter_fichier — puisque
+# la décision de mise en attente court-circuite toute validation/création.
+def lire_condition_attente(bloc: str) -> str | None:
+    """Texte de la condition ATTENTE d'un bloc (espaces superflus retirés),
+    ou None si le champ est absent ou vide — une valeur non vide signifie
+    « mettre en attente »."""
+    return lire_champ_entete(bloc, "ATTENTE")
+
+
+def retirer_champ_attente(bloc: str) -> str:
+    """Retire la ligne d'en-tête ATTENTE d'un bloc, reste intact — utilisé au
+    lancement d'un élément en attente (POST /issues-attente/lancer) : le
+    champ n'a plus de sens une fois l'issue renvoyée au circuit normal et ne
+    doit pas brouiller CCL."""
+    return retirer_ligne_entete(bloc, "ATTENTE")
 
 
 # ─── Découpage multi-blocs — lot (miroir Python de decouperCorpsEnBlocs de
@@ -923,6 +972,70 @@ def _rejeter(cfg: ConfigInbox, chemin: Path, titre: str, projet: str, detail: st
     _notifier_fichier_refuse(nom_avant_deplacement, titre or None, detail)
 
 
+# ─── Champ ATTENTE — mise de côté avant création (issue #713) ─────────────
+# Un bloc (fichier mono-issue entier, ou un bloc d'un lot) portant un champ
+# ATTENTE non vide n'est NI validé NI créé : il est mis de côté dans
+# en_attente/, tel quel, en attendant qu'Alain juge la condition remplie et
+# le relance via `POST /issues-attente/lancer` (app/issues_inbox.py). AUCUNE
+# vérification automatique de la condition — c'est tout le sens de ce champ.
+
+def _chemin_disponible(dossier: Path, nom: str) -> Path:
+    """Chemin libre dans `dossier` pour `nom` — suffixe numérique en cas de
+    collision (même principe que _deplacer_vers_rejected ci-dessus).
+    Réutilisé par app/issues_inbox.py au lancement d'un élément en attente,
+    pour ne jamais écraser un fichier homonyme déjà présent dans le dossier
+    d'entrée."""
+    cible = dossier / nom
+    if not cible.exists():
+        return cible
+    stem, suffixe = Path(nom).stem, Path(nom).suffix
+    i = 1
+    while True:
+        cible = dossier / f"{stem}-{i}{suffixe}"
+        if not cible.exists():
+            return cible
+        i += 1
+
+
+def _mettre_fichier_en_attente(cfg: ConfigInbox, chemin: Path, contenu: str, condition: str) -> None:
+    """Fichier mono-issue entier portant le champ ATTENTE : déplacé TEL QUEL
+    vers en_attente/ (suffixe en cas de collision de nom), sans validation ni
+    création d'issue."""
+    cfg.en_attente_dir.mkdir(parents=True, exist_ok=True)
+    nom_avant_deplacement = chemin.name
+    cible = _chemin_disponible(cfg.en_attente_dir, chemin.name)
+    try:
+        chemin.rename(cible)
+    except OSError as e:
+        log.error(f"Impossible de mettre {chemin.name} en attente : {e}")
+        return
+    projet = lire_champ_entete(contenu, "PROJET") or "(unknown)"
+    _ecrire_ligne_log(cfg, projet, "EN_ATTENTE", f"{nom_avant_deplacement} — {condition}")
+    log.info(f"Mis en attente : {nom_avant_deplacement} → {cible.name} ({condition}).")
+
+
+def _ecrire_bloc_en_attente(cfg: ConfigInbox, chemin_origine: Path, index: int,
+                             bloc: str, condition: str) -> Path | None:
+    """Bloc d'un lot portant le champ ATTENTE : écrit comme fichier séparé
+    dans en_attente/ AVANT tout traitement des autres blocs du lot (rien ne
+    doit pouvoir se perdre si le reste du lot échoue ensuite, cf.
+    traiter_fichier). Retourne le chemin écrit, ou None si l'écriture a
+    échoué (le bloc reste alors uniquement dans le fichier d'origine, traité
+    normalement comme les autres — pas de perte silencieuse)."""
+    cfg.en_attente_dir.mkdir(parents=True, exist_ok=True)
+    nom = f"{chemin_origine.stem}__bloc{index}{chemin_origine.suffix}"
+    cible = _chemin_disponible(cfg.en_attente_dir, nom)
+    try:
+        cible.write_text(bloc, encoding="utf-8")
+    except OSError as e:
+        log.error(f"Impossible d'écrire le bloc en attente {nom} : {e}")
+        return None
+    projet = lire_champ_entete(bloc, "PROJET") or "(unknown)"
+    _ecrire_ligne_log(cfg, projet, "EN_ATTENTE", f"{cible.name} — {condition}")
+    log.info(f"Bloc mis en attente : {cible.name} ({condition}).")
+    return cible
+
+
 # ─── Création de l'issue via gh (miroir de app/issues.py::envoyer) ─────────
 
 def _creer_issue(cfg: ConfigInbox, cfg_projet, titre: str, labels: str, body: str):
@@ -1129,7 +1242,42 @@ def traiter_fichier(cfg: ConfigInbox, chemin: Path) -> None:
     # (en-tête possiblement placé AVANT #Titre:, cf. decouper_corps_en_blocs).
     blocs = decouper_corps_en_blocs(contenu)
     if len(blocs) >= 2:
-        _traiter_lot(cfg, chemin, blocs)
+        # Champ ATTENTE (issue #713) : AVANT tout traitement du lot, chaque
+        # bloc concerné est écrit à part dans en_attente/ — rien ne doit
+        # pouvoir se perdre si le reste du lot échoue ensuite (cf. le cas
+        # limite documenté plus bas). Un bloc dont l'écriture en attente
+        # échouerait (disque plein, permissions...) retombe sur le
+        # traitement normal plutôt que d'être perdu silencieusement.
+        blocs_a_traiter = []
+        for i, bloc in enumerate(blocs, start=1):
+            condition = lire_condition_attente(bloc)
+            if condition and _ecrire_bloc_en_attente(cfg, chemin, i, bloc, condition) is not None:
+                continue
+            blocs_a_traiter.append(bloc)
+
+        if not blocs_a_traiter:
+            try:
+                chemin.unlink()
+            except OSError as e:
+                log.warning(f"Lot entièrement mis en attente mais suppression "
+                            f"de {chemin.name} échouée : {e}")
+            return
+
+        # Cas limite : si TOUS les blocs restants (non mis en attente)
+        # échouent ensuite, _traiter_lot déplace le fichier D'ORIGINE entier
+        # vers rejected/ (comportement #508 inchangé) — qui contient alors
+        # AUSSI les blocs déjà mis en attente ci-dessus. Doublon sans
+        # conséquence : ces blocs existent déjà, intacts, dans en_attente/ ;
+        # le fichier rejeté n'est qu'une copie figée de l'état d'origine,
+        # jamais retraité automatiquement (§3.2 du DOC).
+        _traiter_lot(cfg, chemin, blocs_a_traiter)
+        return
+
+    # Champ ATTENTE (issue #713) : fichier mono-issue entier mis de côté tel
+    # quel, sans validation ni création — voir _mettre_fichier_en_attente.
+    condition = lire_condition_attente(contenu)
+    if condition:
+        _mettre_fichier_en_attente(cfg, chemin, contenu, condition)
         return
 
     succes, titre, projet, texte, resultat_gh, labels_creation, donnees_temps = _traiter_bloc(cfg, contenu)

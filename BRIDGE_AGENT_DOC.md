@@ -147,6 +147,7 @@ puis le corps. Champs d'en-tête reconnus, tous optionnels sauf `PROJET` :
 | `MODELE`    | Doit être une valeur reconnue (`claude-sonnet-5`, etc.) si fourni    |
 | `MODE`      | Reconnu de façon tolérante (§5) — absent/non reconnu → `lecture`     |
 | `LABELS`    | Labels GitHub additionnels, séparés par des virgules                 |
+| `ATTENTE`   | Optionnel — texte libre, en une phrase, de la condition qui retarde cette issue (ex. « après la fusion de l'étape C et l'arrêt de Rummikub »). Valeur non vide → l'issue n'est PAS créée sur GitHub, elle est mise de côté dans `issues_inbox/en_attente/` (issue #713, voir §3.16). Vide ou absent → traitée tout de suite, comme aujourd'hui. **Claude Chat doit poser ce champ lui-même** dès qu'une issue est « à lancer après... » — pas seulement le mentionner dans sa réponse. |
 
 Label de notification par défaut (issue #490) : `construire_labels()` pose
 systématiquement **`notif_pc`** (miroir du comportement le plus courant côté
@@ -712,6 +713,95 @@ puis un `creation_issue`/`fichier_refuse` par bloc EXPLOITABLE (un bloc
 un événement groupé pour tout le lot. Voir `tests/test_evenements_issues_inbox_631.py`
 pour la construction et l'ordre exacts de ces séquences (aucun appel réseau
 ni `gh` réel : `_poster_best_effort` et `_traiter_bloc` sont substitués).
+
+### 3.16 Champ `ATTENTE` : mettre une issue de côté avant sa création (issue #713)
+
+**Problème résolu.** Alain reçoit des issues à lancer tout de suite et
+d'autres à lancer plus tard (après la fusion d'une autre issue, après une
+vérification manuelle...). Jusqu'ici rien ne distinguait les deux dans
+`issues_inbox/` : les fichiers s'accumulaient et il fallait se souvenir de ce
+qui était déjà parti. `ATTENTE` ajoute un troisième état, **avant** la
+création — à ne pas confondre avec `needs-human` (§13), qui s'applique à une
+issue déjà créée et déjà en échec.
+
+**Format.** `| ATTENTE | <condition en une phrase> |` dans l'en-tête (même
+zone bornée §3.3, même tolérance de casse que les autres champs — lu par
+`lire_condition_attente()`, miroir direct de `lire_champ_entete`). La
+`VALEUR` est un texte libre écrit par Claude Chat, ex. « après la fusion de
+l'étape C et l'arrêt de Rummikub ». **Valeur vide ou champ absent → traitée
+tout de suite**, exactement comme avant #713. **Aucune vérification
+automatique de la condition** — c'est une décision qu'Alain seul prend, en
+relisant le texte, jamais un calcul du watcher.
+
+```markdown
+| PROJET  | bridge_agent |
+| ATTENTE | après la fusion de l'étape C et l'arrêt de Rummikub |
+
+#Titre: Étape D — ...
+```
+
+**Avant toute validation/création (`traiter_fichier`).** Une valeur non vide
+détourne tout le bloc, de la même famille que `RELANCE` (§3.14) mais en
+amont : aucune validation (§3.4), aucun anti-doublon, aucun `gh issue
+create`.
+- **Fichier mono-issue** portant le champ → déplacé **tel quel** (jamais
+  modifié) vers `issues_inbox/en_attente/` (suffixe numérique en cas de
+  collision de nom, même principe que `rejected/`) ; ligne de journal dédiée
+  `EN_ATTENTE` dans `logs/issues_inbox.log`.
+- **Lot (§3.13)** : chaque bloc portant le champ est **écrit à part** dans
+  `en_attente/` **avant** tout traitement des autres blocs du lot — rien ne
+  doit pouvoir se perdre si le reste du lot échoue ensuite. Les blocs restants
+  suivent la logique de lot existante (`_traiter_lot`) sans changement. Si
+  aucun bloc ne reste (lot entièrement en attente), le fichier d'origine est
+  simplement supprimé (rien n'a été créé, rien n'a échoué). **Cas limite** :
+  si tous les blocs restants échouent ensuite, `_traiter_lot` déplace le
+  fichier **d'origine entier** vers `rejected/` (comportement #508 inchangé)
+  — qui contient alors aussi une copie des blocs déjà mis en attente. Doublon
+  sans conséquence : ces blocs existent déjà, intacts, dans `en_attente/` ; le
+  fichier rejeté n'est jamais retraité automatiquement (§3.2).
+- **Fichier sans ce champ** : aucun changement, circuit identique à avant
+  #713.
+
+`issues_inbox/en_attente/` est un sous-dossier, naturellement ignoré par
+`traiter_dossier()` (qui ne parcourt que les FICHIERS de la racine du dossier
+d'entrée), exactement comme `rejected/`.
+
+**Lancer ou supprimer un élément en attente (`app/issues_inbox.py`),
+protégées par la même authentification que les routes voisines :**
+- `GET /issues-attente` — liste triée du **plus ancien au plus récent** (pour
+  ne jamais oublier les plus vieux), un objet par élément :
+  `{id, titre, projet, date, condition}` — `id` est le nom de fichier dans
+  `en_attente/`, `condition` le texte lu par `lire_condition_attente()`.
+- `POST /issues-attente/lancer` — `{id: <nom de fichier>}`. Valide l'identifiant
+  (simple nom de fichier existant dans `en_attente/`, **aucune séparation de
+  chemin** — refus de tout `/`, `\`, `.`/`..`) ; retire le champ `ATTENTE`
+  (`retirer_champ_attente()`, il n'a plus de sens une fois envoyé et ne doit
+  pas brouiller CCL) ; écrit le résultat dans `issues_inbox/` de façon
+  **atomique** — fichier temporaire dans le MÊME dossier puis `os.replace()`
+  — pour que le watcher ne lise jamais un fichier à moitié écrit (cf.
+  `_fichier_pret`, §3.6) ; supprime enfin l'élément d'`en_attente/`. Si
+  l'écriture échoue, l'élément reste en place (rien n'est perdu). L'issue
+  renvoyée au circuit normal repasse par **toutes** ses validations
+  habituelles (§3.4), exactement comme un fichier déposé directement.
+- `POST /issues-attente/supprimer` — `{id: <nom de fichier>}`, même
+  validation d'identifiant. Supprime simplement le fichier — **aucun
+  archivage** : le texte d'origine reste dans la conversation Claude Chat qui
+  l'a produit.
+
+`GET /issues-inbox/etat` (§3.8) expose en plus **`nb_en_attente`** — compteur
+durable relu du disque à chaque appel, jamais compté comme un fichier à
+traiter. Choix volontaire de l'ajouter à une route déjà interrogée en continu
+par le panneau « Watcher spool » plutôt que d'ouvrir un nouveau canal
+d'événements, qui risquerait d'être manqué (cf. #705).
+
+**Formulaire web** : ignore cette convention — `ATTENTE` n'existe que côté
+`issues_inbox/`, 99 % des dépôts d'issues passant par ce dossier. **Hors
+périmètre de #713** : l'onglet qui affiche ces éléments côté interface (issue
+suivante, 2/2) et toute vérification automatique de la condition.
+
+Voir `tests/test_champ_attente_713.py` pour les fonctions pures, le watcher
+avec dossiers temporaires et les trois routes (aucun accès réseau ni `gh`
+réel).
 
 ---
 

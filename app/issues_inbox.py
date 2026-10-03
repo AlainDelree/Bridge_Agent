@@ -1,5 +1,5 @@
 """État de l'onglet « Résultats inbox » + pilotage du watcher spool (issues
-#483, #485).
+#483, #485) + issues en attente (#713).
 
 Lit l'état du watcher_issues_inbox (scripts/watcher_issues_inbox.py) UNIQUEMENT
 depuis le disque — aucun appel gh. L'alarme visuelle de l'onglet est pilotée
@@ -15,12 +15,26 @@ watcher spool n'a par défaut pas d'auto-extinction (contrairement aux watchers
 de projet, DELAI_INACTIVITE_MIN) : une durée optionnelle peut être choisie au
 démarrage (--duree-min), auto-extinction interne implémentée par le script
 lui-même (voir scripts/watcher_issues_inbox.py::boucle).
+
+Issues en attente (issue #713) : un fichier déposé dans issues_inbox/ avec le
+champ d'en-tête ATTENTE rempli est mis de côté par le watcher dans
+issues_inbox/en_attente/ (scripts/watcher_issues_inbox.py::traiter_fichier),
+AVANT toute validation/création — AUCUNE vérification automatique de la
+condition, c'est Alain qui décide. Trois routes ici : `GET /issues-attente`
+(liste), `POST /issues-attente/lancer` (retire le champ ATTENTE et renvoie le
+fichier dans issues_inbox/ pour un traitement normal, écriture atomique) et
+`POST /issues-attente/supprimer`. `GET /issues-inbox/etat` expose en plus le
+compteur `nb_en_attente` (durable, relu du disque à chaque appel — le panneau
+« Watcher spool » l'interroge déjà en continu, cf. #705). Dossier résolu par
+la même config que le watcher (_config() ci-dessous).
 """
 
+import logging
 import os
 import signal
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -31,8 +45,12 @@ sys.path.insert(0, str(DOSSIER_SCRIPT))
 sys.path.insert(0, str(DOSSIER_SCRIPT / "scripts"))
 
 from watcher_issues_inbox import (charger_config_inbox, DEFAUT_CHEMIN_CONFIG,  # noqa: E402
-                                  DOSSIER_MOTIFS, SUFFIXE_MOTIF)
+                                  DOSSIER_MOTIFS, SUFFIXE_MOTIF,
+                                  lire_condition_attente, retirer_champ_attente,  # (issue #713)
+                                  extraire_champs, _chemin_disponible)
 from watcher import _pid_vivant  # noqa: E402
+
+log = logging.getLogger("app.issues_inbox")
 
 # Nombre de lignes d'historique renvoyées à l'onglet (le fichier lui-même est
 # déjà borné à MAX_LOG_LINES par le watcher — cf. ConfigInbox.max_log_lines).
@@ -154,6 +172,16 @@ def _motif_rejet(cfg, nom_fichier: str) -> str | None:
         return None
 
 
+def _nb_en_attente(cfg) -> int:
+    """Nombre d'éléments actuellement mis de côté dans en_attente/ (issue
+    #713) — compteur durable, relu du disque à chaque appel comme le reste de
+    cette route (jamais un fichier à traiter par le watcher, cf.
+    traiter_dossier qui ignore déjà tout sous-dossier)."""
+    if not cfg.en_attente_dir.is_dir():
+        return 0
+    return sum(1 for chemin in cfg.en_attente_dir.iterdir() if chemin.is_file())
+
+
 def etat_inbox():
     """Retourne :
       - alarme     : True si issues_inbox/rejected/ contient au moins un fichier
@@ -162,6 +190,8 @@ def etat_inbox():
                      intégral (sidecar <nom>.motif), None si indisponible
       - historique : dernières lignes de logs/issues_inbox.log (plus récente
                      en premier), purement informatif
+      - nb_en_attente : nombre d'éléments mis de côté par le champ ATTENTE
+        (issue #713), jamais comptés comme des fichiers à traiter
       - watcher_actif, watcher_pid, watcher_restant_s : état du processus
         watcher spool (issue #485) — restant_s = None si actif sans durée
         fixée (indéfini) ou si inactif.
@@ -202,6 +232,8 @@ def etat_inbox():
         historique=historique,
         inbox_dir=str(cfg.inbox_dir),
         rejected_dir=str(cfg.rejected_dir),
+        en_attente_dir=str(cfg.en_attente_dir),
+        nb_en_attente=_nb_en_attente(cfg),
         watcher_actif=actif,
         watcher_pid=pid,
         watcher_restant_s=_temps_restant_s() if actif else None,
@@ -229,3 +261,122 @@ def arreter_watcher_inbox_route():
     """Arrête le watcher spool."""
     ok, msg = arreter_watcher_inbox()
     return jsonify(succes=ok, message=msg)
+
+
+# ─── Issues en attente — champ ATTENTE (issue #713) ────────────────────────
+# Ces trois routes n'opèrent QUE sur issues_inbox/en_attente/, jamais sur
+# issues_inbox/ lui-même (hors l'écriture atomique de /lancer) — aucune
+# vérification de la condition elle-même, c'est Alain qui juge.
+
+def _identifiant_attente_valide(nom: str) -> bool:
+    """Identifiant = simple nom de fichier existant dans en_attente/, AUCUNE
+    séparation de chemin (traversée de répertoire interdite)."""
+    return bool(nom) and nom not in (".", "..") and "/" not in nom and "\\" not in nom
+
+
+def _lire_item_attente(chemin: Path) -> dict | None:
+    """{id, titre, projet, date, condition} pour un fichier d'en_attente/, ou
+    None si illisible. `extraire_champs` est réutilisé tel quel pour
+    titre/projet — le champ ATTENTE lui-même (encore présent dans ce
+    fichier) est lu séparément via lire_condition_attente, cohérent avec le
+    fait qu'il n'est jamais retiré avant le lancement (POST .../lancer)."""
+    try:
+        contenu = chemin.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    champs = extraire_champs(contenu)
+    try:
+        date_depot = chemin.stat().st_mtime
+    except OSError:
+        date_depot = 0.0
+    return {
+        "id": chemin.name,
+        "titre": champs["titre"],
+        "projet": champs["projet"],
+        "date": date_depot,
+        "condition": lire_condition_attente(contenu) or "",
+    }
+
+
+def issues_attente_liste():
+    """GET /issues-attente — éléments mis de côté par le champ ATTENTE, du
+    plus ancien au plus récent (pour ne pas oublier les plus vieux)."""
+    cfg = _config()
+    items = []
+    if cfg.en_attente_dir.is_dir():
+        for chemin in cfg.en_attente_dir.iterdir():
+            if not chemin.is_file():
+                continue
+            item = _lire_item_attente(chemin)
+            if item is not None:
+                items.append(item)
+    items.sort(key=lambda it: it["date"])
+    return jsonify(items=items)
+
+
+def issues_attente_lancer():
+    """POST /issues-attente/lancer — JSON {id: <nom de fichier>}. Retire le
+    champ ATTENTE puis écrit le résultat dans issues_inbox/ de façon
+    atomique (fichier temporaire + renommage, même dossier donc même
+    système de fichiers — le watcher ne doit jamais lire un fichier à moitié
+    écrit, cf. _fichier_pret) avant de supprimer l'élément d'en_attente/. Si
+    l'écriture échoue, l'élément reste en place (rien n'est perdu)."""
+    data = request.json or {}
+    nom = (data.get("id") or "").strip()
+    if not _identifiant_attente_valide(nom):
+        return jsonify(succes=False, erreur="identifiant invalide."), 400
+
+    cfg = _config()
+    chemin = cfg.en_attente_dir / nom
+    if not chemin.is_file():
+        return jsonify(succes=False, erreur="élément introuvable."), 404
+
+    try:
+        contenu = chemin.read_text(encoding="utf-8")
+    except OSError as e:
+        return jsonify(succes=False, erreur=f"lecture impossible : {e}"), 500
+
+    nouveau_contenu = retirer_champ_attente(contenu)
+    cfg.inbox_dir.mkdir(parents=True, exist_ok=True)
+    cible = _chemin_disponible(cfg.inbox_dir, nom)
+    try:
+        fd, tmp_nom = tempfile.mkstemp(dir=str(cfg.inbox_dir), suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(nouveau_contenu)
+            os.replace(tmp_nom, cible)
+        except OSError:
+            Path(tmp_nom).unlink(missing_ok=True)
+            raise
+    except OSError as e:
+        return jsonify(succes=False, erreur=f"écriture impossible : {e}"), 500
+
+    try:
+        chemin.unlink()
+    except OSError as e:
+        log.warning(f"Lancée ({cible.name}) mais suppression de l'élément "
+                    f"en attente {nom} échouée : {e}")
+
+    return jsonify(succes=True, fichier=cible.name)
+
+
+def issues_attente_supprimer():
+    """POST /issues-attente/supprimer — JSON {id: <nom de fichier>}. Simple
+    suppression du fichier d'en_attente/, sans archivage (le texte d'origine
+    reste de toute façon dans la conversation Claude Chat qui l'a produit)."""
+    data = request.json or {}
+    nom = (data.get("id") or "").strip()
+    if not _identifiant_attente_valide(nom):
+        return jsonify(succes=False, erreur="identifiant invalide."), 400
+
+    cfg = _config()
+    chemin = cfg.en_attente_dir / nom
+    if not chemin.is_file():
+        return jsonify(succes=False, erreur="élément introuvable."), 404
+
+    try:
+        chemin.unlink()
+    except OSError as e:
+        return jsonify(succes=False, erreur=str(e)), 500
+
+    return jsonify(succes=True)

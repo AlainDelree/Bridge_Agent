@@ -58,8 +58,11 @@ lui-même par ses propres issues (dogfooding).
   obligatoire, le reste facultatif.
 - §18 (#191/#192) : pièces jointes image → `issue-attachments/` + URL raw.
 - §17 (#187) : notifications centralisées via `new_issue.py` (tous projets).
-- §16 (#174…) : onglet « CCW ». #709/#711 : une issue for-windows démarre
-  seul le service CCW éteint (web, `issues_inbox/`, relance) — retrofit fini.
+- §16 (#174…) : onglet « CCW », démarrage à la demande fini (#709/#711).
+- §3.16 (#713, 1/2) : champ `ATTENTE` dans `issues_inbox/` met une issue de
+  côté (`en_attente/`) au lieu de la créer ; routes `/issues-attente`
+  (liste/lancer/supprimer), `nb_en_attente` sur `/issues-inbox/etat` ;
+  AUCUNE vérif auto de la condition. Onglet web = issue 2/2 (à venir).
 
 ## Maintenance de ce fichier
 Si ta tâche modifie l'architecture, les dépendances, les conventions ou
