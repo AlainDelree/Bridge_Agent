@@ -610,6 +610,10 @@ def scenario_dispatch_jamais_claude(tmp_path_factory):
 
 
 def main():
+    if os.name == "nt":
+        print("  (ignoré : ce test s'appuie sur de faux `gh`/`powershell` shebang bash et sur `openssl` réel via PATH, non applicable sous Windows)")
+        return 0
+
     tmp = tempfile.TemporaryDirectory()
     compteur = {"n": 0}
 

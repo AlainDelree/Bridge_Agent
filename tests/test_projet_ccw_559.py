@@ -438,6 +438,10 @@ def scenario_bootstrap_depot_inexistant_refuse(tmp_path_factory):
 
 
 def main():
+    if os.name == "nt":
+        print("  (ignoré : ce test s'appuie sur un faux `gh` shebang bash et sur `openssl` réel via PATH, non applicable sous Windows)")
+        return 0
+
     tmp = tempfile.TemporaryDirectory()
     compteur = {"n": 0}
 

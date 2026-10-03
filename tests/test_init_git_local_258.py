@@ -201,6 +201,10 @@ def test_timeout_git_ne_fait_pas_echouer_la_creation():
     import os
     import stat
 
+    if os.name == "nt":
+        print("  (ignoré : faux `git` shebang bash utilisé pour simuler un timeout de push, non applicable sous Windows)")
+        return {"ignore": True}
+
     with tempfile.TemporaryDirectory() as tmp:
         rep = Path(tmp) / "projet"
         rep.mkdir()

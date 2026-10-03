@@ -64,6 +64,25 @@ PowerShell courante (ou simplement en ouvrir une nouvelle) :
 La commande `bridge` lance alors `new_issue.py --lan` depuis n'importe quel
 répertoire.
 
+## 3. Vérifier l'installation (suite de tests)
+
+Les fichiers `tests/test_*.py` sont des scripts autonomes (pas collectés
+par `pytest`) : `tests/lancer_tous_les_tests.py` (issue #704) les exécute
+tous l'un après l'autre, chacun dans son propre sous-processus avec
+`PYTHONUTF8=1` forcé — nécessaire sous Windows, sans quoi une sortie
+redirigée fait planter chaque script sur les symboles ✓/✗/❌ (même famille
+que le correctif #686/#688). Dépendance : `pytest` (plusieurs fichiers
+l'importent), installée via `pip install -r requirements-dev.txt`.
+
+```powershell
+pip install -r requirements-dev.txt
+python tests\lancer_tous_les_tests.py
+```
+
+Code de sortie 0 si tous les fichiers réussissent (un test qui s'ignore
+proprement sous Windows — message « ignoré : ... non applicable sous
+Windows » — compte comme réussi), 1 sinon.
+
 ## Voir aussi
 
 - `provisionner.ps1` — provisioning du service `CCW-Watcher` (headless,

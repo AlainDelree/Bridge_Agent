@@ -1,0 +1,6 @@
+# Dépendances propres aux tests (`tests/test_*.py`) — issue #704. Plusieurs
+# fichiers importent `pytest` ou l'invoquent en sous-processus (collecte de
+# scénarios ciblés au sein d'un script par ailleurs autonome) ; `watcher.py`
+# et `new_issue.py` n'en ont besoin d'aucune en production (cf.
+# requirements.txt, CONTEXTE.md).
+pytest>=8

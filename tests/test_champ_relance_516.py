@@ -200,17 +200,18 @@ def scenario_7_traiter_relance_numero_invalide_rejete():
 def scenario_8_extraction_champs_sous_dossier_repo_cible():
     """SOUS_DOSSIER et REPO_CIBLE sont reconnus comme TIMEOUT/MODELE et
     retirés du corps restant."""
+    chemin_repo_cible = str(Path(tempfile.gettempdir()) / "Autre_Projet")
     contenu = (
         "| PROJET       | bridge_agent |\n"
         "| RELANCE      | #77 |\n"
         "| SOUS_DOSSIER | CCW/gestionmail |\n"
-        "| REPO_CIBLE   | /home/alain/Autre_Projet |\n"
+        f"| REPO_CIBLE   | {chemin_repo_cible} |\n"
         "\n"
         "Le chemin visé était incorrect, d'où la correction.\n"
     )
     champs = w.extraire_champs(contenu)
     assert champs["sous_dossier_brut"] == "CCW/gestionmail", champs["sous_dossier_brut"]
-    assert champs["repo_cible_brut"] == "/home/alain/Autre_Projet", champs["repo_cible_brut"]
+    assert champs["repo_cible_brut"] == chemin_repo_cible, champs["repo_cible_brut"]
     assert "SOUS_DOSSIER" not in champs["corps"], champs["corps"]
     assert "REPO_CIBLE" not in champs["corps"], champs["corps"]
     return {"sous_dossier_brut": champs["sous_dossier_brut"], "repo_cible_brut": champs["repo_cible_brut"]}

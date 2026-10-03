@@ -4,5 +4,7 @@
 #
 # Versions minimales vérifiées le 29/09/2026 (celles déjà en service sur le
 # ThinkPad) — pas de plafond haut volontaire, aucune contrainte connue.
+#
+# Dépendances de test (pytest) : voir requirements-dev.txt (issue #704).
 flask>=3.1
 werkzeug>=3.1
