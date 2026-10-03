@@ -17,6 +17,14 @@ Résolution du projet : TOUJOURS via le champ DEPOT du .conf
 (app.projets.projet_par_depot), jamais déduite du nom du projet ni du
 basename de REP_TRAVAIL — ces trois chaînes peuvent diverger (voir
 §"résolution des identités" de l'issue #323).
+
+Watcher LOCAL sous Windows natif (issue #701, suite #695) : l'arbre de
+process n'est plus reconstruit par /proc (absent sous Windows) mais par
+appartenance au Job Object persistant du watcher (créé côté watcher.py,
+voir nom_job_watcher_windows) — branche `os.name == "nt"` dans
+interrompre_linux (nom historique, gère en réalité le watcher local quel
+que soit son OS ; interrompre_windows ci-dessous reste le chemin délégué
+SSH vers le PC fixe CCW, pour les issues for-windows).
 """
 
 import ctypes
@@ -43,6 +51,18 @@ from app.ccw import (
 DOSSIER_SCRIPT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(DOSSIER_SCRIPT))
 from watcher import _chemin_verrou, _pid_vivant, DOSSIER_LOGS  # noqa: E402
+
+# Job Object PERSISTANT du watcher (issue #695, côté producteur déjà en
+# place dans watcher.py) : constantes/structure/fonction de nommage, SANS
+# garde OS (importables sous Linux, voir watcher.py §"Job Object PERSISTANT")
+# — réutilisées ci-dessous par la branche Windows de la reconstruction
+# d'arbre (issue #701).
+from watcher import (  # noqa: E402
+    nom_job_watcher_windows,
+    _JOB_OBJECT_QUERY, _JOB_OBJECT_TERMINATE, _JobObjectBasicProcessIdList,
+    _JOBOBJECT_BASIC_PROCESS_ID_LIST, _CAPACITE_PID_JOB_PERSISTANT,
+    _PROCESS_QUERY_LIMITED_INFORMATION,
+)
 
 LABEL_NEEDS_HUMAN         = "needs-human"
 COMMENTAIRE_INTERRUPTION  = "⛔ Interrompu via new_issue.py"
@@ -205,6 +225,129 @@ def _lister_worktrees_actifs(cfg) -> list:
     return resultat
 
 
+# ─── for-windows natif (watcher local, hors délégation CCW) : arbre de
+# process par appartenance au Job Object PERSISTANT (issue #701, suite #695)
+# ─────────────────────────────────────────────────────────────────────────
+# /proc n'existe pas sous Windows : impossible d'y reconstruire l'arbre par
+# PPID comme _lister_arbre ci-dessus. On s'appuie à la place sur le Job
+# Object NOMMÉ créé par _preparer_job_persistant_windows (watcher.py, AUTRE
+# process) : l'appartenance au job EST l'arbre (watcher + claude + sa
+# descendance, par héritage de Job) — TerminateJobObject les tue tous d'un
+# coup, sans boucle de SIGKILL ni énumération de processus séparée.
+
+def _cmdline_windows(pid: int) -> str:
+    """Windows uniquement — repli de _cmdline (/proc, absent ici) pour
+    l'affichage au moment d'un « Interrompre » : chemin de l'image du
+    process `pid` (QueryFullProcessImageNameW, droits minimaux — même esprit
+    que _pid_vivant côté watcher.py). Volontairement PAS la ligne de commande
+    complète : la reconstruire demanderait une énumération de processus
+    séparée (CreateToolhelp32Snapshot/WMI), hors de portée de ctypes seul —
+    le nom de l'image suffit à identifier le process dans la liste affichée
+    (solution la plus simple, cf. issue #701)."""
+    handle = ctypes.windll.kernel32.OpenProcess(_PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+    if not handle:
+        return "(image indisponible)"
+    try:
+        taille = ctypes.wintypes.DWORD(260)
+        tampon = ctypes.create_unicode_buffer(260)
+        if ctypes.windll.kernel32.QueryFullProcessImageNameW(handle, 0, tampon, ctypes.byref(taille)):
+            return tampon.value
+        return "(image indisponible)"
+    finally:
+        ctypes.windll.kernel32.CloseHandle(handle)
+
+
+def _arreter_arbre_windows(cfg) -> tuple:
+    """Windows uniquement : rouvre PAR NOM (nom_job_watcher_windows) le job
+    persistant du watcher `cfg.nom`, liste ses PID membres pour l'affichage,
+    puis tue l'arbre entier via TerminateJobObject. Renvoie (etapes,
+    arbre_mort), avec les MÊMES noms d'étape que la branche Linux
+    (arreter_arbre_watcher / attente_fin_process) — contrat identique côté
+    appelant (interrompre_linux) et côté route Flask.
+
+    Cas limites (issue #701, point 4) :
+    - Job introuvable (OpenJobObjectW échoue) : watcher déjà mort, ou lancé
+      avant #695 (pas de job persistant) → 'rien_a_faire', PAS 'echec' (rien
+      d'anormal, juste rien à faire ici).
+    - Liste de PID tronquée (plus de membres que _CAPACITE_PID_JOB_PERSISTANT) :
+      signalée dans le message, mais la terminaison porte quand même sur TOUT
+      le job (TerminateJobObject n'a pas besoin de connaître les PID un par
+      un, à la différence de l'énumération d'affichage)."""
+    etapes = []
+    nom = nom_job_watcher_windows(cfg.nom)
+    handle = ctypes.windll.kernel32.OpenJobObjectW(
+        _JOB_OBJECT_QUERY | _JOB_OBJECT_TERMINATE, False, nom)
+    if not handle:
+        etapes.append({"etape": "arreter_arbre_watcher", "statut": "rien_a_faire",
+                        "message": f"Aucun job persistant « {nom} » (watcher déjà arrêté, "
+                                   f"ou lancé avant #695 sans job persistant)."})
+        etapes.append({"etape": "attente_fin_process", "statut": "rien_a_faire",
+                        "message": "Rien à attendre."})
+        return etapes, True
+
+    info = _JOBOBJECT_BASIC_PROCESS_ID_LIST()
+    taille_retour = ctypes.wintypes.DWORD(0)
+    requete_ok = ctypes.windll.kernel32.QueryInformationJobObject(
+        handle, _JobObjectBasicProcessIdList, ctypes.byref(info),
+        ctypes.sizeof(info), ctypes.byref(taille_retour))
+
+    arbre = []
+    tronque = False
+    if requete_ok:
+        nb = min(info.NumberOfProcessIdsInList, _CAPACITE_PID_JOB_PERSISTANT)
+        tronque = info.NumberOfAssignedProcesses > _CAPACITE_PID_JOB_PERSISTANT
+        arbre = [(int(info.ProcessIdList[i]), _cmdline_windows(int(info.ProcessIdList[i])))
+                 for i in range(nb)]
+
+    if arbre:
+        details = ", ".join(f"{pid} ({img})" for pid, img in arbre)
+    elif requete_ok:
+        details = "(aucun membre)"
+    else:
+        details = "(liste de PID indisponible)"
+    if tronque:
+        details += f" — liste tronquée à {_CAPACITE_PID_JOB_PERSISTANT} PID (job plus peuplé)."
+
+    try:
+        termine_ok = bool(ctypes.windll.kernel32.TerminateJobObject(handle, 1))
+    finally:
+        ctypes.windll.kernel32.CloseHandle(handle)
+
+    if not termine_ok:
+        etapes.append({"etape": "arreter_arbre_watcher", "statut": "echec",
+                        "message": f"TerminateJobObject a échoué. Membres listés : {details}"})
+        etapes.append({"etape": "attente_fin_process", "statut": "echec",
+                        "message": "Sautée : terminaison du job non confirmée."})
+        return etapes, False
+
+    etapes.append({"etape": "arreter_arbre_watcher", "statut": "succes",
+                    "message": f"Job terminé (TerminateJobObject) : {details}"})
+
+    if not requete_ok:
+        etapes.append({"etape": "attente_fin_process", "statut": "succes",
+                        "message": "Job terminé ; confirmation individuelle impossible "
+                                   "(liste de PID indisponible), considéré mort."})
+        return etapes, True
+
+    limite = time.monotonic() + 5
+    survivants = list(arbre)
+    while True:
+        survivants = [(pid, img) for pid, img in survivants if _pid_vivant(pid)]
+        if not survivants or time.monotonic() >= limite:
+            break
+        time.sleep(0.05)
+
+    if survivants:
+        noms = ", ".join(f"{pid} ({img})" for pid, img in survivants)
+        etapes.append({"etape": "attente_fin_process", "statut": "echec",
+                        "message": f"Process encore vivant(s) après 5s : {noms} — lock NON nettoyé."})
+        return etapes, False
+
+    etapes.append({"etape": "attente_fin_process", "statut": "succes",
+                    "message": "Arbre confirmé mort."})
+    return etapes, True
+
+
 # Étape "neutraliser_relance_systemd" retirée (issue #682) : elle empêchait
 # systemd --user (unité `watcher@<projet>.service`, `Restart=on-failure`,
 # issue #596) de voir le SIGKILL de l'arbre ci-dessus comme un crash à
@@ -218,55 +361,68 @@ def _lister_worktrees_actifs(cfg) -> list:
 
 
 def interrompre_linux(cfg) -> list:
+    """Nom historique (issue #323) : interrompt en fait le watcher LOCAL,
+    quel que soit son OS — par opposition à interrompre_windows ci-dessous,
+    qui délègue par SSH au PC fixe CCW (voir route_interrompre : le choix
+    entre les deux se fait sur le label for-windows de l'issue, pas sur l'OS
+    courant). Sur CE process, `os.name` détermine seulement COMMENT l'arbre
+    de process est reconstruit/arrêté (issue #701, suite #695) : par PPID
+    via /proc sous Linux, par appartenance au Job Object persistant du
+    watcher sous Windows (/proc y est absent) — tout le reste (verrou,
+    worktrees) est un simple fichier, identique sur les deux OS."""
     etapes = []
 
-    pid_file = DOSSIER_LOGS / f"watcher-{cfg.nom}.pid"
-    pid_watcher = None
-    if pid_file.exists():
-        try:
-            candidat = int(pid_file.read_text().strip())
-        except ValueError:
-            candidat = None
-        if candidat is not None and _pid_vivant(candidat):
-            pid_watcher = candidat
-
-    arbre = _lister_arbre(pid_watcher) if pid_watcher else []
-
-    if not arbre:
-        etapes.append({"etape": "arreter_arbre_watcher", "statut": "rien_a_faire",
-                        "message": "Aucun process watcher vivant (PID absent ou mort)."})
-        etapes.append({"etape": "attente_fin_process", "statut": "rien_a_faire",
-                        "message": "Rien à attendre."})
-        arbre_mort = True
+    if os.name == "nt":
+        etapes_arbre, arbre_mort = _arreter_arbre_windows(cfg)
+        etapes.extend(etapes_arbre)
     else:
-        for pid, _cmd in arbre:
+        pid_file = DOSSIER_LOGS / f"watcher-{cfg.nom}.pid"
+        pid_watcher = None
+        if pid_file.exists():
             try:
-                os.kill(pid, signal.SIGKILL)
-            except OSError:
-                pass
-        details = ", ".join(f"{pid} ({cmd})" for pid, cmd in arbre)
-        etapes.append({"etape": "arreter_arbre_watcher", "statut": "succes",
-                        "message": f"Arbre tué (SIGKILL) : {details}"})
+                candidat = int(pid_file.read_text().strip())
+            except ValueError:
+                candidat = None
+            if candidat is not None and _pid_vivant(candidat):
+                pid_watcher = candidat
 
-        limite = time.monotonic() + 5
-        survivants = list(arbre)
-        while True:
-            if pid_watcher is not None:
-                _reaper_best_effort(pid_watcher)   # évite un faux "vivant" (zombie non réapé)
-            survivants = [(pid, cmd) for pid, cmd in survivants if _pid_vivant(pid)]
-            if not survivants or time.monotonic() >= limite:
-                break
-            time.sleep(0.05)
+        arbre = _lister_arbre(pid_watcher) if pid_watcher else []
 
-        if survivants:
-            noms = ", ".join(f"{pid} ({cmd})" for pid, cmd in survivants)
-            etapes.append({"etape": "attente_fin_process", "statut": "echec",
-                            "message": f"Process encore vivant(s) après 5s : {noms} — lock NON nettoyé."})
-            arbre_mort = False
-        else:
-            etapes.append({"etape": "attente_fin_process", "statut": "succes",
-                            "message": "Arbre confirmé mort."})
+        if not arbre:
+            etapes.append({"etape": "arreter_arbre_watcher", "statut": "rien_a_faire",
+                            "message": "Aucun process watcher vivant (PID absent ou mort)."})
+            etapes.append({"etape": "attente_fin_process", "statut": "rien_a_faire",
+                            "message": "Rien à attendre."})
             arbre_mort = True
+        else:
+            for pid, _cmd in arbre:
+                try:
+                    os.kill(pid, signal.SIGKILL)
+                except OSError:
+                    pass
+            details = ", ".join(f"{pid} ({cmd})" for pid, cmd in arbre)
+            etapes.append({"etape": "arreter_arbre_watcher", "statut": "succes",
+                            "message": f"Arbre tué (SIGKILL) : {details}"})
+
+            limite = time.monotonic() + 5
+            survivants = list(arbre)
+            while True:
+                if pid_watcher is not None:
+                    _reaper_best_effort(pid_watcher)   # évite un faux "vivant" (zombie non réapé)
+                survivants = [(pid, cmd) for pid, cmd in survivants if _pid_vivant(pid)]
+                if not survivants or time.monotonic() >= limite:
+                    break
+                time.sleep(0.05)
+
+            if survivants:
+                noms = ", ".join(f"{pid} ({cmd})" for pid, cmd in survivants)
+                etapes.append({"etape": "attente_fin_process", "statut": "echec",
+                                "message": f"Process encore vivant(s) après 5s : {noms} — lock NON nettoyé."})
+                arbre_mort = False
+            else:
+                etapes.append({"etape": "attente_fin_process", "statut": "succes",
+                                "message": "Arbre confirmé mort."})
+                arbre_mort = True
 
     if not arbre_mort:
         etapes.append({"etape": "suppression_verrou", "statut": "echec",
