@@ -28,6 +28,11 @@ import watcher_issues_inbox as w  # noqa: E402
 import app.watchers as watchers_mod  # noqa: E402
 
 
+def _appel_ccw_interdit(*_a, **_k):
+    raise AssertionError("demarrer_service_ccw_arriere_plan n'aurait pas dû être appelé pour "
+                          "une issue for-linux (appel SSH potentiel — garde violée, issue #711)")
+
+
 def _cfg_projet(depot="AlainDelree/Bridge_Agent", nom="bridge_agent", rep_travail=None, perimetre_dynamique=False):
     return SimpleNamespace(depot=depot, nom=nom, timeout_claude=300, timeout_chef=1200,
                             rep_travail=rep_travail or Path(tempfile.gettempdir()),
@@ -120,6 +125,7 @@ def scenario_5_traiter_relance_chemin_complet_succes(tmp_path_factory):
         return True, "", {
             "number": numero, "state": "OPEN", "title": "TIMEOUT trop court",
             "body": "| TIMEOUT | 300s |\n| PROJET | bridge_agent |\n",
+            "labels": [{"name": "bridge"}, {"name": "for-linux"}],
         }
 
     def _faux_edit_corps(depot, numero, corps):
@@ -141,6 +147,7 @@ def scenario_5_traiter_relance_chemin_complet_succes(tmp_path_factory):
     w._modifier_corps_gh = _faux_edit_corps
     w.relancer_issue = _faux_relancer
     watchers_mod.demarrer_watcher = _faux_demarrer_watcher
+    w.demarrer_service_ccw_arriere_plan = _appel_ccw_interdit
 
     contenu = (
         "| PROJET  | bridge_agent |\n"
@@ -341,6 +348,7 @@ def scenario_15_traiter_relance_sous_dossier_chemin_complet_succes(tmp_path_fact
         return True, "", {
             "number": numero, "state": "OPEN", "title": "SOUS_DOSSIER incorrect",
             "body": "| SOUS_DOSSIER | mauvais/chemin |\n| PROJET | bridge_agent |\n",
+            "labels": [{"name": "bridge"}, {"name": "for-linux"}],
         }
 
     def _faux_edit_corps(depot, numero, corps):
@@ -356,6 +364,7 @@ def scenario_15_traiter_relance_sous_dossier_chemin_complet_succes(tmp_path_fact
     w._modifier_corps_gh = _faux_edit_corps
     w.relancer_issue = _faux_relancer
     watchers_mod.demarrer_watcher = lambda cfg, forcer=False: (False, 4242)
+    w.demarrer_service_ccw_arriere_plan = _appel_ccw_interdit
 
     champs = w.extraire_champs(
         "| PROJET       | bridge_agent |\n"
@@ -385,7 +394,8 @@ def scenario_16_traiter_relance_redemarre_watcher_eteint(tmp_path_factory):
 
     def _fausse_recuperation(depot, numero):
         return True, "", {"number": numero, "state": "OPEN", "title": "Issue bloquée",
-                           "body": "| PROJET | bridge_agent |\n"}
+                           "body": "| PROJET | bridge_agent |\n",
+                           "labels": [{"name": "bridge"}, {"name": "for-linux"}]}
 
     def _faux_relancer(depot, numero, commentaire=""):
         appels["commentaire"] = commentaire
@@ -399,6 +409,7 @@ def scenario_16_traiter_relance_redemarre_watcher_eteint(tmp_path_factory):
     w._recuperer_issue = _fausse_recuperation
     w.relancer_issue = _faux_relancer
     watchers_mod.demarrer_watcher = _faux_demarrer_watcher
+    w.demarrer_service_ccw_arriere_plan = _appel_ccw_interdit
 
     champs = w.extraire_champs("| PROJET | bridge_agent |\n| RELANCE | #77 |\n")
     succes, titre, projet, texte, resultat_gh, _labels, _donnees_temps = w._traiter_relance(w.ConfigInbox(), champs)
@@ -421,7 +432,8 @@ def scenario_17_traiter_relance_watcher_deja_actif_pas_de_trace(tmp_path_factory
 
     def _fausse_recuperation(depot, numero):
         return True, "", {"number": numero, "state": "OPEN", "title": "Issue bloquée",
-                           "body": "| PROJET | bridge_agent |\n"}
+                           "body": "| PROJET | bridge_agent |\n",
+                           "labels": [{"name": "bridge"}, {"name": "for-linux"}]}
 
     def _faux_relancer(depot, numero, commentaire=""):
         appels["commentaire"] = commentaire
@@ -431,6 +443,7 @@ def scenario_17_traiter_relance_watcher_deja_actif_pas_de_trace(tmp_path_factory
     w._recuperer_issue = _fausse_recuperation
     w.relancer_issue = _faux_relancer
     watchers_mod.demarrer_watcher = lambda cfg, forcer=False: (False, 1234)
+    w.demarrer_service_ccw_arriere_plan = _appel_ccw_interdit
 
     champs = w.extraire_champs("| PROJET | bridge_agent |\n| RELANCE | #77 |\n")
     succes, titre, projet, texte, resultat_gh, _labels, _donnees_temps = w._traiter_relance(w.ConfigInbox(), champs)
@@ -453,7 +466,8 @@ def scenario_18_traiter_relance_echec_demarrage_watcher_trace_sans_bloquer(tmp_p
 
     def _fausse_recuperation(depot, numero):
         return True, "", {"number": numero, "state": "OPEN", "title": "Issue bloquée",
-                           "body": "| PROJET | bridge_agent |\n"}
+                           "body": "| PROJET | bridge_agent |\n",
+                           "labels": [{"name": "bridge"}, {"name": "for-linux"}]}
 
     def _faux_relancer(depot, numero, commentaire=""):
         appels["commentaire"] = commentaire
@@ -466,6 +480,7 @@ def scenario_18_traiter_relance_echec_demarrage_watcher_trace_sans_bloquer(tmp_p
     w._recuperer_issue = _fausse_recuperation
     w.relancer_issue = _faux_relancer
     watchers_mod.demarrer_watcher = _demarrer_watcher_qui_echoue
+    w.demarrer_service_ccw_arriere_plan = _appel_ccw_interdit
 
     champs = w.extraire_champs("| PROJET | bridge_agent |\n| RELANCE | #77 |\n")
     succes, titre, projet, texte, resultat_gh, _labels, _donnees_temps = w._traiter_relance(w.ConfigInbox(), champs)
@@ -476,8 +491,56 @@ def scenario_18_traiter_relance_echec_demarrage_watcher_trace_sans_bloquer(tmp_p
     return {"texte": texte}
 
 
+# ─── Issue #711, étape D : RELANCE d'une issue for-windows démarre le service
+# CCW délégué (symétrique de #709/étape C), jamais le watcher CCL ─────────────
+
+def scenario_19_traiter_relance_for_windows_demarre_ccw_sans_toucher_au_watcher(tmp_path_factory):
+    """Issue relancée portant le label for-windows (lu sur l'issue elle-même,
+    pas sur le fichier déposé) : demarrer_service_ccw_arriere_plan est appelé
+    avec le nom du projet, demarrer_watcher JAMAIS invoqué — et le résultat
+    (asynchrone) n'apparaît ni dans le commentaire ni dans le suffixe de log."""
+    tmp_dir = tmp_path_factory()
+    _preparer_config_bidon(tmp_dir)
+
+    appels = {"demarrer_watcher_appele": False, "ccw_appels": []}
+
+    def _fausse_recuperation(depot, numero):
+        return True, "", {"number": numero, "state": "OPEN", "title": "Build Windows à relancer",
+                           "body": "| PROJET | bridge_agent |\n",
+                           "labels": [{"name": "bridge"}, {"name": "for-windows"}]}
+
+    def _faux_relancer(depot, numero, commentaire=""):
+        appels["commentaire"] = commentaire
+        return "ok", [{"etape": "retrait_label_needs_human", "statut": "succes", "message": ""},
+                        {"etape": "commentaire", "statut": "succes", "message": ""}]
+
+    def _demarrer_watcher_qui_ne_devrait_pas_etre_appele(cfg, forcer=False):
+        appels["demarrer_watcher_appele"] = True
+        return True, 1
+
+    def _faux_demarrage_ccw(nom_projet):
+        appels["ccw_appels"].append(nom_projet)
+
+    w._recuperer_issue = _fausse_recuperation
+    w.relancer_issue = _faux_relancer
+    watchers_mod.demarrer_watcher = _demarrer_watcher_qui_ne_devrait_pas_etre_appele
+    w.demarrer_service_ccw_arriere_plan = _faux_demarrage_ccw
+
+    champs = w.extraire_champs("| PROJET | bridge_agent |\n| RELANCE | #77 |\n")
+    succes, titre, projet, texte, resultat_gh, _labels, _donnees_temps = w._traiter_relance(w.ConfigInbox(), champs)
+
+    assert succes, texte
+    assert not appels["demarrer_watcher_appele"], "demarrer_watcher ne doit pas être appelé pour for-windows"
+    assert appels["ccw_appels"] == ["bridge_agent"], appels["ccw_appels"]
+    assert "redémarré" not in appels["commentaire"], appels["commentaire"]
+    assert "watcher CCL" not in texte, texte
+    return {"ccw_appels": appels["ccw_appels"]}
+
+
 def main():
     tmp = tempfile.TemporaryDirectory()
+    ancien_demarrer_watcher = watchers_mod.demarrer_watcher
+    ancien_demarrage_ccw = w.demarrer_service_ccw_arriere_plan
 
     def _tmp_path_factory():
         return Path(tmp.name)
@@ -501,6 +564,7 @@ def main():
         ("_traiter_relance : watcher éteint → redémarré et tracé (#572)", lambda: scenario_16_traiter_relance_redemarre_watcher_eteint(_tmp_path_factory)),
         ("_traiter_relance : watcher déjà actif → aucune trace (#572)", lambda: scenario_17_traiter_relance_watcher_deja_actif_pas_de_trace(_tmp_path_factory)),
         ("_traiter_relance : échec démarrage watcher tracé sans bloquer la relance (#572)", lambda: scenario_18_traiter_relance_echec_demarrage_watcher_trace_sans_bloquer(_tmp_path_factory)),
+        ("_traiter_relance : for-windows → CCW démarré, watcher jamais appelé (#711)", lambda: scenario_19_traiter_relance_for_windows_demarre_ccw_sans_toucher_au_watcher(_tmp_path_factory)),
     ]
     echecs = 0
     for nom, fn in tests:
@@ -513,6 +577,9 @@ def main():
         except Exception as e:  # noqa: BLE001
             echecs += 1
             print(f"  ✗ {nom} — erreur inattendue : {type(e).__name__}: {e}")
+        finally:
+            watchers_mod.demarrer_watcher = ancien_demarrer_watcher
+            w.demarrer_service_ccw_arriere_plan = ancien_demarrage_ccw
 
     tmp.cleanup()
     if echecs:

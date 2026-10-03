@@ -1,19 +1,26 @@
 #!/usr/bin/env python3
-"""Test de non-régression — issue #574 : le bouton web « 🔄 Relancer »
-(`app/interruption.py::route_relancer()`, route `/relancer-issue`) redémarre
-désormais le watcher CCL cible s'il s'était éteint entre-temps (#200) —
-même mécanisme que la création d'issue (`app/issues.py::envoyer`, #202) et
-que le bloc RELANCE (`scripts/watcher_issues_inbox.py::_traiter_relance`,
-#572).
+"""Test de non-régression — issues #574 et #711 (étape D) : le bouton web
+« 🔄 Relancer » (`app/interruption.py::route_relancer()`, route
+`/relancer-issue`) redémarre désormais le watcher CCL cible s'il s'était
+éteint entre-temps (#200) — même mécanisme que la création d'issue
+(`app/issues.py::envoyer`, #202) et que le bloc RELANCE
+(`scripts/watcher_issues_inbox.py::_traiter_relance`, #572) — et démarre à la
+demande le service CCW délégué pour une issue for-windows (#711, symétrique
+de #709/étape C).
 
-Couvre, SANS vrai `gh` ni vrai sous-processus watcher (`_retirer_label_gh`/
-`_commenter_gh`/`demarrer_watcher` substitués) :
+Couvre, SANS vrai `gh`, vrai sous-processus watcher, ni vraie connexion SSH
+(`_retirer_label_gh`/`_commenter_gh`/`demarrer_watcher`/
+`demarrer_service_ccw_arriere_plan` tous substitués — leçon des issues
+#702/#703) :
 - watcher éteint (for-linux) → redémarré, tracé dans le commentaire posté ET
-  dans la réponse JSON ;
+  dans la réponse JSON ; `demarrer_service_ccw_arriere_plan` jamais appelé ;
 - watcher déjà actif → aucune trace, `watcher_demarre=False` ;
 - label for-windows (pas for-linux) → `demarrer_watcher` jamais appelé
-  (traité par CCW, rien à démarrer côté Linux) ;
-- dépôt sans projet configuré → aucun crash, relance quand même effectuée ;
+  (traité par CCW), `demarrer_service_ccw_arriere_plan` appelé avec le nom du
+  projet, de façon non bloquante (aucune trace dans le commentaire ni dans la
+  réponse JSON — résultat asynchrone) ;
+- ni for-linux ni for-windows, ou dépôt sans projet configuré → aucun des deux
+  mécanismes n'est appelé, aucun crash, relance quand même effectuée ;
 - `demarrer_watcher` qui lève une exception → la relance réussit quand même
   (échec du redémarrage tracé, jamais bloquant) ;
 - `forcer=False` systématiquement (idempotent, ne tue jamais un watcher déjà
@@ -38,6 +45,11 @@ import app.watchers as watchers_mod  # noqa: E402
 APP_FLASK = flask.Flask(__name__)
 
 CFG_BRIDGE_AGENT = SimpleNamespace(depot="AlainDelree/Bridge_Agent", nom="bridge_agent")
+
+
+def _appel_ccw_interdit(*_a, **_k):
+    raise AssertionError("demarrer_service_ccw_arriere_plan n'aurait pas dû être appelé "
+                          "(appel SSH potentiel — garde violée)")
 
 
 def _appeler_relancer(payload: dict):
@@ -66,6 +78,7 @@ def scenario_watcher_eteint_redemarre_et_trace():
     appels = {}
     _neutraliser_gh(appels)
     interruption.projet_par_depot = lambda depot: CFG_BRIDGE_AGENT
+    interruption.demarrer_service_ccw_arriere_plan = _appel_ccw_interdit
 
     def _faux_demarrer_watcher(cfg, forcer=False):
         assert forcer is False, "doit toujours être appelé avec forcer=False (idempotent)"
@@ -94,6 +107,7 @@ def scenario_watcher_deja_actif_pas_de_trace():
     appels = {}
     _neutraliser_gh(appels)
     interruption.projet_par_depot = lambda depot: CFG_BRIDGE_AGENT
+    interruption.demarrer_service_ccw_arriere_plan = _appel_ccw_interdit
     watchers_mod.demarrer_watcher = lambda cfg, forcer=False: (False, 4242)
 
     r = _appeler_relancer({"depot": "AlainDelree/Bridge_Agent", "numero": 77,
@@ -105,10 +119,13 @@ def scenario_watcher_deja_actif_pas_de_trace():
     return {}
 
 
-def scenario_label_for_windows_watcher_jamais_appele():
-    """Issue for-windows : traitée par CCW, rien à démarrer côté Linux —
-    demarrer_watcher n'est jamais invoqué."""
-    appels = {"demarrer_watcher_appele": False}
+def scenario_label_for_windows_demarre_ccw_sans_toucher_au_watcher():
+    """Issue for-windows (issue #711, étape D) : demarrer_watcher n'est
+    jamais invoqué (traité par CCW côté Linux, rien à démarrer), mais
+    demarrer_service_ccw_arriere_plan EST appelé avec le nom du projet —
+    de façon non bloquante (jamais de trace dans le commentaire ni dans la
+    réponse JSON, résultat asynchrone)."""
+    appels = {"demarrer_watcher_appele": False, "ccw_appels": []}
     _neutraliser_gh(appels)
     interruption.projet_par_depot = lambda depot: CFG_BRIDGE_AGENT
 
@@ -116,7 +133,11 @@ def scenario_label_for_windows_watcher_jamais_appele():
         appels["demarrer_watcher_appele"] = True
         return True, 1
 
+    def _faux_demarrage_ccw(nom_projet):
+        appels["ccw_appels"].append(nom_projet)
+
     watchers_mod.demarrer_watcher = _demarrer_watcher_qui_ne_devrait_pas_etre_appele
+    interruption.demarrer_service_ccw_arriere_plan = _faux_demarrage_ccw
 
     r = _appeler_relancer({"depot": "AlainDelree/Bridge_Agent", "numero": 77,
                             "labels": ["bridge", "for-windows"]})
@@ -124,8 +145,10 @@ def scenario_label_for_windows_watcher_jamais_appele():
     assert r["succes"], r
     assert r["watcher_demarre"] is None, r
     assert not appels["demarrer_watcher_appele"], "demarrer_watcher ne doit pas être appelé pour for-windows"
+    assert appels["ccw_appels"] == ["bridge_agent"], appels["ccw_appels"]
     assert "redémarré" not in appels["commentaire"], appels["commentaire"]
-    return {}
+    assert set(r) == {"succes", "statut_global", "etapes", "watcher_demarre", "watcher_pid"}, r
+    return {"ccw_appels": appels["ccw_appels"]}
 
 
 def scenario_depot_sans_projet_configure_aucun_crash():
@@ -135,6 +158,7 @@ def scenario_depot_sans_projet_configure_aucun_crash():
     appels = {"demarrer_watcher_appele": False}
     _neutraliser_gh(appels)
     interruption.projet_par_depot = lambda depot: None
+    interruption.demarrer_service_ccw_arriere_plan = _appel_ccw_interdit
 
     def _demarrer_watcher_qui_ne_devrait_pas_etre_appele(cfg, forcer=False):
         appels["demarrer_watcher_appele"] = True
@@ -158,6 +182,7 @@ def scenario_echec_demarrage_watcher_trace_sans_bloquer():
     appels = {}
     _neutraliser_gh(appels)
     interruption.projet_par_depot = lambda depot: CFG_BRIDGE_AGENT
+    interruption.demarrer_service_ccw_arriere_plan = _appel_ccw_interdit
 
     def _demarrer_watcher_qui_echoue(cfg, forcer=False):
         raise RuntimeError("configs/bridge_agent.conf illisible")
@@ -181,6 +206,7 @@ def scenario_labels_absents_aucun_redemarrage():
     appels = {"demarrer_watcher_appele": False}
     _neutraliser_gh(appels)
     interruption.projet_par_depot = lambda depot: CFG_BRIDGE_AGENT
+    interruption.demarrer_service_ccw_arriere_plan = _appel_ccw_interdit
 
     def _demarrer_watcher_qui_ne_devrait_pas_etre_appele(cfg, forcer=False):
         appels["demarrer_watcher_appele"] = True
@@ -200,11 +226,12 @@ def main():
     ancien_retrait_label = interruption._retirer_label_gh
     ancien_commentaire = interruption._commenter_gh
     ancien_demarrer_watcher = watchers_mod.demarrer_watcher
+    ancien_demarrage_ccw = interruption.demarrer_service_ccw_arriere_plan
 
     tests = [
         ("route_relancer : watcher éteint → redémarré et tracé (#574)", scenario_watcher_eteint_redemarre_et_trace),
         ("route_relancer : watcher déjà actif → aucune trace (#574)", scenario_watcher_deja_actif_pas_de_trace),
-        ("route_relancer : for-windows → demarrer_watcher jamais appelé (#574)", scenario_label_for_windows_watcher_jamais_appele),
+        ("route_relancer : for-windows → CCW démarré, watcher jamais appelé (#574, #711)", scenario_label_for_windows_demarre_ccw_sans_toucher_au_watcher),
         ("route_relancer : dépôt sans projet configuré → aucun crash (#574)", scenario_depot_sans_projet_configure_aucun_crash),
         ("route_relancer : échec démarrage watcher tracé sans bloquer la relance (#574)", scenario_echec_demarrage_watcher_trace_sans_bloquer),
         ("route_relancer : aucun label transmis → aucun redémarrage tenté (#574)", scenario_labels_absents_aucun_redemarrage),
@@ -225,6 +252,7 @@ def main():
             interruption._retirer_label_gh = ancien_retrait_label
             interruption._commenter_gh = ancien_commentaire
             watchers_mod.demarrer_watcher = ancien_demarrer_watcher
+            interruption.demarrer_service_ccw_arriere_plan = ancien_demarrage_ccw
 
     if echecs:
         print(f"\n❌ {echecs} scénario(s) en échec.")

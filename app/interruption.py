@@ -44,6 +44,7 @@ from app.ccw import (
     _preparer, _copier, _executer_ps,
     _lister_projets_vm, _extraire_projets, _message_echec,
     DOSSIER_WINDOWS, TIMEOUT_COURT, TIMEOUT_LONG,
+    demarrer_service_ccw_arriere_plan,  # (issue #711, étape D)
 )
 
 # app.projets ajoute déjà la racine du projet au sys.path (pour
@@ -642,11 +643,16 @@ def route_relancer():
     éteint entre-temps — à la différence de la création d'issue
     (app/issues.py::envoyer, #202) et du bloc RELANCE
     (scripts/watcher_issues_inbox.py::_traiter_relance, #572), qui le font
-    déjà tous les deux. Même garde que ces deux chemins (uniquement
-    for-linux — for-windows est traité par CCW, rien à démarrer ici) et même
+    déjà tous les deux. Même garde que ces deux chemins (for-linux) et même
     philosophie : un échec du démarrage ne doit JAMAIS transformer une
     relance réussie en erreur (try/except large), tracé dans le commentaire
-    posté sur l'issue ET dans la réponse JSON plutôt que silencieux."""
+    posté sur l'issue ET dans la réponse JSON plutôt que silencieux.
+
+    for-windows (issue #711, étape D du retrofit CCW) : symétrique, mais vers
+    le service CCW délégué (PC fixe, SSH) via demarrer_service_ccw_arriere_plan
+    (#709, étape C) — strictement non bloquant (thread démon, jamais de
+    résultat récupérable ici), à la différence du watcher CCL ci-dessus :
+    rien n'est donc ajouté au commentaire ni à la réponse JSON pour ce cas."""
     data   = request.json or {}
     depot  = (data.get("depot") or "").strip()
     numero = data.get("numero")
@@ -665,6 +671,8 @@ def route_relancer():
     if cfg and "for-linux" in labels:
         from app.watchers import redemarrer_si_eteint
         watcher_demarre, watcher_pid, trace_watcher = redemarrer_si_eteint(cfg, tracer=True)
+    elif cfg and "for-windows" in labels:
+        demarrer_service_ccw_arriere_plan(cfg.nom)
 
     statut_global, etapes = relancer_issue(depot, numero, commentaire=COMMENTAIRE_RELANCE + trace_watcher)
 
