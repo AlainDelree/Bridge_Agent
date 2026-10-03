@@ -9,6 +9,88 @@ milliers de caractères sur une seule ligne logique, coûteux à relire et
 
 Convention d'ajout : voir §10 de `BRIDGE_AGENT_DOC.md`.
 
+## #706 — Issue H (suite) : `valider_repo_cible` sous Windows, test #584, lanceur verbeux sur échec
+
+Suite à la validation réelle du lanceur de tests (#704) sur CCW le
+03/10/2026 : 35/37 fichiers réussis, 2 échecs identifiés et corrigés ici.
+
+- `watcher.py::valider_repo_cible` (~ligne 1694) : la vérification de
+  propriétaire (`resolu.stat().st_uid != os.getuid()`) plantait sous Windows
+  avec `AttributeError: module 'os' has no attribute 'getuid'`, faisant
+  échouer tout `REPO_CIBLE` pourtant valide (`tests/test_champ_relance_516.py`,
+  scénario « REPO_CIBLE valide accepté avec PERIMETRE_DYNAMIQUE »). Même
+  garde que `valider_sous_dossier` : sous `os.name == "nt"`, la vérification
+  de propriétaire est ignorée (les trois autres contrôles — absolu,
+  canonique, dossier existant — restent appliqués). Comportement Linux
+  strictement inchangé.
+- `tests/test_verrou_refus_precoce_584.py` : les scénarios
+  `scenario_refus_precoce_libere_verrou` et
+  `scenario_echec_rapide_sans_travail_libere_verrou` fabriquent de faux
+  `gh`/`claude` en scripts bash, non exécutables sous Windows — les vrais
+  outils auraient été appelés contre un dépôt fictif. Ajout d'un garde
+  `os.name == "nt"` en tête de ces deux scénarios (même style de message
+  « ignoré : ... non applicable sous Windows » que `scenario_pid_mort_*`
+  dans ce même fichier). Les deux autres scénarios (sonde PID, sans faux
+  exécutable) restent inchangés et continuent de s'exécuter sous Windows.
+- `tests/lancer_tous_les_tests.py` : pour un fichier en échec, affiche
+  désormais les lignes portant le marqueur `✗` ou le résumé
+  « scénario(s) en échec », ou à défaut les 15 dernières lignes de sa
+  sortie — au lieu de la seule dernière ligne non vide, qui pouvait n'être
+  que du bruit normal émis par un scénario qui passe (cas réel : 516
+  affichait « configs/bridge_agent.conf illisible », pas la vraie cause).
+  Les fichiers réussis gardent une seule ligne de résumé.
+
+Validé sur Linux (37/37, suite complète + fichiers ciblés). CCL ne peut pas
+exécuter Windows : validation réelle à faire à la main sur CCW.
+
+## #705 — Résultats : resynchroniser la liste au retour de l'onglet au premier plan et après une reconnexion SSE
+
+- Front-end uniquement, comme demandé. Constat : la liste Résultats n'est
+  alimentée que par les événements `/stream` ciblés (`creation_issue`,
+  `debut_issue`, `fin_issue`, traités par `traiterNotif` dans
+  `static/js/resultats.js`) — un événement manqué (onglet masqué, coupure
+  réseau, redémarrage de `new_issue.py`) la laisse périmée indéfiniment,
+  sans aucun rejeu côté serveur.
+- Deux fonctions pures ajoutées à `static/js/resultats.js` (testées sous
+  Node, `static/js/tests/resultats.test.js`), isolant la décision
+  « faut-il resynchroniser (↻) ? » :
+  - `fautResynchroniserApresMasquage(dureeMasqueeMs, seuilMs = SEUIL_RESYNC_MASQUAGE_MS)`
+    — `SEUIL_RESYNC_MASQUAGE_MS = 30000` (30 s).
+  - `fautResynchroniserApresReconnexionSse(premiereOuverture)` — ne resync
+    que sur une RECONNEXION, jamais à la toute première ouverture (pas de
+    double chargement au démarrage de la page).
+- `static/js/socle/sse.js::creerCanalSse().connecter()` accepte désormais un
+  paramètre optionnel `{ onOuvert }` (surcharge celui, le cas échéant, passé
+  à la construction du canal) — nécessaire pour que `resultats.js` y
+  branche sa propre logique de reconnexion sans coupler ce module générique
+  à une logique métier.
+- `static/js/resultats.js::initialiser()` : `sse.stream.connecter({ onOuvert:
+  surOuvertureSse })` — `surOuvertureSse` distingue première ouverture et
+  reconnexion (drapeau module `sseDejaOuverte`) et déclenche le ↻ via le pont
+  (`appelerAncien('resynchroniserResultatsAuRetour')`) uniquement sur
+  reconnexion.
+- `static/js/app.js` :
+  - Nouvelle fonction `resynchroniserResultatsAuRetour()` : garde anti-rafale
+    simple (ne relance pas si un rafraîchissement est en cours ou vient
+    d'avoir lieu, `DELAI_MIN_ENTRE_RESYNCS_AUTO_MS = 5000`), puis appelle
+    `rafraichirResultats()` — le même rafraîchissement que le bouton ↻.
+    Utilisée par les deux déclencheurs (retour d'onglet, reconnexion SSE),
+    donc partagée entre les deux.
+  - Gestionnaire `visibilitychange` (`demarrerCycleVie`) : mémorise
+    l'horodatage de masquage (`momentMasquageOnglet`) ; au retour au premier
+    plan, conserve l'appel existant à `envoyerHeartbeat()` puis, si la durée
+    masquée dépasse le seuil (`window.Bridge.resultats.fautResynchroniserApresMasquage`),
+    déclenche `resynchroniserResultatsAuRetour()`. Comportement inchangé tant
+    que l'utilisateur reste sur la page (durée masquée nulle → pas de resync).
+- `fautResynchroniserApresMasquage` publiée sous
+  `window.Bridge.resultats` (pont, issue #625/#632) pour être consommée par
+  l'ancien `app.js`, classique et non importable en module ES — même
+  convention que `calculerBadgeModele`/`calculerBadgeSansRedacteur`.
+
+## 3 octobre 2026 — issue #704
+
+Suite de tests exécutable sous Windows (plan hybride, issue H) : ajout de `tests/lancer_tous_les_tests.py`, lanceur unique qui exécute chaque `tests/test_*.py` dans un sous-processus avec `PYTHONUTF8=1` forcé (sans quoi une sortie redirigée fait planter chaque script sur les symboles ✓/✗/❌ sous Windows, même famille que #686/#688), délai maximal par fichier, une ligne de résumé par fichier puis un résumé global, code de sortie non nul si au moins un fichier échoue ; mentionné dans `provisioning/windows/NEW_ISSUE_LOCAL_WINDOWS.md` (§3, vérifier une installation). Ajout de `requirements-dev.txt` (`pytest`, utilisé par plusieurs tests) et d'un pointeur depuis `requirements.txt`. Correction des 4 échecs réels identifiés par lecture du code (29-30/09/2026 sur CCW) : `test_champ_relance_516.py` utilise désormais un chemin `REPO_CIBLE` absolu neutre vis-à-vis de l'OS (`tempfile.gettempdir()`) au lieu de `/home/alain/Autre_Projet` codé en dur ; `test_creation_bootstrap_ccw_556.py` et `test_projet_ccw_559.py` s'ignorent désormais proprement sous Windows (convention déjà en place sur `327`/`247`/`322`/`337`), leurs scénarios reposant sur de faux `gh`/`powershell` shebang bash et sur `openssl` réel via PATH ; `test_init_git_local_258.py` n'ignore que son unique scénario dépendant d'un faux `git` shebang bash (timeout de push), les 4 autres scénarios du fichier restant exécutés sous Windows. Aucun code de production modifié.
+
 ## #701 — « Interrompre » un watcher Windows natif via le Job Object persistant (suite #695)
 
 - #695 avait livré le côté producteur (`watcher.py`, déjà en master) : création
