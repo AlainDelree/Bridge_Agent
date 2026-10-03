@@ -31,14 +31,19 @@ CONFIGURATION SSH :
 """
 
 import json
+import logging
 import ntpath
 import os
 import re
 import subprocess
 import tempfile
+import threading
+import time
 from pathlib import Path
 
 from flask import jsonify, request
+
+log = logging.getLogger(__name__)
 
 # Racine du projet (dossier parent du package app/) et dossier des scripts CCW.
 DOSSIER_SCRIPT  = Path(__file__).resolve().parent.parent
@@ -385,48 +390,79 @@ def ccw_finaliser_projet():
         erreur=f"Échec de la finalisation (code {r.returncode}).")
 
 
-def _piloter_service_ccw(action_nssm: str, verbe: str):
-    """Exécute « nssm <action_nssm> <service> » sur le service Windows d'un projet
-    CCW, sans toucher au topic ni aux tokens (issues #180 / #203).
+def _piloter_service_ccw_action(nom_projet: str, action_nssm: str, verbe: str, *,
+                                 eviter_si_deja_dans_cet_etat: str | None = None) -> dict:
+    """Fonction PURE (issue #709, étape C du retrofit CCW) : nom de projet +
+    action nssm (« restart », « start », « stop ») → résolution du nom EXACT
+    du service via lister_projets_ccw.ps1 (source de vérité unique — voir
+    _lister_projets_vm), ce qui gère de fait le spécial-cas « Bridge_Agent »
+    → « CCW-Watcher » (sans suffixe) sans dupliquer la règle, garde-fou sur le
+    format du service, puis exécution à distance (nssm est déjà dans le PATH
+    du PC fixe). Aucun objet Flask en entrée ni en sortie : extraite de
+    _piloter_service_ccw (route) pour être appelable aussi depuis
+    app.issues.envoyer() (démarrage à la demande d'une issue for-windows),
+    sans dupliquer la résolution du nom de service ni le garde-fou.
 
-    Facteur commun de redemarrer/demarrer/arreter-projet : validation du nom de
-    projet reçu, résolution du nom EXACT du service via lister_projets_ccw.ps1
-    (source de vérité unique — voir _lister_projets_vm), ce qui gère de fait le
-    spécial-cas « Bridge_Agent » → « CCW-Watcher » (sans suffixe) sans dupliquer la
-    règle, garde-fou sur le format du service, puis exécution à distance (nssm est
-    déjà dans le PATH du PC fixe).
+    eviter_si_deja_dans_cet_etat : si fourni (ex. « running » pour l'action
+    « start »), et que l'état relevé par la MÊME liste de projets (déjà
+    nécessaire pour résoudre le nom du service — aucun aller-retour SSH
+    supplémentaire) correspond déjà à cette valeur, n'exécute PAS « nssm
+    <action> » (idempotence sans SSH inutile). None (défaut) : comportement
+    HISTORIQUE, aucune vérification d'état — c'est ce que les 3 routes
+    existantes (redémarrer/démarrer/arrêter) utilisent, pour un comportement
+    STRICTEMENT inchangé.
 
-    action_nssm : sous-commande nssm (« restart », « start », « stop »).
-    verbe       : nom de l'action pour les messages (« redémarrage », « démarrage »,
-                  « arrêt »)."""
-    data = request.json or {}
-    nom  = (data.get("nom") or "").strip()
-    if not nom or re.search(r"[\\/\s]", nom):
-        return jsonify(succes=False,
-            erreur="Nom de projet requis, sans espace ni séparateur de chemin.")
+    Retourne un dict {succes, service, etat_avant, deja_dans_cet_etat,
+    message, code, sortie} :
+      - service    : nom exact résolu, ou None si introuvable avant d'avoir
+        pu l'identifier (nom invalide, SSH non configuré/en échec, projet
+        absent de la liste) ;
+      - etat_avant : champ « etat » de la liste des projets au moment de la
+        résolution (« running », « stopped », « stoppending », …), ou None si
+        le service n'a pas pu être résolu ;
+      - deja_dans_cet_etat : True si l'exécution a été court-circuitée par
+        eviter_si_deja_dans_cet_etat (aucun appel SSH nssm effectué) ;
+      - message    : texte d'erreur en cas d'échec, None sinon ;
+      - code       : code de retour de nssm, None si l'exécution SSH n'a pas
+        été atteinte (ou court-circuitée) ;
+      - sortie     : sortie brute (stdout+stderr) de la commande nssm, None
+        si l'exécution SSH n'a pas été atteinte (ou court-circuitée)."""
+    if not nom_projet or re.search(r"[\\/\s]", nom_projet):
+        return dict(succes=False, service=None, etat_avant=None, deja_dans_cet_etat=False,
+                    message="Nom de projet requis, sans espace ni séparateur de chemin.",
+                    code=None, sortie=None)
     ctx, err = _preparer()
     if err:
-        return err
+        return dict(succes=False, service=None, etat_avant=None, deja_dans_cet_etat=False,
+                    message=_texte_erreur_json(err), code=None, sortie=None)
     hote, utilisateur, cle_privee = ctx
 
     projets, err = _lister_projets_vm(hote, utilisateur, cle_privee)
     if err:
-        return err
-    service = None
+        return dict(succes=False, service=None, etat_avant=None, deja_dans_cet_etat=False,
+                    message=_texte_erreur_json(err), code=None, sortie=None)
+    service = etat_avant = None
     for p in projets:
-        if isinstance(p, dict) and str(p.get("projet", "")).strip().lower() == nom.lower():
-            service = (p.get("service") or "").strip()
+        if isinstance(p, dict) and str(p.get("projet", "")).strip().lower() == nom_projet.lower():
+            service    = (p.get("service") or "").strip()
+            etat_avant = (p.get("etat") or "").strip().lower() or None
             break
     if not service:
-        return jsonify(succes=False,
-            erreur=f"Projet « {nom} » introuvable parmi les services CCW-Watcher du PC fixe. "
-                   f"Rafraîchissez la liste des projets.")
+        return dict(succes=False, service=None, etat_avant=None, deja_dans_cet_etat=False,
+                    message=f"Projet « {nom_projet} » introuvable parmi les services "
+                            f"CCW-Watcher du PC fixe. Rafraîchissez la liste des projets.",
+                    code=None, sortie=None)
     # Garde-fou : le nom vient de la liste (donc de confiance), mais on vérifie
     # qu'il correspond bien au format attendu d'un service CCW avant de
     # l'injecter dans la commande PowerShell.
     if not re.match(r"^CCW-Watcher(-\w+)?$", service):
-        return jsonify(succes=False,
-            erreur=f"Nom de service inattendu (« {service} ») — abandon par précaution.")
+        return dict(succes=False, service=service, etat_avant=etat_avant, deja_dans_cet_etat=False,
+                    message=f"Nom de service inattendu (« {service} ») — abandon par précaution.",
+                    code=None, sortie=None)
+
+    if eviter_si_deja_dans_cet_etat is not None and etat_avant == eviter_si_deja_dans_cet_etat:
+        return dict(succes=True, service=service, etat_avant=etat_avant, deja_dans_cet_etat=True,
+                    message=None, code=None, sortie=None)
 
     try:
         # « exit $LASTEXITCODE » : propage le code de retour de nssm pour que
@@ -435,17 +471,46 @@ def _piloter_service_ccw(action_nssm: str, verbe: str):
             hote, utilisateur, cle_privee,
             f"nssm {action_nssm} {service}; exit $LASTEXITCODE", TIMEOUT_LONG)
     except subprocess.TimeoutExpired:
-        return jsonify(succes=False,
-            erreur=f"Délai dépassé — {verbe} du service interrompu (SSH).")
+        return dict(succes=False, service=service, etat_avant=etat_avant, deja_dans_cet_etat=False,
+                    message=f"Délai dépassé — {verbe} du service interrompu (SSH).",
+                    code=None, sortie=None)
     except subprocess.SubprocessError as e:
-        return jsonify(succes=False, erreur=f"Erreur SSH : {e}")
+        return dict(succes=False, service=service, etat_avant=etat_avant, deja_dans_cet_etat=False,
+                    message=f"Erreur SSH : {e}", code=None, sortie=None)
 
+    succes = (r.returncode == 0)
+    return dict(
+        succes=succes, service=service, etat_avant=etat_avant, deja_dans_cet_etat=False,
+        message=None if succes else f"Échec — {verbe} de « {service} » (code {r.returncode}).",
+        code=r.returncode, sortie=_sortie_lisible(r),
+    )
+
+
+def _piloter_service_ccw(action_nssm: str, verbe: str):
+    """Route Flask : lit le nom de projet depuis request.json, délègue la
+    résolution + l'exécution à _piloter_service_ccw_action (fonction pure,
+    issue #709) et construit la réponse JSON — comportement STRICTEMENT
+    inchangé par rapport à avant l'extraction (mêmes clés, mêmes messages).
+
+    `resultat["code"] is None` discrimine les deux familles de réponse : tant
+    que l'exécution SSH n'a pas été atteinte (nom invalide, config SSH
+    absente, projet introuvable, garde-fou de format, timeout/erreur SSH),
+    seules `succes`/`erreur` sont renvoyées ; une fois nssm réellement
+    invoqué, `service`/`sortie` s'y ajoutent — exactement comme avant.
+
+    action_nssm : sous-commande nssm (« restart », « start », « stop »).
+    verbe       : nom de l'action pour les messages (« redémarrage », « démarrage »,
+                  « arrêt »)."""
+    data = request.json or {}
+    nom  = (data.get("nom") or "").strip()
+    resultat = _piloter_service_ccw_action(nom, action_nssm, verbe)
+    if resultat["code"] is None:
+        return jsonify(succes=False, erreur=resultat["message"])
     return jsonify(
-        succes=(r.returncode == 0),
-        service=service,
-        sortie=_sortie_lisible(r),
-        erreur=None if r.returncode == 0
-               else f"Échec — {verbe} de « {service} » (code {r.returncode}).",
+        succes=resultat["succes"],
+        service=resultat["service"],
+        sortie=resultat["sortie"],
+        erreur=resultat["message"],
     )
 
 
@@ -473,6 +538,80 @@ def ccw_arreter_projet():
     arrêter temporairement un service (économie de ressources VM) sans le
     relancer aussitôt. Voir _piloter_service_ccw."""
     return _piloter_service_ccw("stop", "arrêt")
+
+
+# ─── Démarrage à la demande depuis la création d'issue (issue #709, étape C) ──
+# Contexte (voir en-tête de l'issue) : AppExit 42 Exit (étape A du retrofit)
+# fait qu'un watcher CCW qui s'éteint seul (auto-extinction, code 42) n'est
+# plus relancé par NSSM — une issue for-windows créée pendant que le service
+# est éteint ne serait sinon traitée qu'après un rallumage MANUEL (onglet
+# CCW). Symétrique du rallumage auto for-linux (app.watchers.
+# redemarrer_si_eteint, issue #600/#202), mais le transport SSH (latence,
+# hôte potentiellement injoignable) interdit de bloquer la réponse HTTP de
+# envoyer() dessus : voir demarrer_service_ccw_arriere_plan ci-dessous.
+
+def _demarrer_service_ccw_sync(nom_projet: str) -> tuple[bool | None, str]:
+    """Cœur SYNCHRONE (délibérément testable sans thread) du démarrage à la
+    demande : idempotent (court-circuite nssm si déjà « running », via
+    _piloter_service_ccw_action(eviter_si_deja_dans_cet_etat="running") — pas
+    d'aller-retour SSH gaspillé), une seule ligne de journal par tentative
+    (service, résultat, durée), et au plus UNE courte nouvelle tentative si le
+    service est en « stoppending » (observé lors d'un Redémarrer depuis
+    l'onglet CCW — nssm start y échoue tant que l'arrêt n'est pas terminé),
+    jamais de boucle.
+
+    Retourne (ccw_demarre, avertissement) :
+      - ccw_demarre : True = démarré par cet appel, False = déjà en marche ou
+        démarrage échoué, None = non applicable (hôte SSH non configuré,
+        projet sans service CCW, nom invalide) ;
+      - avertissement : message non bloquant si le démarrage a RÉELLEMENT
+        échoué, chaîne vide sinon (déjà en marche, non applicable, ou
+        succès)."""
+    debut = time.monotonic()
+    res = _piloter_service_ccw_action(nom_projet, "start", "démarrage",
+                                       eviter_si_deja_dans_cet_etat="running")
+    if (res["etat_avant"] == "stoppending" and not res["succes"]
+            and not res["deja_dans_cet_etat"]):
+        log.info(f"CCW « {nom_projet} » : service en cours d'arrêt (stop pending) — "
+                 f"nouvelle tentative dans 2s (une seule, issue #709).")
+        time.sleep(2)
+        res = _piloter_service_ccw_action(nom_projet, "start", "démarrage",
+                                           eviter_si_deja_dans_cet_etat="running")
+    duree = time.monotonic() - debut
+
+    if res["service"] is None:
+        # Non applicable : hôte SSH non configuré (cas normal de new_issue.py
+        # natif sous Windows — l'onglet CCW y affiche déjà ce message), nom
+        # invalide, ou projet sans service CCW dans la liste — jamais un
+        # message d'erreur à l'utilisateur, seulement le journal (point 3 de
+        # l'issue #709).
+        log.info(f"CCW « {nom_projet} » : démarrage non applicable "
+                 f"({res['message']}), {duree:.1f}s.")
+        return None, ""
+    if res["deja_dans_cet_etat"]:
+        log.info(f"CCW « {res['service']} » : déjà en marche, rien à faire ({duree:.1f}s).")
+        return False, ""
+    if res["succes"]:
+        log.info(f"CCW « {res['service']} » : démarré automatiquement ({duree:.1f}s).")
+        return True, ""
+    log.warning(f"CCW « {res['service']} » : démarrage échoué ({res['message']}), {duree:.1f}s.")
+    return False, ("Le service CCW n'a pas pu être démarré automatiquement — "
+                    "démarrez-le depuis l'onglet CCW.")
+
+
+def demarrer_service_ccw_arriere_plan(nom_projet: str) -> None:
+    """Wrapper NON BLOQUANT utilisé par app.issues.envoyer() (issue #709,
+    étape C) : la création d'une issue for-windows ne doit JAMAIS attendre un
+    aller-retour SSH vers le PC fixe (hôte injoignable, service en
+    stop-pending, etc.) — « la création d'issue reste instantanée dans tous
+    les cas » (résultat attendu de l'issue). _demarrer_service_ccw_sync tourne
+    donc dans un thread démon, borné par les timeouts SSH déjà en place
+    (TIMEOUT_COURT pour la liste des projets, TIMEOUT_LONG pour nssm — jamais
+    indéfini) ; son résultat n'est donc plus récupérable ici, seule la ligne
+    de journal qu'il émet en garde trace. Sans retour utile (None) par
+    construction — _demarrer_service_ccw_sync, lui, reste directement
+    appelable et testable de façon synchrone sans thread."""
+    threading.Thread(target=_demarrer_service_ccw_sync, args=(nom_projet,), daemon=True).start()
 
 
 def _texte_erreur_json(reponse_json) -> str:

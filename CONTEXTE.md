@@ -60,7 +60,7 @@ lui-même par ses propres issues (dogfooding).
 - §17 (#187) : notifications centralisées via `new_issue.py` (tous projets,
   CCW).
 - §16 (#174…) : onglet « CCW » — pilotage du PC Windows physique depuis
-  Linux.
+  Linux. #709 : une issue for-windows démarre seule le service CCW éteint.
 
 ## Maintenance de ce fichier
 Si ta tâche modifie l'architecture, les dépendances, les conventions ou

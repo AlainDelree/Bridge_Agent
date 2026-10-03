@@ -455,6 +455,27 @@ def envoyer():
             if "for-linux" in labels_liste:
                 from app.watchers import redemarrer_si_eteint
                 watcher_demarre, _pid, _trace = redemarrer_si_eteint(cfg)
+
+            # Pendant for-windows (issue #709, étape C du retrofit CCW) :
+            # symétrique de redemarrer_si_eteint ci-dessus, mais pour le
+            # service CCW délégué (PC fixe, SSH) plutôt que le watcher local.
+            # AppExit 42 Exit (étape A) fait qu'un watcher CCW éteint par
+            # auto-extinction n'est plus relancé par NSSM — sans ce
+            # démarrage, l'issue resterait en attente jusqu'à un rallumage
+            # manuel (onglet CCW). demarrer_service_ccw_arriere_plan() ne
+            # bloque JAMAIS cette réponse (SSH en thread démon, borné par les
+            # timeouts déjà en place) et n'échoue jamais : hôte SSH non
+            # configuré (new_issue.py natif Windows) ou projet sans service
+            # CCW sont ignorés silencieusement (journal seulement). Son
+            # résultat réel (démarré / déjà en marche / échec) n'est donc pas
+            # connu à cet instant — ccw_demarre reste à None, comme
+            # watcher_demarre l'est pour for-linux ci-dessus en cas
+            # d'inapplicabilité ; seul le journal serveur (app.ccw) en garde
+            # trace.
+            ccw_demarre = None
+            if "for-windows" in labels_liste:
+                from app.ccw import demarrer_service_ccw_arriere_plan
+                demarrer_service_ccw_arriere_plan(cfg.nom)
             # Ajout immédiat à la liste surveillée par le poller de
             # notifications (issue #624) : sans ça, une issue for-windows
             # créée depuis le formulaire web n'aurait été détectée qu'au
@@ -487,7 +508,7 @@ def envoyer():
                                         labels=labels_liste, timing=donnees_temps)
             maj_rate_limit("app.issues.envoyer")
             return jsonify(succes=True, url=resultat, watcher_demarre=watcher_demarre,
-                           labels_omis=labels_omis)
+                           ccw_demarre=ccw_demarre, labels_omis=labels_omis)
         else:
             return jsonify(succes=False, erreur=resultat)
     except Exception as e:
