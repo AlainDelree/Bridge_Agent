@@ -1668,6 +1668,31 @@ async function rafraichirResultats() {
   }
 }
 
+// ─── Resynchronisation auto (issue #705) ─────────────────────────────────────
+// Déclenche le même rafraîchissement que le bouton ↻ (rafraichirResultats),
+// mais depuis deux déclencheurs automatiques : retour au premier plan de
+// l'onglet après masquage prolongé, et reconnexion SSE après coupure (voir
+// demarrerCycleVie et static/js/resultats.js::surOuvertureSse). Garde simple
+// contre les rafales : les deux déclencheurs peuvent survenir à quelques
+// secondes d'intervalle (ex. reconnexion SSE juste après le retour d'onglet).
+let resyncAutoEnCours    = false;
+let dernierResyncAutoMs  = 0;
+const DELAI_MIN_ENTRE_RESYNCS_AUTO_MS = 5000;
+
+async function resynchroniserResultatsAuRetour() {
+  const maintenant = Date.now();
+  if (resyncAutoEnCours || (maintenant - dernierResyncAutoMs) < DELAI_MIN_ENTRE_RESYNCS_AUTO_MS) {
+    return;
+  }
+  resyncAutoEnCours = true;
+  dernierResyncAutoMs = maintenant;
+  try {
+    await rafraichirResultats();
+  } finally {
+    resyncAutoEnCours = false;
+  }
+}
+
 // Copie le texte de la réponse CCL (dernier commentaire) dans le presse-papier.
 // Feedback visuel « ✓ Copié ! » pendant 2 s. Fallback silencieux (sélection du
 // texte + warning console) si navigator.clipboard est indisponible (non-HTTPS).
@@ -2513,6 +2538,9 @@ window.addEventListener('DOMContentLoaded', function() {
 // qui affiche un overlay quand le serveur s'arrête (Ctrl+C ou coupure brutale).
 let sourceEvents     = null;
 let timerErreurArret = null;
+// Horodatage du passage de l'onglet en arrière-plan (issue #705), ou null
+// tant qu'il est au premier plan — voir le gestionnaire visibilitychange.
+let momentMasquageOnglet = null;
 
 function afficherOverlayArret() {
   const ov = document.getElementById('overlay-arret');
@@ -2548,8 +2576,25 @@ function demarrerCycleVie() {
   // croire au serveur que l'onglet était fermé. Au retour au premier plan, on
   // force un heartbeat immédiat. La détection de vraie fermeture repose surtout
   // sur la connexion SSE /events (non throttlée), ceci n'est qu'un renfort.
+  //
+  // Resynchronisation Résultats (issue #705) : un masquage prolongé peut faire
+  // manquer un événement /stream (creation_issue notamment), laissant la liste
+  // périmée jusqu'au ↻ manuel. Si l'onglet est resté masqué plus que le seuil
+  // (voir resultats.js::fautResynchroniserApresMasquage), on déclenche le même
+  // rafraîchissement que le bouton ↻ au retour. Comportement inchangé tant que
+  // l'utilisateur reste sur la page.
   document.addEventListener('visibilitychange', function() {
-    if (!document.hidden) envoyerHeartbeat();
+    if (document.hidden) {
+      momentMasquageOnglet = Date.now();
+      return;
+    }
+    envoyerHeartbeat();
+    const dureeMasqueeMs = momentMasquageOnglet !== null ? Date.now() - momentMasquageOnglet : 0;
+    momentMasquageOnglet = null;
+    const resync = window.Bridge && window.Bridge.resultats
+      && window.Bridge.resultats.fautResynchroniserApresMasquage
+      && window.Bridge.resultats.fautResynchroniserApresMasquage(dureeMasqueeMs);
+    if (resync) resynchroniserResultatsAuRetour();
   });
 
   // Canal serveur → onglet.

@@ -16,6 +16,9 @@ import {
   fusionnerTimingProjet,
   construireIssueCreation,
   FENETRE_RECENTE_TIMING_MS,
+  fautResynchroniserApresMasquage,
+  fautResynchroniserApresReconnexionSse,
+  SEUIL_RESYNC_MASQUAGE_MS,
 } from '../resultats.js';
 
 // Repère temporel fixe pour des calculs déterministes.
@@ -324,4 +327,29 @@ test('fusionnerTimingProjet : n\'affecte jamais le timing des AUTRES projets', (
   };
   const timing = fusionnerTimingProjet(ancienTiming, 'p', [], {}, T0);
   assert.deepEqual(timing['autre#9'], ancienTiming['autre#9']);
+});
+
+// ─── fautResynchroniserApresMasquage / fautResynchroniserApresReconnexionSse
+// (issue #705 : resync Résultats au retour d'onglet / reconnexion SSE) ──────
+test('fautResynchroniserApresMasquage : sous le seuil → pas de resync', () => {
+  assert.equal(fautResynchroniserApresMasquage(0), false);
+  assert.equal(fautResynchroniserApresMasquage(SEUIL_RESYNC_MASQUAGE_MS - 1), false);
+});
+
+test('fautResynchroniserApresMasquage : au seuil ou au-delà → resync', () => {
+  assert.equal(fautResynchroniserApresMasquage(SEUIL_RESYNC_MASQUAGE_MS), true);
+  assert.equal(fautResynchroniserApresMasquage(SEUIL_RESYNC_MASQUAGE_MS + 60000), true);
+});
+
+test('fautResynchroniserApresMasquage : seuil personnalisé respecté', () => {
+  assert.equal(fautResynchroniserApresMasquage(5000, 10000), false);
+  assert.equal(fautResynchroniserApresMasquage(10000, 10000), true);
+});
+
+test('fautResynchroniserApresReconnexionSse : première ouverture → pas de resync (évite le double chargement initial)', () => {
+  assert.equal(fautResynchroniserApresReconnexionSse(true), false);
+});
+
+test('fautResynchroniserApresReconnexionSse : reconnexion après coupure → resync', () => {
+  assert.equal(fautResynchroniserApresReconnexionSse(false), true);
 });

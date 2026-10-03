@@ -213,6 +213,32 @@ export function planifierEvenementSse(etat, ev, projetsConnus) {
   return { action: 'ignorer', cle, connue };
 }
 
+// ─── Resynchronisation au retour (issue #705) ────────────────────────────────
+// La liste Résultats n'est alimentée que par les événements /stream ciblés
+// ci-dessus : un événement manqué (onglet masqué, coupure réseau, redémarrage
+// de new_issue.py) la laisse périmée indéfiniment, sans qu'aucun rechargement
+// périodique ne vienne la rattraper. Les deux fonctions pures ci-dessous
+// isolent la décision « faut-il resynchroniser toute la liste (↻) ? », pour
+// les deux déclencheurs posés côté app.js/sse.js : retour au premier plan de
+// l'onglet, et reconnexion SSE après coupure.
+
+// Seuil (ms) de masquage de l'onglet au-delà duquel on considère la liste
+// potentiellement périmée. En-dessous, le canal /stream (jamais interrompu
+// par le masquage lui-même) a eu largement le temps de tout recevoir.
+export const SEUIL_RESYNC_MASQUAGE_MS = 30000;
+
+// true si l'onglet est resté masqué assez longtemps pour justifier un ↻.
+export function fautResynchroniserApresMasquage(dureeMasqueeMs, seuilMs = SEUIL_RESYNC_MASQUAGE_MS) {
+  return dureeMasqueeMs >= seuilMs;
+}
+
+// true si CETTE ouverture du canal SSE doit déclencher un ↻ : seule une
+// RECONNEXION (après coupure) le justifie — pas la toute première ouverture
+// de la page, qui vient déjà de charger la liste au chargement initial.
+export function fautResynchroniserApresReconnexionSse(premiereOuverture) {
+  return !premiereOuverture;
+}
+
 // Fusionne un chargement de liste en CONSERVANT les issues des projets non
 // refetchés ET des projets dont le fetch a ÉCHOUÉ (correctif anomalie #3 :
 // un projet en échec ne disparaît plus en silence). `chargements` =
@@ -905,6 +931,24 @@ async function rafraichir(nomsAFetcher) {
   await chargerTimingTous();
 }
 
+// true dès que le canal /stream s'est ouvert une première fois — distingue
+// cette première ouverture (page qui vient de charger la liste) d'une
+// RECONNEXION après coupure (issue #705, voir fautResynchroniserApresReconnexionSse).
+let sseDejaOuverte = false;
+
+// onOuvert du canal /stream : ne resynchronise que sur reconnexion, jamais à
+// la première ouverture (double chargement évité). Le ↻ complet lui-même
+// (rafraichirResultats, app.js) n'est pas importable ici (ancien code,
+// script classique) — appelé via le pont, comme les autres déclencheurs
+// cross-module (ex. ccw.js:appelerAncien('rafraichirPanneauLateralResultats')).
+function surOuvertureSse() {
+  const premiereOuverture = !sseDejaOuverte;
+  sseDejaOuverte = true;
+  if (fautResynchroniserApresReconnexionSse(premiereOuverture)) {
+    appelerAncien('resynchroniserResultatsAuRetour');
+  }
+}
+
 // ─── Amorçage (appelé une fois par index.js) ─────────────────────────────────
 function initialiser() {
   // Purge de l'ancienne clé de redimensionnement de la colonne titre (issue
@@ -927,7 +971,9 @@ function initialiser() {
     if (nom === 'resultats') onActiverOnglet(); else onDesactiverOnglet();
   });
   // UNIQUE connexion /stream (permanente, comme l'ancien code depuis #515).
-  sse.stream.connecter();
+  // onOuvert (issue #705) : resynchronise la liste quand cette connexion est
+  // RÉTABLIE après coupure — jamais à la toute première ouverture.
+  sse.stream.connecter({ onOuvert: surOuvertureSse });
   // Polling /issues-inbox/etat (issue #639) : badge d'alerte + reconstruction
   // des lignes rejetées, en continu quel que soit l'onglet actif.
   demarrerInbox();
@@ -953,4 +999,7 @@ export const resultats = {
   calculerBadgeModele,
   // Idem pour le badge « sans REDACTEUR » (issue #647).
   calculerBadgeSansRedacteur,
+  // Exposée pour que l'ancien app.js (visibilitychange) décide d'un ↻ au
+  // retour au premier plan via l'unique fonction testée (issue #705).
+  fautResynchroniserApresMasquage,
 };

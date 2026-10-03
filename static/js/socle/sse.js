@@ -26,7 +26,10 @@
 export function creerCanalSse(url, gestionnaires = {}, opts = {}) {
   let source = null;
 
-  function connecter() {
+  // optsAppel.onOuvert (issue #705) : surcharge opts.onOuvert pour CET appel —
+  // permet à un module appelant (ex. resultats.js) de réagir aux reconnexions
+  // sans que ce module générique sache rien de la logique métier déclenchée.
+  function connecter(optsAppel = {}) {
     if (source) return source;                     // idempotent : pas de doublon
     if (typeof EventSource === 'undefined') {
       throw new Error('EventSource indisponible (contexte non-navigateur)');
@@ -38,7 +41,8 @@ export function creerCanalSse(url, gestionnaires = {}, opts = {}) {
     }
     // EventSource se reconnecte nativement après une coupure ; on n'ajoute de
     // logique manuelle que via opts.onErreur si un canal en a besoin.
-    if (opts.onOuvert) source.onopen = opts.onOuvert;
+    const onOuvert = optsAppel.onOuvert || opts.onOuvert;
+    if (onOuvert) source.onopen = onOuvert;
     if (opts.onErreur) source.onerror = opts.onErreur;
     return source;
   }
