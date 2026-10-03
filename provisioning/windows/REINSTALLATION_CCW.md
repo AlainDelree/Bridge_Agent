@@ -145,10 +145,26 @@ CCL via l'onglet **CCW** de l'interface web (`new_issue.py`) — voir
 ### 7. Recréer les services multi-projets dédiés
 
 Les étapes 1 à 6 ne remettent en place que le service de **base**
-`CCW-Watcher` (canal `for-windows` de Bridge_Agent). En production tournent
-en plus des **services dédiés**, un par projet du modèle multi-projets actif
-(issue #170, cf. `BRIDGE_AGENT_DOC.md` §16) — eux aussi recréés à zéro par
-la réinstallation, puisque le service NSSM et ses tokens ne survivent pas.
+`CCW-Watcher` (canal `for-windows` de Bridge_Agent) — celui-ci reste
+**toujours actif** (voir encadré ci-dessous), contrairement aux services
+dédiés recréés par cette étape 7. En production, un par projet du modèle
+multi-projets actif (issue #170, cf. `BRIDGE_AGENT_DOC.md` §16) s'ajoute à
+ce service de base — eux aussi recréés à zéro par la réinstallation, puisque
+le service NSSM et ses tokens ne survivent pas.
+
+> **Modèle « à la demande » (retrofit #712).** Les services dédiés recréés
+> ici par `ajouter_projet_ccw.ps1` (via `creer_projet_ccw_complet.ps1`) ne
+> tournent **pas en permanence** : chacun s'éteint seul après 20 min
+> d'inactivité (`AppExit 42 Exit`) et est rallumé à la demande par
+> `new_issue.py` (formulaire web, `issues_inbox/`, relance) via SSH — détail
+> complet dans `BRIDGE_AGENT_DOC.md` §16. Deux cas n'en bénéficient pas :
+> une issue `for-windows` créée par `gh issue create` direct (hors
+> `new_issue.py`), et `new_issue.py` natif sous Windows (pas d'hôte SSH
+> configuré pour se joindre lui-même) — dans ces cas, démarrer le service à
+> la main (`nssm start <service>` ou bouton **Démarrer** de l'onglet CCW).
+> `CCW-Watcher` (service de base, étapes 1-6) reste lui **toujours actif** —
+> aucun réglage à reproduire pour lui. Retour arrière pour un service donné :
+> `nssm set <service> AppExit 42 Restart`.
 
 Rappel : les fichiers `.conf` de chaque projet (ex. `configs\alchess-ccw.conf`)
 vivent dans le dépôt du projet lui-même, donc **survivent** à la

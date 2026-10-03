@@ -2575,7 +2575,7 @@ deux) en une seule commande.
 |---------|------|
 | `provisionner.ps1` | Script PowerShell d'installation logicielle : installe Git, GitHub CLI, Python 3.12 et NSSM par **téléchargement direct des installeurs officiels** (plus de dépendance à winget, issue #658 — bootstrap winget systématiquement en échec sur l'édition LTSC/IoT du PC fixe, dépendance `Microsoft.VCLibs.140.00` introuvable en autonome), OpenSSL en installeur autonome (winget en repli optionnel `-TenterWinget`), pyinstaller (pip) + Claude Code (installeur natif, sans Node.js, + ajout du `PATH` utilisateur `.local\bin`), désactive Windows Update, clone le dépôt en lecture seule dans `C:\CCW\Bridge_Agent`, écrit `configs\ccw.conf` (`LABEL=for-windows`, `NOM=ccw`, `REP_TRAVAIL=C:\CCW_Share` — chemin **local** sur le PC physique —, `TOPIC_NTFY` placeholder), et enregistre le service Windows `CCW-Watcher` via NSSM sous le compte **`AlainW`** (non-admin), avec son `PATH` complet posé dans `AppEnvironmentExtra`. Mot de passe du compte de service demandé via `Read-Host -AsSecureString` (fonctionne en SSH, contrairement à l'ancien `Get-Credential`). Mode `-DryRun`/`-WhatIf` disponible. Reste utilisable comme référence des étapes d'installation logicielle, à rejouer manuellement sur le PC physique le cas échéant. |
 | `mettre_a_jour_tokens_ccw.ps1` | Renouvellement des tokens d'un service CCW sans manipuler à la main la chaîne PowerShell (issue #168). Demande `GH_TOKEN` puis `CLAUDE_CODE_OAUTH_TOKEN` en `Read-Host -AsSecureString` (jamais affichés en clair), reconstruit `AppEnvironmentExtra` comme **trois lignes distinctes** — `PATH`, `GH_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN` — passées en arguments séparés à `nssm set` (issue #658 : une chaîne unique jointe par `` `n`` ne fonctionne pas avec `nssm set`, et sans reconstruire la ligne `PATH` à chaque appel, `nssm set` — qui REMPLACE toute la valeur — effacerait celle posée par `provisionner.ps1`), fait `nssm restart`, attend puis affiche les 10 dernières lignes du log de service et conclut OK / à vérifier (code 2 si `ERROR`). Paramétrable (`-NomService`, `-RepDepot`, `-NomLog` pour cibler le bon log de service ex. `ccw-scrabble-service.log` issue #173, et `-CompteService` pour reconstruire la ligne `PATH`) : sert aussi bien à `CCW-Watcher` qu'aux services multi-projets `CCW-Watcher-<NomProjet>` (issue #170). Depuis l'issue #174, accepte aussi `-FichierTokens <chemin>` : les deux valeurs sont alors **lues dans un fichier** « clé=valeur » (au lieu de `Read-Host`), ce qui permet à l'onglet CCW de poser les tokens à distance sans saisie dans la VM et sans jamais les passer en argument de commande. |
-| `ajouter_projet_ccw.ps1` | **(actif, modèle multi-projets #170 ; voir aussi `creer_projet_ccw_complet.ps1`, §16.5, qui l'appelle)** Instancie un projet CCW **supplémentaire** sur le modèle multi-projets (issue #170), sans rien réinstaller. Paramétrable (`-NomProjet`, `-Depot owner/repo`, ou prompt interactif) : clone le dépôt en lecture seule dans `C:\CCW\<NomProjet>`, écrit `configs\<nom>-ccw.conf` (`NOM=<nom>-ccw`, `LABEL=for-windows`, `REP_TRAVAIL`/`PERIMETRE`=`C:\CCW\<NomProjet>`, `TOPIC_NTFY` placeholder), et enregistre un service NSSM dédié `CCW-Watcher-<NomProjet>` (mêmes réglages que `CCW-Watcher` : `SERVICE_AUTO_START`, `AppExit Default Restart`, `AppRestartDelay`, `logs\ccw-<nom>-service.log`). Idempotent (clone mis à jour par pull, service arrêté/supprimé avant recréation). Ne configure **pas** `AppEnvironmentExtra` : chaque projet a son propre token dédié, posé ensuite en **une seule commande** via `finaliser_projet_ccw.ps1` (rappel affiché en fin de script). |
+| `ajouter_projet_ccw.ps1` | **(actif, modèle multi-projets #170 ; voir aussi `creer_projet_ccw_complet.ps1`, §16.5, qui l'appelle)** Instancie un projet CCW **supplémentaire** sur le modèle multi-projets (issue #170), sans rien réinstaller. Paramétrable (`-NomProjet`, `-Depot owner/repo`, ou prompt interactif) : clone le dépôt en lecture seule dans `C:\CCW\<NomProjet>`, écrit `configs\<nom>-ccw.conf` (`NOM=<nom>-ccw`, `LABEL=for-windows`, `REP_TRAVAIL`/`PERIMETRE`=`C:\CCW\<NomProjet>`, `TOPIC_NTFY` placeholder), et enregistre un service NSSM dédié `CCW-Watcher-<NomProjet>` : `SERVICE_AUTO_START`, `AppExit Default Restart` (vrais plantages) **+ `AppExit 42 Exit`** (retrofit CCW, issue #712 — service « à la demande » dès sa création, voir encadré ci-dessous), `AppRestartDelay`, `logs\ccw-<nom>-service.log`. Idempotent (clone mis à jour par pull, service arrêté/supprimé avant recréation — donc le réglage `AppExit 42 Exit` est reposé à chaque recréation, même pour un projet déjà existant). Ne configure **pas** `AppEnvironmentExtra` : chaque projet a son propre token dédié, posé ensuite en **une seule commande** via `finaliser_projet_ccw.ps1` (rappel affiché en fin de script). |
 | `lister_projets_ccw.ps1` | **(appelé à distance — issue #174)** Inventaire **JSON** des projets CCW : énumère les services `CCW-Watcher*` (NSSM), et pour chacun émet le nom du service, le projet dérivé, l'état (`running`/`stopped`) et le statut du placeholder `TOPIC_NTFY` (lu dans le config, sans jamais renvoyer la valeur réelle du topic). Sortie encadrée par `<<<CCW_JSON>>>…<<<CCW_END>>>` pour extraction fiable côté Linux. Exécuté par l'onglet CCW de l'interface web. |
 | `finaliser_projet_ccw_auto.ps1` | **(appelé à distance — issue #174)** Variante **non interactive** de `finaliser_projet_ccw.ps1` : lit `TOPIC_NTFY` + les deux tokens dans un **fichier « clé=valeur »** poussé par l'appelant (jamais en argument de commande), remplace le placeholder `TOPIC_NTFY` dans le config (édition ciblée) puis **appelle** `mettre_a_jour_tokens_ccw.ps1 -FichierTokens` (aucune duplication de la logique des tokens). Supprime le fichier de valeurs dans un `finally` (nettoyage côté VM). Code de sortie = celui du script de tokens (0/2/1). |
 | `finaliser_projet_ccw.ps1` | **(actif, modèle multi-projets #170)** Finalise en **une seule commande** un projet déjà créé par `ajouter_projet_ccw.ps1` (issue #173, suite #170), regroupant les 3 étapes manuelles auparavant dispersées. À partir du seul `-NomProjet` (argument ou prompt), **dérive** `CCW-Watcher-<NomProjet>`, `C:\CCW\<NomProjet>` et `configs\<nom>-ccw.conf` (même logique qu'`ajouter_projet_ccw.ps1`) et **vérifie** leur existence (sinon renvoie vers `ajouter_projet_ccw.ps1`). Puis : (1) demande `TOPIC_NTFY` (`Read-Host`, pas un secret) et remplace le placeholder `###TOPIC_NTFY_A_DEFINIR###` **dans** le config par édition ciblée (le reste du fichier préservé, UTF-8 sans BOM) ; (2) rappelle les réglages du token dédié à créer (repo unique, permissions, expiration alignée) avec une **pause** ; (3) **appelle** `mettre_a_jour_tokens_ccw.ps1` (pas de duplication) avec les paramètres déduits — dont `-NomLog ccw-<nom>-service.log` — pour la saisie masquée + pose des tokens + redémarrage + vérif des logs ; (4) résumé final selon le code renvoyé. |
@@ -2613,6 +2613,58 @@ session ouverte** (`SERVICE_AUTO_START`) et redémarrage automatique sur
 l'ancienne tâche planifiée `-AtLogOn`, qui ne redémarrait pas au boot sans
 session ; la boucle interne du watcher reste la première ligne de
 robustesse.
+
+> **Retrofit « à la demande » — `AppExit 42 Exit` (issue #712, validé en réel
+> le 03/10/2026).** Le réglage ci-dessus (`AppExit Default Restart`) décrit le
+> comportement sur **plantage** (NSSM relance). Depuis #712, les **services de
+> projet** (`CCW-Watcher-<Projet>`, posés par `ajouter_projet_ccw.ps1`)
+> reçoivent en plus `AppExit 42 Exit` : le code de sortie **42** signale
+> l'**auto-extinction pour inactivité** du watcher après 20 min (issues
+> #199/#200), qui n'est PAS un plantage — dans ce cas précis, NSSM laisse le
+> service **éteint** au lieu de le relancer aussitôt (sans ce réglage, l'auto-
+> extinction n'avait aucun effet : `Default Restart` le relançait en
+> permanence, annulant l'économie de ressources visée par #199/#200).
+>
+> **Rallumage à la demande.** Un service de projet ainsi éteint est rallumé
+> par `new_issue.py` au moment où une issue `for-windows` visant ce projet est
+> **créée ou relancée**, via SSH vers le PC fixe (`app.ccw.
+> demarrer_service_ccw_arriere_plan`, thread démon non bloquant) — trois
+> points d'entrée couverts : le **formulaire web** (`app/issues.py::envoyer()`,
+> issue #709, étape C), le dépôt dans **`issues_inbox/`** et sa **RELANCE**
+> (`scripts/watcher_issues_inbox.py`, issue #711, étape D). Symétrique du
+> rallumage auto déjà en place côté `for-linux` (`app.watchers.
+> redemarrer_si_eteint`, issue #600/#202).
+>
+> **Exception volontaire : `CCW-Watcher` (service de base, sans suffixe)
+> reste TOUJOURS actif** — `provisionner.ps1` ne pose PAS `AppExit 42 Exit`
+> dessus, seulement `Default Restart`. Deux raisons : (1) il traite, par le
+> canal central `for-windows`/Bridge_Agent, les issues des projets **sans**
+> service CCW dédié (`REDACTEUR=bridge_agent`, §3.4) — le démarrage à la
+> demande cherche le service du projet **visé par l'issue** et n'en trouve
+> aucun dans ce cas, donc rien ne serait rallumé ; (2) il reçoit les
+> délégations de CCL vers Windows créées par `gh issue create` **direct** (ex.
+> #692), qui ne passent par aucun des trois points d'entrée ci-dessus et ne
+> déclenchent donc aucun démarrage à la demande.
+>
+> **Deux limites connues (démarrage à la demande non applicable) :**
+> 1. une issue `for-windows` créée par `gh issue create` **direct** (hors
+>    `new_issue.py`) ne déclenche rien — cas visé par l'exception ci-dessus,
+>    mais vaut aussi pour un projet avec service dédié si l'issue est créée
+>    hors interface ;
+> 2. `new_issue.py` tournant **nativement sous Windows** (pas d'hôte SSH
+>    configuré dans ce cas — `app.ccw._preparer()` renvoie une erreur de
+>    config, ignorée silencieusement par le démarrage à la demande) ne peut
+>    pas se SSH vers lui-même pour rallumer un service CCW.
+>
+> Dans ces deux cas : démarrer le service à la main, soit `nssm start
+> <service>` directement sur le PC fixe, soit le bouton **Démarrer** de
+> l'onglet **CCW** de l'interface web (§16.2).
+>
+> **Retour arrière pour un service donné** (désactiver l'auto-extinction
+> effective, revenir au comportement « toujours actif ») :
+> ```powershell
+> nssm set <service> AppExit 42 Restart
+> ```
 
 > **Compte NSSM — `AlainW`, pas `LocalSystem` (issue #446).** Sur le PC fixe
 > physique, le service `CCW-Watcher` tourne sous le compte **`AlainW`**

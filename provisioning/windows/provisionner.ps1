@@ -982,6 +982,18 @@ Desactiver-WindowsUpdate
 #     tâche planifiée -AtLogOn, qui ne redémarrait pas au boot sans session.
 #     Le watcher lui-même reste la première ligne de robustesse (boucle interne).
 #
+#     ⚠️ CCW-Watcher reste VOLONTAIREMENT toujours actif — PAS d'AppExit 42
+#     Exit ici (retrofit CCW, issue #712), contrairement aux services de
+#     projet posés par ajouter_projet_ccw.ps1. Deux raisons : (1) il traite,
+#     par le canal central for-windows/Bridge_Agent, les issues for-windows
+#     des projets SANS service CCW dédié (REDACTEUR=bridge_agent, §3.4 du
+#     DOC) — le démarrage à la demande (app.ccw) cherche le service du
+#     projet VISÉ par l'issue et n'en trouve aucun dans ce cas, donc rien ne
+#     le rallumerait ; (2) il reçoit les délégations de CCL vers Windows
+#     créées par `gh issue create` direct (ex. #692), qui ne déclenchent
+#     aucun démarrage à la demande. Default Restart + AppRestartDelay
+#     suffisent donc ici : ce service ne doit jamais s'éteindre de lui-même.
+#
 #     Compte de service — $CompteService (AlainW par défaut), PAS LocalSystem
 #     (issue #446, suite #447) : PC physique, non-admin, cohérent avec un
 #     compte utilisateur normal du PC. NSSM exige le mot de passe du compte

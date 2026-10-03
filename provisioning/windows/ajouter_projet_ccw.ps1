@@ -17,9 +17,15 @@
        LABEL=for-windows, REP_TRAVAIL / PERIMETRE = C:\CCW\<NomProjet>,
        TOPIC_NTFY = placeholder à renseigner manuellement) ;
     3. enregistre un NOUVEAU service NSSM « CCW-Watcher-<NomProjet> » qui lance
-       watcher.py --config configs\<nom>-ccw.conf au démarrage (mêmes réglages
-       que CCW-Watcher : SERVICE_AUTO_START, AppExit Default Restart,
-       AppRestartDelay, logs\ccw-<nom>-service.log).
+       watcher.py --config configs\<nom>-ccw.conf au démarrage : SERVICE_AUTO_START,
+       AppExit Default Restart (un vrai plantage relance le service) + AppExit 42
+       Exit (retrofit CCW, issue #712) — le code de sortie 42 signale l'auto-
+       extinction du watcher après 20 min d'inactivité (issues #199/#200) : dans ce
+       cas précis, NSSM laisse le service ÉTEINT au lieu de le relancer aussitôt ; il
+       est rallumé à la demande par la création ou la relance d'une issue
+       `for-windows` (formulaire web, `issues_inbox/`, relance — voir §16 du DOC),
+       jamais par une boucle de redémarrage NSSM. AppRestartDelay, logs\ccw-<nom>-
+       service.log inchangés.
 
   Idempotent : relançable sans dommage — le clone est mis à jour par pull, et le
   service existant est arrêté/supprimé avant recréation (même pattern que
@@ -251,6 +257,13 @@ nssm install $NomService $pythonExe "`"$CheminWatcher`" --config configs\$NomCon
 nssm set $NomService AppDirectory     $RepDepot
 nssm set $NomService Start            SERVICE_AUTO_START
 nssm set $NomService AppExit Default  Restart
+# AppExit 42 Exit (retrofit CCW, issue #712, réglage validé en réel le
+# 03/10/2026 sur CCW-Watcher-Rummikub/-Scrabble/-Actualise) : le code 42
+# signale l'auto-extinction du watcher après inactivité (#199/#200), PAS un
+# plantage — dans ce cas, NSSM laisse le service éteint au lieu de le
+# relancer ; il est rallumé à la demande par une issue for-windows (§16 du
+# DOC). Default Restart ci-dessus reste en place pour les vrais plantages.
+nssm set $NomService AppExit 42       Exit
 nssm set $NomService AppRestartDelay  5000
 # Rediriger stdout/stderr du service vers un fichier de log dédié.
 nssm set $NomService AppStdout        $LogService
