@@ -9,6 +9,18 @@ milliers de caractères sur une seule ligne logique, coûteux à relire et
 
 Convention d'ajout : voir §10 de `BRIDGE_AGENT_DOC.md`.
 
+## 3 octobre 2026 — issue #711
+
+§16 « Agent Windows CCW » : **démarrage à la demande du service CCW depuis `issues_inbox/` (création et RELANCE) et depuis la relance de l'interface** (issue #711, étape D du retrofit CCW, suite de l'étape C/#709 qui ne couvrait que le formulaire web — plus de 99 % des issues d'Alain passent par `issues_inbox/`, chemin critique jusqu'ici non couvert).
+
+- `scripts/watcher_issues_inbox.py`, création (`_traiter_bloc`) : l'appel à `redemarrer_si_eteint()` (watcher CCL, issue #486) devient conditionnel au label de l'issue créée — `for-linux` inchangé, `for-windows` démarre à la place le service CCW via `app.ccw.demarrer_service_ccw_arriere_plan` (#709) et ne démarre plus à tort le watcher Linux. Une ligne de journal par tentative ; un échec du démarrage CCW n'empêche jamais la création de l'issue.
+- Même fichier, chemin RELANCE (`_traiter_relance`) : même distinction, en lisant les labels sur l'issue GitHub relancée (déjà rapatriés par `_recuperer_issue`, pas de nouvel appel `gh`). Le commentaire de trace posté à la relance ne contient pas le résultat du démarrage CCW (asynchrone, thread démon) — seul le redémarrage du watcher CCL (for-linux) y est tracé, comme avant.
+- `app/interruption.py::route_relancer` : ajout de la branche `for-windows` (appel non bloquant à `demarrer_service_ccw_arriere_plan`), symétrique de la branche `for-linux` existante (#574) — labels déjà transmis par le front, aucune lecture supplémentaire nécessaire.
+- Bug corrigé au passage dans `app/ccw.py` (découvert en écrivant les tests de ce chemin, point 4 de l'issue) : `_preparer()`/`_lister_projets_vm()` construisaient leur réponse d'erreur avec `jsonify(...)`, qui lève `RuntimeError: Working outside of application context` hors contexte Flask — précisément le cas du thread démon de `demarrer_service_ccw_arriere_plan` (#709) et de tout appel depuis `scripts/watcher_issues_inbox.py` (process sans Flask). Nouveau `_reponse_erreur_ssh()` : `jsonify(...)` si un contexte applicatif est actif (toutes les routes — comportement strictement inchangé), sinon un substitut minimal `_ReponseErreurSansContexte` (même interface `.get_json()`). Sans ce correctif, une issue `for-windows` déposée pour un projet sans SSH configuré aurait fait planter silencieusement le thread de démarrage (trace uniquement dans les logs du process, jamais remontée) au lieu du « ignoré silencieusement » attendu.
+- Tests : `tests/test_demarrage_ccw_issues_inbox_711.py` (nouveau, chemin création + vérification de l'import de `app.ccw` sans contexte Flask) ; `tests/test_champ_relance_516.py` (nouveau scénario for-windows + labels `for-linux` ajoutés aux fixtures existantes, devenues sélectives) ; `tests/test_relancer_watcher_574.py` (scénario for-windows étendu). SSH et `gh` entièrement simulés partout (leçon #702/#703).
+
+Hors périmètre (rappel de l'issue, non traité ici) : réglages NSSM des autres services, scripts de provisioning, création directe par `gh issue create`, préservation d'`AppExit` au re-provisioning (étape B).
+
 ## #710 — Garde-fou : les faux exécutables de tests ne peuvent plus laisser passer un appel vers le vrai GitHub
 
 Suite à l'incident du 03/10/2026 (`test_projet_ccw_559.py` lancé sur CCW :
