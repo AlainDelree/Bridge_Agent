@@ -9,6 +9,10 @@ milliers de caractères sur une seule ligne logique, coûteux à relire et
 
 Convention d'ajout : voir §10 de `BRIDGE_AGENT_DOC.md`.
 
+## 3 octobre 2026 — issue #709
+
+§16 « Agent Windows CCW » : **démarrage à la demande du service CCW depuis le formulaire web** (issue #709, étape C du retrofit CCW, suite de l'étape A réelle sur `CCW-Watcher-Rummikub` — `AppExit 42 Exit` fait qu'un watcher CCW éteint par auto-extinction après inactivité n'est plus relancé par NSSM). Création d'une issue `for-windows` quand le service est éteint : `app/issues.py::envoyer()` le démarre désormais lui-même, symétrique de `redemarrer_si_eteint()` (for-linux), sans jamais bloquer ni faire échouer la réponse HTTP. Extraction d'une fonction PURE `app.ccw._piloter_service_ccw_action` (nom de projet + action nssm → résolution du service exact + exécution SSH + résultat structuré) depuis l'ancienne route `_piloter_service_ccw`, dont le comportement reste STRICTEMENT inchangé (vérifié par test) ; nouvelle option `eviter_si_deja_dans_cet_etat` (idempotence sans aller-retour SSH superflu, utilisée uniquement côté démarrage à la demande). Nouveau `app.ccw._demarrer_service_ccw_sync` (cœur testable sans thread : déjà en marche → rien, hôte SSH non configuré/projet sans service CCW → ignoré silencieusement, STOP_PENDING → une seule nouvelle tentative, jamais de boucle) et `demarrer_service_ccw_arriere_plan` (thread démon, bornés par les timeouts SSH déjà en place) pour ne jamais retarder la création d'issue. Champ `ccw_demarre` ajouté à la réponse JSON de `/envoyer`, analogue à `watcher_demarre` — toujours `None` par construction (le démarrage étant asynchrone, son résultat réel n'est connu que du journal serveur, jamais de la réponse HTTP elle-même ; limite assumée, documentée dans le code). Tests (`tests/test_demarrage_ccw_a_la_demande_709.py`) : SSH entièrement simulé, aucune vraie connexion ni vrai `gh`.
+
 ## #706 — Issue H (suite) : `valider_repo_cible` sous Windows, test #584, lanceur verbeux sur échec
 
 Suite à la validation réelle du lanceur de tests (#704) sur CCW le
