@@ -37,6 +37,19 @@ def _derniere_ligne_utile(texte: str) -> str:
     return lignes[-1] if lignes else "(aucune sortie)"
 
 
+def _lignes_echec(texte: str) -> list[str]:
+    """Lignes à afficher pour un fichier en échec : celles qui portent le
+    marqueur de scénario en échec (✗) ou le résumé final (« scénario(s) en
+    échec »), ou à défaut les 15 dernières lignes de la sortie — la dernière
+    ligne seule peut n'être que du bruit normal émis par un scénario qui
+    passe (issue #706, cas 516/REPO_CIBLE)."""
+    lignes = [l.rstrip() for l in texte.splitlines() if l.strip()]
+    if not lignes:
+        return ["(aucune sortie)"]
+    pertinentes = [l for l in lignes if "✗" in l or "scénario(s) en échec" in l]
+    return pertinentes if pertinentes else lignes[-15:]
+
+
 def _lancer_un_fichier(chemin: Path) -> tuple[int, str]:
     env = dict(os.environ)
     env["PYTHONUTF8"] = "1"
@@ -52,12 +65,10 @@ def _lancer_un_fichier(chemin: Path) -> tuple[int, str]:
             timeout=DELAI_MAX_PAR_FICHIER,
         )
         sortie = (resultat.stdout or "") + (resultat.stderr or "")
-        return resultat.returncode, _derniere_ligne_utile(sortie)
+        return resultat.returncode, sortie
     except subprocess.TimeoutExpired as e:
         sortie = (e.stdout or "") + (e.stderr or "")
-        detail = _derniere_ligne_utile(sortie) if sortie else ""
-        suffixe = f" — dernière sortie : {detail}" if detail else ""
-        return 1, f"(délai dépassé : > {DELAI_MAX_PAR_FICHIER}s){suffixe}"
+        return 1, f"(délai dépassé : > {DELAI_MAX_PAR_FICHIER}s)\n{sortie}"
 
 
 def main() -> int:
@@ -80,11 +91,16 @@ def main() -> int:
     debut_total = time.monotonic()
     for chemin in fichiers:
         debut = time.monotonic()
-        code, derniere = _lancer_un_fichier(chemin)
+        code, sortie = _lancer_un_fichier(chemin)
         duree = time.monotonic() - debut
         statut = "✓" if code == 0 else "✗"
-        print(f"  {statut} {chemin.name:<48} exit={code}  ({duree:.1f}s)  {derniere}")
-        if code != 0:
+        if code == 0:
+            print(f"  {statut} {chemin.name:<48} exit={code}  ({duree:.1f}s)  "
+                  f"{_derniere_ligne_utile(sortie)}")
+        else:
+            print(f"  {statut} {chemin.name:<48} exit={code}  ({duree:.1f}s)")
+            for ligne in _lignes_echec(sortie):
+                print(f"      {ligne}")
             echecs.append(chemin.name)
 
     duree_totale = time.monotonic() - debut_total
