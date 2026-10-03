@@ -170,6 +170,11 @@ def scenario_refus_precoce_libere_verrou():
     `_traiter_issue_synchrone` (le worker qui pose/relâche le verrou), même
     chemin que le canal unifié for-windows mode_write, sans la complexité du
     dispatch worktree de `traiter_issue` (hors sujet ici)."""
+    if os.name == "nt":
+        print("  (ignoré : ce scénario s'appuie sur de faux `gh`/`claude` shebang bash, "
+              "non applicable sous Windows)")
+        return {"ignore": True}
+
     with tempfile.TemporaryDirectory() as tmp:
         tmp_path = Path(tmp)
         rep_travail = tmp_path / "CCW_Share"
@@ -207,6 +212,11 @@ def scenario_echec_rapide_sans_travail_libere_verrou():
     """Une tâche mode_write qui échoue rapidement de façon répétée (exit non
     nul dès la première tentative, avant tout travail réel) jusqu'à
     l'abandon définitif (needs-human) doit elle aussi relâcher le verrou."""
+    if os.name == "nt":
+        print("  (ignoré : ce scénario s'appuie sur de faux `gh`/`claude` shebang bash, "
+              "non applicable sous Windows)")
+        return {"ignore": True}
+
     with tempfile.TemporaryDirectory() as tmp:
         tmp_path = Path(tmp)
         rep_travail = tmp_path / "CCW_Share"

@@ -1700,8 +1700,9 @@ def valider_repo_cible(chemin: str) -> tuple[bool, str]:
          normalisation — '..' ou lien symbolique — le fait diverger et donc
          refuser) ;
       2. le chemin existe et est un dossier ;
-      3. le dossier appartient au même utilisateur système que le process
-         watcher (st_uid == os.getuid()).
+      3. (hors Windows uniquement — os.getuid() indisponible sous Windows,
+         voir valider_sous_dossier) le dossier appartient au même utilisateur
+         système que le process watcher (st_uid == os.getuid()).
 
     Retourne (True, "") si tout passe, sinon (False, raison explicite). L'échec
     d'une seule vérification suffit à refuser — c'est une erreur de
@@ -1717,6 +1718,10 @@ def valider_repo_cible(chemin: str) -> tuple[bool, str]:
                        "pas canonique (lien symbolique) — fournir un chemin absolu direct")
     if not resolu.is_dir():
         return False, "le chemin n'existe pas ou n'est pas un dossier"
+    if os.name == "nt":
+        # os.getuid() n'existe pas sous Windows — pas d'équivalent st_uid
+        # fiable, vérification de propriétaire ignorée (issue #706).
+        return True, ""
     try:
         proprietaire = resolu.stat().st_uid
     except OSError as e:
