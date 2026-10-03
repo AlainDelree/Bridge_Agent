@@ -39,6 +39,7 @@ RACINE = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(RACINE))
 
 import watcher  # noqa: E402
+from garde_fou_faux_executables import verifier_faux_executables_actifs  # noqa: E402
 
 FAUX_GH = """#!/bin/bash
 # Faux `gh` — issue #327. Stateful uniquement sur `issue view --json comments`
@@ -161,6 +162,11 @@ exit 0
         bin_dir = _preparer_bin(tmp_path, script_claude)
         ancien_path = os.environ.get("PATH", "")
         os.environ["PATH"] = f"{bin_dir}{os.pathsep}{ancien_path}"
+        try:
+            verifier_faux_executables_actifs(bin_dir, ["claude", "gh"])
+        except Exception:
+            os.environ["PATH"] = ancien_path
+            raise
         os.environ["TEST_327_MARQUEUR"] = str(marqueur)
 
         ancien_dossier_verrous = watcher.DOSSIER_VERROUS
@@ -239,6 +245,11 @@ exit 0
         bin_dir = _preparer_bin(tmp_path, script_claude)
         ancien_path = os.environ.get("PATH", "")
         os.environ["PATH"] = f"{bin_dir}{os.pathsep}{ancien_path}"
+        try:
+            verifier_faux_executables_actifs(bin_dir, ["claude", "gh"])
+        except Exception:
+            os.environ["PATH"] = ancien_path
+            raise
         os.environ["TEST_327_MARQUEUR"] = str(tmp_path / "marqueur_non_utilise")
 
         ancien_dossier_verrous = watcher.DOSSIER_VERROUS

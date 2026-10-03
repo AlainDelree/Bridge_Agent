@@ -51,6 +51,7 @@ RACINE = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(RACINE))
 
 import watcher  # noqa: E402
+from garde_fou_faux_executables import verifier_faux_executables_actifs  # noqa: E402
 
 FAUX_GH = """#!/bin/bash
 if [ "$1" = "issue" ] && [ "$2" = "comment" ]; then
@@ -183,13 +184,15 @@ def scenario_refus_precoce_libere_verrou():
 
         bin_dir = _preparer_bin(tmp_path, FAUX_CLAUDE_REFUS_PRECOCE)
         ancien_path = os.environ.get("PATH", "")
-        os.environ["PATH"] = f"{bin_dir}{os.pathsep}{ancien_path}"
-        os.environ["TEST_584_MARQUEUR"] = str(tmp_path / "marqueur_resultat")
-
-        anciens = _isoler_etat(tmp_path, "test584a", rep_travail, max_essais=3, timeout_claude=15)
-        watcher.issues_en_cours.discard(9583)
-
+        anciens = None
         try:
+            os.environ["PATH"] = f"{bin_dir}{os.pathsep}{ancien_path}"
+            verifier_faux_executables_actifs(bin_dir, ["claude", "gh"])
+            os.environ["TEST_584_MARQUEUR"] = str(tmp_path / "marqueur_resultat")
+
+            anciens = _isoler_etat(tmp_path, "test584a", rep_travail, max_essais=3, timeout_claude=15)
+            watcher.issues_en_cours.discard(9583)
+
             issue = _issue_minimale(9583, "Test #584 — refus précoce", ["mode_write"])
             watcher._traiter_issue_synchrone(issue, dry_run=False)
         finally:
@@ -198,7 +201,8 @@ def scenario_refus_precoce_libere_verrou():
             else:
                 os.environ.pop("PATH", None)
             os.environ.pop("TEST_584_MARQUEUR", None)
-            _restaurer_etat(anciens)
+            if anciens is not None:
+                _restaurer_etat(anciens)
 
         verrou = watcher._chemin_verrou(rep_travail)
         assert not verrou.exists(), (
@@ -225,22 +229,23 @@ def scenario_echec_rapide_sans_travail_libere_verrou():
 
         bin_dir = _preparer_bin(tmp_path, FAUX_CLAUDE_ECHEC_RAPIDE)
         ancien_path = os.environ.get("PATH", "")
-        os.environ["PATH"] = f"{bin_dir}{os.pathsep}{ancien_path}"
-        os.environ["TEST_584_MARQUEUR"] = str(tmp_path / "marqueur_non_utilise")
-
-        anciens = _isoler_etat(tmp_path, "test584b", rep_travail, max_essais=1, timeout_claude=15)
-        watcher.issues_en_cours.discard(9584)
-
-        labels_ajoutes = []
+        anciens = None
         vrai_ajouter_label = watcher.ajouter_label
+        labels_ajoutes = []
 
         def _capturer_ajouter_label(numero, label):
             labels_ajoutes.append(label)
             return vrai_ajouter_label(numero, label)
 
-        watcher.ajouter_label = _capturer_ajouter_label
-
         try:
+            os.environ["PATH"] = f"{bin_dir}{os.pathsep}{ancien_path}"
+            verifier_faux_executables_actifs(bin_dir, ["claude", "gh"])
+            os.environ["TEST_584_MARQUEUR"] = str(tmp_path / "marqueur_non_utilise")
+
+            anciens = _isoler_etat(tmp_path, "test584b", rep_travail, max_essais=1, timeout_claude=15)
+            watcher.issues_en_cours.discard(9584)
+            watcher.ajouter_label = _capturer_ajouter_label
+
             issue = _issue_minimale(9584, "Test #584 — échec rapide répété", ["mode_write"])
             watcher._traiter_issue_synchrone(issue, dry_run=False)
         finally:
@@ -250,7 +255,8 @@ def scenario_echec_rapide_sans_travail_libere_verrou():
             else:
                 os.environ.pop("PATH", None)
             os.environ.pop("TEST_584_MARQUEUR", None)
-            _restaurer_etat(anciens)
+            if anciens is not None:
+                _restaurer_etat(anciens)
 
         assert watcher.LABEL_ECHEC in labels_ajoutes, (
             f"le label '{watcher.LABEL_ECHEC}' aurait dû être posé — labels posés : {labels_ajoutes}")

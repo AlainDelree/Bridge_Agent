@@ -42,6 +42,14 @@ RACINE = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(RACINE))
 
 import watcher  # noqa: E402
+from garde_fou_faux_executables import verifier_faux_executables_actifs  # noqa: E402
+
+# Dépôt manifestement fictif (issue #710) — avant #710, ces scénarios
+# utilisaient le VRAI dépôt AlainDelree/Bridge_Agent : un appel ayant
+# échappé au faux `gh`/`powershell` (cf. module garde_fou_faux_executables)
+# aurait pu atteindre une vraie issue, comme lors de l'incident du
+# 03/10/2026.
+DEPOT_INEXISTANT_556 = "AlainDelree/depot-inexistant-test556"
 
 
 # ─── Aides crypto (openssl réel, disponible sur CCL) ────────────────────────
@@ -392,9 +400,10 @@ def scenario_traiter_creation_succes(tmp_path_factory):
         "TEST_556_FICHIER_VALEURS_VU": str(fichier_valeurs_vu),
     })
     try:
-        os.environ["PATH"] = f"{bin_dir}:{ancien_path}"
+        os.environ["PATH"] = f"{bin_dir}{os.pathsep}{ancien_path}"
+        verifier_faux_executables_actifs(bin_dir, ["gh", "powershell"])
         watcher.CFG = watcher.Config(
-            nom="ccw", depot="AlainDelree/Bridge_Agent",
+            nom="ccw", depot=DEPOT_INEXISTANT_556,
             rep_travail=Path("/tmp/nexiste-pas-556"), topic_ntfy="ccw",
             label="for-windows", notifier_local=False,
         )
@@ -472,9 +481,10 @@ def scenario_traiter_creation_champ_manquant_needs_human(tmp_path_factory):
         "TEST_556_FICHIER_VALEURS_VU": str(tmp / "fichier_valeurs_vu.txt"),
     })
     try:
-        os.environ["PATH"] = f"{bin_dir}:{ancien_path}"
+        os.environ["PATH"] = f"{bin_dir}{os.pathsep}{ancien_path}"
+        verifier_faux_executables_actifs(bin_dir, ["gh", "powershell"])
         watcher.CFG = watcher.Config(
-            nom="ccw", depot="AlainDelree/Bridge_Agent",
+            nom="ccw", depot=DEPOT_INEXISTANT_556,
             rep_travail=Path("/tmp/nexiste-pas-556b"), topic_ntfy="ccw",
             label="for-windows", notifier_local=False,
         )
@@ -517,9 +527,10 @@ def scenario_traiter_creation_dry_run(tmp_path_factory):
         "TEST_556_FICHIER_VALEURS_VU": str(tmp / "fichier_valeurs_vu.txt"),
     })
     try:
-        os.environ["PATH"] = f"{bin_dir}:{ancien_path}"
+        os.environ["PATH"] = f"{bin_dir}{os.pathsep}{ancien_path}"
+        verifier_faux_executables_actifs(bin_dir, ["gh", "powershell"])
         watcher.CFG = watcher.Config(
-            nom="ccw", depot="AlainDelree/Bridge_Agent",
+            nom="ccw", depot=DEPOT_INEXISTANT_556,
             rep_travail=Path("/tmp/nexiste-pas-556c"), topic_ntfy="ccw",
             label="for-windows", notifier_local=False,
         )
@@ -575,10 +586,11 @@ def scenario_dispatch_jamais_claude(tmp_path_factory):
         "TEST_556_FICHIER_VALEURS_VU": str(tmp / "fichier_valeurs_vu.txt"),
     })
     try:
-        os.environ["PATH"] = f"{bin_dir}:{ancien_path}"
+        os.environ["PATH"] = f"{bin_dir}{os.pathsep}{ancien_path}"
+        verifier_faux_executables_actifs(bin_dir, ["gh", "powershell", "claude"])
         watcher.DOSSIER_VERROUS = tmp / "verrous"
         watcher.CFG = watcher.Config(
-            nom="ccw", depot="AlainDelree/Bridge_Agent",
+            nom="ccw", depot=DEPOT_INEXISTANT_556,
             rep_travail=Path("/tmp/nexiste-pas-556d"), topic_ntfy="ccw",
             label="for-windows", notifier_local=False,
         )

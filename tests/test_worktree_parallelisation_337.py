@@ -74,6 +74,7 @@ RACINE = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(RACINE))
 
 import watcher  # noqa: E402
+from garde_fou_faux_executables import verifier_faux_executables_actifs  # noqa: E402
 
 FAUX_GH = """#!/bin/bash
 # Faux `gh` — issue #337. Stateful sur `issue view --json comments` (marqueur
@@ -542,6 +543,11 @@ def scenario_parallelisation_deux_issues_mode_write():
 
         ancien_path = os.environ.get("PATH", "")
         os.environ["PATH"] = f"{bin_dir}{os.pathsep}{ancien_path}"
+        try:
+            verifier_faux_executables_actifs(bin_dir, ["claude", "gh", "notify-send"])
+        except Exception:
+            os.environ["PATH"] = ancien_path
+            raise
         os.environ["TEST_337_DIR"] = str(test_dir)
 
         numero1, numero2 = 93371, 93372
@@ -633,6 +639,11 @@ def scenario_max_1_isole_dans_worktree():
 
         ancien_path = os.environ.get("PATH", "")
         os.environ["PATH"] = f"{bin_dir}{os.pathsep}{ancien_path}"
+        try:
+            verifier_faux_executables_actifs(bin_dir, ["claude", "gh", "notify-send"])
+        except Exception:
+            os.environ["PATH"] = ancien_path
+            raise
         os.environ["TEST_337_DIR"] = str(test_dir)
 
         ancien_dossier_verrous = watcher.DOSSIER_VERROUS
@@ -732,6 +743,11 @@ def scenario_max_1_repli_si_worktree_echoue():
 
         ancien_path = os.environ.get("PATH", "")
         os.environ["PATH"] = f"{bin_dir}{os.pathsep}{ancien_path}"
+        try:
+            verifier_faux_executables_actifs(bin_dir, ["claude", "gh", "notify-send"])
+        except Exception:
+            os.environ["PATH"] = ancien_path
+            raise
         os.environ["TEST_337_DIR"] = str(test_dir)
 
         numero = 93374
@@ -818,6 +834,11 @@ def scenario_max_superieur_repli_si_toutes_tentatives_echouent():
 
         ancien_path = os.environ.get("PATH", "")
         os.environ["PATH"] = f"{bin_dir}{os.pathsep}{ancien_path}"
+        try:
+            verifier_faux_executables_actifs(bin_dir, ["claude", "gh", "notify-send"])
+        except Exception:
+            os.environ["PATH"] = ancien_path
+            raise
         os.environ["TEST_337_DIR"] = str(test_dir)
 
         numero = 93375
@@ -889,6 +910,11 @@ def scenario_needs_human_bloque_max_1():
 
         ancien_path = os.environ.get("PATH", "")
         os.environ["PATH"] = f"{bin_dir}{os.pathsep}{ancien_path}"
+        try:
+            verifier_faux_executables_actifs(bin_dir, ["claude", "gh", "notify-send"])
+        except Exception:
+            os.environ["PATH"] = ancien_path
+            raise
         os.environ["TEST_576_DIR"] = str(test_dir)
         # FAUX_GH (issue comment/view, marqueur de résultat posté) référence
         # TEST_337_DIR en dur — même dossier, exposé sous les deux noms.
@@ -966,6 +992,11 @@ def scenario_needs_human_compte_avec_max_superieur():
 
         ancien_path = os.environ.get("PATH", "")
         os.environ["PATH"] = f"{bin_dir}{os.pathsep}{ancien_path}"
+        try:
+            verifier_faux_executables_actifs(bin_dir, ["claude", "gh", "notify-send"])
+        except Exception:
+            os.environ["PATH"] = ancien_path
+            raise
         os.environ["TEST_576_DIR"] = str(test_dir)
         # FAUX_GH (issue comment/view, marqueur de résultat posté) référence
         # TEST_337_DIR en dur — même dossier, exposé sous les deux noms.

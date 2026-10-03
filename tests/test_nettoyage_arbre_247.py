@@ -35,6 +35,7 @@ RACINE = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(RACINE))
 
 import watcher  # noqa: E402
+from garde_fou_faux_executables import verifier_faux_executables_actifs  # noqa: E402
 
 FAKE_CLAUDE = """#!/bin/bash
 # Faux `claude` : lance un enfant bloqué (lecture sur un FIFO jamais écrit,
@@ -78,6 +79,11 @@ def scenario_enfant_bloque_tue_apres_retour():
 
         ancien_path = os.environ.get("PATH", "")
         os.environ["PATH"] = f"{bin_dir}{os.pathsep}{ancien_path}"
+        try:
+            verifier_faux_executables_actifs(bin_dir, ["claude"])
+        except Exception:
+            os.environ["PATH"] = ancien_path
+            raise
         os.environ["TEST_FIFO_247"] = str(fifo_path)
         os.environ["TEST_PIDFILE_247"] = str(pidfile_path)
 

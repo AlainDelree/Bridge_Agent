@@ -50,6 +50,13 @@ import flask  # noqa: E402
 
 import watcher  # noqa: E402
 from app import projet_ccw  # noqa: E402
+from garde_fou_faux_executables import verifier_faux_executables_actifs  # noqa: E402
+
+# Dépôt manifestement fictif (issue #710) — avant #710, ces scénarios
+# utilisaient le VRAI dépôt AlainDelree/Bridge_Agent : un appel ayant
+# échappé au faux `gh` (cf. module garde_fou_faux_executables) aurait pu
+# atteindre une vraie issue, comme lors de l'incident du 03/10/2026.
+DEPOT_INEXISTANT_559 = "AlainDelree/depot-inexistant-test559"
 
 APP_FLASK = flask.Flask(__name__)
 
@@ -242,13 +249,14 @@ def scenario_creer_issue_gh_succes(tmp_path_factory):
     os.environ["TEST_559_COMPTEUR"] = str(compteur)
     os.environ.pop("TEST_559_LISTE_OUVERTES", None)
     try:
-        os.environ["PATH"] = f"{bin_dir}:{ancien_path}"
-        cfg = SimpleNamespace(depot="AlainDelree/Bridge_Agent", nom="bridge_agent")
+        os.environ["PATH"] = f"{bin_dir}{os.pathsep}{ancien_path}"
+        verifier_faux_executables_actifs(bin_dir, ["gh"])
+        cfg = SimpleNamespace(depot=DEPOT_INEXISTANT_559, nom="bridge_agent")
         res = projet_ccw._creer_issue_gh(cfg, "Un titre de test #559",
                                           "bridge,for-linux,mode_write", "corps de test")
         assert res["succes"], res
         assert res["numero"] == 1001, res
-        assert res["url"] == "https://github.com/AlainDelree/Bridge_Agent/issues/1001", res
+        assert res["url"] == f"https://github.com/{DEPOT_INEXISTANT_559}/issues/1001", res
         contenu = log_create.read_text()
         assert "TITRE=Un titre de test #559" in contenu, contenu
         assert "corps de test" in contenu, contenu
@@ -272,8 +280,9 @@ def scenario_creer_issue_gh_anti_doublon(tmp_path_factory):
     os.environ["TEST_559_LOG_CREATE"] = str(log_create)
     os.environ["TEST_559_LISTE_OUVERTES"] = str(liste)
     try:
-        os.environ["PATH"] = f"{bin_dir}:{ancien_path}"
-        cfg = SimpleNamespace(depot="AlainDelree/Bridge_Agent", nom="bridge_agent")
+        os.environ["PATH"] = f"{bin_dir}{os.pathsep}{ancien_path}"
+        verifier_faux_executables_actifs(bin_dir, ["gh"])
+        cfg = SimpleNamespace(depot=DEPOT_INEXISTANT_559, nom="bridge_agent")
         res = projet_ccw._creer_issue_gh(cfg, "Titre déjà pris #559", "bridge,for-linux", "corps")
         assert not res["succes"], res
         assert "42" in res["erreur"], res
@@ -348,9 +357,10 @@ def scenario_bootstrap_succes_complet(tmp_path_factory):
     watchers_mod.demarrer_watcher = lambda cfg, forcer=False: (appels_demarrer.append(cfg.nom), (False, 0))[1]
 
     try:
-        os.environ["PATH"] = f"{bin_dir}:{ancien_path}"
+        os.environ["PATH"] = f"{bin_dir}{os.pathsep}{ancien_path}"
+        verifier_faux_executables_actifs(bin_dir, ["gh"])
         projet_ccw.CHEMIN_CLE_PUBLIQUE_CACHE = pub
-        cfg_ba = SimpleNamespace(depot="AlainDelree/Bridge_Agent", nom="bridge_agent")
+        cfg_ba = SimpleNamespace(depot=DEPOT_INEXISTANT_559, nom="bridge_agent")
         projet_ccw._config_bridge_agent = lambda: cfg_ba
 
         r = _appeler_bootstrap({
@@ -419,7 +429,8 @@ def scenario_bootstrap_depot_inexistant_refuse(tmp_path_factory):
     os.environ["TEST_559_LOG_CREATE"] = str(log_create)
     os.environ["TEST_559_DEPOT_EXISTE"] = "0"
     try:
-        os.environ["PATH"] = f"{bin_dir}:{ancien_path}"
+        os.environ["PATH"] = f"{bin_dir}{os.pathsep}{ancien_path}"
+        verifier_faux_executables_actifs(bin_dir, ["gh"])
         projet_ccw.CHEMIN_CLE_PUBLIQUE_CACHE = pub
         r = _appeler_bootstrap({
             "nom": "monprojet", "depot": "AlainDelree/MonProjet",

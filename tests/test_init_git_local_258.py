@@ -30,6 +30,7 @@ RACINE = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(RACINE))
 
 import nouveau_projet as np  # noqa: E402
+from garde_fou_faux_executables import verifier_faux_executables_actifs  # noqa: E402
 
 DEPOT_INEXISTANT = "AlainDelree/depot-de-test-258-inexistant"
 
@@ -226,9 +227,10 @@ def test_timeout_git_ne_fait_pas_echouer_la_creation():
 
         ancien_path = os.environ.get("PATH", "")
         ancien_timeout_push = np.TIMEOUT_GIT_PUSH
-        os.environ["PATH"] = f"{bin_dir}{os.pathsep}{ancien_path}"
-        np.TIMEOUT_GIT_PUSH = 0.3
         try:
+            os.environ["PATH"] = f"{bin_dir}{os.pathsep}{ancien_path}"
+            verifier_faux_executables_actifs(bin_dir, ["git"])
+            np.TIMEOUT_GIT_PUSH = 0.3
             res = np.initialiser_git(str(rep), DEPOT_INEXISTANT)
         finally:
             os.environ["PATH"] = ancien_path

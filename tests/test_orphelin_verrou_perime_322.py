@@ -39,6 +39,7 @@ RACINE = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(RACINE))
 
 import watcher  # noqa: E402
+from garde_fou_faux_executables import verifier_faux_executables_actifs  # noqa: E402
 
 FAKE_CLAUDE_BLOQUE = """#!/bin/bash
 sleep 30
@@ -292,6 +293,7 @@ def scenario_lancer_claude_ecrit_pgid_dans_verrou():
         ancien_path = os.environ.get("PATH", "")
         os.environ["PATH"] = f"{bin_dir}{os.pathsep}{ancien_path}"
         try:
+            verifier_faux_executables_actifs(bin_dir, ["claude"])
             verrou = watcher._chemin_verrou(tmp_path)
             verrou.parent.mkdir(parents=True, exist_ok=True)
             verrou.write_text(f"pid={os.getpid()} projet=test322e rep={tmp_path}\n", encoding="utf-8")
