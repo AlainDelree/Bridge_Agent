@@ -9,6 +9,26 @@ milliers de caractères sur une seule ligne logique, coûteux à relire et
 
 Convention d'ajout : voir §10 de `BRIDGE_AGENT_DOC.md`.
 
+# CHANGELOG-714 — à fusionner dans CHANGELOG.md
+
+## 3 octobre 2026 — issue #714 (2/2)
+
+§3.16 « Issues en attente » : **onglet web « En attente »** affichant les issues mises de côté par le champ `ATTENTE` (issue #714, 2/2 — suite de #713 qui posait le mécanisme et les routes côté serveur). Liste, badge, « Lancer » et « Supprimer » — Alain seul juge si la condition affichée est remplie, aucune vérification automatique.
+
+- `static/js/attente.js` (nouveau module par fonctionnalité, suivant le modèle `resultats.js`/`ccw.js`) : chargement de la liste (`GET /issues-attente`) à l'ouverture de l'onglet et après chaque action ; une ligne par élément (pastille couleur projet via `couleurProjet` de l'ancien `app.js`, titre, date de dépôt, **condition mise en évidence** dans un encart ambré) ; état vide explicite « Aucune issue en attente ». « Lancer » (`POST /issues-attente/lancer`) retire la ligne et bascule un toast de succès (« … elle apparaîtra dans Résultats »), sans changer d'onglet ; « Supprimer » (`POST /issues-attente/supprimer`) demande d'abord confirmation via `toasts.confirmer` (suppression définitive, aucun archivage). Un échec (toast d'erreur, message du serveur si disponible) ne retire jamais la ligne, boutons réactivés. Pas de polling dédié : le badge suit le sondage déjà en place de `/issues-inbox/etat` (`rafraichirInbox`, `static/js/resultats.js`, issue #705) via un abonnement à `store.issuesInbox.nbEnAttente` — si l'onglet est ouvert quand ce compteur change, la liste se recharge automatiquement.
+- `static/js/resultats.js` : `rafraichirInbox()` pousse désormais `nb_en_attente` dans `store.issuesInbox.nbEnAttente` (même cycle que l'alarme `rejetes`, aucun appel réseau supplémentaire).
+- `static/js/socle/store.js` : tranche `issuesInbox` étendue avec `nbEnAttente: 0` par défaut.
+- `static/js/socle/index.js` : `initAttente()` appelée une fois au chargement (comme `initJournal()`/`initialiserCcw()`), avant l'activation de l'onglet par défaut.
+- `templates/fragments/onglets.html` : nouvel onglet `data-onglet="attente"` « En attente », juste après Résultats, avec `#badge-attente` (masqué par défaut, `display:none` tant que le compteur est à zéro — `decisionBadgeAttente`).
+- `templates/fragments/onglet_attente.html` (nouveau fragment) + `templates/index.html` (inclusion + feuille de style) : panneau `#panneau-attente` / `#attente-liste`, suivant le patron des autres onglets de la refonte web.
+- `static/css/attente.css` (nouveau, chargé en fin de cascade) : carte par élément, condition en encart ambré (même traitement que `.np-rappel-git`), badge compteur rouge cohérent avec `.pastille-notif`. Disposition en colonne unique avec `flex-wrap`, sans tableau ni défilement horizontal (contrainte 1360×768).
+- Tests : `static/js/tests/attente.test.js` (nouveau, 12 scénarios Node) — `formaterDateAttente` (zéro-remplissage, absence), `decisionBadgeAttente` (seuil > 0), `descriptionLigneAttente` (replis titre/condition), `messageEchecAttente` (interprétation du corps JSON d'une réponse HTTP non-2xx, ces deux routes renvoyant 400/404/500 sur erreur contrairement à la convention `succes:false` + 200 des autres routes de l'inbox). `static/js/tests/pont_globales.test.js` : `attente` ajouté à la liste des onglets réels (`NOMS_ONGLETS`). Suite complète vérifiée verte : 216 tests Node (`node --test static/js/tests static/js/socle/tests`, y compris le garde-fou socle #653 et le garde-fou pont) et 152 tests Python (`pytest tests/`).
+- `BRIDGE_AGENT_DOC.md` §3.16 : courte mention de l'onglet et de son fonctionnement (badge, Lancer, Supprimer) ajoutée en fin de section.
+- Aucune modification côté serveur : `GET /issues-attente`, `POST /issues-attente/lancer`, `POST /issues-attente/supprimer` et `nb_en_attente` (issue #713) étaient déjà en place et inchangés.
+- Point de vérification demandé par l'issue (neutralisation réseau #635 vs. l'incident « fichier reçu : mono.txt » observé pendant #713) : vérifié sans modification nécessaire. `tests/test_champ_attente_713.py` ne lance aucun sous-processus (appelle `traiter_fichier` directement en process) ; `utils._script_tests_direct()` le neutralise correctement que ce soit exécuté sous pytest ou en direct (`python3 tests/test_champ_attente_713.py`, confirmé par relecture de code et exécution réelle, aucune requête vers `localhost:5100` — le serveur réel tournait sur ce port pendant la vérification). Les sous-processus lancés par `tests/lancer_tous_les_tests.py` restent couverts : chaque fichier de test est son propre `__main__` sous `tests/`. `tests/test_neutralisation_notifs_reseau_635.py` (déjà existant) couvre explicitement `_notifier_fichier_recu` par interception d'`urlopen` — ré-exécuté, toujours vert. L'incident documenté dans l'issue provient très vraisemblablement d'une vérification manuelle ponctuelle hors du harnais de tests officiel (hors périmètre de cette issue : modification du comportement du watcher).
+
+Hors périmètre (rappel de l'issue, non traité ici) : toute vérification automatique des conditions, le formulaire web, la modification du comportement du watcher.
+
 # CHANGELOG-713 — à fusionner dans CHANGELOG.md
 
 ## 3 octobre 2026 — issue #713 (1/2)
