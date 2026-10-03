@@ -41,7 +41,7 @@ import threading
 import time
 from pathlib import Path
 
-from flask import jsonify, request
+from flask import has_app_context, jsonify, request
 
 log = logging.getLogger(__name__)
 
@@ -216,6 +216,32 @@ def _extraire_projets(stdout: str):
     return []
 
 
+class _ReponseErreurSansContexte:
+    """Substitut minimal d'une réponse jsonify(...) d'échec (même interface
+    `.get_json()` que consomment _texte_erreur_json/_erreur_de), utilisé
+    UNIQUEMENT quand aucun contexte applicatif Flask n'est actif — thread
+    démon de demarrer_service_ccw_arriere_plan (issue #709) ou process séparé
+    de scripts/watcher_issues_inbox.py (issue #711, point 4), tous deux
+    susceptibles d'appeler _preparer()/_lister_projets_vm() via la fonction
+    « pure » _piloter_service_ccw_action SANS qu'un contexte Flask soit
+    garanti. jsonify() lève RuntimeError hors contexte applicatif — voir
+    _reponse_erreur_ssh ci-dessous."""
+    def __init__(self, erreur: str):
+        self._erreur = erreur
+
+    def get_json(self):
+        return {"succes": False, "erreur": self._erreur}
+
+
+def _reponse_erreur_ssh(erreur: str):
+    """jsonify(...) si un contexte applicatif Flask est actif (c'est TOUJOURS
+    le cas pour les routes — comportement strictement inchangé), sinon le
+    substitut minimal ci-dessus (issue #711)."""
+    if has_app_context():
+        return jsonify(succes=False, erreur=erreur)
+    return _ReponseErreurSansContexte(erreur)
+
+
 def _preparer() -> tuple[tuple[str, str, str] | None, object]:
     """Vérif commune avant une opération SSH : configuration disponible
     (hôte, utilisateur, clé privée).
@@ -224,7 +250,7 @@ def _preparer() -> tuple[tuple[str, str, str] | None, object]:
     (None, réponse_json_erreur) — jamais une exception Flask brute."""
     ctx, erreur = _charger_config_ssh()
     if erreur:
-        return None, jsonify(succes=False, erreur=erreur)
+        return None, _reponse_erreur_ssh(erreur)
     return ctx, None
 
 
@@ -240,20 +266,19 @@ def _lister_projets_vm(hote: str, utilisateur: str, cle_privee: str):
     déjà portée par ce script et finaliser_projet_ccw_auto.ps1 (issue #180)."""
     script = DOSSIER_WINDOWS / "lister_projets_ccw.ps1"
     if not script.exists():
-        return None, jsonify(succes=False, erreur=f"Script introuvable : {script.name}")
+        return None, _reponse_erreur_ssh(f"Script introuvable : {script.name}")
     try:
         r = _copier(hote, utilisateur, cle_privee, script, TIMEOUT_COURT)
         if r.returncode != 0:
-            return None, jsonify(succes=False, erreur=_message_echec("copie du script", r))
+            return None, _reponse_erreur_ssh(_message_echec("copie du script", r))
         r = _executer_ps(hote, utilisateur, cle_privee, script.name, [], TIMEOUT_COURT)
     except subprocess.TimeoutExpired:
-        return None, jsonify(succes=False,
-            erreur="Délai dépassé en interrogeant le PC fixe (SSH).")
+        return None, _reponse_erreur_ssh("Délai dépassé en interrogeant le PC fixe (SSH).")
     except subprocess.SubprocessError as e:
-        return None, jsonify(succes=False, erreur=f"Erreur SSH : {e}")
+        return None, _reponse_erreur_ssh(f"Erreur SSH : {e}")
     projets = _extraire_projets(r.stdout)
     if projets is None:
-        return None, jsonify(succes=False, erreur=_message_echec("liste des projets", r))
+        return None, _reponse_erreur_ssh(_message_echec("liste des projets", r))
     return projets, None
 
 
@@ -615,10 +640,12 @@ def demarrer_service_ccw_arriere_plan(nom_projet: str) -> None:
 
 
 def _texte_erreur_json(reponse_json) -> str:
-    """Extrait le champ erreur d'une réponse jsonify(...) d'échec (_preparer,
-    _lister_projets_vm) — même logique que _erreur_de dans app/interruption.py,
-    dupliquée ici pour éviter un import circulaire (interruption.py importe déjà
-    depuis ce module)."""
+    """Extrait le champ erreur d'une réponse d'échec de _preparer/
+    _lister_projets_vm (jsonify(...) en contexte Flask, ou
+    _ReponseErreurSansContexte hors contexte — issue #711, même interface
+    `.get_json()` dans les deux cas) — même logique que _erreur_de dans
+    app/interruption.py, dupliquée ici pour éviter un import circulaire
+    (interruption.py importe déjà depuis ce module)."""
     try:
         return reponse_json.get_json().get("erreur") or "Erreur inconnue."
     except Exception:

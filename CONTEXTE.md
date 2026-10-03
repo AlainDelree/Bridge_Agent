@@ -57,10 +57,9 @@ lui-même par ses propres issues (dogfooding).
   PROMPT CCL par `watcher.py` (point de passage unique) ; `globales.md`
   obligatoire, le reste facultatif.
 - §18 (#191/#192) : pièces jointes image → `issue-attachments/` + URL raw.
-- §17 (#187) : notifications centralisées via `new_issue.py` (tous projets,
-  CCW).
-- §16 (#174…) : onglet « CCW » — pilotage du PC Windows physique depuis
-  Linux. #709 : une issue for-windows démarre seule le service CCW éteint.
+- §17 (#187) : notifications centralisées via `new_issue.py` (tous projets).
+- §16 (#174…) : onglet « CCW ». #709/#711 : une issue for-windows démarre
+  seul le service CCW éteint (web, `issues_inbox/`, relance) — retrofit fini.
 
 ## Maintenance de ce fichier
 Si ta tâche modifie l'architecture, les dépendances, les conventions ou

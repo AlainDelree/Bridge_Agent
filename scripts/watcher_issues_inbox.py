@@ -78,6 +78,11 @@ from watcher import (charger_config, lire_conf, est_titre_chef,  # noqa: E402
                      LABEL_SANS_REDACTEUR,  # (issue #647)
                      valider_sous_dossier, valider_repo_cible)  # noqa: E402 (issue #567)
 from app.watchers import redemarrer_si_eteint  # noqa: E402 (issue #486, #600)
+from app.ccw import demarrer_service_ccw_arriere_plan  # noqa: E402 (issue #711, étape D — déjà
+# importé transitivement via app.interruption ci-dessous ; direct ici pour la lisibilité.
+# Les objets Flask de ce module (jsonify/request) ne sont utilisés que dans ses fonctions de
+# route, jamais par demarrer_service_ccw_arriere_plan/_demarrer_service_ccw_sync — aucune requête
+# Flask n'est donc requise dans ce process séparé (voir issue #711, point 4).
 from app.issues import (_issue_ouverte_meme_titre, formater_entete,  # noqa: E402 (issues #491, #601, #624)
                         numero_depuis_url, donnees_temps_creation,  # (issue #634)
                         extraire_modele_entete, modele_defaut_projet,  # (issue #638, #640)
@@ -692,6 +697,11 @@ def _traiter_relance(cfg: ConfigInbox, champs: dict):
             return (False, issue.get("title") or f"#{numero}", champs["projet"],
                     f"mise à jour du corps de #{numero} échouée : {detail_edit}", "", None, None)
 
+    # Labels de l'issue relancée, lus une seule fois (déjà rapatriés par
+    # _recuperer_issue ci-dessus) — décident, comme à la création (#711, étape
+    # D), lequel des deux mécanismes de démarrage à la demande s'applique.
+    labels_issue = [(l.get("name") or "") for l in (issue.get("labels") or [])]
+
     # Redémarrage auto du watcher CCL cible si éteint (issue #572) : un
     # RELANCE déposé après que ce watcher se soit auto-éteint par inactivité
     # (§20 du DOC, issue #200) resterait sinon bloqué en file jusqu'à ce
@@ -703,10 +713,22 @@ def _traiter_relance(cfg: ConfigInbox, champs: dict):
     # watcher tourne déjà, le démarre sinon. Tracé dans le commentaire posté
     # ci-dessous, quel que soit le cas (visibilité plutôt que correction
     # silencieuse, cf. §11 du DOC).
-    watcher_demarre, watcher_pid, trace_watcher = redemarrer_si_eteint(cfg_projet, tracer=True)
-    if watcher_demarre:
-        log.info(f"Watcher CCL redémarré pour la relance de #{numero} "
-                 f"(projet « {champs['projet']} », pid {watcher_pid}).")
+    #
+    # for-windows (issue #711, étape D) : symétrique, mais vers le service CCW
+    # délégué (PC fixe, SSH) via demarrer_service_ccw_arriere_plan (#709,
+    # étape C) — strictement non bloquant (thread démon), jamais de retour
+    # exploitable ici. Son résultat (asynchrone) n'a donc pas sa place dans le
+    # commentaire de trace ci-dessous, à la différence du watcher CCL.
+    watcher_demarre, watcher_pid, trace_watcher = None, None, ""
+    if "for-linux" in labels_issue:
+        watcher_demarre, watcher_pid, trace_watcher = redemarrer_si_eteint(cfg_projet, tracer=True)
+        if watcher_demarre:
+            log.info(f"Watcher CCL redémarré pour la relance de #{numero} "
+                     f"(projet « {champs['projet']} », pid {watcher_pid}).")
+    elif "for-windows" in labels_issue:
+        log.info(f"Démarrage CCW à la demande tenté pour la relance de #{numero} "
+                 f"(projet « {champs['projet']} »).")
+        demarrer_service_ccw_arriere_plan(cfg_projet.nom)
 
     commentaire = COMMENTAIRE_RELANCE_INBOX
     if modifies:
@@ -725,7 +747,6 @@ def _traiter_relance(cfg: ConfigInbox, champs: dict):
     # #624) : l'issue avait été RETIRÉE de la liste à son échec définitif
     # (needs-human) — sans ce POST, ni sa future prise en charge (ACK) ni sa
     # clôture ne seraient plus détectées.
-    labels_issue = [(l.get("name") or "") for l in (issue.get("labels") or [])]
     if "for-windows" in labels_issue:
         _notifier_issue_a_surveiller(depot, numero, ",".join(labels_issue))
 
@@ -1007,11 +1028,25 @@ def _traiter_bloc(cfg: ConfigInbox, contenu_bloc: str):
     # que le bouton « Lancer ») : ne fait rien si le watcher tourne déjà (pas
     # question d'interrompre un traitement d'issue potentiellement en cours
     # sur ce projet), le démarre sinon.
-    demarre, pid, _trace = redemarrer_si_eteint(cfg_projet)
+    #
+    # Garde sur les labels (issue #711, étape D du retrofit CCW) : for-linux
+    # inchangé (comportement ci-dessus, issue #486) ; for-windows démarre à la
+    # place le service CCW délégué (PC fixe, SSH) via
+    # demarrer_service_ccw_arriere_plan (issue #709, étape C) — symétrique du
+    # chemin déjà en place dans app.issues.envoyer() pour le formulaire web.
+    # Non bloquant (thread démon) et n'échoue jamais : un hôte SSH non
+    # configuré ou un projet sans service CCW sont ignorés silencieusement
+    # (journal de app.ccw seul) — jamais de rejet du fichier déposé.
     suffixe = ""
-    if demarre:
-        suffixe = f" — watcher CCL démarré (pid {pid})"
-        log.info(f"Watcher CCL démarré pour le projet « {champs['projet']} » (pid {pid}).")
+    if "for-linux" in labels.split(","):
+        demarre, pid, _trace = redemarrer_si_eteint(cfg_projet)
+        if demarre:
+            suffixe = f" — watcher CCL démarré (pid {pid})"
+            log.info(f"Watcher CCL démarré pour le projet « {champs['projet']} » (pid {pid}).")
+    elif "for-windows" in labels.split(","):
+        log.info(f"Démarrage CCW à la demande tenté pour « {champs['projet']} » "
+                 f"(issue for-windows créée depuis issues_inbox/).")
+        demarrer_service_ccw_arriere_plan(cfg_projet.nom)
 
     # Enrichissement de l'événement SSE creation_issue (issue #634) : mêmes
     # données que /issues-en-attente calculerait pour cette issue, à partir de
