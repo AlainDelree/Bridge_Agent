@@ -9,6 +9,24 @@ milliers de caractères sur une seule ligne logique, coûteux à relire et
 
 Convention d'ajout : voir §10 de `BRIDGE_AGENT_DOC.md`.
 
+# CHANGELOG-717 — à fusionner dans CHANGELOG.md
+
+## 4 octobre 2026 — issue #717
+
+§16 : **démarrer/arrêter les services CCW depuis Windows SANS SSH** (issue #717, étape F du retrofit CCW #712) — `new_issue.py` tournant nativement sous Windows (ThinkPad éteint, nouveau PC) appelle désormais `nssm` directement au lieu d'ignorer silencieusement l'absence d'hôte SSH configuré.
+
+Constat vérifié le 04/10/2026, depuis un PowerShell NON élevé en `AlainW` : le compte est administrateur mais son jeton est bridé par l'UAC (groupe Administrators « deny only », niveau Medium) — `nssm status` fonctionne, `nssm start` échoue avec « OpenService(): Access is denied ». L'hypothèse « UAC désactivé » était donc fausse ; le démarrage par SSH marche parce qu'une session SSH d'administrateur reçoit les droits complets.
+
+- `provisioning/windows/ccw-commun.psm1` : nouvelle fonction `Autoriser-DemarrageServiceCcw` — accorde à un compte (`AlainW` par défaut, SID résolu **dynamiquement**, jamais codé en dur) le droit de démarrer/arrêter/interroger un service SANS élévation UAC (`sc.exe sdset`, entrée `(A;;LCSWRPWPLOCRRC;;;<SID>)`). Idempotente : lit le descripteur actuel (`sc.exe sdshow`), ne fait rien si l'entrée existe déjà, sinon l'insère dans la section `D:` (avant `S:` si présente) sans retirer les entrées existantes (SYSTEM/Administrateurs/utilisateurs interactifs), puis réécrit via `sc.exe sdset`.
+- `provisioning/windows/autoriser_demarrage_ccw.ps1` (nouveau) : à lancer **une seule fois**, en PowerShell administrateur, pour poser les droits sur tous les services `CCW-Watcher*` déjà existants (base comprise) — affiche le résultat par service.
+- `provisioning/windows/ajouter_projet_ccw.ps1` : pose les mêmes droits en fin de script (persistance) — `nssm remove`+`install` efface sinon ce réglage à chaque recréation d'un projet.
+- `app/ccw.py` : `_local_natif_sans_ssh()` détecte le cas natif Windows sans hôte SSH configuré (`os.name == "nt"` + config SSH absente — comportement Linux strictement inchangé). `_piloter_service_ccw_action` bascule alors sur une nouvelle branche locale (`_piloter_service_ccw_action_local` + `_nom_service_local`, même règle Bridge_Agent → `CCW-Watcher` sans suffixe) qui appelle `nssm` **directement en local**, sans ssh/scp — couvre à la fois le démarrage à la demande (`demarrer_service_ccw_arriere_plan`, toujours en thread démon non bloquant) et les actions Démarrer/Arrêter/Redémarrer de l'onglet CCW. Échec (droits non posés, service introuvable, nssm absent du PATH) → journalisé clairement, jamais silencieux.
+- `app/ccw.py` : `_sddl_contient_sid` / `_inserer_ace_sddl` / `_ace_demarrage_arret` / `_ajouter_droit_demarrage_sddl` — port Python PUR de l'algorithme de manipulation du descripteur SDDL réellement exécuté en PowerShell (`ccw-commun.psm1`), gardé uniquement pour permettre des tests unitaires sans dépendre de Windows (suite de tests sous Linux).
+- Tests : `tests/test_demarrage_ccw_windows_717.py` (nouveau, 19 scénarios en fonctions `test_*` collectées par pytest — comme `tests/test_champ_attente_713.py`/`tests/test_demarrage_ccw_a_la_demande_709.py`, avec le même `main()` autonome pour `python3 tests/test_demarrage_ccw_windows_717.py`) — manipulation idempotente de la chaîne SDDL (ajout, conservation des entrées existantes, insertion avant la section SACL, descripteur invalide), choix SSH ou nssm direct selon `os.name`/la config SSH, résolution du nom de service local, bascule transparente de `_piloter_service_ccw_action`/`_demarrer_service_ccw_sync` vers nssm local (succès, échec avec message clair, nssm introuvable, nom invalide). Suite complète vérifiée verte : `pytest tests/` → 175 tests (156 préexistants + 19 nouveaux), aucune régression.
+- `BRIDGE_AGENT_DOC.md` §16 : correction de la mention « AlainW utilisateur non-administrateur » (3 occurrences) → AlainW est administrateur, avec un jeton filtré par l'UAC en session normale. Bloc « Deux limites connues » du retrofit #712 mis à jour (la limite « new_issue.py natif Windows » est résolue, documentée comme telle) ; nouveau paragraphe « Droits de démarrage/arrêt sans élévation UAC — sc.exe sdset » décrivant le mécanisme, le script à lancer une fois et la persistance via `ajouter_projet_ccw.ps1` ; entrée ajoutée au tableau des scripts pour `autoriser_demarrage_ccw.ps1`.
+
+Hors périmètre (rappel de l'issue) : `configs/*.conf` non touché, service `CCW-Watcher` de base toujours actif (inchangé), jetons CCW non touchés. Validation réelle (`nssm start` puis `stop` en PowerShell non élevé sur CCW) à faire par Alain après fusion et exécution de `autoriser_demarrage_ccw.ps1`.
+
 # CHANGELOG-716 — à fusionner dans CHANGELOG.md
 
 ## 4 octobre 2026 — issue #716
