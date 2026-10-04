@@ -1220,18 +1220,24 @@ def _traiter_lot(cfg: ConfigInbox, chemin: Path, blocs: list) -> None:
 
 
 def traiter_fichier(cfg: ConfigInbox, chemin: Path) -> None:
-    # SSE fichier_recu (issue #631) : émis dès la prise en charge, AVANT tout
-    # parsing/validation — le fichier peut malgré tout finir refusé, mais son
-    # apparition dans l'interface doit être immédiate.
-    _notifier_fichier_recu(chemin.name)
-
+    # SSE fichier_recu (issue #631) : émis dès la prise en charge, AVANT toute
+    # validation de fond — le fichier peut malgré tout finir refusé, mais son
+    # apparition dans l'interface doit être immédiate. EXCEPTION (issue #716) :
+    # un fichier (ou lot) ENTIÈREMENT mis en attente (champ ATTENTE, #713) ne
+    # doit produire aucune ligne « fichier reçu » dans Résultats — rien ne
+    # viendrait jamais la remplacer ni l'enlever puisqu'aucune issue n'est
+    # créée. L'émission est donc retardée après la détection ATTENTE
+    # ci-dessous (qui ne lit/découpe que le contenu, sans appel réseau), et
+    # sautée entièrement sur les chemins où tout finit en_attente/.
     if chemin.suffix.lower() != ".txt":
+        _notifier_fichier_recu(chemin.name)
         _rejeter(cfg, chemin, "", "", "extension invalide : attendu .txt")
         return
 
     try:
         contenu = chemin.read_text(encoding="utf-8")
     except OSError as e:
+        _notifier_fichier_recu(chemin.name)
         _rejeter(cfg, chemin, "", "", f"lecture impossible : {e}")
         return
 
@@ -1256,12 +1262,23 @@ def traiter_fichier(cfg: ConfigInbox, chemin: Path) -> None:
             blocs_a_traiter.append(bloc)
 
         if not blocs_a_traiter:
+            # Lot ENTIÈREMENT mis en attente (issue #716) : aucune ligne
+            # « fichier reçu » — _notifier_fichier_recu n'a jamais été
+            # appelé pour ce fichier, rien ne doit la remplacer/l'enlever
+            # puisqu'aucune issue n'est créée. Seul le badge de l'onglet
+            # « En attente » signale son arrivée.
             try:
                 chemin.unlink()
             except OSError as e:
                 log.warning(f"Lot entièrement mis en attente mais suppression "
                             f"de {chemin.name} échouée : {e}")
             return
+
+        # Lot mixte : au moins un bloc rejoint le circuit normal (création ou
+        # refus) — la ligne « fichier reçu » apparaît donc bien, comme avant
+        # #716 (elle sera remplacée par la première issue créée, cf.
+        # resultats.js).
+        _notifier_fichier_recu(chemin.name)
 
         # Cas limite : si TOUS les blocs restants (non mis en attente)
         # échouent ensuite, _traiter_lot déplace le fichier D'ORIGINE entier
@@ -1275,11 +1292,14 @@ def traiter_fichier(cfg: ConfigInbox, chemin: Path) -> None:
 
     # Champ ATTENTE (issue #713) : fichier mono-issue entier mis de côté tel
     # quel, sans validation ni création — voir _mettre_fichier_en_attente.
+    # Aucune ligne « fichier reçu » dans ce cas (issue #716) : _notifier_
+    # fichier_recu n'est appelé que plus bas, sur le seul circuit normal.
     condition = lire_condition_attente(contenu)
     if condition:
         _mettre_fichier_en_attente(cfg, chemin, contenu, condition)
         return
 
+    _notifier_fichier_recu(chemin.name)
     succes, titre, projet, texte, resultat_gh, labels_creation, donnees_temps = _traiter_bloc(cfg, contenu)
     if not succes:
         _rejeter(cfg, chemin, titre, projet, texte)
