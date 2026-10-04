@@ -799,9 +799,13 @@ d'événements, qui risquerait d'être manqué (cf. #705).
 périmètre de #713** : l'onglet qui affiche ces éléments côté interface (issue
 suivante, 2/2) et toute vérification automatique de la condition.
 
-**Onglet « En attente » (issue #714, 2/2)** : juste après Résultats
-(`templates/fragments/onglet_attente.html`, module dédié
-`static/js/attente.js`). Une ligne par élément — titre, pastille couleur du
+**Onglet « En attente » (issue #714, 2/2)** : avant Résultats dans la barre
+d'onglets, pour plus de visibilité (`templates/fragments/onglet_attente.html`,
+module dédié `static/js/attente.js`). Réordonné avant Résultats par l'issue
+#718 — Résultats reste l'onglet actif au lancement du programme malgré ce
+changement d'ordre : l'activation par défaut se fait par NOM
+(`ONGLET_PAR_DEFAUT` dans `static/js/onglets.js`), jamais par position dans la
+barre. Une ligne par élément — titre, pastille couleur du
 projet, date de dépôt, et la **condition mise en évidence** (c'est elle qui
 dit à Alain quand lancer) — avec « Lancer » (rejoint le circuit normal, sans
 changement d'onglet automatique) et « Supprimer » (confirmation requise,

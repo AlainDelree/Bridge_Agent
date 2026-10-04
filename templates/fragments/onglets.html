@@ -1,17 +1,22 @@
   <div class="onglets">
-    <!-- Badge d'alerte déplacé sur l'onglet Résultats (issue #639) : l'onglet
-         « Résultats inbox » a été supprimé, ses fichiers rejetés apparaissent
-         désormais comme lignes rouges dans la liste Résultats. -->
-    <div class="onglet actif" data-onglet="resultats">Résultats
-      <span id="badge-alarme-inbox" class="badge-alarme-inbox" style="display:none" title="Des fichiers issues_inbox/rejected/ attendent une correction manuelle">🚨</span>
-    </div>
-    <!-- Onglet « En attente » (issue #714, suite #713) : issues mises de côté
-         par le champ d'en-tête ATTENTE, juste après Résultats. Badge =
-         nombre d'éléments en attente, visible seulement si > 0 (voir
-         static/js/attente.js, qui suit le sondage déjà en place de
-         /issues-inbox/etat plutôt que d'ouvrir un polling dédié). -->
+    <!-- Onglet « En attente » (issue #714, suite #713 ; réordonné avant
+         Résultats par #718 pour plus de visibilité) : issues mises de côté
+         par le champ d'en-tête ATTENTE. Badge = nombre d'éléments en
+         attente, visible seulement si > 0 (voir static/js/attente.js, qui
+         suit le sondage déjà en place de /issues-inbox/etat plutôt que
+         d'ouvrir un polling dédié). Sa position dans la barre n'a AUCUNE
+         incidence sur l'onglet actif au lancement (toujours Résultats, par
+         NOM — voir ONGLET_PAR_DEFAUT dans static/js/onglets.js). -->
     <div class="onglet" data-onglet="attente">En attente
       <span id="badge-attente" class="badge-attente" style="display:none"></span>
+    </div>
+    <!-- Badge d'alerte déplacé sur l'onglet Résultats (issue #639) : l'onglet
+         « Résultats inbox » a été supprimé, ses fichiers rejetés apparaissent
+         désormais comme lignes rouges dans la liste Résultats. Reste l'onglet
+         actif au lancement du programme (issue #718) malgré le réordonnancement
+         ci-dessus. -->
+    <div class="onglet actif" data-onglet="resultats">Résultats
+      <span id="badge-alarme-inbox" class="badge-alarme-inbox" style="display:none" title="Des fichiers issues_inbox/rejected/ attendent une correction manuelle">🚨</span>
     </div>
     <div class="onglet" data-onglet="journal">Journal watcher</div>
     <div class="onglet" data-onglet="config">Configuration</div>
