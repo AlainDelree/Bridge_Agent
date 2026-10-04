@@ -89,18 +89,18 @@ SDDL_SANS_ALAINW = (
 SID_ALAINW = "S-1-5-21-1111111111-2222222222-3333333333-1001"
 
 
-def scenario_sddl_contient_sid_absent():
+def test_sddl_contient_sid_absent():
     assert ccw._sddl_contient_sid(SDDL_SANS_ALAINW, SID_ALAINW) is False
     return {}
 
 
-def scenario_sddl_contient_sid_present():
+def test_sddl_contient_sid_present():
     sddl_avec = SDDL_SANS_ALAINW + f"(A;;LCSWRPWPLOCRRC;;;{SID_ALAINW})"
     assert ccw._sddl_contient_sid(sddl_avec, SID_ALAINW) is True
     return {}
 
 
-def scenario_inserer_ace_conserve_les_entrees_existantes():
+def test_inserer_ace_conserve_les_entrees_existantes():
     ace = f"(A;;LCSWRPWPLOCRRC;;;{SID_ALAINW})"
     nouveau = ccw._inserer_ace_sddl(SDDL_SANS_ALAINW, ace)
     # Les 3 entrées existantes (SY, BA, IU) doivent rester TELLES QUELLES.
@@ -113,7 +113,7 @@ def scenario_inserer_ace_conserve_les_entrees_existantes():
     return {}
 
 
-def scenario_inserer_ace_avant_section_sacl():
+def test_inserer_ace_avant_section_sacl():
     """Si une section S: (SACL, audit) est présente, la nouvelle entrée doit
     s'insérer AVANT elle, jamais après — sinon sc.exe sdset la rejette."""
     sddl_avec_sacl = SDDL_SANS_ALAINW + "S:(AU;FA;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;WD)"
@@ -124,7 +124,7 @@ def scenario_inserer_ace_avant_section_sacl():
     return {}
 
 
-def scenario_inserer_ace_descripteur_invalide_leve():
+def test_inserer_ace_descripteur_invalide_leve():
     try:
         ccw._inserer_ace_sddl("PAS_UN_SDDL_VALIDE", "(A;;RPWP;;;S-1-5-1)")
     except ValueError:
@@ -132,7 +132,7 @@ def scenario_inserer_ace_descripteur_invalide_leve():
     raise AssertionError("ValueError attendue pour un descripteur sans section D:")
 
 
-def scenario_ajouter_droit_demarrage_sddl_idempotent():
+def test_ajouter_droit_demarrage_sddl_idempotent():
     """Deuxième appel sur le résultat du premier : AUCUN changement (a_change
     = False), chaîne strictement identique."""
     nouveau1, a_change1 = ccw._ajouter_droit_demarrage_sddl(SDDL_SANS_ALAINW, SID_ALAINW)
@@ -145,7 +145,7 @@ def scenario_ajouter_droit_demarrage_sddl_idempotent():
 
 # ─── _local_natif_sans_ssh : choix SSH ou nssm direct ──────────────────────
 
-def scenario_linux_toujours_ssh_meme_config_absente():
+def test_linux_toujours_ssh_meme_config_absente():
     """os.name == 'posix' (Linux, cas réel de CCL) : TOUJOURS la branche SSH,
     peu importe l'état de la config SSH — comportement historique inchangé."""
     with Patch(ccw.os, "name", "posix"), \
@@ -157,7 +157,7 @@ def scenario_linux_toujours_ssh_meme_config_absente():
     return {}
 
 
-def scenario_windows_avec_ssh_configure_reste_ssh():
+def test_windows_avec_ssh_configure_reste_ssh():
     """os.name == 'nt' MAIS un hôte SSH est configuré : la branche SSH
     historique reste utilisée (inchangé) — seule l'ABSENCE de config bascule
     sur nssm direct."""
@@ -167,7 +167,7 @@ def scenario_windows_avec_ssh_configure_reste_ssh():
     return {}
 
 
-def scenario_windows_sans_ssh_bascule_local():
+def test_windows_sans_ssh_bascule_local():
     """os.name == 'nt' ET aucun hôte SSH configuré : nouveau comportement
     #717 — bascule sur nssm direct plutôt que d'échouer silencieusement."""
     with Patch(ccw.os, "name", "nt"), \
@@ -178,18 +178,18 @@ def scenario_windows_sans_ssh_bascule_local():
 
 # ─── _nom_service_local : résolution sans lister_projets_ccw.ps1 ──────────
 
-def scenario_nom_service_local_bridge_agent_sans_suffixe():
+def test_nom_service_local_bridge_agent_sans_suffixe():
     assert ccw._nom_service_local("Bridge_Agent") == "CCW-Watcher"
     assert ccw._nom_service_local("bridge_agent") == "CCW-Watcher"  # insensible à la casse
     return {}
 
 
-def scenario_nom_service_local_projet_normal():
+def test_nom_service_local_projet_normal():
     assert ccw._nom_service_local("Rummikub") == "CCW-Watcher-Rummikub"
     return {}
 
 
-def scenario_nom_service_local_invalide():
+def test_nom_service_local_invalide():
     assert ccw._nom_service_local("") is None
     assert ccw._nom_service_local("avec espace") is None
     assert ccw._nom_service_local("chemin/separe") is None
@@ -200,7 +200,7 @@ def scenario_nom_service_local_invalide():
 
 # ─── _piloter_service_ccw_action : bascule transparente vers le local ─────
 
-def scenario_piloter_action_bascule_locale_succes():
+def test_piloter_action_bascule_locale_succes():
     appels = []
 
     def _run(cmd, **kwargs):
@@ -221,7 +221,7 @@ def scenario_piloter_action_bascule_locale_succes():
     return {}
 
 
-def scenario_piloter_action_bascule_locale_echec_message_clair():
+def test_piloter_action_bascule_locale_echec_message_clair():
     def _run(cmd, **kwargs):
         return FauxResultat(5, stderr="OpenService(): Access is denied\n")
 
@@ -238,7 +238,7 @@ def scenario_piloter_action_bascule_locale_echec_message_clair():
     return {}
 
 
-def scenario_piloter_action_bascule_locale_nssm_introuvable():
+def test_piloter_action_bascule_locale_nssm_introuvable():
     def _run(cmd, **kwargs):
         raise FileNotFoundError("nssm introuvable")
 
@@ -253,7 +253,7 @@ def scenario_piloter_action_bascule_locale_nssm_introuvable():
     return {}
 
 
-def scenario_piloter_action_bascule_locale_nom_invalide():
+def test_piloter_action_bascule_locale_nom_invalide():
     with Patch(ccw.os, "name", "nt"), \
          Patch(ccw, "_charger_config_ssh", lambda: (None, "non configuré")), \
          Patch(ccw, "_preparer", _appel_interdit), \
@@ -266,7 +266,7 @@ def scenario_piloter_action_bascule_locale_nom_invalide():
 
 # ─── _demarrer_service_ccw_sync : démarrage à la demande, mode local ──────
 
-def scenario_demarrer_sync_local_succes():
+def test_demarrer_sync_local_succes():
     def _run(cmd, **kwargs):
         return FauxResultat(0, stdout="Service started.\n")
 
@@ -280,7 +280,7 @@ def scenario_demarrer_sync_local_succes():
     return {}
 
 
-def scenario_demarrer_sync_local_echec_avertissement_non_bloquant():
+def test_demarrer_sync_local_echec_avertissement_non_bloquant():
     """Le démarrage local échoue réellement (droits sc.exe sdset non posés,
     par exemple) : AVERTISSEMENT retourné, PAS d'exception — comportement
     non bloquant identique à la branche SSH, mais jamais silencieux non plus
@@ -298,7 +298,7 @@ def scenario_demarrer_sync_local_echec_avertissement_non_bloquant():
     return {}
 
 
-def scenario_demarrer_sync_local_nom_invalide_non_applicable():
+def test_demarrer_sync_local_nom_invalide_non_applicable():
     with Patch(ccw.os, "name", "nt"), \
          Patch(ccw, "_charger_config_ssh", lambda: (None, "non configuré")), \
          Patch(ccw, "_preparer", _appel_interdit), \
@@ -311,25 +311,25 @@ def scenario_demarrer_sync_local_nom_invalide_non_applicable():
 
 def main() -> int:
     tests = [
-        ("_sddl_contient_sid : SID absent", scenario_sddl_contient_sid_absent),
-        ("_sddl_contient_sid : SID présent", scenario_sddl_contient_sid_present),
-        ("_inserer_ace_sddl : conserve les entrées existantes", scenario_inserer_ace_conserve_les_entrees_existantes),
-        ("_inserer_ace_sddl : insertion avant la section S:", scenario_inserer_ace_avant_section_sacl),
-        ("_inserer_ace_sddl : descripteur invalide → ValueError", scenario_inserer_ace_descripteur_invalide_leve),
-        ("_ajouter_droit_demarrage_sddl : idempotent", scenario_ajouter_droit_demarrage_sddl_idempotent),
-        ("_local_natif_sans_ssh : Linux toujours SSH", scenario_linux_toujours_ssh_meme_config_absente),
-        ("_local_natif_sans_ssh : Windows + SSH configuré → SSH", scenario_windows_avec_ssh_configure_reste_ssh),
-        ("_local_natif_sans_ssh : Windows sans SSH → local", scenario_windows_sans_ssh_bascule_local),
-        ("_nom_service_local : Bridge_Agent sans suffixe", scenario_nom_service_local_bridge_agent_sans_suffixe),
-        ("_nom_service_local : projet normal", scenario_nom_service_local_projet_normal),
-        ("_nom_service_local : noms invalides rejetés", scenario_nom_service_local_invalide),
-        ("_piloter_service_ccw_action : bascule locale, succès", scenario_piloter_action_bascule_locale_succes),
-        ("_piloter_service_ccw_action : bascule locale, échec clair", scenario_piloter_action_bascule_locale_echec_message_clair),
-        ("_piloter_service_ccw_action : bascule locale, nssm introuvable", scenario_piloter_action_bascule_locale_nssm_introuvable),
-        ("_piloter_service_ccw_action : bascule locale, nom invalide", scenario_piloter_action_bascule_locale_nom_invalide),
-        ("_demarrer_service_ccw_sync : mode local, succès", scenario_demarrer_sync_local_succes),
-        ("_demarrer_service_ccw_sync : mode local, échec non bloquant", scenario_demarrer_sync_local_echec_avertissement_non_bloquant),
-        ("_demarrer_service_ccw_sync : mode local, nom invalide → non applicable", scenario_demarrer_sync_local_nom_invalide_non_applicable),
+        ("_sddl_contient_sid : SID absent", test_sddl_contient_sid_absent),
+        ("_sddl_contient_sid : SID présent", test_sddl_contient_sid_present),
+        ("_inserer_ace_sddl : conserve les entrées existantes", test_inserer_ace_conserve_les_entrees_existantes),
+        ("_inserer_ace_sddl : insertion avant la section S:", test_inserer_ace_avant_section_sacl),
+        ("_inserer_ace_sddl : descripteur invalide → ValueError", test_inserer_ace_descripteur_invalide_leve),
+        ("_ajouter_droit_demarrage_sddl : idempotent", test_ajouter_droit_demarrage_sddl_idempotent),
+        ("_local_natif_sans_ssh : Linux toujours SSH", test_linux_toujours_ssh_meme_config_absente),
+        ("_local_natif_sans_ssh : Windows + SSH configuré → SSH", test_windows_avec_ssh_configure_reste_ssh),
+        ("_local_natif_sans_ssh : Windows sans SSH → local", test_windows_sans_ssh_bascule_local),
+        ("_nom_service_local : Bridge_Agent sans suffixe", test_nom_service_local_bridge_agent_sans_suffixe),
+        ("_nom_service_local : projet normal", test_nom_service_local_projet_normal),
+        ("_nom_service_local : noms invalides rejetés", test_nom_service_local_invalide),
+        ("_piloter_service_ccw_action : bascule locale, succès", test_piloter_action_bascule_locale_succes),
+        ("_piloter_service_ccw_action : bascule locale, échec clair", test_piloter_action_bascule_locale_echec_message_clair),
+        ("_piloter_service_ccw_action : bascule locale, nssm introuvable", test_piloter_action_bascule_locale_nssm_introuvable),
+        ("_piloter_service_ccw_action : bascule locale, nom invalide", test_piloter_action_bascule_locale_nom_invalide),
+        ("_demarrer_service_ccw_sync : mode local, succès", test_demarrer_sync_local_succes),
+        ("_demarrer_service_ccw_sync : mode local, échec non bloquant", test_demarrer_sync_local_echec_avertissement_non_bloquant),
+        ("_demarrer_service_ccw_sync : mode local, nom invalide → non applicable", test_demarrer_sync_local_nom_invalide_non_applicable),
     ]
     echecs = 0
     for nom, fn in tests:
