@@ -317,6 +317,20 @@ if ($tokensPreserve) {
 nssm start $NomService | Out-Null
 
 # ---------------------------------------------------------------------------
+# 4. Droits de démarrage/arrêt sans élévation UAC (issue #717, persistance).
+#    nssm remove + nssm install (étape 3 ci-dessus) efface tout réglage
+#    sc.exe sdset posé précédemment — on le repose donc ICI systématiquement,
+#    à chaque création OU recréation, pour qu'AlainW n'ait jamais besoin de
+#    relancer manuellement autoriser_demarrage_ccw.ps1 après un ajout de projet.
+# ---------------------------------------------------------------------------
+try {
+    Autoriser-DemarrageServiceCcw -NomService $NomService | Out-Null
+    Info "Droits de démarrage/arrêt sans élévation posés pour « $NomService »."
+} catch {
+    Avert "Pose des droits de démarrage (sc.exe sdset) échouée pour « $NomService » : $($_.Exception.Message)"
+}
+
+# ---------------------------------------------------------------------------
 # Fin — rappels des actions MANUELLES restantes (hors périmètre du script).
 # ---------------------------------------------------------------------------
 Info ''

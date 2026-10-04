@@ -105,4 +105,69 @@ function Lire-ValeurFichier {
     return $null
 }
 
-Export-ModuleMember -Function Set-PrefixeCcw, Info, Ok, Avert, Get-CheminsProjetCcw, Lire-ValeurFichier
+# Accorde à un compte (AlainW par défaut) le droit de démarrer/arrêter/
+# interroger un service CCW SANS élévation UAC (issue #717, étape F du
+# retrofit CCW). Constat du 04/10/2026 : AlainW est administrateur, mais son
+# jeton en session NORMALE est bridé par l'UAC (groupe Administrators en
+# « deny only », niveau Medium) — nssm status fonctionne, nssm start échoue
+# avec « OpenService(): Access is denied ». Le démarrage par SSH marche
+# parce qu'une session SSH d'administrateur reçoit les droits complets.
+#
+# `sc.exe sdset` pose une entrée DÉDIÉE au compte visé, sans dépendre de son
+# appartenance au groupe Administrateurs — ce compte peut alors démarrer/
+# arrêter/interroger le service en session normale, sans élévation. Entrée
+# ajoutée (A;;LCSWRPWPLOCRRC;;;<SID>) : LC (query config) + SW (enum
+# dependents) + RP (start) + WP (stop) + LO (query status) + CR (user-
+# defined control) + RC (read control) — démarrer/arrêter/interroger, rien
+# de plus. Le SID est résolu DYNAMIQUEMENT à partir du nom de compte (propre
+# à chaque PC), jamais codé en dur.
+#
+# Idempotent : lit le descripteur actuel via `sc.exe sdshow` (jamais `sc`,
+# alias PowerShell de Set-Content), ne fait rien si une entrée pour ce SID
+# est déjà présente, sinon l'insère dans la section D: (ACL discrétionnaire,
+# avant la section S: — audit — si elle existe) SANS retirer les entrées
+# existantes (SYSTEM, Administrateurs, utilisateurs interactifs), puis
+# réécrit via `sc.exe sdset`.
+function Autoriser-DemarrageServiceCcw {
+    param(
+        [Parameter(Mandatory=$true)][string]$NomService,
+        [string]$NomCompte = 'AlainW'
+    )
+
+    $sid = (New-Object System.Security.Principal.NTAccount($NomCompte)).
+        Translate([System.Security.Principal.SecurityIdentifier]).Value
+
+    $sortieSdshow = & sc.exe sdshow $NomService
+    if ($LASTEXITCODE -ne 0) {
+        throw "sc.exe sdshow a échoué (code $LASTEXITCODE) pour « $NomService » — service introuvable ?"
+    }
+    $sddlActuel = (($sortieSdshow | Where-Object { $_.Trim() -ne '' }) -join '').Trim()
+    if (-not $sddlActuel) {
+        throw "sc.exe sdshow $NomService n'a renvoyé aucun descripteur exploitable."
+    }
+
+    if ($sddlActuel -match [regex]::Escape(";;;$sid)")) {
+        return [PSCustomObject]@{ Service = $NomService; Statut = 'déjà présent'; Sddl = $sddlActuel }
+    }
+
+    # Découpe D: (en-tête + flags éventuels) / liste des ACE / S: (SACL,
+    # optionnelle) — insertion de la nouvelle entrée à la fin de la liste des
+    # ACE, avant S: si présente, sans toucher au reste.
+    if ($sddlActuel -notmatch '^(D:[^(]*)((?:\([^)]*\))*)(S:.*)?$') {
+        throw "Descripteur SDDL inattendu (ne commence pas par D:) pour « $NomService » : $sddlActuel"
+    }
+    $entete = $Matches[1]
+    $aces   = $Matches[2]
+    $sacl   = $Matches[3]
+
+    $nouvelleAce = "(A;;LCSWRPWPLOCRRC;;;$sid)"
+    $nouveauSddl = $entete + $aces + $nouvelleAce + $sacl
+
+    & sc.exe sdset $NomService $nouveauSddl | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        throw "sc.exe sdset a échoué (code $LASTEXITCODE) pour « $NomService »."
+    }
+    return [PSCustomObject]@{ Service = $NomService; Statut = 'ajouté'; Sddl = $nouveauSddl }
+}
+
+Export-ModuleMember -Function Set-PrefixeCcw, Info, Ok, Avert, Get-CheminsProjetCcw, Lire-ValeurFichier, Autoriser-DemarrageServiceCcw

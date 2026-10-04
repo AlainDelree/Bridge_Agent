@@ -59,6 +59,7 @@ lui-même par ses propres issues (dogfooding).
 - §18 (#191/#192) : pièces jointes image → `issue-attachments/` + URL raw.
 - §17 (#187) : notifications centralisées via `new_issue.py` (tous projets).
 - §16 (#174…) : onglet « CCW », démarrage à la demande fini (#709/#711).
+  #717 : natif Windows sans SSH → `nssm` direct (droits `sc.exe sdset`).
 - §3.16 (#713, 1/2) : champ `ATTENTE` dans `issues_inbox/` met une issue de
   côté (`en_attente/`) au lieu de la créer ; routes `/issues-attente`
   (liste/lancer/supprimer), `nb_en_attente` sur `/issues-inbox/etat` ;

@@ -28,6 +28,25 @@ CONFIGURATION SSH :
   PC fixe, clé publique installée dans authorized_keys de l'utilisateur SSH.
   Configuration absente/incomplète → l'action renvoie un message clair, aucune
   erreur Flask brute.
+
+MODE NATIF WINDOWS SANS SSH (issue #717, étape F) :
+  Quand ce code tourne LUI-MÊME sous Windows (`new_issue.py` natif, sur la
+  machine qui héberge les services CCW — ThinkPad éteint, nouveau PC) ET
+  qu'aucun hôte SSH n'est configuré, piloter un service CCW n'a pas besoin de
+  SSH : le service visé est forcément LOCAL. `_local_natif_sans_ssh()`
+  détecte ce cas (`os.name == "nt"` + config SSH absente) ; `nssm` est alors
+  appelé EN LOCAL (sans ssh/scp) par `_piloter_service_ccw_action` (donc
+  aussi par le démarrage à la demande et par les actions Démarrer/Arrêter/
+  Redémarrer de l'onglet CCW). Comportement côté Linux STRICTEMENT inchangé :
+  `os.name` y vaut toujours `"posix"`, donc `_local_natif_sans_ssh()` renvoie
+  toujours False et la branche SSH historique reste seule utilisée.
+
+  Prérequis manuel (hors périmètre de ce code) : droits de démarrage/arrêt
+  sans élévation UAC posés sur le compte local via `sc.exe sdset` — voir
+  `provisioning/windows/ccw-commun.psm1::Autoriser-DemarrageServiceCcw` et
+  `provisioning/windows/autoriser_demarrage_ccw.ps1`. Sans eux, `nssm start`/
+  `stop` en local échoue avec « Access is denied » même pour un compte
+  administrateur (jeton bridé par l'UAC en session normale).
 """
 
 import json
@@ -120,6 +139,66 @@ def _charger_config_ssh() -> tuple[tuple[str, str, str] | None, str | None]:
     if not chemin_cle.exists():
         return None, f"Clé privée SSH introuvable : {chemin_cle}"
     return (hote, utilisateur, str(chemin_cle)), None
+
+
+def _local_natif_sans_ssh() -> bool:
+    """True si CE code tourne NATIVEMENT sous Windows (`new_issue.py` natif,
+    sur la machine qui héberge les services CCW) ET qu'aucun hôte SSH n'est
+    configuré (issue #717, étape F) : le service visé est alors forcément
+    LOCAL, nssm peut être appelé directement sans ssh/scp.
+
+    Comportement Linux STRICTEMENT inchangé : `os.name` y vaut toujours
+    `"posix"`, donc cette fonction renvoie toujours False et la branche SSH
+    historique reste seule utilisée — exactement comme avant l'issue #717."""
+    if os.name != "nt":
+        return False
+    _, erreur = _charger_config_ssh()
+    return erreur is not None
+
+
+# ─── Utilitaires : droits sc.exe sdset (issue #717) ────────────────────────────
+# L'implémentation RÉELLEMENT exécutée est en PowerShell
+# (provisioning/windows/ccw-commun.psm1::Autoriser-DemarrageServiceCcw,
+# appelée par ajouter_projet_ccw.ps1 et autoriser_demarrage_ccw.ps1) —
+# sc.exe n'existe que sous Windows. Les deux fonctions pures ci-dessous sont
+# un PORT FIDÈLE du même algorithme (présence d'une entrée pour un SID donné,
+# insertion idempotente dans la section D: sans toucher au reste), gardé ICI
+# uniquement pour permettre des tests unitaires SANS dépendre de Windows (la
+# suite de tests tourne sous Linux) — toute modification de l'algorithme doit
+# être répercutée dans LES DEUX implémentations.
+
+def _sddl_contient_sid(sddl: str, sid: str) -> bool:
+    """True si une entrée ACE pour ce SID existe déjà dans le descripteur
+    (ignore les droits exacts accordés — la seule présence suffit à rendre
+    l'opération d'ajout idempotente, comme côté PowerShell)."""
+    return bool(re.search(r";;;" + re.escape(sid) + r"\)", sddl))
+
+
+def _inserer_ace_sddl(sddl: str, ace: str) -> str:
+    """Insère `ace` à la fin de la liste des ACE de la section D: (ACL
+    discrétionnaire), avant la section S: (SACL, optionnelle) si présente —
+    sans toucher à l'en-tête D: ni aux ACE déjà présentes. Lève ValueError si
+    `sddl` ne commence pas par une section D: reconnaissable."""
+    m = re.match(r"^(D:[^(]*)((?:\([^)]*\))*)(S:.*)?$", sddl)
+    if not m:
+        raise ValueError(f"Descripteur SDDL inattendu (ne commence pas par D:) : {sddl!r}")
+    entete, aces, sacl = m.group(1), m.group(2), m.group(3) or ""
+    return entete + aces + ace + sacl
+
+
+def _ace_demarrage_arret(sid: str) -> str:
+    """Entrée SDDL accordant à `sid` le démarrage (RP), l'arrêt (WP) et
+    l'interrogation (LC + LO + CR + RC + SW) d'un service — droits
+    strictement nécessaires, rien de plus."""
+    return f"(A;;LCSWRPWPLOCRRC;;;{sid})"
+
+
+def _ajouter_droit_demarrage_sddl(sddl: str, sid: str) -> tuple[str, bool]:
+    """(nouveau_sddl, a_change). a_change=False si une entrée pour ce SID
+    est déjà présente (idempotent, `sddl` renvoyé inchangé)."""
+    if _sddl_contient_sid(sddl, sid):
+        return sddl, False
+    return _inserer_ace_sddl(sddl, _ace_demarrage_arret(sid)), True
 
 
 # ─── Utilitaires : commandes ssh/scp ────────────────────────────────────────────
@@ -415,6 +494,61 @@ def ccw_finaliser_projet():
         erreur=f"Échec de la finalisation (code {r.returncode}).")
 
 
+def _nom_service_local(nom_projet: str) -> str | None:
+    """Résout le nom EXACT du service CCW-Watcher SANS passer par
+    lister_projets_ccw.ps1 (indisponible sans SSH — issue #717) : même règle
+    que Get-CheminsProjetCcw (ccw-commun.psm1) — projet « Bridge_Agent »
+    (insensible à la casse) → service « CCW-Watcher » SANS suffixe, tout
+    autre projet → « CCW-Watcher-<NomProjet> ». None si nom_projet est vide,
+    contient un séparateur de chemin/espace, ou si le nom de service résultant
+    ne respecte pas le format attendu (même garde-fou que la branche SSH)."""
+    if not nom_projet or re.search(r"[\\/\s]", nom_projet):
+        return None
+    nom_projet = nom_projet.strip()
+    service = "CCW-Watcher" if nom_projet.lower() == "bridge_agent" else f"CCW-Watcher-{nom_projet}"
+    return service if re.match(r"^CCW-Watcher(-\w+)?$", service) else None
+
+
+def _piloter_service_ccw_action_local(nom_projet: str, action_nssm: str, verbe: str) -> dict:
+    """Branche LOCALE (sans SSH) de _piloter_service_ccw_action (issue #717) :
+    utilisée quand ce code tourne nativement sous Windows, sur la machine qui
+    héberge les services CCW, sans hôte SSH configuré — le service visé est
+    alors forcément local. Résout le nom via _nom_service_local (pas de liste
+    de projets disponible sans SSH), puis appelle nssm DIRECTEMENT (pas de
+    ssh/scp). etat_avant reste toujours None et deja_dans_cet_etat toujours
+    False (pas d'info d'état sans SSH — nssm lui-même absorbe un appel sur un
+    service déjà dans l'état visé). Même forme de dict que la branche SSH."""
+    service = _nom_service_local(nom_projet)
+    if service is None:
+        return dict(succes=False, service=None, etat_avant=None, deja_dans_cet_etat=False,
+                    message="Nom de projet requis, sans espace ni séparateur de chemin.",
+                    code=None, sortie=None)
+    try:
+        r = subprocess.run(["nssm", action_nssm, service], capture_output=True,
+                           encoding="cp1252", errors="replace", timeout=TIMEOUT_LONG)
+    except FileNotFoundError:
+        return dict(succes=False, service=service, etat_avant=None, deja_dans_cet_etat=False,
+                    message=f"nssm introuvable dans le PATH local — {verbe} de « {service} » impossible.",
+                    code=None, sortie=None)
+    except subprocess.TimeoutExpired:
+        return dict(succes=False, service=service, etat_avant=None, deja_dans_cet_etat=False,
+                    message=f"Délai dépassé — {verbe} du service interrompu (local).",
+                    code=None, sortie=None)
+    except subprocess.SubprocessError as e:
+        return dict(succes=False, service=service, etat_avant=None, deja_dans_cet_etat=False,
+                    message=f"Erreur nssm (local) : {e}", code=None, sortie=None)
+    succes = (r.returncode == 0)
+    return dict(
+        succes=succes, service=service, etat_avant=None, deja_dans_cet_etat=False,
+        message=None if succes else (
+            f"Échec — {verbe} de « {service} » en local (code {r.returncode}). Vérifiez que "
+            f"les droits sc.exe sdset ont été posés (provisioning/windows/"
+            f"autoriser_demarrage_ccw.ps1) — sinon nssm échoue avec « Access is denied » "
+            f"même pour un compte administrateur (jeton bridé par l'UAC)."),
+        code=r.returncode, sortie=_sortie_lisible(r),
+    )
+
+
 def _piloter_service_ccw_action(nom_projet: str, action_nssm: str, verbe: str, *,
                                  eviter_si_deja_dans_cet_etat: str | None = None) -> dict:
     """Fonction PURE (issue #709, étape C du retrofit CCW) : nom de projet +
@@ -456,6 +590,15 @@ def _piloter_service_ccw_action(nom_projet: str, action_nssm: str, verbe: str, *
         return dict(succes=False, service=None, etat_avant=None, deja_dans_cet_etat=False,
                     message="Nom de projet requis, sans espace ni séparateur de chemin.",
                     code=None, sortie=None)
+    # Issue #717 : nativement sous Windows sans hôte SSH configuré, le
+    # service visé est forcément local — nssm est appelé directement, sans
+    # SSH. Couvre aussi bien le démarrage à la demande (_demarrer_service_ccw_sync)
+    # que les actions Démarrer/Arrêter/Redémarrer de l'onglet CCW. eviter_si_
+    # deja_dans_cet_etat n'a pas d'équivalent ici (pas d'info d'état sans
+    # SSH) — sans incidence : seul le démarrage à la demande l'utilise, et nssm
+    # absorbe lui-même un appel sur un service déjà dans l'état visé.
+    if _local_natif_sans_ssh():
+        return _piloter_service_ccw_action_local(nom_projet, action_nssm, verbe)
     ctx, err = _preparer()
     if err:
         return dict(succes=False, service=None, etat_avant=None, deja_dans_cet_etat=False,
@@ -585,10 +728,19 @@ def _demarrer_service_ccw_sync(nom_projet: str) -> tuple[bool | None, str]:
     l'onglet CCW — nssm start y échoue tant que l'arrêt n'est pas terminé),
     jamais de boucle.
 
+    Issue #717 : sous Windows natif sans hôte SSH configuré,
+    _piloter_service_ccw_action bascule elle-même sur nssm EN LOCAL (voir
+    _local_natif_sans_ssh) — ce n'est donc plus un cas « non applicable »
+    comme avant #717 (où l'absence d'hôte SSH, non distinguable de
+    l'exécution Linux, faisait toujours échouer silencieusement _preparer()).
+    Reste « non applicable » (service=None) : nom de projet invalide, ou
+    (sous Linux, ou Windows AVEC hôte SSH configuré) config SSH absente/
+    incomplète.
+
     Retourne (ccw_demarre, avertissement) :
       - ccw_demarre : True = démarré par cet appel, False = déjà en marche ou
-        démarrage échoué, None = non applicable (hôte SSH non configuré,
-        projet sans service CCW, nom invalide) ;
+        démarrage échoué, None = non applicable (nom invalide, hôte SSH non
+        configuré en mode SSH, projet sans service CCW) ;
       - avertissement : message non bloquant si le démarrage a RÉELLEMENT
         échoué, chaîne vide sinon (déjà en marche, non applicable, ou
         succès)."""
