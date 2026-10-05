@@ -328,6 +328,13 @@ elle-même**, alimenté à la fois par trois événements SSE `/stream` (issue #
   défaut, insère directement — une **ligne rouge « ✕ fichier refusé : <nom> —
   <motif> »** (repli « refusé, motif indisponible »). Un lot multi-blocs
   partiellement refusé produit donc une ligne rouge distincte par bloc refusé.
+  **Exception (issues #716, #719)** : `fichier_recu` n'est PAS émis pour un
+  fichier (ou lot) dont **tous** les blocs restants sont des `ATTENTE` (§3.16)
+  et/ou des `RELANCE` (§3.14) — ces deux chemins ne créent jamais d'issue, donc
+  rien ne remplacerait/n'enlèverait jamais la ligne « reçu » si elle était
+  émise ; elle resterait affichée indéfiniment jusqu'au rechargement. Un bloc
+  `RELANCE` **refusé** garde sa propre ligne rouge (`fichier_refuse`), inchangé
+  — voir §3.15.
 - **Exclusion propre** : ces lignes sont rendues en `.ligne-fichier` (jamais
   `.ligne-issue`) et **absentes de `store.issues`** — elles échappent donc
   nativement aux filtres, au quota d'affichage, aux pastilles, à la case à
@@ -651,6 +658,24 @@ utile pour tracer *pourquoi* la correction a été faite.
 renommage du titre GitHub. Une correction plus large reste possible à la
 main sur GitHub, comme avant #516.
 
+**Ligne « fichier reçu » dans Résultats (issue #719).** Un bloc `RELANCE`
+réussi ne crée jamais d'issue (voir ci-dessus) — rien n'émettrait donc jamais
+`creation_issue` pour lui. Avant #719, la ligne « 📥 fichier reçu : <nom> »
+(§3.8, §3.15) était malgré tout affichée dès la prise en charge du fichier et
+restait ensuite affichée indéfiniment, jusqu'au rechargement de la page
+(constaté en réel le 05/10/2026 avec `relance_issue_126.txt`) — même
+mécanisme que l'incident corrigé par #716 pour le champ `ATTENTE` (§3.16).
+Corrigé en sautant l'émission de `fichier_recu` dès que `traiter_fichier`
+sait, avant de la notifier, que **tous** les blocs restants du fichier sont
+des `RELANCE` (`relance_demandee()`, miroir de `lire_condition_attente()`
+pour `ATTENTE`) : fichier mono-issue entier `RELANCE`, ou lot dont aucun bloc
+restant (après filtrage `ATTENTE` éventuel) ne crée d'issue. Un lot
+**mixte** (`RELANCE` + création normale) continue d'émettre `fichier_recu`
+normalement — remplacé par la première issue créée, comme avant. Une
+`RELANCE` **refusée** (issue cible introuvable, fermée, dépôt incorrect...)
+garde son propre `fichier_refuse` (§3.15), affiché comme avant #719 — seule
+la ligne « reçu » fantôme disparaît.
+
 **Formulaire web.** Pas de reprise dans `new_issue.py`/`static/js/app.js` :
 le formulaire sert à **créer** des issues, et dispose déjà d'un chemin dédié
 pour cibler une issue existante (bouton « 🔄 Relancer », §13) — dupliquer
@@ -677,7 +702,11 @@ script local, pas par un navigateur).
 - **`fichier_recu`** — `POST /notifier-fichier-recu`, émis par
   `scripts/watcher_issues_inbox.py::traiter_fichier()` dès la prise en charge
   d'un fichier (AVANT tout parsing/validation — le fichier peut malgré tout
-  finir refusé). Corps/événement : `{"fichier": <nom>}`.
+  finir refusé). Corps/événement : `{"fichier": <nom>}`. **Exception (issues
+  #716, #713 ; #719, #516)** : jamais émis pour un fichier (ou lot) dont tous
+  les blocs restants sont des `ATTENTE` et/ou des `RELANCE` — ni l'un ni
+  l'autre ne crée jamais d'issue, donc rien ne remplacerait/n'enlèverait
+  jamais cette ligne (voir §3.14, §3.16).
 - **`creation_issue`** — `POST /notifier-creation-issue`, émis après **chaque
   création réussie** d'une issue (jamais pour un bloc `RELANCE`, qui n'en crée
   aucune — voir §3.14). Deux émetteurs :
@@ -710,9 +739,16 @@ script local, pas par un navigateur).
 Pour un fichier multi-blocs (§3.13), la séquence est donc : un `fichier_recu`,
 puis un `creation_issue`/`fichier_refuse` par bloc EXPLOITABLE (un bloc
 `RELANCE` réussi n'émet ni l'un ni l'autre), dans l'ordre du fichier — jamais
-un événement groupé pour tout le lot. Voir `tests/test_evenements_issues_inbox_631.py`
-pour la construction et l'ordre exacts de ces séquences (aucun appel réseau
-ni `gh` réel : `_poster_best_effort` et `_traiter_bloc` sont substitués).
+un événement groupé pour tout le lot. **Sauf** si *tous* les blocs restants
+sont des `RELANCE` (et/ou `ATTENTE`) : dans ce cas, `fichier_recu` lui-même
+est sauté (voir ci-dessus) — la séquence ne contient alors qu'un
+`fichier_refuse` par bloc `RELANCE` refusé, s'il y en a, et rien d'autre si
+tous réussissent. Voir `tests/test_evenements_issues_inbox_631.py` pour la
+construction et l'ordre exacts de ces séquences (aucun appel réseau ni `gh`
+réel : `_poster_best_effort` et `_traiter_bloc` sont substitués), et
+`tests/test_pas_de_ligne_fichier_recu_si_attente_716.py`/
+`tests/test_pas_de_ligne_fichier_recu_si_relance_719.py` pour l'exception
+elle-même.
 
 ### 3.16 Champ `ATTENTE` : mettre une issue de côté avant sa création (issue #713)
 

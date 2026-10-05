@@ -557,6 +557,19 @@ RELANCE_RE = re.compile(r"^#?\s*(\d+)\s*$")
 COMMENTAIRE_RELANCE_INBOX = "🔄 Relancée via issues_inbox/ (champ RELANCE, issue #516)."
 
 
+def relance_demandee(bloc: str) -> bool:
+    """True si ce bloc BRUT (fichier mono-issue entier, ou un bloc d'un lot)
+    porte un champ RELANCE non vide — appelée AVANT extraire_champs()/
+    _traiter_bloc, pour décider si `_notifier_fichier_recu` doit être sauté
+    (issue #719, même principe que lire_condition_attente pour ATTENTE
+    ci-dessus) : un bloc RELANCE ne crée jamais d'issue (donc jamais de
+    creation_issue, cf. _traiter_relance) — en cas de succès, rien ne
+    remplacerait/n'enlèverait alors une ligne « fichier reçu » émise pour lui.
+    Un bloc RELANCE refusé garde sa propre ligne fichier_refuse (émise par
+    _rejeter/_traiter_lot), inchangé — voir traiter_fichier."""
+    return lire_champ_entete(bloc, "RELANCE") is not None
+
+
 def _numero_relance(brut: str | None) -> int | None:
     if not brut:
         return None
@@ -1222,13 +1235,18 @@ def _traiter_lot(cfg: ConfigInbox, chemin: Path, blocs: list) -> None:
 def traiter_fichier(cfg: ConfigInbox, chemin: Path) -> None:
     # SSE fichier_recu (issue #631) : émis dès la prise en charge, AVANT toute
     # validation de fond — le fichier peut malgré tout finir refusé, mais son
-    # apparition dans l'interface doit être immédiate. EXCEPTION (issue #716) :
-    # un fichier (ou lot) ENTIÈREMENT mis en attente (champ ATTENTE, #713) ne
-    # doit produire aucune ligne « fichier reçu » dans Résultats — rien ne
-    # viendrait jamais la remplacer ni l'enlever puisqu'aucune issue n'est
-    # créée. L'émission est donc retardée après la détection ATTENTE
-    # ci-dessous (qui ne lit/découpe que le contenu, sans appel réseau), et
-    # sautée entièrement sur les chemins où tout finit en_attente/.
+    # apparition dans l'interface doit être immédiate. EXCEPTIONS :
+    # - issue #716 : un fichier (ou lot) ENTIÈREMENT mis en attente (champ
+    #   ATTENTE, #713) ne doit produire aucune ligne « fichier reçu » dans
+    #   Résultats — rien ne viendrait jamais la remplacer ni l'enlever
+    #   puisqu'aucune issue n'est créée. L'émission est donc retardée après
+    #   la détection ATTENTE ci-dessous (qui ne lit/découpe que le contenu,
+    #   sans appel réseau), et sautée entièrement sur les chemins où tout
+    #   finit en_attente/.
+    # - issue #719 : même raisonnement pour un fichier (ou lot) dont tous les
+    #   blocs restants sont des RELANCE (champ RELANCE, #516) — ce chemin ne
+    #   crée jamais d'issue non plus (voir relance_demandee ci-dessous, et
+    #   les deux points d'appel plus bas).
     if chemin.suffix.lower() != ".txt":
         _notifier_fichier_recu(chemin.name)
         _rejeter(cfg, chemin, "", "", "extension invalide : attendu .txt")
@@ -1277,8 +1295,13 @@ def traiter_fichier(cfg: ConfigInbox, chemin: Path) -> None:
         # Lot mixte : au moins un bloc rejoint le circuit normal (création ou
         # refus) — la ligne « fichier reçu » apparaît donc bien, comme avant
         # #716 (elle sera remplacée par la première issue créée, cf.
-        # resultats.js).
-        _notifier_fichier_recu(chemin.name)
+        # resultats.js). EXCEPTION (issue #719) : si TOUS les blocs restants
+        # sont des RELANCE, aucun ne créera jamais d'issue (même raisonnement
+        # que #716 ci-dessus, via relance_demandee) — la ligne est sautée ;
+        # un bloc RELANCE refusé garde sa propre ligne fichier_refuse (émise
+        # par _traiter_lot plus bas), inchangé.
+        if not all(relance_demandee(bloc) for bloc in blocs_a_traiter):
+            _notifier_fichier_recu(chemin.name)
 
         # Cas limite : si TOUS les blocs restants (non mis en attente)
         # échouent ensuite, _traiter_lot déplace le fichier D'ORIGINE entier
@@ -1299,7 +1322,14 @@ def traiter_fichier(cfg: ConfigInbox, chemin: Path) -> None:
         _mettre_fichier_en_attente(cfg, chemin, contenu, condition)
         return
 
-    _notifier_fichier_recu(chemin.name)
+    # Champ RELANCE (issue #719) : un bloc RELANCE ne crée jamais d'issue
+    # (donc jamais de creation_issue, cf. _traiter_relance) — en cas de
+    # succès, rien ne remplacerait/n'enlèverait alors une ligne « fichier
+    # reçu » émise pour lui ; elle resterait affichée indéfiniment, comme la
+    # ligne ATTENTE corrigée par #716. Une RELANCE refusée garde sa propre
+    # ligne fichier_refuse (émise par _rejeter ci-dessous), inchangé.
+    if not relance_demandee(contenu):
+        _notifier_fichier_recu(chemin.name)
     succes, titre, projet, texte, resultat_gh, labels_creation, donnees_temps = _traiter_bloc(cfg, contenu)
     if not succes:
         _rejeter(cfg, chemin, titre, projet, texte)
