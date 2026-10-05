@@ -13,6 +13,7 @@ import {
   decisionModeCopie,
   extraireCasesLegacy,
   premieresParProjet,
+  appliquerCaseDecochee,
 } from '../resultats_coches.js';
 
 // ─── normaliserNumero ─────────────────────────────────────────────────────────
@@ -72,6 +73,33 @@ test('retirerDansEtat : retire, supprime la clé projet vidée, idempotent', () 
   assert.equal('alpha' in r2, false);                // liste vidée → clé supprimée
   assert.deepEqual(r2.beta, [9]);
   assert.equal(retirerDansEtat(r2, 'alpha', 99), r2); // absent → même objet
+});
+
+// ─── appliquerCaseDecochee (issue #720, événement SSE `case_decochee`) ───────
+test('appliquerCaseDecochee : retire la case indiquée par l\'événement', () => {
+  const etat = { bridge_agent: [629, 630] };
+  const r = appliquerCaseDecochee(etat, { projet: 'bridge_agent', numero: 629 });
+  assert.deepEqual(r.bridge_agent, [630]);
+});
+
+test('appliquerCaseDecochee : idempotent — déjà décochée → même objet (pas de re-rendu)', () => {
+  const etat = { bridge_agent: [630] };
+  const r = appliquerCaseDecochee(etat, { projet: 'bridge_agent', numero: 629 });
+  assert.equal(r, etat);
+});
+
+test('appliquerCaseDecochee : événement malformé (projet/numéro absent) → no-op', () => {
+  const etat = { bridge_agent: [629] };
+  assert.equal(appliquerCaseDecochee(etat, null), etat);
+  assert.equal(appliquerCaseDecochee(etat, {}), etat);
+  assert.equal(appliquerCaseDecochee(etat, { projet: 'bridge_agent' }), etat);
+  assert.equal(appliquerCaseDecochee(etat, { numero: 629 }), etat);
+});
+
+test('appliquerCaseDecochee : ne touche pas aux autres projets', () => {
+  const etat = { bridge_agent: [629], autre_projet: [1] };
+  const r = appliquerCaseDecochee(etat, { projet: 'bridge_agent', numero: 629 });
+  assert.deepEqual(r.autre_projet, [1]);
 });
 
 // ─── decisionModeCopie ────────────────────────────────────────────────────────

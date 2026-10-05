@@ -18,6 +18,7 @@ DOSSIER_SCRIPT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(DOSSIER_SCRIPT))
 
 import etat_cases_cochees as ecc  # noqa: E402
+from app.fin_issue import _diffuser  # noqa: E402 (issue #720, diffusion SSE ci-dessous)
 
 
 def lire_cases(nom_projet):
@@ -39,6 +40,36 @@ def decocher_case(nom_projet, numero):
     if not ok:
         return jsonify(succes=False, erreur=erreur), 500
     return jsonify(succes=True, numeros=ecc.lire_cases_cochees(nom_projet))
+
+
+def notifier_case_decochee():
+    """POST /notifier-case-decochee (issue #720) — appelé par
+    `scripts/watcher_issues_inbox.py` (process séparé) juste après une
+    RELANCE RÉUSSIE sur une issue déposée dans `issues_inbox/` (champ
+    RELANCE, §3.14 du DOC) : cette issue va produire un nouveau résultat,
+    sa case « traité/lu » ne doit donc plus la montrer comme déjà lue.
+
+    Décoche réellement l'état serveur (`ecc.decocher_issue`, idempotente —
+    aucun effet/erreur si elle était déjà décochée) PUIS diffuse
+    l'événement SSE `case_decochee` à tous les onglets Résultats déjà
+    ouverts (`app.fin_issue._diffuser`) : sans ce second temps, la case
+    resterait cochée à l'écran jusqu'au prochain chargement par projet
+    (l'interface ne relit l'état serveur qu'à ce moment-là, voir
+    `static/js/resultats_coches.js::rechargerCases`).
+
+    Corps JSON {"projet", "numero"}. Pas d'authentification — appelé par un
+    script local, jamais par un navigateur, même raison que
+    `/notifier-fichier-recu` (`app/fin_issue.py`)."""
+    corps = request.get_json(silent=True) or {}
+    projet = corps.get("projet")
+    numero = corps.get("numero")
+    if not projet or numero is None:
+        return jsonify(ok=False, erreur="projet et numero requis"), 400
+    ok, erreur = ecc.decocher_issue(projet, int(numero))
+    if not ok:
+        return jsonify(ok=False, erreur=erreur), 500
+    _diffuser("case_decochee", {"projet": projet, "numero": int(numero)})
+    return jsonify(ok=True)
 
 
 def importer_cases_route():

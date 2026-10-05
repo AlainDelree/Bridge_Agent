@@ -125,6 +125,16 @@ export function extraireCasesLegacy(entrees) {
   return { cases, cles };
 }
 
+// Applique un événement SSE `case_decochee` (issue #720, après une RELANCE
+// réussie — { projet, numero }) à la tranche casesCochees : réutilise
+// retirerDansEtat, donc idempotent (renvoie LE MÊME objet `etat` si la case
+// n'était pas cochée — l'appelant peut s'en servir pour éviter une écriture
+// inutile du store/DOM). Événement malformé (projet/numero absent) → no-op.
+export function appliquerCaseDecochee(etat, notif) {
+  if (!notif || !notif.projet || notif.numero == null) return etat;
+  return retirerDansEtat(etat, notif.projet, notif.numero);
+}
+
 // Regroupe les `limite` premières issues de chaque projet (issues déjà triées
 // par date décroissante), renvoyant { projet: [numero, ...] }. C'est EXACTEMENT
 // le périmètre compté par les pastilles (majPastillesFiltres, issue #382) : le
@@ -214,6 +224,19 @@ async function migrerLocalStorage() {
       for (const cle of cles) persistance.supprimer(cle);
     }
   } catch (e) { /* réseau : on retentera au prochain chargement */ }
+}
+
+// ─── Événement SSE `case_decochee` (issue #720) ───────────────────────────────
+// Pousse instantanément vers un onglet Résultats déjà ouvert la décoche faite
+// côté serveur après une RELANCE réussie (§3.14 du DOC) — sans ce handler, la
+// case resterait cochée à l'écran jusqu'au prochain chargement par projet
+// (rechargerCases, qui ne relit l'état serveur qu'à ce moment-là).
+function surCaseDecochee(notif) {
+  const avant = etatCases();
+  const suivant = appliquerCaseDecochee(avant, notif);
+  if (suivant === avant) return;   // idempotent : déjà décochée (ou événement malformé)
+  store.set('casesCochees', suivant);
+  resyncDom();
 }
 
 // ─── Bascule d'une case (onchange de la case, issue #636) ─────────────────────
@@ -533,6 +556,9 @@ async function initialiser() {
   //    à chaque changement de liste, pour une copie fiable au 1er clic.
   store.abonnerCle('issues', () => setTimeout(precharderVisiblesRepli, 0));
   setTimeout(precharderVisiblesRepli, 0);
+  // 4) Événement /stream `case_decochee` (issue #720, déposé dans le store par
+  //    sse.js) — décoche instantanée d'un onglet Résultats déjà ouvert.
+  store.abonnerCle('derniereNotifCase', (notif) => surCaseDecochee(notif));
 }
 
 // Objet publié sous window.Bridge.resultatsCoches (via installerPont dans index.js) :

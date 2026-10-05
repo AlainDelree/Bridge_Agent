@@ -111,6 +111,7 @@ URL_SURVEILLER_ISSUE       = "http://localhost:5100/notifier-issue-a-surveiller"
 URL_NOTIFIER_FICHIER_RECU   = "http://localhost:5100/notifier-fichier-recu"
 URL_NOTIFIER_CREATION_ISSUE = "http://localhost:5100/notifier-creation-issue"
 URL_NOTIFIER_FICHIER_REFUSE = "http://localhost:5100/notifier-fichier-refuse"
+URL_NOTIFIER_CASE_DECOCHEE  = "http://localhost:5100/notifier-case-decochee"
 
 
 def _poster_best_effort(url: str, payload: dict) -> None:
@@ -174,6 +175,22 @@ def _notifier_fichier_refuse(nom_fichier: str, titre: str | None, motif: str) ->
     _poster_best_effort(URL_NOTIFIER_FICHIER_REFUSE, {
         "fichier": nom_fichier, "titre": titre or None, "motif": motif,
     })
+
+
+def _notifier_case_decochee(projet: str, numero: int) -> None:
+    """Décoche + SSE `case_decochee` (issue #720) — appelé après chaque
+    RELANCE RÉUSSIE (champ RELANCE, §3.14, voir _traiter_relance) : cette
+    issue va produire un nouveau résultat, elle ne doit plus apparaître
+    comme déjà lue/traitée. Même mécanisme best-effort que les trois
+    émetteurs ci-dessus : ce watcher ne peut pas écrire lui-même dans
+    logs/etat_cases_cochees.json (fichier appartenant au process
+    new_issue.py, risque de conflit d'écriture concurrente) — POST vers
+    app.cases_cochees.notifier_case_decochee, qui réutilise l'opération de
+    décochage existante (ecc.decocher_issue, idempotente) puis diffuse
+    l'événement aux onglets Résultats déjà ouverts. Si new_issue.py n'est
+    pas lancé, la RELANCE elle-même reste réussie — seule cette décoche est
+    perdue, sans erreur (voir _poster_best_effort)."""
+    _poster_best_effort(URL_NOTIFIER_CASE_DECOCHEE, {"projet": projet, "numero": int(numero)})
 
 log = logging.getLogger("watcher_issues_inbox")
 
@@ -804,6 +821,11 @@ def _traiter_relance(cfg: ConfigInbox, champs: dict):
         detail_erreurs = "; ".join(e["message"] for e in etapes if e["statut"] == "echec")
         return (False, issue.get("title") or f"#{numero}", champs["projet"],
                 f"relance de #{numero} incomplète : {detail_erreurs}", "", None, None)
+
+    # Décoche automatique de la case « traité/lu » (issue #720) : cette issue
+    # va produire un nouveau résultat, elle ne doit plus apparaître comme déjà
+    # lue — best-effort, sans effet si elle n'était pas cochée (idempotent).
+    _notifier_case_decochee(champs["projet"], numero)
 
     # Ré-ajout à la liste surveillée par le poller de notifications (issue
     # #624) : l'issue avait été RETIRÉE de la liste à son échec définitif

@@ -681,6 +681,43 @@ le formulaire sert à **créer** des issues, et dispose déjà d'un chemin dédi
 pour cibler une issue existante (bouton « 🔄 Relancer », §13) — dupliquer
 `RELANCE` là n'apporterait rien.
 
+**Décoche automatique de la case « traité/lu » (issue #720).** Une issue
+relancée va produire un **nouveau** résultat : si Alain l'avait déjà cochée
+avant l'échec, la case doit redevenir décochée pour qu'il la revoie comme à
+traiter (état serveur §629/#636, voir « État serveur des cases cochées »
+ci-dessous). `scripts/watcher_issues_inbox.py` ne peut pas écrire lui-même
+dans `logs/etat_cases_cochees.json` (fichier possédé par le process
+`new_issue.py` ; écriture concurrente entre les deux process, risque de
+collision) — dès que `relancer_issue()` ci-dessus réussit (`statut_global ==
+"ok"`), `_notifier_case_decochee(projet, numero)` POSTe **best-effort** vers
+`POST /notifier-case-decochee` (`app/cases_cochees.py::notifier_case_decochee`,
+même famille que les émetteurs du §3.15 ci-dessous : pas de `login_requis`,
+échec silencieux si `new_issue.py` n'est pas lancé). Cette route réutilise
+l'opération de décochage existante (`etat_cases_cochees.decocher_issue`,
+**idempotente** — aucun effet/erreur si la case n'était pas cochée) puis
+diffuse l'événement SSE `case_decochee` (voir §3.15) pour que la case se
+décoche **instantanément** dans un onglet Résultats déjà ouvert, sans
+attendre le prochain chargement par projet. Une `RELANCE` **refusée** (issue
+introuvable, fermée, dépôt incorrect…) n'appelle jamais ce chemin : la case
+ne change pas. `new_issue.py` non lancé au moment du dépôt : la `RELANCE`
+elle-même reste réussie comme avant (label retiré, commentaire posté) — seule
+cette décoche est perdue, silencieusement.
+
+Seul le chemin `RELANCE` d'`issues_inbox/` est concerné par cette décoche
+automatique — y compris quand le fichier `RELANCE` vient de l'onglet
+« En attente » (§3.16). Le bouton « 🔄 Relancer » d'une ligne Résultats
+(`route_relancer()`, §13 « Relancer une issue bloquée en needs-human »)
+réutilise la **même** `relancer_issue()` mais **ne décoche rien** : laissé
+tel quel (hors périmètre de #720), ce bouton cible généralement une issue que
+l'utilisateur vient de constater en échec, donc pas encore cochée.
+
+Tests : `tests/test_decoche_relance_720.py` (route Flask isolée du vrai
+`logs/etat_cases_cochees.json`, et `_traiter_relance`/`traiter_fichier` avec
+`_poster_best_effort` intercepté, comme `tests/test_champ_relance_516.py` et
+`tests/test_pas_de_ligne_fichier_recu_si_relance_719.py` — aucun appel
+réseau ni `gh` réel) + `static/js/tests/resultats_coches.test.js`
+(`appliquerCaseDecochee`, logique pure de réception de l'événement).
+
 ### 3.15 Événements SSE émis (issues #631, #627, #634)
 
 Avant #631, aucun événement n'était émis ni au dépôt d'un fichier dans
@@ -735,6 +772,21 @@ script local, pas par un navigateur).
   §3.13) : un événement par bloc, dans l'ordre de traitement — jamais groupé
   pour tout le fichier. Événement : `{"fichier", "titre", "motif"}` (`titre`
   `null` si le bloc n'a même pas livré de `#Titre:` exploitable).
+- **`case_decochee`** (issue #720) — `POST /notifier-case-decochee`, émis par
+  `scripts/watcher_issues_inbox.py::_traiter_relance()` après **chaque
+  `RELANCE` réussie** (jamais pour une `RELANCE` refusée, ni pour une
+  création normale). Événement : `{"projet", "numero"}`. Contrairement aux
+  trois événements ci-dessus, celui-ci a un effet de bord côté serveur AVANT
+  la diffusion : la route décoche réellement `logs/etat_cases_cochees.json`
+  (`etat_cases_cochees.decocher_issue`, idempotente) puisqu'un process séparé
+  ne peut pas l'écrire lui-même (voir §3.14). Consommé côté navigateur par
+  `static/js/resultats_coches.js` (pas `resultats.js` — la case « traité/lu »
+  est une préoccupation distincte, voir l'en-tête du module) : retire
+  (projet, numéro) de `store.casesCochees` et resynchronise le DOM, sans
+  rafraîchir le reste de la ligne (état/labels) — un rafraîchissement complet
+  de la ligne n'apporterait rien d'instantané ici, puisque `RELANCE` ne
+  change pas l'état `OPEN`/`needs-human` affiché avant que le watcher cible
+  n'ACKe réellement l'issue (ce que `debut_issue` couvre déjà, §17.3).
 
 Pour un fichier multi-blocs (§3.13), la séquence est donc : un `fichier_recu`,
 puis un `creation_issue`/`fichier_refuse` par bloc EXPLOITABLE (un bloc
@@ -1645,6 +1697,16 @@ attente courte). Format : `{"<nom_projet>": [<numero>, ...], ...}`.
 | `DELETE` | `/cases-cochees/<nom_projet>/<numero>` | Décoche cette issue (idempotent). Même forme de réponse. |
 | `POST` | `/cases-cochees/importer` | Import en masse, **idempotent** — corps JSON `{"cases": [{"projet": ..., "numero": ...}, ...]}`, potentiellement plusieurs projets à la fois (le localStorage du navigateur n'est pas scindé par projet). Servira à la reprise de l'existant en 5b ; les entrées mal formées sont ignorées silencieusement. Réponse : `{"succes": true, "nb_ajoutees": N}`. |
 
+**Décoche depuis un process séparé (issue #720).** Une route distinte,
+**sans `login_requis`** — `POST /notifier-case-decochee`
+(`app/cases_cochees.py::notifier_case_decochee`) — appelée en best-effort
+par `scripts/watcher_issues_inbox.py` (process séparé, ne peut pas écrire
+lui-même dans `logs/etat_cases_cochees.json`) après chaque `RELANCE` réussie
+(§3.14) : corps `{"projet", "numero"}`, décoche via
+`etat_cases_cochees.decocher_issue` (même fonction idempotente que la route
+`DELETE` ci-dessus) puis diffuse l'événement SSE `case_decochee` (§3.15) à
+tous les onglets Résultats déjà ouverts.
+
 **Nettoyage au démarrage de `new_issue.py`** (`nettoyer_anciennes()`,
 appelé juste après le chargement du mot de passe) — **sans aucun appel
 GitHub** : pour chaque projet, calcule le plus grand numéro connu **parmi
@@ -1665,6 +1727,8 @@ Tests : `tests/test_cases_cochees_629.py` (stockage isolé du vrai
 `CHEMIN_VERROU`, comme `tests/test_supprimer_projet_587.py` pour
 `configs/`) — lecture/écriture, idempotence cocher/décocher/import, règle
 de nettoyage, isolation entre projets, suppression de projet, routes Flask.
+`tests/test_decoche_relance_720.py` couvre la route `/notifier-case-decochee`
+ci-dessus avec la même isolation.
 
 ### Case « traité/lu » côté interface + copie fiable (issue #636, étape 5b)
 
@@ -1705,10 +1769,18 @@ relais appelés par le markup inline des lignes).
   cochées, côté serveur (`POST /cases-cochees/importer`), **toutes** les issues
   chargées de **tous** les projets, quel que soit le filtre. Confirmation légère
   (`toasts.confirmer`). **Aucune copie.**
+- **Décoche instantanée après une RELANCE (issue #720).** `static/js/socle/
+  sse.js` route l'événement `case_decochee` (§3.15) vers la tranche dédiée
+  `store.derniereNotifCase` (même principe que `derniereNotifFichier`) ;
+  `resultats_coches.js` s'y abonne et applique `appliquerCaseDecochee`
+  (réutilise `retirerDansEtat`, idempotent) sur `store.casesCochees`, puis
+  resynchronise le DOM — sans passer par `resultats.js`, la case « traité/lu »
+  restant une préoccupation séparée (voir l'en-tête du module).
 
 Tests de logique pure : `static/js/tests/resultats_coches.test.js` (fusion de
 l'état serveur dans le store, décision du mode de copie, migration idempotente
-du `localStorage`, périmètre `premieresParProjet`).
+du `localStorage`, périmètre `premieresParProjet`, `appliquerCaseDecochee`
+depuis l'issue #720).
 
 ### Couleur d'accent des projets (issues #120, #121, #534, #535, #539, #540)
 

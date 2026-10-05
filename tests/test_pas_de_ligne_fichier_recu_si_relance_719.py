@@ -33,6 +33,12 @@ Aucun appel réseau ni `gh` réel (`_recuperer_issue`/`_modifier_corps_gh`/
 `relancer_issue`/`_creer_issue`/`_issue_ouverte_meme_titre` substitués, comme
 tests/test_champ_relance_516.py).
 
+Depuis l'issue #720, une RELANCE réussie co-émet aussi `case_decochee`
+(décoche automatique de la case « traité/lu », voir
+tests/test_decoche_relance_720.py pour cet aspect) — filtré à part par
+`_types_decoches` ci-dessous, SANS RAPPORT avec l'invariant #719 testé ici
+(fichier_recu/fichier_refuse).
+
 Exécution :  python3 tests/test_pas_de_ligne_fichier_recu_si_relance_719.py
 Sortie      :  code 0 si tous les scénarios passent, 1 sinon.
 """
@@ -148,6 +154,14 @@ def _types_refuses(appels: list) -> list:
     return [p for u, p in appels if u == w.URL_NOTIFIER_FICHIER_REFUSE]
 
 
+def _types_decoches(appels: list) -> list:
+    """Événements `case_decochee` (issue #720) — co-émis par une RELANCE
+    réussie, SANS RAPPORT avec l'invariant `fichier_recu` testé par ce
+    fichier (issue #719) : filtré à part pour ne pas fausser les assertions
+    `== []` ci-dessous, qui ne portent que sur fichier_recu/fichier_refuse."""
+    return [p for u, p in appels if u == w.URL_NOTIFIER_CASE_DECOCHEE]
+
+
 def test_mono_issue_relance_reussie_aucune_ligne_fichier_recu(_tmp_dir_factory):
     tmp = _tmp_dir_factory()
     cfg = _preparer_cfg(tmp)
@@ -166,7 +180,11 @@ def test_mono_issue_relance_reussie_aucune_ligne_fichier_recu(_tmp_dir_factory):
     w.traiter_fichier(cfg, chemin)
 
     assert not chemin.exists()
-    assert appels == [], f"aucun événement attendu, obtenu : {appels}"
+    assert _types_recus(appels) == [] and _types_refuses(appels) == [], \
+        f"aucun fichier_recu/fichier_refuse attendu, obtenu : {appels}"
+    # Décoche automatique (issue #720) — SEUL événement co-émis par une
+    # RELANCE réussie, hors de portée de l'invariant #719 testé ici.
+    assert appels == [(w.URL_NOTIFIER_CASE_DECOCHEE, {"projet": "bridge_agent", "numero": 126})], appels
     return {"appels": appels}
 
 
@@ -190,7 +208,11 @@ def test_lot_entierement_relance_aucune_ligne_fichier_recu(_tmp_dir_factory):
     w.traiter_fichier(cfg, chemin)
 
     assert not chemin.exists()
-    assert appels == [], f"aucun événement attendu, obtenu : {appels}"
+    assert _types_recus(appels) == [] and _types_refuses(appels) == [], \
+        f"aucun fichier_recu/fichier_refuse attendu, obtenu : {appels}"
+    # Décoche automatique (issue #720) pour CHAQUE issue relancée du lot.
+    assert _types_decoches(appels) == [{"projet": "bridge_agent", "numero": 126},
+                                        {"projet": "bridge_agent", "numero": 127}], appels
     return {"appels": appels}
 
 
@@ -291,7 +313,10 @@ def test_lot_attente_et_relance_sans_creation_aucune_ligne_fichier_recu(_tmp_dir
 
     assert not chemin.exists()
     assert len(list(cfg.en_attente_dir.iterdir())) == 1
-    assert appels == [], f"aucun événement attendu, obtenu : {appels}"
+    assert _types_recus(appels) == [] and _types_refuses(appels) == [], \
+        f"aucun fichier_recu/fichier_refuse attendu, obtenu : {appels}"
+    # Décoche automatique (issue #720) de l'unique issue relancée du lot.
+    assert appels == [(w.URL_NOTIFIER_CASE_DECOCHEE, {"projet": "bridge_agent", "numero": 126})], appels
     return {"appels": appels}
 
 

@@ -87,6 +87,18 @@ function surEvenementFichier(e) {
   } catch { /* données non-JSON ignorées */ }
 }
 
+// /stream émet aussi (issue #720, décoche automatique après une RELANCE
+// réussie, §3.14) : case_decochee : { projet, numero }. Noté dans une
+// tranche DÉDIÉE du store (derniereNotifCase), consommée par
+// static/js/resultats_coches.js — pas resultats.js, la case « traité/lu »
+// étant une préoccupation distincte (voir l'en-tête de ce module).
+function surEvenementCase(e) {
+  try {
+    const donnees = JSON.parse(e.data);
+    store.set('derniereNotifCase', { ...donnees, type: e.type });
+  } catch { /* données non-JSON ignorées */ }
+}
+
 export const sse = {
   stream: creerCanalSse('/stream', {
     debut_issue: surEvenementIssue,
@@ -94,5 +106,6 @@ export const sse = {
     creation_issue: surEvenementIssue,
     fichier_recu: surEvenementFichier,
     fichier_refuse: surEvenementFichier,
+    case_decochee: surEvenementCase,
   }),
 };

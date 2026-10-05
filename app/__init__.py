@@ -121,7 +121,7 @@ def _enregistrer_routes(app: Flask) -> None:
     from app.son_issue import get_son_issue, post_son_issue, get_sons_projet
     from app.rate_limit import rate_limit
     from app.cases_cochees import (lire_cases, cocher_case, decocher_case,
-                                   importer_cases_route)
+                                   importer_cases_route, notifier_case_decochee)
     from app.vues import index
 
     app.add_url_rule("/login", "login", login, methods=["GET"])
@@ -188,6 +188,9 @@ def _enregistrer_routes(app: Flask) -> None:
     app.add_url_rule("/notifier-fichier-recu", "notifier_fichier_recu", notifier_fichier_recu, methods=["POST"])
     app.add_url_rule("/notifier-creation-issue", "notifier_creation_issue", notifier_creation_issue, methods=["POST"])
     app.add_url_rule("/notifier-fichier-refuse", "notifier_fichier_refuse", notifier_fichier_refuse, methods=["POST"])
+    # ─── Décoche automatique après une RELANCE réussie (issue #720) : même
+    # famille que les trois routes ci-dessus (script local, pas de login_requis).
+    app.add_url_rule("/notifier-case-decochee", "notifier_case_decochee", notifier_case_decochee, methods=["POST"])
     # ─── Liste des issues surveillées par le poller de notifications (issue
     # #624) : ajout en direct depuis scripts/watcher_issues_inbox.py (process
     # séparé, ne peut pas muter app.notifications_poller._ISSUES_SURVEILLEES
