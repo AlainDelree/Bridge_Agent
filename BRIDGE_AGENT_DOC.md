@@ -71,6 +71,7 @@ Claude Chat → crée une issue → GitHub → watcher.py détecte → CCL exéc
 |-----|-------------|--------------------------|------------|---------|
 | `actualise` | AlainDelree/Actualise | ~/Actualise | (conf local) | `#009DD6` |
 | `alchess` | AlainDelree/AlChess | ~/NicLink | (conf local) | `#00D68F` |
+| `annuairetoken` | AlainDelree/Annuairetoken | ~/AnnuaireToken | (conf local) | `#FFE4CC` |
 | `apiselect` | AlainDelree/ApiSelect | ~/ApiSelect | (conf local) | `#FFD429` |
 | `bloc_score` | AlainDelree/Bloc_score | ~/Bloc_score | (conf local) | `#FF8595` |
 | `bridge_agent` | AlainDelree/Bridge_Agent | ~/Bridge_Agent | (conf local) | `#EB0000` |
@@ -1096,6 +1097,7 @@ hors périmètre même si l'issue le demande explicitement :
 |--------|-------------------|
 | `actualise` | /home/alain/Actualise |
 | `alchess` | /home/alain/NicLink |
+| `annuairetoken` | /home/alain/AnnuaireToken |
 | `apiselect` | /home/alain/ApiSelect |
 | `bloc_score` | /home/alain/Bloc_score |
 | `bridge_agent` | /home/alain/Bridge_Agent |
@@ -4642,7 +4644,7 @@ de création d'issue, seul valable pour du contenu qu'il produit.
 
 ---
 
-*Dernière mise à jour : 26 septembre 2026 — issue #629 (étape 5a de la
+*Dernière mise à jour : 6 octobre 2026 — issue #629 (étape 5a de la
 refonte web, §6 d'`ARCHITECTURE.md`) : nouveau backend d'état serveur pour
 la case « traité/lu » de l'onglet Résultats, jusqu'ici 100% localStorage
 (issue #154) — `etat_cases_cochees.py` (fichier JSON sous `logs/`, écriture
