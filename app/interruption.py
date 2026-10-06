@@ -676,6 +676,18 @@ def route_relancer():
 
     statut_global, etapes = relancer_issue(depot, numero, commentaire=COMMENTAIRE_RELANCE + trace_watcher)
 
+    # Décoche la case « traité/lu » de cette issue dans l'onglet Résultats
+    # (issue #721, même intention que le chemin fichier RELANCE #720) :
+    # l'issue va produire un nouveau résultat, elle ne doit plus apparaître
+    # comme déjà lue. Même process que l'état des cases (new_issue.py) :
+    # appel direct à la fonction partagée, pas de notification réseau.
+    # Seulement si la relance a réussi (sinon la case ne doit pas changer),
+    # et seulement si le projet est connu localement (cfg, sinon pas de case
+    # possible pour ce dépôt).
+    if statut_global == "ok" and cfg:
+        from app.cases_cochees import decocher_et_diffuser
+        decocher_et_diffuser(cfg.nom, numero)
+
     # Ré-ajout à la liste surveillée par le poller de notifications (issue
     # #624) : une issue for-windows relancée avait été RETIRÉE de la liste au
     # moment de son échec définitif (needs-human) — sans ce ré-ajout, ni sa

@@ -42,6 +42,29 @@ def decocher_case(nom_projet, numero):
     return jsonify(succes=True, numeros=ecc.lire_cases_cochees(nom_projet))
 
 
+def decocher_et_diffuser(projet, numero):
+    """Cœur partagé de la décoche de la case « traité/lu » + diffusion SSE
+    (issues #720 et #721) : décoche réellement l'état serveur
+    (`ecc.decocher_issue`, idempotente — aucun effet/erreur si elle était
+    déjà décochée) PUIS diffuse l'événement SSE `case_decochee` à tous les
+    onglets Résultats déjà ouverts (`app.fin_issue._diffuser`) : sans ce
+    second temps, la case resterait cochée à l'écran jusqu'au prochain
+    chargement par projet (l'interface ne relit l'état serveur qu'à ce
+    moment-là, voir `static/js/resultats_coches.js::rechargerCases`).
+
+    Deux appelants, même process `new_issue.py` :
+    - `notifier_case_decochee` ci-dessous (route POST, appelée par le
+      watcher spool — process séparé — pour le chemin fichier RELANCE) ;
+    - `app/interruption.py::route_relancer` (issue #721, bouton « 🔄
+      Relancer » d'une ligne de l'onglet Résultats) — appel direct, même
+      process, pas besoin de notification réseau."""
+    ok, erreur = ecc.decocher_issue(projet, int(numero))
+    if not ok:
+        return False, erreur
+    _diffuser("case_decochee", {"projet": projet, "numero": int(numero)})
+    return True, None
+
+
 def notifier_case_decochee():
     """POST /notifier-case-decochee (issue #720) — appelé par
     `scripts/watcher_issues_inbox.py` (process séparé) juste après une
@@ -49,13 +72,9 @@ def notifier_case_decochee():
     RELANCE, §3.14 du DOC) : cette issue va produire un nouveau résultat,
     sa case « traité/lu » ne doit donc plus la montrer comme déjà lue.
 
-    Décoche réellement l'état serveur (`ecc.decocher_issue`, idempotente —
-    aucun effet/erreur si elle était déjà décochée) PUIS diffuse
-    l'événement SSE `case_decochee` à tous les onglets Résultats déjà
-    ouverts (`app.fin_issue._diffuser`) : sans ce second temps, la case
-    resterait cochée à l'écran jusqu'au prochain chargement par projet
-    (l'interface ne relit l'état serveur qu'à ce moment-là, voir
-    `static/js/resultats_coches.js::rechargerCases`).
+    Mince wrapper HTTP autour de `decocher_et_diffuser` ci-dessus, qui
+    porte la logique réelle (partagée avec le bouton « 🔄 Relancer »,
+    issue #721).
 
     Corps JSON {"projet", "numero"}. Pas d'authentification — appelé par un
     script local, jamais par un navigateur, même raison que
@@ -65,10 +84,9 @@ def notifier_case_decochee():
     numero = corps.get("numero")
     if not projet or numero is None:
         return jsonify(ok=False, erreur="projet et numero requis"), 400
-    ok, erreur = ecc.decocher_issue(projet, int(numero))
+    ok, erreur = decocher_et_diffuser(projet, int(numero))
     if not ok:
         return jsonify(ok=False, erreur=erreur), 500
-    _diffuser("case_decochee", {"projet": projet, "numero": int(numero)})
     return jsonify(ok=True)
 
 

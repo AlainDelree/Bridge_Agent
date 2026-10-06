@@ -703,20 +703,29 @@ ne change pas. `new_issue.py` non lancé au moment du dépôt : la `RELANCE`
 elle-même reste réussie comme avant (label retiré, commentaire posté) — seule
 cette décoche est perdue, silencieusement.
 
-Seul le chemin `RELANCE` d'`issues_inbox/` est concerné par cette décoche
-automatique — y compris quand le fichier `RELANCE` vient de l'onglet
-« En attente » (§3.16). Le bouton « 🔄 Relancer » d'une ligne Résultats
-(`route_relancer()`, §13 « Relancer une issue bloquée en needs-human »)
-réutilise la **même** `relancer_issue()` mais **ne décoche rien** : laissé
-tel quel (hors périmètre de #720), ce bouton cible généralement une issue que
-l'utilisateur vient de constater en échec, donc pas encore cochée.
+**Même décoche depuis le bouton « 🔄 Relancer » (issue #721).** Le bouton
+« 🔄 Relancer » d'une ligne Résultats (`route_relancer()`, §13 « Relancer
+une issue bloquée en needs-human ») réutilise la **même** `relancer_issue()`
+que ce chemin `RELANCE`, et depuis #721 décoche aussi la case : le résultat
+est identique quelle que soit la façon de relancer. `route_relancer()`
+s'exécute dans le **même process** que l'état des cases (`new_issue.py`
+lui-même), donc pas de notification réseau comme ci-dessus — appel direct
+à `app/cases_cochees.py::decocher_et_diffuser(projet, numero)`, la fonction
+factorisée qui porte la logique partagée par les deux chemins (décoche
+l'état serveur puis diffuse l'événement SSE `case_decochee`). Déclenché
+seulement si `relancer_issue()` a réussi (`statut_global == "ok"`) et si le
+dépôt correspond à un projet configuré localement (`cfg` non `None` —
+sinon pas de case possible pour ce dépôt).
 
 Tests : `tests/test_decoche_relance_720.py` (route Flask isolée du vrai
 `logs/etat_cases_cochees.json`, et `_traiter_relance`/`traiter_fichier` avec
 `_poster_best_effort` intercepté, comme `tests/test_champ_relance_516.py` et
 `tests/test_pas_de_ligne_fichier_recu_si_relance_719.py` — aucun appel
 réseau ni `gh` réel) + `static/js/tests/resultats_coches.test.js`
-(`appliquerCaseDecochee`, logique pure de réception de l'événement).
+(`appliquerCaseDecochee`, logique pure de réception de l'événement) +
+`tests/test_decoche_bouton_relancer_721.py` (`route_relancer()` isolée du
+vrai `logs/etat_cases_cochees.json`, mêmes gardes-fous que
+`tests/test_relancer_watcher_574.py` — aucun appel `gh` réel).
 
 ### 3.15 Événements SSE émis (issues #631, #627, #634)
 
@@ -1697,15 +1706,22 @@ attente courte). Format : `{"<nom_projet>": [<numero>, ...], ...}`.
 | `DELETE` | `/cases-cochees/<nom_projet>/<numero>` | Décoche cette issue (idempotent). Même forme de réponse. |
 | `POST` | `/cases-cochees/importer` | Import en masse, **idempotent** — corps JSON `{"cases": [{"projet": ..., "numero": ...}, ...]}`, potentiellement plusieurs projets à la fois (le localStorage du navigateur n'est pas scindé par projet). Servira à la reprise de l'existant en 5b ; les entrées mal formées sont ignorées silencieusement. Réponse : `{"succes": true, "nb_ajoutees": N}`. |
 
-**Décoche depuis un process séparé (issue #720).** Une route distinte,
-**sans `login_requis`** — `POST /notifier-case-decochee`
-(`app/cases_cochees.py::notifier_case_decochee`) — appelée en best-effort
-par `scripts/watcher_issues_inbox.py` (process séparé, ne peut pas écrire
-lui-même dans `logs/etat_cases_cochees.json`) après chaque `RELANCE` réussie
-(§3.14) : corps `{"projet", "numero"}`, décoche via
-`etat_cases_cochees.decocher_issue` (même fonction idempotente que la route
-`DELETE` ci-dessus) puis diffuse l'événement SSE `case_decochee` (§3.15) à
-tous les onglets Résultats déjà ouverts.
+**Décoche après une relance, deux chemins, un seul cœur partagé (issues
+#720, #721).** `app/cases_cochees.py::decocher_et_diffuser(projet, numero)`
+porte la logique réelle : décoche via `etat_cases_cochees.decocher_issue`
+(même fonction idempotente que la route `DELETE` ci-dessus) puis diffuse
+l'événement SSE `case_decochee` (§3.15) à tous les onglets Résultats déjà
+ouverts. Deux appelants, tous deux dans le process `new_issue.py` :
+
+- une route distincte, **sans `login_requis`** — `POST
+  /notifier-case-decochee` (`app/cases_cochees.py::notifier_case_decochee`)
+  — appelée en best-effort par `scripts/watcher_issues_inbox.py` (process
+  **séparé**, ne peut pas écrire lui-même dans
+  `logs/etat_cases_cochees.json`) après chaque `RELANCE` réussie d'un fichier
+  `issues_inbox/` (§3.14) : corps `{"projet", "numero"}` ;
+- le bouton « 🔄 Relancer » d'une ligne Résultats (`app/interruption.py::
+  route_relancer`, §13), issue #721 : **même process**, appel direct sans
+  notification réseau.
 
 **Nettoyage au démarrage de `new_issue.py`** (`nettoyer_anciennes()`,
 appelé juste après le chargement du mot de passe) — **sans aucun appel
@@ -1728,7 +1744,8 @@ Tests : `tests/test_cases_cochees_629.py` (stockage isolé du vrai
 `configs/`) — lecture/écriture, idempotence cocher/décocher/import, règle
 de nettoyage, isolation entre projets, suppression de projet, routes Flask.
 `tests/test_decoche_relance_720.py` couvre la route `/notifier-case-decochee`
-ci-dessus avec la même isolation.
+ci-dessus avec la même isolation ; `tests/test_decoche_bouton_relancer_721.py`
+couvre le second appelant (`route_relancer()`) de la même façon.
 
 ### Case « traité/lu » côté interface + copie fiable (issue #636, étape 5b)
 
@@ -2076,6 +2093,18 @@ directement par le clic sur le badge, voir
 (`chargerListeIssues()`) puis, si la ligne de l'issue reste visible sous les
 filtres courants, son détail (`afficherIssue()`) — le badge ⚠️ disparaît
 donc de la ligne concernée sans rechargement manuel complet de la page.
+
+**Décoche de la case « traité/lu » (issue #721).** Une issue relancée va
+produire un **nouveau** résultat : si elle était déjà cochée, `route_relancer()`
+décoche aussi sa case — même intention et même mécanisme que la relance par
+fichier `RELANCE` d'`issues_inbox/` (§3.14, issue #720), via la fonction
+partagée `app/cases_cochees.py::decocher_et_diffuser` (voir « État serveur
+des cases cochées » ci-dessus). `route_relancer()` s'exécute dans le même
+process (`new_issue.py`) que l'état des cases : appel direct, pas de
+notification réseau. L'événement SSE `case_decochee` ainsi diffusé décoche
+la case **instantanément** dans un onglet Résultats déjà ouvert, sans
+rechargement de page. Rien n'est décoché si la relance échoue, ni si
+l'issue n'était pas cochée (idempotent).
 
 ### Nettoyage de l'arbre de process après une tâche (issue #247)
 
