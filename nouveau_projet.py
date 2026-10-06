@@ -26,6 +26,7 @@ import sys
 import unicodedata
 from pathlib import Path
 
+import etat_configs_legitimes
 import regenerer_tableaux_projets
 from palette import COULEURS_PROJETS_EXISTANTS, PALETTE_COULEURS
 
@@ -227,7 +228,12 @@ def creer_depot(depot: str, nom: str, public: bool = True) -> tuple[bool, str]:
 def ecrire_conf(nom: str, depot: str, rep: str, perimetre: str,
                 topic: str = "",
                 couleur: str = "") -> Path:
-    """Génère configs/<nom>.conf depuis le gabarit. Renvoie le chemin écrit."""
+    """Génère configs/<nom>.conf depuis le gabarit. Renvoie le chemin écrit.
+
+    Enregistre aussi cette création dans `etat_configs_legitimes` (issue
+    #724) : si une issue mode_write tourne en ce moment dans un AUTRE
+    projet, le garde-fou #318 de watcher.py ne doit pas supprimer ce .conf
+    tout neuf en fin de traitement."""
     chemin = DOSSIER_CONFIGS / f"{nom}.conf"
     contenu = GABARIT_CONF.format(
         nom=nom,
@@ -239,6 +245,7 @@ def ecrire_conf(nom: str, depot: str, rep: str, perimetre: str,
         modele_ccl=MODELE_CCL_DEFAUT,
     )
     chemin.write_text(contenu, encoding="utf-8")
+    etat_configs_legitimes.enregistrer(chemin.name)
     return chemin
 
 

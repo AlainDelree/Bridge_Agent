@@ -17,6 +17,7 @@ from flask import jsonify, request
 DOSSIER_SCRIPT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(DOSSIER_SCRIPT))
 
+import etat_configs_legitimes  # noqa: E402
 from watcher import Config, charger_config  # noqa: E402
 
 
@@ -46,7 +47,12 @@ CLES_EDITABLES = {
 def sauvegarder_conf(nom_projet: str, nouvelles_valeurs: dict) -> tuple[bool, str]:
     """Met à jour les clés éditables du .conf en préservant commentaires et
     structure. Les lignes commentées correspondant à une clé éditée sont
-    décommentées au passage. Les clés absentes du fichier sont ajoutées à la fin."""
+    décommentées au passage. Les clés absentes du fichier sont ajoutées à la fin.
+
+    Enregistre aussi cet enregistrement dans `etat_configs_legitimes` (issue
+    #724) : si une issue mode_write tourne en ce moment dans un AUTRE projet,
+    le garde-fou #318 de watcher.py ne doit pas annuler cette modification
+    volontaire en fin de traitement."""
     chemin = DOSSIER_SCRIPT / "configs" / f"{nom_projet}.conf"
     if not chemin.exists():
         return False, f"Fichier introuvable : {chemin.name}"
@@ -86,6 +92,7 @@ def sauvegarder_conf(nom_projet: str, nouvelles_valeurs: dict) -> tuple[bool, st
             nouvelles_lignes.append(f"{cle} = {a_ecrire[cle]}")
 
     chemin.write_text("\n".join(nouvelles_lignes) + "\n", encoding="utf-8")
+    etat_configs_legitimes.enregistrer(chemin.name)
     return True, "Configuration enregistrée."
 
 

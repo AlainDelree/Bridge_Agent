@@ -47,6 +47,11 @@ import notifications
 # État partagé du quota GraphQL (issue #615) : rafraîchi après chaque appel gh
 # SIGNIFICATIF (fermer_issue ci-dessous), lu par la route Flask /rate-limit.
 import etat_rate_limit
+# Trace des actions légitimes sur configs/*.conf faites depuis new_issue.py
+# (issue #724) : consultée en LECTURE SEULE par le garde-fou #318 ci-dessous
+# (_restaurer_configs_modifies) — ce module n'appelle jamais sa fonction
+# d'écriture, réservée à nouveau_projet.py/supprimer_projet.py/app/projets.py.
+import etat_configs_legitimes
 
 # ─── Emplacements fixes (relatifs au script, PAS au cwd du projet) ─────────────
 # Les journaux vivent à côté du watcher, quel que soit le projet piloté. Ils ne
@@ -4130,13 +4135,34 @@ def _detecter_demande_modif_configs(body: str) -> bool:
     return bool(re.search(r"configs[/\\][\w.-]*\.conf", body or "", re.IGNORECASE))
 
 
-def _restaurer_configs_modifies(numero: int, empreinte_avant: dict[str, bytes]) -> None:
-    """Garde-fou technique (issue #318) : après une exécution mode_write,
-    compare configs/*.conf à l'instantané pris juste avant (`_empreinte_configs`)
-    et annule toute modification, création ou suppression détectée — fichier
-    par fichier, en journalisant un WARNING explicite — sans jamais faire
-    échouer le reste du traitement de l'issue (best-effort, aucune exception
-    propagée). Seul Alain modifie ces fichiers, à la main."""
+def _action_legitime_posterieure(nom_fichier: str, instant_debut: float) -> bool:
+    """True si `etat_configs_legitimes` connaît une action volontaire sur
+    `nom_fichier` (création/suppression de projet, enregistrement de l'onglet
+    Configuration — issue #724) postérieure à `instant_debut` (l'instant où
+    `_empreinte_configs` a été prise, AVANT la première tentative de l'issue).
+    Une entrée ANTÉRIEURE à `instant_debut` ne compte pas : elle daterait d'un
+    geste fait avant que cette issue ne démarre, donc déjà capturé dans
+    l'empreinte — seul un geste fait PENDANT le traitement justifie de ne pas
+    restaurer."""
+    instant = etat_configs_legitimes.instant_legitime(nom_fichier)
+    return instant is not None and instant >= instant_debut
+
+
+def _restaurer_configs_modifies(numero: int, empreinte_avant: tuple[dict[str, bytes], float]) -> None:
+    """Garde-fou technique (issue #318, affiné #724) : après une exécution
+    mode_write, compare configs/*.conf à l'instantané pris juste avant
+    (`_empreinte_configs`) et annule toute modification, création ou
+    suppression détectée — fichier par fichier, en journalisant un WARNING
+    explicite — sans jamais faire échouer le reste du traitement de l'issue
+    (best-effort, aucune exception propagée). Seul Alain modifie ces
+    fichiers, à la main ou via l'onglet Configuration de new_issue.py.
+
+    Exception (#724) : un changement reconnu par `etat_configs_legitimes`
+    comme un geste volontaire d'Alain fait PENDANT ce traitement (création/
+    suppression de projet, enregistrement du .conf depuis l'onglet
+    Configuration) n'est PAS annulé — seul un changement sans trace de ce
+    type, donc attribuable à l'issue elle-même, déclenche la restauration."""
+    empreinte, instant_debut = empreinte_avant
     dossier = DOSSIER_SCRIPT / "configs"
     if not dossier.is_dir():
         return
@@ -4147,12 +4173,19 @@ def _restaurer_configs_modifies(numero: int, empreinte_avant: dict[str, bytes]) 
         fichiers_apres = []
     for chemin in fichiers_apres:
         noms_apres.add(chemin.name)
-        contenu_avant = empreinte_avant.get(chemin.name)
+        contenu_avant = empreinte.get(chemin.name)
         try:
             contenu_apres = chemin.read_bytes()
         except OSError:
             continue
         if contenu_avant is None:
+            if _action_legitime_posterieure(chemin.name, instant_debut):
+                log.info(
+                    f"  ℹ️  Issue #{numero} : nouveau fichier 'configs/{chemin.name}' détecté "
+                    f"après un traitement mode_write — reconnu comme une création de projet "
+                    f"légitime depuis new_issue.py (issue #724), conservé."
+                )
+                continue
             log.warning(
                 f"  ⚠️  Issue #{numero} : nouveau fichier 'configs/{chemin.name}' détecté "
                 f"après un traitement mode_write — modification de configs/*.conf interdite "
@@ -4163,6 +4196,13 @@ def _restaurer_configs_modifies(numero: int, empreinte_avant: dict[str, bytes]) 
             except OSError as e:
                 log.error(f"  Suppression de configs/{chemin.name} impossible : {e}")
         elif contenu_apres != contenu_avant:
+            if _action_legitime_posterieure(chemin.name, instant_debut):
+                log.info(
+                    f"  ℹ️  Issue #{numero} : modification de 'configs/{chemin.name}' détectée "
+                    f"après un traitement mode_write — reconnue comme un enregistrement "
+                    f"légitime depuis l'onglet Configuration (issue #724), conservée."
+                )
+                continue
             log.warning(
                 f"  ⚠️  Issue #{numero} : modification de 'configs/{chemin.name}' détectée "
                 f"après un traitement mode_write — interdite (consignes/globales.md, issue "
@@ -4172,8 +4212,15 @@ def _restaurer_configs_modifies(numero: int, empreinte_avant: dict[str, bytes]) 
                 chemin.write_bytes(contenu_avant)
             except OSError as e:
                 log.error(f"  Restauration de configs/{chemin.name} impossible : {e}")
-    for nom, contenu_avant in empreinte_avant.items():
+    for nom, contenu_avant in empreinte.items():
         if nom in noms_apres:
+            continue
+        if _action_legitime_posterieure(nom, instant_debut):
+            log.info(
+                f"  ℹ️  Issue #{numero} : suppression de 'configs/{nom}' détectée après un "
+                f"traitement mode_write — reconnue comme une suppression de projet légitime "
+                f"depuis new_issue.py (issue #724), non recréée."
+            )
             continue
         log.warning(
             f"  ⚠️  Issue #{numero} : suppression de 'configs/{nom}' détectée après un "
@@ -4581,12 +4628,16 @@ def _preparer_lecture_active(numero: int, mode: str, dry_run: bool,
 
 
 def _demarrer_traitement(numero: int, mode: str, mode_txt: str, dry_run: bool,
-                          cwd_effectif: Path) -> tuple[bool, float, int, dict | None, str | None]:
+                          cwd_effectif: Path) -> tuple[bool, float, int, tuple[dict, float] | None, str | None]:
     """Tout ce qui précède la première tentative `lancer_claude` : détection
     RELANCE, ACK, rafraîchissement SSE, départ du chrono, sonde pre-flight
     token, empreinte configs/*.conf et SHA de HEAD avant traitement. Retourne
     (est_relance, debut_traitement, nb_projets_actifs_debut,
-    empreinte_configs_avant, tete_avant_traitement)."""
+    empreinte_configs_avant, tete_avant_traitement) — `empreinte_configs_avant`
+    est un couple (empreinte, instant_unix) depuis #724 : l'instant sert de
+    référence au garde-fou pour ne reconnaître comme légitimes que les
+    actions de new_issue.py faites PENDANT ce traitement (voir
+    _action_legitime_posterieure)."""
     # Détection RELANCE (champ RELANCE, issue #516) AVANT l'ACK courante
     # (issue #592) : un commentaire d'échec définitif déjà présent dans
     # l'historique de l'issue signale que le worktree peut contenir du
@@ -4629,7 +4680,7 @@ def _demarrer_traitement(numero: int, mode: str, mode_txt: str, dry_run: bool,
     # précédente, pour rester la référence même après une éventuelle
     # restauration intermédiaire.
     empreinte_configs_avant = (
-        _empreinte_configs() if (mode != MODE_LECTURE and not dry_run) else None
+        (_empreinte_configs(), time.time()) if (mode != MODE_LECTURE and not dry_run) else None
     )
 
     # SHA de HEAD avant la toute première tentative (issue #689) : seul le
@@ -4649,7 +4700,7 @@ def _demarrer_traitement(numero: int, mode: str, mode_txt: str, dry_run: bool,
 def _executer_une_tentative(numero: int, titre: str, body: str, dry_run: bool, mode: str,
                              timeout: int, modele: str, perimetre_effectif: str,
                              cwd_effectif: Path, verrou, chemin_scratch: Path | None,
-                             chemin_worktree: Path | None, empreinte_configs_avant: dict | None,
+                             chemin_worktree: Path | None, empreinte_configs_avant: tuple[dict, float] | None,
                              tentative: int, max_tentatives: int | None = None,
                              tete_avant_traitement: str | None = None) -> tuple[bool, str]:
     """Une tentative `lancer_claude`, garde-fou de format de clôture (#581) et

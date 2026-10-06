@@ -29,11 +29,12 @@ import shutil
 import sys
 from pathlib import Path
 
+import etat_cases_cochees
+import etat_configs_legitimes
 import etat_son_issue
 import regenerer_tableaux_projets
 from nouveau_projet import DOSSIER_CONFIGS
 from watcher import lire_conf
-import etat_cases_cochees
 
 
 def conf_chemin(nom: str) -> Path:
@@ -111,12 +112,17 @@ def _supprimer_repertoire(rep_path: Path | None) -> dict:
 
 
 def _supprimer_conf(chemin: Path) -> dict:
+    """Supprime configs/<nom>.conf et l'enregistre dans
+    `etat_configs_legitimes` (issue #724) : si une issue mode_write tourne en
+    ce moment dans un AUTRE projet, le garde-fou #318 de watcher.py ne doit
+    pas recréer ce .conf en fin de traitement."""
     if not chemin.exists():
         return {"ok": True, "detail": f"{chemin.name} déjà absent."}
     try:
         chemin.unlink()
     except OSError as exc:
         return {"ok": False, "detail": f"échec de la suppression de {chemin.name} : {exc}"}
+    etat_configs_legitimes.enregistrer(chemin.name)
     return {"ok": True, "detail": f"{chemin.name} supprimé."}
 
 
