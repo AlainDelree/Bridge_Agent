@@ -149,6 +149,17 @@ puis le corps. Champs d'en-tête reconnus, tous optionnels sauf `PROJET` :
 | `LABELS`    | Labels GitHub additionnels, séparés par des virgules                 |
 | `ATTENTE`   | Optionnel — texte libre, en une phrase, de la condition qui retarde cette issue (ex. « après la fusion de l'étape C et l'arrêt de Rummikub »). Valeur non vide → l'issue n'est PAS créée sur GitHub, elle est mise de côté dans `issues_inbox/en_attente/` (issue #713, voir §3.16). Vide ou absent → traitée tout de suite, comme aujourd'hui. **Claude Chat doit poser ce champ lui-même** dès qu'une issue est « à lancer après... » — pas seulement le mentionner dans sa réponse. |
 
+> ⚠️ **Choix du MODE quand la tâche exécute un script (issue #722).** Avant
+> de poser `MODE`, relire la « Tâche demandée » rédigée : si elle contient un
+> des mots déclencheurs **exécuter, lancer, mesurer, simuler, tester**,
+> `python3`, `pytest`, **script** (ou un équivalent évident), le mode
+> `lecture` (défaut) est presque toujours le mauvais choix — en lecture
+> seule, aucune commande en dehors de la courte allowlist du §5 n'est
+> exécutée, `python3` et tout script compris. Choisir `| MODE | lecture
+> active |` si le script ne doit pas toucher au projet (analyse, simulation,
+> mesure), ou `| MODE | écriture |` s'il doit le modifier. Ce refus ne
+> concerne pas les issues déjà en écriture.
+
 Label de notification par défaut (issue #490) : `construire_labels()` pose
 systématiquement **`notif_pc`** (miroir du comportement le plus courant côté
 formulaire web), sauf si `LABELS` demande déjà explicitement `notif_gsm` ou
@@ -966,6 +977,18 @@ Idéal pour : diagnostics, audits, lectures de fichiers, comptages.
   autorisés sans approbation par l'heuristique interne de Claude Code. Voir
   `OUTILS_LECTURE_AUTORISES` dans `watcher.py` pour le détail et le
   raisonnement de chaque entrée.
+
+> ⚠️ **Aucun script ne s'exécute en lecture seule (issue #722).** En dehors
+> des commandes listées ci-dessus, tout le reste est bloqué derrière une
+> approbation interactive inatteignable — `python3`, `pytest`, un shell
+> script, peu importe le langage : aucune exception. Une tâche qui doit
+> **exécuter** un script d'analyse, de simulation ou de mesure, sans toucher
+> au projet, doit choisir la **lecture active** (`| MODE | lecture active |`,
+> voir ci-dessous) : écriture confinée au dossier scratch, contrôle
+> avant/après. Une tâche qui doit exécuter un script **modifiant** le projet
+> doit choisir l'**écriture** (`| MODE | écriture |`) — ce refus ne concerne
+> en rien les issues en écriture, qui exécutent `python3`/`pytest`/
+> `py_compile` sans aucune difficulté.
 
 **Lecture active (`mode_scratch`, issue #327)** — CCL peut écrire, mais
 **UNIQUEMENT** dans un dossier scratch dédié, jamais dans le projet. Utile
