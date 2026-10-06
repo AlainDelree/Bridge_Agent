@@ -9,6 +9,19 @@ milliers de caractères sur une seule ligne logique, coûteux à relire et
 
 Convention d'ajout : voir §10 de `BRIDGE_AGENT_DOC.md`.
 
+# CHANGELOG-723 — à fusionner dans CHANGELOG.md
+
+## 6 octobre 2026 — issue #723
+
+Case « traité/lu » + badges ✅/All : **la copie préfixe désormais une ligne d'identité** `Issue #N — <projet> — <titre>` suivie d'une ligne vide — jusqu'ici la copie ne contenait que le dernier commentaire (rapport ou « ❌ Échec après N tentatives »), sans numéro ni titre ni projet, forçant à redonner le numéro à Claude.ai pour rédiger une RELANCE.
+
+- `static/js/resultats_coches.js` : nouvelles fonctions pures `ligneIdentite(it, projet)` (construit la ligne, titre aplati sur une seule ligne via `replace(/\s+/g, ' ').trim()` — robuste à un titre multiligne ou très long ; pas de « — » final orphelin si le détail d'issue n'a pas de titre), `prefixerIdentite(it, projet, texte)` (préfixe ligne d'identité + ligne vide, SAUF si `texte` est vide — pas de ligne orpheline sur une issue pas encore répondue, pour que la détection « pas encore disponible » du moteur de copie reste correcte) et `texteCopieAvecIdentite(variante, it, projet, texte)` (point d'assemblage unique : ajoute l'identité pour `'reponse'`/`'all'`, jamais pour `'diff'`). `texteReponse`/`texteAll` appellent désormais `texteCopieAvecIdentite` ; `texteDiff` inchangé (diff brut, hors périmètre).
+- Le numéro et le titre viennent du détail d'issue déjà chargé par `detailIssue` (`/issue/<projet>/<numero>` → `number`, `title`) ; le projet vient du contexte de la copie (paramètre déjà transmis à `texteReponse`/`texteAll`). Aucune requête réseau supplémentaire.
+- Tests : `static/js/tests/resultats_coches.test.js` — nouveaux tests pour `ligneIdentite` (forme attendue, titre absent, titre multiligne/très long aplati sur une seule ligne), `prefixerIdentite` (texte non vide préfixé, texte vide/blanc inchangé) et `texteCopieAvecIdentite` (identité présente pour `reponse`/`all`, absente pour `diff`). Suite complète vérifiée verte : `node --test static/js/tests/` → 193 tests, aucune régression.
+- `BRIDGE_AGENT_DOC.md` : section « Case « traité/lu » côté interface + copie fiable (issue #636, étape 5b) » — nouveau paragraphe « Identité de l'issue en tête de la copie (issue #723) » ; mention des nouvelles fonctions dans la liste des tests de logique pure du module.
+
+Hors périmètre (rappel de l'issue) : variante « diff » inchangée (diff brut) ; aucun changement côté watcher ni du commentaire posté sur GitHub (JS uniquement — le correctif s'applique donc aussi aux anciennes issues, sans réémission de commentaire) ; `configs/*.conf` non touché. Après fusion : Ctrl+Maj+R suffit, aucun redémarrage de `new_issue.py` nécessaire.
+
 # CHANGELOG-722 — à fusionner dans CHANGELOG.md
 
 ## 6 octobre 2026 — issue #722
