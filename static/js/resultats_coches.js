@@ -154,6 +154,35 @@ export function premieresParProjet(issuesTriees, limite) {
   return parProjet;
 }
 
+// ─── Ligne d'identité en tête des copies « réponse »/« all » (issue #723) ─────
+// Sans elle, le texte copié par la case/les badges ✅/All ne contenait que le
+// dernier commentaire (rapport ou « ❌ Échec après N tentatives ») : collé dans
+// Claude.ai, il fallait redonner le numéro d'issue pour rédiger une RELANCE. Ne
+// s'applique PAS à la variante « diff » (diff brut, hors périmètre de #723).
+// Le titre est aplati sur une seule ligne : un titre multiligne ou très long ne
+// doit jamais faire déborder la ligne d'identité sur plusieurs lignes.
+export function ligneIdentite(it, projet) {
+  const numero = it && it.number;
+  const titre = ((it && it.title) || '').replace(/\s+/g, ' ').trim();
+  const base = 'Issue #' + numero + ' — ' + (projet || '');
+  return titre ? base + ' — ' + titre : base;
+}
+
+// Préfixe `texte` par la ligne d'identité suivie d'une ligne vide — sauf si
+// `texte` est vide (issue pas encore répondue) : pas de ligne d'identité
+// orpheline, pour que lancerCopie continue de détecter correctement le cas
+// « pas encore disponible » (texteVide).
+export function prefixerIdentite(it, projet, texte) {
+  if (!texte || !texte.trim()) return texte;
+  return ligneIdentite(it, projet) + '\n\n' + texte;
+}
+
+// Point d'assemblage unique des 3 variantes de copie : seules 'reponse' et
+// 'all' reçoivent la ligne d'identité — 'diff' (diff brut) passe inchangé.
+export function texteCopieAvecIdentite(variante, it, projet, texte) {
+  return variante === 'diff' ? texte : prefixerIdentite(it, projet, texte);
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // 2. ÉTAT SERVEUR DES CASES (store.casesCochees ⇄ routes /cases-cochees)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -370,10 +399,14 @@ async function diffCommits(projet, hashes) {
 }
 
 // Producteurs de texte (réutilisent reponseCompleteCcl/hashesDeCommit d'app.js
-// via le pont — aucune duplication de la reconstruction markdown).
+// via le pont — aucune duplication de la reconstruction markdown). La ligne
+// d'identité (issue #723) est préfixée ici, pas dans reponseCompleteCcl : elle
+// ne concerne que ces deux variantes, pas texteDiff.
 async function texteReponse(projet, numero) {
   const it = await detailIssue(projet, numero);
-  return it ? (appelerAncien('reponseCompleteCcl', it) || '') : '';
+  if (!it) return '';
+  const corps = appelerAncien('reponseCompleteCcl', it) || '';
+  return texteCopieAvecIdentite('reponse', it, projet, corps);
 }
 async function texteAll(projet, numero) {
   const it = await detailIssue(projet, numero);
@@ -382,7 +415,7 @@ async function texteAll(projet, numero) {
   const hashes = appelerAncien('hashesDeCommit', it) || [];
   const diffs = await diffCommits(projet, hashes);
   if (diffs.length) texte += '\n\n' + diffs.join('\n\n');
-  return texte;
+  return texteCopieAvecIdentite('all', it, projet, texte);
 }
 async function texteDiff(projet, numero) {
   const it = await detailIssue(projet, numero);

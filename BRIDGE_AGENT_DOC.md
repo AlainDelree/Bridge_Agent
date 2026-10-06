@@ -1799,6 +1799,18 @@ relais appelés par le markup inline des lignes).
   d'erreur, jamais de boîte « OK ») ; le cochage (persistance/grisage/pastilles)
   ne dépend jamais de la copie. Décocher ne copie rien. Les copies des badges
   sont **factorisées** dans le même moteur (`lancerCopie`).
+- **Identité de l'issue en tête de la copie (issue #723).** Les variantes
+  « réponse » (case à cocher, badge ✅) et « all » (badge All) préfixent le
+  texte copié par une ligne `Issue #N — <projet> — <titre>` suivie d'une ligne
+  vide — `ligneIdentite`/`texteCopieAvecIdentite`, numéro et titre venant du
+  détail d'issue déjà chargé (`detailIssue`), projet venant du contexte de la
+  copie. Un titre absent n'ajoute aucun « — » orphelin ; un titre multiligne
+  ou très long est aplati sur une seule ligne. Sans comportement sur une issue
+  pas encore répondue (texte vide → pas de ligne d'identité orpheline, pour
+  que la détection « pas encore disponible » reste correcte). La variante
+  « diff » (badge Diff) **reste inchangée** : diff brut, sans ligne
+  d'identité. Aucun changement côté watcher ni du commentaire posté sur
+  GitHub (JS seul) : le correctif s'applique donc aussi aux anciennes issues.
 - **Pastilles ↔ « Cocher tout » alignés.** Choix retenu : **élargir « Cocher
   tout »** au périmètre exact des pastilles (les N premières issues par projet,
   `premieresParProjet`, sans le quota d'affichage ni le filtre ouvriers) plutôt
@@ -1820,7 +1832,8 @@ relais appelés par le markup inline des lignes).
 Tests de logique pure : `static/js/tests/resultats_coches.test.js` (fusion de
 l'état serveur dans le store, décision du mode de copie, migration idempotente
 du `localStorage`, périmètre `premieresParProjet`, `appliquerCaseDecochee`
-depuis l'issue #720).
+depuis l'issue #720, et `ligneIdentite`/`prefixerIdentite`/
+`texteCopieAvecIdentite` depuis l'issue #723).
 
 ### Couleur d'accent des projets (issues #120, #121, #534, #535, #539, #540)
 

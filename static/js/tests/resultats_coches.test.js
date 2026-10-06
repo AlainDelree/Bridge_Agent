@@ -14,6 +14,9 @@ import {
   extraireCasesLegacy,
   premieresParProjet,
   appliquerCaseDecochee,
+  ligneIdentite,
+  prefixerIdentite,
+  texteCopieAvecIdentite,
 } from '../resultats_coches.js';
 
 // ─── normaliserNumero ─────────────────────────────────────────────────────────
@@ -170,4 +173,52 @@ test('premieresParProjet : limite Infinity → toutes les issues chargées (remi
   const r = premieresParProjet(issues, Infinity);
   assert.deepEqual(r.a, [1, 2]);
   assert.deepEqual(r.b, [3]);
+});
+
+// ─── ligneIdentite / prefixerIdentite / texteCopieAvecIdentite (issue #723) ───
+test('ligneIdentite : « Issue #N — projet — titre »', () => {
+  const it = { number: 723, title: 'Ajouter l\'identité' };
+  assert.equal(ligneIdentite(it, 'bridge_agent'), 'Issue #723 — bridge_agent — Ajouter l\'identité');
+});
+
+test('ligneIdentite : détail d\'issue sans titre → pas de « — » final orphelin', () => {
+  assert.equal(ligneIdentite({ number: 723 }, 'bridge_agent'), 'Issue #723 — bridge_agent');
+  assert.equal(ligneIdentite({ number: 723, title: '' }, 'bridge_agent'), 'Issue #723 — bridge_agent');
+});
+
+test('ligneIdentite : titre multiligne ou très long → aplati sur une seule ligne', () => {
+  const multiligne = { number: 1, title: 'Première ligne\nDeuxième ligne\r\nTroisième' };
+  const r = multiligne && ligneIdentite(multiligne, 'p');
+  assert.equal(r.includes('\n'), false);
+  assert.equal(r, 'Issue #1 — p — Première ligne Deuxième ligne Troisième');
+
+  const long = 'x'.repeat(5000);
+  const rLong = ligneIdentite({ number: 2, title: long }, 'p');
+  assert.equal(rLong.includes('\n'), false);
+  assert.equal(rLong, 'Issue #2 — p — ' + long);
+});
+
+test('prefixerIdentite : texte non vide → ligne d\'identité + ligne vide + texte', () => {
+  const it = { number: 5, title: 'Titre' };
+  assert.equal(prefixerIdentite(it, 'p', 'Corps du rapport'),
+    'Issue #5 — p — Titre\n\nCorps du rapport');
+});
+
+test('prefixerIdentite : texte vide ou blanc → inchangé (pas de ligne orpheline)', () => {
+  const it = { number: 5, title: 'Titre' };
+  assert.equal(prefixerIdentite(it, 'p', ''), '');
+  assert.equal(prefixerIdentite(it, 'p', '   '), '   ');
+  assert.equal(prefixerIdentite(it, 'p', undefined), undefined);
+});
+
+test('texteCopieAvecIdentite : « reponse » et « all » → identité présente', () => {
+  const it = { number: 9, title: 'T' };
+  assert.equal(texteCopieAvecIdentite('reponse', it, 'p', 'corps').startsWith('Issue #9 — p — T\n\n'), true);
+  assert.equal(texteCopieAvecIdentite('all', it, 'p', 'corps').startsWith('Issue #9 — p — T\n\n'), true);
+});
+
+test('texteCopieAvecIdentite : « diff » → identité ABSENTE, texte brut inchangé', () => {
+  const it = { number: 9, title: 'T' };
+  const diffBrut = '===== Diff abc1234 =====\n\n+ligne ajoutée';
+  assert.equal(texteCopieAvecIdentite('diff', it, 'p', diffBrut), diffBrut);
 });
