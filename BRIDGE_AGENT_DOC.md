@@ -1404,6 +1404,37 @@ d'un traitement en écriture ou en lecture active est détectée
 automatiquement, avec un WARNING journalisé, sans faire échouer le reste
 du traitement de l'issue.
 
+**Actions légitimes d'Alain pendant une issue en cours — issue #724.**
+`configs/` est **commun à tous les projets** (un seul dossier, partagé par
+tous les watchers) : avant #724, le garde-fou ci-dessus traitait à tort
+comme une violation tout geste volontaire d'Alain qui y écrit PENDANT
+qu'une issue mode_write (ou lecture active) tourne dans un **autre**
+projet — création de projet (`nouveau_projet.ecrire_conf`), suppression de
+projet (`supprimer_projet._supprimer_conf`) et enregistrement de l'onglet
+Configuration (`app/projets.sauvegarder_conf`) étaient annulés en fin de
+traitement (nouveau `.conf` supprimé, `.conf` modifié remis dans son état
+d'avant, `.conf` supprimé recréé) — vécu deux fois le 06/10/2026 sur la
+création du projet AnnuaireToken (issues #138 et #140). Ces trois points
+appellent désormais `etat_configs_legitimes.enregistrer(nom_fichier)`
+juste après leur écriture disque, qui horodate l'action dans
+`logs/configs_legitimes.json` (purge automatique des entrées de plus d'une
+heure, `DUREE_VALIDITE_S`). `_restaurer_configs_modifies` consulte cette
+trace (`_action_legitime_posterieure`, via
+`etat_configs_legitimes.instant_legitime`) avant d'agir sur chaque fichier
+changé : une entrée horodatée **après** le début du traitement de l'issue
+(l'instant où `_empreinte_configs` a été prise) fait passer ce changement
+pour légitime — ni suppression, ni restauration, ni recréation — avec un
+message **INFO** explicite dans le journal du watcher («&nbsp;reconnu comme
+une création de projet légitime depuis new_issue.py&nbsp;», etc., en lieu
+et place du WARNING habituel. Point important : `enregistrer()` n'est
+appelée QUE par ces trois points de new_issue.py — le code de traitement
+d'une issue (`watcher.py`, `lancer_claude`, `traiter_issue`) n'appelle
+jamais cette fonction, seulement sa contrepartie en lecture
+(`instant_legitime`) : une issue ne peut donc pas s'ajouter elle-même à
+cette trace via le fonctionnement normal du bridge. Le comportement pour
+un changement fait PAR une issue elle-même reste strictement inchangé :
+annulé et journalisé en WARNING, comme avant #724.
+
 ### 12.1 Consignes injectées — architecture à trois couches (issues #209, #211)
 
 Le bridge injecte automatiquement des **consignes** à trois couches dans le
@@ -1562,6 +1593,12 @@ deux, mêmes étapes, mêmes messages, comportement idempotent identique :
 2. **`configs/<nom>.conf`** généré depuis le gabarit interne (dépôt, répertoire
    de travail, périmètre, topic ntfy, couleur d'accent — voir « Couleur
    d'accent des projets » ci-dessous, issues #120/#121/#534/#535 —, etc.).
+   Cette écriture est aussi tracée dans `etat_configs_legitimes` (issue
+   #724, §12 — même mécanisme pour la suppression de projet et
+   l'enregistrement de l'onglet Configuration) : si une issue mode_write
+   tourne en ce moment dans un **autre** projet, le garde-fou technique
+   `configs/*.conf` (§12/#318) reconnaît ce nouveau `.conf` comme légitime
+   et ne le supprime plus à la fin de ce traitement.
 3. **Labels GitHub** requis (§4) créés sur le dépôt cible, idempotent (les
    présents sont laissés intacts).
 4. **Fichier(s) de contexte** : `CONTEXTE.md` (+ les 3 fichiers Specs MVC si
