@@ -2499,6 +2499,28 @@ séquentiellement dans `REP_TRAVAIL` (hors périmètre de cette issue).
   repli propre sur le traitement séquentiel classique dans `REP_TRAVAIL`
   (l'issue attend qu'un slot se libère au prochain cycle) — jamais
   d'exception propagée, mais signalé activement (voir point suivant).
+  **Réutilisation sur RELANCE (issue #725)** : AVANT toute tentative de
+  création, `_preparer_worktree_ecriture` (appelée par `traiter_issue` à la
+  place de `_creer_worktree_avec_retries`) cherche via
+  `_trouver_worktree_reutilisable` un worktree déjà existant pour CETTE MÊME
+  issue (nom standard ou `-bis`/`-ter` hérité), enregistré comme worktree de
+  ce dépôt, dont la branche correspond et qui n'est pas verrouillé par un
+  traitement en cours — s'il en existe plusieurs (cas hérité), le plus
+  récemment modifié (dernier commit) est choisi. Trouvé : il est REPRIS tel
+  quel (commits et modifications non commitées compris), sans `-bis` ni
+  perte du travail déjà fait — c'est le correctif direct du problème constaté
+  sur Rummikub #146 (relance qui recréait un worktree vierge basé sur
+  master, abandonnant le travail de la tentative précédente). CCL reçoit
+  alors dans son prompt un bloc dédié (même esprit que la clause « tentative
+  précédente » #689) l'invitant à vérifier/compléter ce travail plutôt qu'à
+  le refaire, et à le dire explicitement dans son rapport final. `master`
+  n'est JAMAIS rebasé automatiquement sur ce worktree repris : si `master` a
+  avancé depuis sa création, l'écart (nombre de commits) est journalisé et
+  ajouté au compte-rendu de clôture, pour un merge manuel en connaissance de
+  cause. Aucun candidat valide trouvé (première exécution, dossier présent
+  mais non enregistré comme worktree, branche absente) : comportement
+  historique inchangé, repli sur `_creer_worktree_avec_retries` ci-dessus.
+  Le nettoyage des worktrees reste, comme avant, entièrement manuel.
 - **Repli en dernier recours : signalement actif (issue #611)** — quand
   `_creer_worktree_avec_retries` épuise ses 3 tentatives, `traiter_issue`
   appelle `_signaler_repli_worktree_echoue` avant de lancer la tâche dans

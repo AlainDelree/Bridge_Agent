@@ -3052,7 +3052,9 @@ def lancer_claude(numero: int, titre: str, body: str, dry_run: bool,
                   chemin_worktree: Path = None,
                   tentative: int = 1,
                   max_tentatives: int = None,
-                  tete_avant_traitement: str = None) -> tuple[bool, str]:
+                  tete_avant_traitement: str = None,
+                  worktree_repris: bool = False,
+                  commits_ecart_worktree: int = 0) -> tuple[bool, str]:
     """
     Lance Claude Code en mode non-interactif sur une issue.
 
@@ -3106,6 +3108,19 @@ def lancer_claude(numero: int, titre: str, body: str, dry_run: bool,
     signaler comme telle dans le rapport final plutôt que comme une
     « exécution antérieure » non identifiée. Valeurs par défaut (tentative=1,
     reste à None) : aucun bloc injecté, comportement inchangé.
+
+    worktree_repris / commits_ecart_worktree (issue #725) : renseignés par
+    `_preparer_worktree_ecriture` quand `chemin_worktree` désigne un worktree
+    REPRIS d'une tentative précédente de cette même issue — une RELANCE
+    (nouveau traitement), pas une nouvelle tentative DANS le même traitement
+    (ce cas-là reste couvert par tentative/max_tentatives ci-dessus).
+    Injecte dans le prompt un bloc dans le même esprit que bloc_tentative :
+    le répertoire contient probablement le travail de la tentative
+    précédente de cette même issue, à vérifier/compléter plutôt qu'à
+    refaire, et à signaler explicitement comme telle dans le rapport final.
+    `commits_ecart_worktree` (0 = aucun écart détecté) ajoute la mention du
+    nombre de commits dont master a avancé depuis la création de ce
+    worktree, repris SANS rebase automatique (intention #725).
 
     Retourne (succès, sortie).
     """
@@ -3276,6 +3291,39 @@ Dans ce cas :
   succès), pas d'une « exécution antérieure » non identifiée.
 """
 
+    # Bloc worktree REPRIS (issue #725, même esprit que bloc_tentative
+    # ci-dessus) : injecté quand `_preparer_worktree_ecriture` a choisi de
+    # reprendre un worktree déjà existant pour cette même issue au lieu d'en
+    # créer un nouveau — cas d'une RELANCE (nouveau traitement, après un
+    # échec/timeout/needs-human de la tentative précédente), à distinguer de
+    # bloc_tentative qui couvre les tentatives successives à l'intérieur d'un
+    # MÊME traitement. Sans ce bloc, CCL découvre un répertoire déjà occupé
+    # par du travail sans pouvoir l'attribuer avec certitude à une tentative
+    # antérieure sur cette même issue (cause du problème constaté sur
+    # Rummikub #146 : travail refait depuis zéro après chaque relance).
+    bloc_reprise_worktree = ""
+    if worktree_repris:
+        clause_ecart = (
+            f"\nmaster a avancé de {commits_ecart_worktree} commit(s) depuis la "
+            f"création de ce worktree — AUCUN rebase automatique n'a été fait "
+            f"(choix assumé) : signale cet écart dans ton rapport final, le merge "
+            f"manuel se fera en connaissance de cause."
+            if commits_ecart_worktree else ""
+        )
+        bloc_reprise_worktree = f"""
+⚠️ CE WORKTREE EST REPRIS D'UNE TENTATIVE PRÉCÉDENTE DE CETTE MÊME ISSUE #{numero}
+(relance après un échec — timeout ou needs-human — de ce même traitement,
+dans ce même répertoire {cwd_effectif}). Ce répertoire contient probablement
+le travail déjà fait par cette tentative précédente. Dans ce cas :
+- VÉRIFIE ce travail déjà fait (qualité, complétude par rapport à la tâche
+  demandée et, si disponible, au commentaire d'échec de la tentative
+  précédente) plutôt que de le refaire depuis zéro ;
+- complète-le seulement si nécessaire ;
+- dans ton rapport final, dis EXPLICITEMENT qu'il s'agit d'une reprise de
+  worktree d'une tentative précédente de cette même issue, pas d'un travail
+  fait de zéro.{clause_ecart}
+"""
+
     if prompt_perso is not None:
         prompt = prompt_perso
     else:
@@ -3286,7 +3334,7 @@ TITRE : {titre}
 
 BODY :
 {body}
-{bloc_contexte}{bloc_consignes}{clause_perimetre}{bloc_worktree}{bloc_tentative}{garde_fou}
+{bloc_contexte}{bloc_consignes}{clause_perimetre}{bloc_worktree}{bloc_reprise_worktree}{bloc_tentative}{garde_fou}
 Instructions :
 1. Lis attentivement la tâche demandée
 2. Effectue le travail demandé (dans les limites du mode ci-dessus)
@@ -3745,6 +3793,187 @@ def _creer_worktree_avec_retries(numero: int) -> tuple[Path | None, str | None]:
         if raison is None:
             break
     return None, raison
+
+
+def _worktree_en_cours_de_traitement(chemin: Path) -> bool:
+    """Un traitement est-il actuellement en cours sur ce worktree ? Vérifié
+    via le verrou inter-process (#189/#322) posé sur ce chemin par
+    `acquerir_verrou` — même mécanisme qui protège tout traitement mode_write
+    contre une collision avec un autre process. Condition de réutilisation
+    (issue #725) : un worktree par ailleurs valide ne doit jamais être repris
+    s'il est encore occupé — cas extrême, le thread Python de CE process est
+    déjà écarté plus haut dans `traiter_issue` avant d'atteindre ce point."""
+    verrou = _chemin_verrou(chemin)
+    if not verrou.exists():
+        return False
+    return _pid_vivant(_lire_pid_verrou(verrou))
+
+
+def _horodatage_dernier_commit(chemin: Path) -> float:
+    """Horodatage epoch (secondes) du dernier commit HEAD du worktree
+    `chemin` — sert à départager plusieurs worktrees hérités pour la même
+    issue (cas standard + `-bis` laissés par des tentatives antérieures à ce
+    correctif, issue #725) : le plus récemment modifié est repris. Retourne
+    0.0 si indéterminable (dossier absent, pas un dépôt, erreur git) — place
+    ce candidat en dernier plutôt que de faire échouer la sélection."""
+    try:
+        res = subprocess.run(
+            ["git", "-C", str(chemin), "log", "-1", "--format=%ct"],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=15,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return 0.0
+    if res.returncode != 0 or not res.stdout.strip():
+        return 0.0
+    try:
+        return float(res.stdout.strip())
+    except ValueError:
+        return 0.0
+
+
+def _trouver_worktree_reutilisable(numero: int) -> tuple[Path, str] | None:
+    """Cherche un worktree déjà existant, valide et disponible pour l'issue
+    mode_write `numero` (issue #725) — relance qui doit reprendre le travail
+    déjà fait plutôt que de créer un nouveau `-bis` vierge basé sur master.
+
+    Conditions de réutilisation (toutes requises) : le dossier existe, il
+    est bien enregistré comme worktree de `CFG.rep_travail` (via `git
+    worktree list`, pas seulement un dossier du même nom laissé par autre
+    chose), sa branche correspond au nom attendu pour ce numéro, et aucun
+    traitement de cette issue n'est actuellement en cours dessus
+    (`_worktree_en_cours_de_traitement`).
+
+    Couvre aussi bien le nom standard (`<projet>-issue<numero>`) que les
+    suffixes historiques `-bis`/`-ter` (issue #611, antérieurs à ce
+    correctif) : si plusieurs worktrees valides existent pour la même issue
+    — cas hérité uniquement, ce correctif n'en produit plus qu'un par issue
+    — le plus récemment modifié (dernier commit) est choisi.
+
+    Retourne `(chemin, branche)`, ou None si aucun candidat valide et
+    disponible n'est trouvé — l'appelant retombe alors sur le chemin
+    historique (`_creer_worktree_avec_retries` : nom standard, puis -bis,
+    puis -ter)."""
+    prefixe = f"{CFG.nom}-issue{numero}"
+    candidats: list[tuple[Path, str]] = []
+    for w in _lister_worktrees_secondaires():
+        chemin_str = w.get("chemin") or ""
+        nom = Path(chemin_str).name
+        if nom == prefixe:
+            suffixe = ""
+        elif nom in (prefixe + "-bis", prefixe + "-ter"):
+            suffixe = nom[len(prefixe):]
+        else:
+            continue
+        branche = w.get("branche", "")
+        if branche != _branche_worktree(numero, suffixe):
+            continue
+        chemin = Path(chemin_str)
+        if not chemin.is_dir():
+            continue
+        if _worktree_en_cours_de_traitement(chemin):
+            continue
+        candidats.append((chemin, branche))
+    if not candidats:
+        return None
+    if len(candidats) == 1:
+        return candidats[0]
+    return max(candidats, key=lambda c: _horodatage_dernier_commit(c[0]))
+
+
+def _commits_ecart_depuis_creation(branche: str) -> int:
+    """Nombre de commits dont `CFG.rep_travail` (typiquement master) a
+    avancé depuis la création de `branche` — commits accessibles depuis son
+    HEAD mais pas depuis `branche` (issue #725). Sert UNIQUEMENT à signaler
+    l'écart (journal + compte-rendu de clôture) : jamais de rebase/merge
+    automatique du worktree repris (intention #725 — le merge manuel se fait
+    en connaissance de cause). Retourne 0 si indéterminable (branche absente,
+    erreur git), traité comme « aucun écart détecté », jamais comme une
+    erreur bloquante."""
+    try:
+        res = subprocess.run(
+            ["git", "-C", str(CFG.rep_travail), "rev-list", "--count", f"{branche}..HEAD"],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=15,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return 0
+    if res.returncode != 0:
+        return 0
+    try:
+        return int(res.stdout.strip())
+    except ValueError:
+        return 0
+
+
+@dataclass
+class WorktreeResolu:
+    """Résultat de `_preparer_worktree_ecriture` (issue #725) : soit un
+    worktree REPRIS d'une tentative précédente de cette même issue (relance),
+    soit un worktree neuf créé par le chemin historique
+    (`_creer_worktree_avec_retries`), soit aucun — toutes les tentatives de
+    création ont échoué, repli en tout dernier recours sur REP_TRAVAIL,
+    `raison_deja_pris` renseignée (issue #611)."""
+    chemin: Path | None
+    raison_deja_pris: str | None
+    worktree_repris: bool
+    commits_ecart: int
+    avertissement_worktree_repris: str
+
+
+def _preparer_worktree_ecriture(numero: int) -> WorktreeResolu:
+    """Point d'entrée unique de préparation du worktree d'une issue
+    mode_write (issue #725) : reprend tel quel (commits et éventuelles
+    modifications non commitées compris) un worktree déjà existant pour
+    CETTE MÊME issue si les conditions de réutilisation sont réunies (voir
+    `_trouver_worktree_reutilisable`), au lieu de créer systématiquement un
+    nouveau `-bis` vierge basé sur master — cause du problème constaté sur
+    Rummikub #146 (travail déjà fait abandonné à chaque relance, timeouts
+    répétés, accumulation de worktrees).
+
+    Un numéro d'issue étant unique, un worktree valide trouvé pour ce numéro
+    appartient forcément à CETTE issue — aucune ambiguïté possible avec une
+    autre tâche.
+
+    Dans tous les autres cas (aucun worktree existant pour cette issue,
+    dossier présent mais non enregistré comme worktree, branche absente, ou
+    worktree trouvé mais actuellement verrouillé par un autre traitement) :
+    comportement historique inchangé, repli sur `_creer_worktree_avec_retries`
+    (nom standard, puis -bis, puis -ter, issue #611).
+
+    Base jamais rebasée automatiquement sur master (choix assumé, cf.
+    intention #725) : si master a avancé depuis la création du worktree
+    repris, l'écart est journalisé ici (une ligne) et exposé via
+    `avertissement_worktree_repris`, destiné au compte-rendu de clôture — le
+    merge manuel se fait ensuite en connaissance de cause."""
+    trouve = _trouver_worktree_reutilisable(numero)
+    if trouve is None:
+        chemin, raison = _creer_worktree_avec_retries(numero)
+        return WorktreeResolu(chemin, raison, False, 0, "")
+
+    chemin, branche = trouve
+    ecart = _commits_ecart_depuis_creation(branche)
+    if ecart:
+        log.info(
+            f"  Issue #{numero} : worktree repris {chemin} (branche {branche}, "
+            f"issue #725) — master a avancé de {ecart} commit(s) depuis sa "
+            f"création, aucun rebase automatique, merge manuel à faire en "
+            f"connaissance de cause."
+        )
+        avertissement = (
+            f"ℹ️ Worktree repris d'une tentative précédente de cette même "
+            f"issue (relance, issue #725) — `master` a avancé de {ecart} "
+            f"commit(s) depuis sa création ; aucun rebase automatique (choix "
+            f"assumé), merge manuel à faire en connaissance de cause.\n\n"
+        )
+    else:
+        log.info(
+            f"  Issue #{numero} : worktree repris {chemin} (branche {branche}, "
+            f"issue #725)."
+        )
+        avertissement = (
+            f"ℹ️ Worktree repris d'une tentative précédente de cette même "
+            f"issue (relance, issue #725).\n\n"
+        )
+    return WorktreeResolu(chemin, None, True, ecart, avertissement)
 
 
 def _signaler_repli_worktree_echoue(numero: int, raison: str | None) -> None:
@@ -4702,7 +4931,9 @@ def _executer_une_tentative(numero: int, titre: str, body: str, dry_run: bool, m
                              cwd_effectif: Path, verrou, chemin_scratch: Path | None,
                              chemin_worktree: Path | None, empreinte_configs_avant: tuple[dict, float] | None,
                              tentative: int, max_tentatives: int | None = None,
-                             tete_avant_traitement: str | None = None) -> tuple[bool, str]:
+                             tete_avant_traitement: str | None = None,
+                             worktree_repris: bool = False,
+                             commits_ecart_worktree: int = 0) -> tuple[bool, str]:
     """Une tentative `lancer_claude`, garde-fou de format de clôture (#581) et
     restauration best-effort des configs/*.conf modifiés (#318/#327).
 
@@ -4711,6 +4942,10 @@ def _executer_une_tentative(numero: int, titre: str, body: str, dry_run: bool, m
     (clause « tentative précédente probable » injectée dans le prompt à
     partir de la tentative 2).
 
+    worktree_repris / commits_ecart_worktree (issue #725) : simplement
+    transmis à `lancer_claude` — voir sa docstring (clause « worktree repris
+    d'une relance » injectée dans le prompt).
+
     Retourne (succes, sortie)."""
     succes, sortie = lancer_claude(numero, titre, body, dry_run, mode,
                                    timeout, modele,
@@ -4718,7 +4953,9 @@ def _executer_une_tentative(numero: int, titre: str, body: str, dry_run: bool, m
                                    verrou=verrou, chemin_scratch=chemin_scratch,
                                    chemin_worktree=chemin_worktree,
                                    tentative=tentative, max_tentatives=max_tentatives,
-                                   tete_avant_traitement=tete_avant_traitement)
+                                   tete_avant_traitement=tete_avant_traitement,
+                                   worktree_repris=worktree_repris,
+                                   commits_ecart_worktree=commits_ecart_worktree)
 
     # Garde-fou de format (issue #581) : le prompt standard impose un
     # rapport de clôture marqué par ✅ ou ❌ (« Réponds avec ce format
@@ -4817,15 +5054,21 @@ def _verifier_violation_scratch(numero: int, titre: str, labels: list[str],
 
 def _finaliser_succes(numero: int, titre: str, body: str, labels: list[str], mode: str,
                        timeout: int, avertissement_conflit: str,
-                       avertissement_worktree_deja_pris: str, sortie: str,
+                       avertissement_worktree_deja_pris: str,
+                       avertissement_worktree_repris: str, sortie: str,
                        debut_traitement: float, nb_projets_actifs_debut: int,
                        est_relance: bool) -> None:
     """Traitement d'une tentative réussie : commentaire de résultat (avec
     retry), fermeture de l'issue, historique des durées, calibration
     automatique du TIMEOUT et notification. Termine toujours le traitement de
-    l'issue — l'appelant doit retourner immédiatement après l'appel."""
+    l'issue — l'appelant doit retourner immédiatement après l'appel.
+
+    avertissement_worktree_repris (issue #725) : même esprit
+    qu'avertissement_worktree_deja_pris — rend visible dans le compte-rendu
+    de clôture qu'un worktree déjà existant a été repris pour cette issue
+    (relance) plutôt que créé, et l'écart de commits avec master s'il y en a."""
     log.info(f"  ✓ Issue #{numero} traitée avec succès.")
-    message_resultat = f"{MARQUEUR_RESULTAT}\n## Résultat\n\n{avertissement_conflit}{avertissement_worktree_deja_pris}{sortie}"
+    message_resultat = f"{MARQUEUR_RESULTAT}\n## Résultat\n\n{avertissement_conflit}{avertissement_worktree_deja_pris}{avertissement_worktree_repris}{sortie}"
     # Le commentaire de résultat est critique (issue #195) : on le
     # poste avec retry/backoff et on ne ferme l'issue QUE s'il a réussi.
     if not commenter_resultat_avec_retry(numero, message_resultat):
@@ -4949,13 +5192,19 @@ def _tracer_tentative_expiree(numero: int, titre: str, body: str, mode: str,
 def _gerer_abandon_max_essais(numero: int, titre: str, body: str, labels: list[str],
                                mode: str, critique: bool, tentative: int, sortie: str,
                                timeout: int, avertissement_worktree_deja_pris: str,
+                               avertissement_worktree_repris: str,
                                perimetre_effectif: str, cwd_effectif: Path,
                                debut_traitement: float) -> None:
     """Nombre maximal de tentatives atteint (`CFG.max_essais`) : issue
     critique ⇒ nouvelle tentative au prochain cycle (retry infini, jamais de
     needs-human) ; sinon abandon définitif (passe diagnostique, label
     needs-human, notification). Termine toujours le traitement de l'issue —
-    l'appelant doit retourner immédiatement après l'appel."""
+    l'appelant doit retourner immédiatement après l'appel.
+
+    avertissement_worktree_repris (issue #725) : même esprit
+    qu'avertissement_worktree_deja_pris — reste visible même en cas d'échec
+    définitif, pour qu'Alain sache que ce worktree venait d'une tentative
+    précédente de cette même issue avant d'intervenir manuellement."""
     if critique:
         alerte_critique(numero, titre, tentative, labels)
         log.warning(f"  Issue critique #{numero} — nouvelle tentative au prochain cycle.")
@@ -4974,6 +5223,7 @@ def _gerer_abandon_max_essais(numero: int, titre: str, body: str, labels: list[s
     message_echec = (
         f"❌ Échec après {CFG.max_essais} tentatives.\n\n"
         f"{avertissement_worktree_deja_pris}"
+        f"{avertissement_worktree_repris}"
         f"Dernière erreur : `{sortie}`\n\n"
     )
     if diagnostic:
@@ -5041,7 +5291,10 @@ def _nettoyer_apres_traitement(verrou, chemin_scratch: Path | None,
 
 
 def _traiter_issue_synchrone(issue: dict, dry_run: bool, chemin_worktree: Path | None = None,
-                              echec_worktree_deja_pris: str | None = None):
+                              echec_worktree_deja_pris: str | None = None,
+                              worktree_repris: bool = False,
+                              commits_ecart_worktree: int = 0,
+                              avertissement_worktree_repris: str = ""):
     """Corps du traitement d'une issue — inchangé depuis avant #337, à
     l'exception du paramètre `chemin_worktree` (issue #337) : chemin du
     worktree git isolé où cette tâche mode_write doit tourner, ou None pour le
@@ -5056,6 +5309,13 @@ def _traiter_issue_synchrone(issue: dict, dry_run: bool, chemin_worktree: Path |
     (mode lecture, parallélisation désactivée, etc.). Rend ce repli visible
     dans le compte-rendu de clôture, en plus du log.warning déjà émis par
     `_creer_worktree` au moment de l'échec.
+
+    `worktree_repris` / `commits_ecart_worktree` / `avertissement_worktree_repris`
+    (issue #725) : renseignés par l'appelant quand `chemin_worktree` désigne
+    un worktree REPRIS d'une tentative précédente de cette même issue
+    (`_preparer_worktree_ecriture`) plutôt que créé — transmis à
+    `lancer_claude` (bloc de prompt dédié) et au compte-rendu de clôture
+    (succès comme échec définitif).
 
     Orchestrateur (issue #619) : chaque étape est déléguée à une sous-fonction
     privée ci-dessus (guards + bootstrap CCW, déduction du mode, résolution du
@@ -5111,7 +5371,8 @@ def _traiter_issue_synchrone(issue: dict, dry_run: bool, chemin_worktree: Path |
                 numero, titre, body, dry_run, mode, timeout, modele,
                 perimetre_effectif, cwd_effectif, verrou, chemin_scratch,
                 chemin_worktree, empreinte_configs_avant, tentative,
-                max_tentatives, tete_avant_traitement)
+                max_tentatives, tete_avant_traitement,
+                worktree_repris, commits_ecart_worktree)
 
             if _verifier_violation_scratch(numero, titre, labels, cwd_effectif, statut_rep_travail_avant):
                 return
@@ -5119,6 +5380,7 @@ def _traiter_issue_synchrone(issue: dict, dry_run: bool, chemin_worktree: Path |
             if succes:
                 _finaliser_succes(numero, titre, body, labels, mode, timeout,
                                    avertissement_conflit, avertissement_worktree_deja_pris,
+                                   avertissement_worktree_repris,
                                    sortie, debut_traitement, nb_projets_actifs_debut, est_relance)
                 return
 
@@ -5131,6 +5393,7 @@ def _traiter_issue_synchrone(issue: dict, dry_run: bool, chemin_worktree: Path |
             if tentative >= CFG.max_essais:
                 _gerer_abandon_max_essais(numero, titre, body, labels, mode, critique, tentative,
                                            sortie, timeout, avertissement_worktree_deja_pris,
+                                           avertissement_worktree_repris,
                                            perimetre_effectif, cwd_effectif, debut_traitement)
                 return
 
@@ -5141,7 +5404,10 @@ def _traiter_issue_synchrone(issue: dict, dry_run: bool, chemin_worktree: Path |
 # ─── Point d'entrée public : dispatch séquentiel / parallèle (issue #337) ──────
 
 def _lancer_thread_ecriture(issue: dict, dry_run: bool, chemin_worktree: Path | None,
-                             echec_worktree_deja_pris: str | None = None) -> None:
+                             echec_worktree_deja_pris: str | None = None,
+                             worktree_repris: bool = False,
+                             commits_ecart_worktree: int = 0,
+                             avertissement_worktree_repris: str = "") -> None:
     """Cible du thread Python dédié à une tâche mode_write parallélisée (issue
     #337). Appelle simplement `_traiter_issue_synchrone` — toute la logique
     (ACK, verrou par chemin_travail, retries, fermeture, notifications) reste
@@ -5153,9 +5419,17 @@ def _lancer_thread_ecriture(issue: dict, dry_run: bool, chemin_worktree: Path | 
     `echec_worktree_deja_pris` (issue #611) : transmis tel quel quand ce
     thread cible REP_TRAVAIL en tout dernier recours, après épuisement des
     tentatives de `_creer_worktree_avec_retries` — rend ce repli visible dans
-    le compte-rendu de clôture (voir `_traiter_issue_synchrone`)."""
+    le compte-rendu de clôture (voir `_traiter_issue_synchrone`).
+
+    `worktree_repris` / `commits_ecart_worktree` / `avertissement_worktree_repris`
+    (issue #725) : transmis tel quel quand `chemin_worktree` a été REPRIS
+    d'une tentative précédente de cette même issue plutôt que créé (voir
+    `_preparer_worktree_ecriture`, appelée par `traiter_issue`)."""
     _traiter_issue_synchrone(issue, dry_run, chemin_worktree=chemin_worktree,
-                              echec_worktree_deja_pris=echec_worktree_deja_pris)
+                              echec_worktree_deja_pris=echec_worktree_deja_pris,
+                              worktree_repris=worktree_repris,
+                              commits_ecart_worktree=commits_ecart_worktree,
+                              avertissement_worktree_repris=avertissement_worktree_repris)
 
 
 def traiter_issue(issue: dict, dry_run: bool) -> None:
@@ -5173,15 +5447,14 @@ def traiter_issue(issue: dict, dry_run: bool) -> None:
         REP_TRAVAIL.
       - `MAX_WRITE_PARALLELE <= 1` (issue #577) → pas de thread (une seule
         tâche mode_write à la fois, thread principal), mais worktree dédié
-        malgré tout : `_creer_worktree_avec_retries` puis
+        malgré tout : `_preparer_worktree_ecriture` puis
         `_traiter_issue_synchrone` appelée directement (bloquant) avec ce
         worktree. Échec de TOUTES les tentatives → repli direct sur
         REP_TRAVAIL, signalé activement (issue #611).
       - `MAX_WRITE_PARALLELE > 1` → TOUTE tâche mode_write du lot, y compris
         la première (issue #611 — plus d'exception REP_TRAVAIL pour le
         premier slot, cf. #577 contredit par #337), obtient un worktree dédié
-        via `_creer_worktree_avec_retries` (nom standard, puis `-bis`/`-ter`
-        si le chemin/la branche est déjà pris) + thread. Échec de TOUTES les
+        via `_preparer_worktree_ecriture` + thread. Échec de TOUTES les
         tentatives → repli en tout DERNIER recours sur REP_TRAVAIL, mais
         toujours en thread (pour que la boucle principale reste libre de
         traiter d'autres issues) : le verrou par chemin_travail (#189/#322)
@@ -5191,6 +5464,15 @@ def traiter_issue(issue: dict, dry_run: bool) -> None:
         + mention dans le compte-rendu de clôture, issue #611/#589).
       - À `MAX_WRITE_PARALLELE` déjà atteint → différée au prochain cycle,
         sans même tenter de worktree.
+
+    `_preparer_worktree_ecriture` (issue #725, dans les deux cas
+    `MAX_WRITE_PARALLELE` ci-dessus) : reprend D'ABORD un worktree déjà
+    existant et disponible pour CETTE MÊME issue (relance après un
+    échec/timeout/needs-human — le travail déjà fait, commits compris, n'est
+    alors PAS abandonné) ; seulement si aucun n'est trouvé, retombe sur le
+    chemin historique `_creer_worktree_avec_retries` (nom standard, puis
+    `-bis`/`-ter`, issue #611, pour une première exécution ou un dossier
+    présent mais non enregistré comme worktree de ce dépôt).
 
     Issue #576 : une issue mode_write bloquée en `needs-human` (échec
     définitif, sans thread actif) continue d'occuper une place de
@@ -5264,18 +5546,31 @@ def traiter_issue(issue: dict, dry_run: bool) -> None:
             # thread dès sa première ligne (garde d'idempotence en tête de
             # _traiter_issue_synchrone). La déduplication inter-cycles est
             # déjà assurée par `_threads_ecriture` (vérifié plus haut).
-            chemin_worktree, raison_deja_pris = _creer_worktree_avec_retries(numero)
+            resultat_worktree = _preparer_worktree_ecriture(numero)
+            chemin_worktree = resultat_worktree.chemin
             if chemin_worktree is not None:
                 thread = threading.Thread(
                     target=_lancer_thread_ecriture, args=(issue, dry_run, chemin_worktree),
+                    kwargs={
+                        "worktree_repris": resultat_worktree.worktree_repris,
+                        "commits_ecart_worktree": resultat_worktree.commits_ecart,
+                        "avertissement_worktree_repris": resultat_worktree.avertissement_worktree_repris,
+                    },
                     name=f"ecriture-issue-{numero}", daemon=True,
                 )
                 with _verrou_threads_ecriture:
                     _threads_ecriture.append({"numero": numero, "worktree": chemin_worktree, "thread": thread})
-                log.info(
-                    f"  Issue #{numero} : lancement dans le worktree {chemin_worktree} "
-                    f"({len(actifs) + 1}/{CFG.max_write_parallele}) — parallélisation mode_write (issue #337)."
-                )
+                if resultat_worktree.worktree_repris:
+                    log.info(
+                        f"  Issue #{numero} : lancement dans le worktree REPRIS {chemin_worktree} "
+                        f"({len(actifs) + 1}/{CFG.max_write_parallele}) — parallélisation mode_write "
+                        f"(issue #337), reprise de relance (issue #725)."
+                    )
+                else:
+                    log.info(
+                        f"  Issue #{numero} : lancement dans le worktree {chemin_worktree} "
+                        f"({len(actifs) + 1}/{CFG.max_write_parallele}) — parallélisation mode_write (issue #337)."
+                    )
                 thread.start()
                 return
 
@@ -5288,10 +5583,10 @@ def traiter_issue(issue: dict, dry_run: bool) -> None:
             # + mention dans le compte-rendu de clôture assurée par
             # `_traiter_issue_synchrone` via `echec_worktree_deja_pris`
             # (transmis à travers `_lancer_thread_ecriture`, issue #589).
-            _signaler_repli_worktree_echoue(numero, raison_deja_pris)
+            _signaler_repli_worktree_echoue(numero, resultat_worktree.raison_deja_pris)
             thread = threading.Thread(
                 target=_lancer_thread_ecriture,
-                args=(issue, dry_run, None, raison_deja_pris),
+                args=(issue, dry_run, None, resultat_worktree.raison_deja_pris),
                 name=f"ecriture-issue-{numero}", daemon=True,
             )
             with _verrou_threads_ecriture:
@@ -5308,17 +5603,28 @@ def traiter_issue(issue: dict, dry_run: bool) -> None:
             # du worktree (nom standard + -bis + -ter, issue #611) → repli
             # direct sur REP_TRAVAIL ci-dessous via `chemin_worktree=None`,
             # signalé activement comme pour le cas parallélisé ci-dessus.
-            chemin_worktree, raison_deja_pris = _creer_worktree_avec_retries(numero)
+            resultat_worktree = _preparer_worktree_ecriture(numero)
+            chemin_worktree = resultat_worktree.chemin
             if chemin_worktree is not None:
-                log.info(
-                    f"  Issue #{numero} : traitement séquentiel dans le worktree "
-                    f"{chemin_worktree} — isolation de REP_TRAVAIL systématique "
-                    f"(issue #577)."
-                )
+                if resultat_worktree.worktree_repris:
+                    log.info(
+                        f"  Issue #{numero} : traitement séquentiel dans le worktree REPRIS "
+                        f"{chemin_worktree} — isolation de REP_TRAVAIL systématique "
+                        f"(issue #577), reprise de relance (issue #725)."
+                    )
+                else:
+                    log.info(
+                        f"  Issue #{numero} : traitement séquentiel dans le worktree "
+                        f"{chemin_worktree} — isolation de REP_TRAVAIL systématique "
+                        f"(issue #577)."
+                    )
             else:
-                _signaler_repli_worktree_echoue(numero, raison_deja_pris)
+                _signaler_repli_worktree_echoue(numero, resultat_worktree.raison_deja_pris)
             _traiter_issue_synchrone(issue, dry_run, chemin_worktree=chemin_worktree,
-                                      echec_worktree_deja_pris=raison_deja_pris)
+                                      echec_worktree_deja_pris=resultat_worktree.raison_deja_pris,
+                                      worktree_repris=resultat_worktree.worktree_repris,
+                                      commits_ecart_worktree=resultat_worktree.commits_ecart,
+                                      avertissement_worktree_repris=resultat_worktree.avertissement_worktree_repris)
             return
 
     _traiter_issue_synchrone(issue, dry_run)

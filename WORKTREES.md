@@ -79,6 +79,31 @@ périmètre de ce mécanisme (voir §5 « Limites connues »).
   manuellement une fois le travail relu, puis nettoie (§3, §4). Le numéro
   d'issue, le chemin du worktree et la branche sont toujours journalisés
   clairement en fin de traitement dans `logs/watcher-<projet>.log`.
+- **Réutilisation sur RELANCE, pas de `-bis` vierge (issue #725).** Avant ce
+  correctif, une RELANCE (nouveau traitement après un échec/timeout/
+  needs-human de la tentative précédente) repartait toujours d'un worktree
+  **neuf** : si le chemin standard existait encore (reliquat de la
+  tentative précédente, jamais nettoyé automatiquement), le code basculait
+  sur `-bis`/`-ter` — un worktree vierge basé sur `master`, qui abandonnait
+  tout le travail déjà fait par la tentative précédente (constaté sur
+  Rummikub #146 : deux worktrees `rummikub-issue146`/`-bis` pour la même
+  issue, travail refait, timeouts répétés). Désormais, `traiter_issue`
+  cherche D'ABORD un worktree déjà existant pour cette même issue (nom
+  standard ou `-bis`/`-ter` hérité), enregistré comme worktree de ce dépôt,
+  dont la branche correspond et qui n'est pas verrouillé par un traitement
+  en cours — s'il en existe plusieurs (cas hérité d'avant ce correctif), le
+  plus récemment modifié (dernier commit) est choisi. Trouvé, il est REPRIS
+  **tel quel** (commits et modifications non commitées compris) : aucun
+  `-bis` créé, le travail déjà fait est conservé. CCL reçoit alors un bloc
+  de prompt dédié l'invitant à vérifier/compléter ce travail plutôt qu'à le
+  refaire, et à le signaler explicitement dans son rapport final. `master`
+  n'est **jamais** rebasé automatiquement sur ce worktree repris : si
+  `master` a avancé depuis sa création, l'écart (nombre de commits) est
+  journalisé et ajouté au compte-rendu de clôture, pour un merge manuel en
+  connaissance de cause. Aucun candidat trouvé (première exécution, dossier
+  présent mais non enregistré comme worktree, branche absente) : repli
+  inchangé sur `_creer_worktree_avec_retries` ci-dessus (nom standard, puis
+  `-bis`, puis `-ter`).
 
 ## 3. Workflow normal d'Alain
 
@@ -193,3 +218,10 @@ au quotidien.
   active (scratch) restent strictement séquentielles dans `REP_TRAVAIL`,
   qu'un ou plusieurs worktrees `mode_write` tournent ou non en parallèle
   à côté.
+- **`-bis`/`-ter` hérités ni supprimés ni migrés (issue #725).** La
+  réutilisation sur relance ci-dessus (§2) choisit le plus récent si
+  plusieurs worktrees existent déjà pour une même issue, mais ne supprime
+  ni ne fusionne jamais les autres — un `-bis` laissé par une relance
+  d'avant ce correctif reste tel quel tant qu'Alain ne le nettoie pas
+  manuellement (§3, étape 5). Le nettoyage des worktrees reste, dans tous
+  les cas, entièrement manuel.
