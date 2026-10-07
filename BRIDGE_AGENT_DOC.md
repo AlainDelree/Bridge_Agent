@@ -685,6 +685,17 @@ Le mode réellement appliqué à CCL reste de toute façon armé par le label
 GitHub (§3.14 ci-dessus, #563) : ce mécanisme n'ouvre aucune voie vers le
 mode écriture, texte libre ou pas.
 
+**Modèle recommandé pour le texte libre (issue #727).** Pour que CCL
+comprenne la correction sans devoir deviner son contexte, structurer ce texte
+libre en deux temps : la cause de l'échec, puis la correction apportée (ex.
+le nouveau `TIMEOUT`). Après un échec par dépassement de délai, ajouter en
+plus une phrase de reprise du type « Un travail partiel existe peut-être
+déjà dans le worktree : le vérifier et le compléter plutôt que de repartir
+de zéro. » Cette dernière phrase est facultative — le prompt de CCL contient
+déjà un rappel équivalent quand le worktree est repris sur relance (issue
+#725) — mais la répéter ici renforce le message au moment où CCL lit le
+corps de l'issue.
+
 **Retrait de `needs-human` + commentaire de trace : réutilisation de
 `app.interruption.relancer_issue()`**, extraite du cœur de `route_relancer()`
 (bouton « 🔄 Relancer », issue #460) précisément pour ce réemploi — aucune

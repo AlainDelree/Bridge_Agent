@@ -155,6 +155,19 @@ au quotidien.
    git branch -d worktree-issue-<N>
    ```
 
+**Après la fusion : quoi relancer (issue #727).** Un processus déjà lancé
+garde l'ancien code en mémoire jusqu'à son propre redémarrage — l'avoir
+lancé avant la fusion, même le même jour, ne suffit pas. Selon les fichiers
+touchés par l'issue fusionnée :
+
+| Fichiers modifiés | Quoi relancer |
+|---|---|
+| `watcher.py` | Relancer les watchers de projet concernés — de préférence quand aucune issue en écriture ne tourne (un redémarrage interromprait une issue en cours). |
+| `app/*.py`, templates, ou modules importés par `new_issue.py` | Redémarrer `new_issue.py`. |
+| `scripts/watcher_issues_inbox.py` | Relancer le Watcher spool — sans conséquence pour les issues en cours, il est indépendant des watchers de projet. |
+| JavaScript ou CSS uniquement | Ctrl+Maj+R dans le navigateur — aucun redémarrage. |
+| Documentation ou tests uniquement | Rien à relancer. |
+
 ## 4. Procédures de récupération
 
 - **Worktree orphelin** (CCL planté ou TIMEOUT atteint pendant le
