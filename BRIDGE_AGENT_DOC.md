@@ -611,6 +611,8 @@ jamais créée pour ce bloc.
 | TIMEOUT | 1800s |
 
 Le TIMEOUT de 900s était trop court : la tâche a échoué par dépassement.
+Reprendre le travail déjà committé dans le worktree plutôt que repartir
+de zéro.
 ```
 
 **Validation avant modification (`valider_relance`, `_recuperer_issue`,
@@ -656,6 +658,33 @@ ne peut pas s'en affranchir. Le vérifier aussi dans `valider_relance` ne fait
 qu'échouer tôt avec un message clair, plutôt que de laisser passer une
 correction qui resterait de toute façon sans effet.
 
+**Texte libre ajouté au corps de l'issue, désormais lu par CCL (issue #726).**
+Le texte libre du fichier RELANCE (au-delà de l'en-tête et de `#Titre:`,
+`champs["corps"]`) n'était auparavant recopié que dans le commentaire de
+trace (ci-dessous) — jamais vu par CCL, qui ne lit que le corps de l'issue
+(`watcher.py`), pas ses commentaires. Pour transmettre une consigne de
+reprise (précisions, cause supposée de l'échec…), il fallait donc éditer le
+corps à la main sur GitHub avant de relancer. Corrigé par
+`_ajouter_texte_libre()` (`scripts/watcher_issues_inbox.py`) : si le texte
+libre est non vide, il est ajouté en **fin de corps**, sous une section
+horodatée `## Relance du <date>`, dans la **même** mise à jour du corps que
+la fusion des champs d'en-tête ci-dessus (un seul appel `_modifier_corps_gh`)
+— le watcher voit donc le corps à jour dès sa prochaine lecture. Texte libre
+vide : corps inchangé par ce mécanisme (seule la fusion d'en-tête s'applique,
+comme avant #726). Relances successives : chaque section s'ajoute à la fin,
+la plus récente en dernier, sans jamais effacer les précédentes.
+
+Garantie structurelle : la nouvelle section est toujours **hors de la zone
+d'en-tête bornée** (`ZONE_ENTETE_LIGNES`, §3.3) — `_ajouter_texte_libre()`
+complète le corps avec des lignes vides jusqu'à cette limite avant d'ajouter
+la section si le corps existant est plus court. Sans cette marge, un texte
+libre imitant une ligne d'en-tête (ex. `| MODE | écriture |`) pourrait sinon
+tomber dans cette même zone et être relu, à tort, comme un véritable champ
+par `lire_champ_entete`/`_maj_ligne_entete` lors d'une relance ultérieure.
+Le mode réellement appliqué à CCL reste de toute façon armé par le label
+GitHub (§3.14 ci-dessus, #563) : ce mécanisme n'ouvre aucune voie vers le
+mode écriture, texte libre ou pas.
+
 **Retrait de `needs-human` + commentaire de trace : réutilisation de
 `app.interruption.relancer_issue()`**, extraite du cœur de `route_relancer()`
 (bouton « 🔄 Relancer », issue #460) précisément pour ce réemploi — aucune
@@ -663,7 +692,9 @@ logique de retrait de label / pose de commentaire dupliquée entre les deux
 flux. Le commentaire posté diffère de celui du bouton (mention explicite
 d'issues_inbox/RELANCE) et résume les champs effectivement corrigés, plus le
 texte libre éventuel du fichier (au-delà de l'en-tête et de `#Titre:`) —
-utile pour tracer *pourquoi* la correction a été faite.
+**conservé tel quel** (issue #726) : il reste l'historique visible sur
+GitHub, en complément — pas en remplacement — de son ajout au corps
+ci-dessus.
 
 **Non traité par ce chemin** (hors-scope, cf. ci-dessus) : changement de
 `MODE`/labels via `RELANCE`, insertion d'un champ absent du corps cible,
@@ -738,6 +769,13 @@ réseau ni `gh` réel) + `static/js/tests/resultats_coches.test.js`
 `tests/test_decoche_bouton_relancer_721.py` (`route_relancer()` isolée du
 vrai `logs/etat_cases_cochees.json`, mêmes gardes-fous que
 `tests/test_relancer_watcher_574.py` — aucun appel `gh` réel).
+
+**Texte libre ajouté au corps (issue #726) :** `tests/test_texte_libre_relance_726.py`
+(`_ajouter_texte_libre()` seule — section horodatée, texte vide, empilement
+de deux relances successives, texte imitant des lignes d'en-tête jamais lu
+comme un champ — et `_traiter_relance()` de bout en bout — fusion d'en-tête
++ texte libre en une seule mise à jour du corps, rejet sans toucher
+`needs-human` si cette mise à jour échoue — aucun appel `gh` réel).
 
 ### 3.15 Événements SSE émis (issues #631, #627, #634)
 
@@ -1061,7 +1099,7 @@ Le watcher lit ces champs dans le tableau markdown de l'en-tête :
 | `TYPE` | `chef` ou `ouvrier` | Identifie le rôle de l'issue dans le pattern multi-agent. `chef` = orchestre les ouvriers. `ouvrier` = sous-tâche créée par le chef, masquée par défaut dans l'onglet Résultats. Absent = issue normale. |
 | `FICHIER_CONTEXTE` | ex. chemin relatif | Fichier additionnel fourni en contexte à CCL pour cette issue (modifiable via l'onglet Configuration, voir §12) |
 | `SUITE_DE` | ex. `#5` | Indique que cette issue fait suite à l'issue #N (discussion ou tâche complémentaire). Absent = issue inédite. |
-| `RELANCE` | ex. `#612` | **Spécifique à `issues_inbox/`** (issue #516, voir §3.14) — présent, détourne le fichier déposé vers la correction/relance de l'issue #N déjà ouverte (`TIMEOUT`/`MODELE` du fichier fusionnés dans son corps, `needs-human` retiré) plutôt que de créer une nouvelle issue. N'a aucun effet une fois l'issue créée — lu uniquement au dépôt du fichier, jamais par `watcher.py`. |
+| `RELANCE` | ex. `#612` | **Spécifique à `issues_inbox/`** (issue #516, voir §3.14) — présent, détourne le fichier déposé vers la correction/relance de l'issue #N déjà ouverte (`TIMEOUT`/`MODELE` du fichier fusionnés dans son corps, `needs-human` retiré) plutôt que de créer une nouvelle issue. Le texte libre éventuel du fichier (hors en-tête) est lui aussi ajouté au corps, en section horodatée distincte (issue #726) — c'est donc bien lu par CCL à la reprise. N'a aucun effet une fois l'issue créée — lu uniquement au dépôt du fichier, jamais par `watcher.py`. |
 | `REDACTEUR` | ex. `bridge_agent` | **Spécifique à `issues_inbox/`** (issue #599, voir §3.4) — optionnel, nom du projet depuis le contexte duquel Claude Chat a rédigé l'issue. Validé pour cohérence avec `PROJET` avant création (`REDACTEUR == PROJET`, ou label `for-windows` + `REDACTEUR == bridge_agent` pour le canal CCW **uniquement si le projet visé n'a pas encore son propre service CCW dédié** — `CCW-Watcher-<Projet>`, modèle multi-projets #170, voir §16 — sinon c'est le cas `REDACTEUR == PROJET` qui s'applique ; dans le cas canal CCW partagé, seul `REDACTEUR` vaut `bridge_agent`, `PROJET` reste le projet réellement concerné, ex. `actualise`, jamais `bridge_agent` du seul fait du canal CCW, issues #665/#684) ; discordance → rejet vers `rejected/`. Absent = aucune validation. Lu uniquement au dépôt du fichier, jamais par `watcher.py`. |
 | `COMPLEXITE` | `rapide` / `court` / `normal` / `lourd` | 4e dimension de la clé EWMA de calibration TIMEOUT (issue #434, voir §19), estimée par Claude Chat au moment de rédiger l'issue. Absent ou valeur non reconnue = `normal` (défaut, ~300s). CCL/CCW doit l'inclure dans les issues chef/ouvrier qu'il crée (voir `consignes/globales.md`) ; pour les issues de Claude Chat, c'est géré côté doc/prompt. |
 | `RESEAU` | `oui` ou `non` | Tag réseau pour la calibration TIMEOUT (issue #220/#435, voir §19) : `oui` = issue impliquant de lourdes opérations réseau (téléchargements, builds avec fetch, etc.), `non` = issue purement locale. Lu par `_detecter_tag_reseau(body)`. Absent ou valeur non reconnue = `None` (F ignoré, facteur d'ambiance neutre). Optionnel (voir `consignes/globales.md`). |

@@ -722,6 +722,35 @@ def _fusionner_entete(corps_existant: str, champs: dict) -> tuple[str, list]:
     return nouveau, modifies
 
 
+def _ajouter_texte_libre(corps: str, texte_libre: str) -> str:
+    """Ajoute `texte_libre` (texte libre du fichier RELANCE, issue #726) en
+    fin de `corps`, sous une section horodatée « ## Relance du <date> ».
+    Les relances successives s'empilent (une section par appel, la plus
+    récente en dernier) : jamais d'écrasement des sections précédentes.
+
+    Complète systématiquement `corps` jusqu'à ZONE_ENTETE_LIGNES lignes avant
+    d'ajouter la section, même s'il est plus court : garantit que la nouvelle
+    section reste toujours HORS de la zone d'en-tête bornée (§3.3) lue par
+    lire_champ_entete/_maj_ligne_entete (toutes deux bornées aux
+    ZONE_ENTETE_LIGNES premières lignes, cf. _zone_entete) — sans cette
+    marge, un texte libre court imitant une ligne d'en-tête (ex.
+    « | MODE | ... | ») pourrait sinon tomber dans cette zone et être lu, à
+    tort, comme un véritable champ d'en-tête lors d'une relance ultérieure."""
+    horodatage = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+    section = f"## Relance du {horodatage}\n\n{texte_libre}"
+
+    lignes = corps.splitlines()
+    if len(lignes) < ZONE_ENTETE_LIGNES:
+        # Rejoint PUIS ajoute un "\n" final séparé (plutôt que rstrip("\n")
+        # sur le résultat) : un rstrip aurait justement effacé les lignes
+        # vides de complément qu'on vient d'ajouter, annulant la marge.
+        lignes += [""] * (ZONE_ENTETE_LIGNES - len(lignes))
+        corps = "\n".join(lignes) + "\n"
+    elif not corps.endswith("\n"):
+        corps += "\n"
+    return corps + "\n" + section + "\n"
+
+
 def _modifier_corps_gh(depot: str, numero: int, corps: str) -> tuple[bool, str]:
     with tempfile.NamedTemporaryFile(mode="w", suffix=".md", delete=False, encoding="utf-8") as f:
         f.write(corps)
@@ -769,6 +798,8 @@ def _traiter_relance(cfg: ConfigInbox, champs: dict):
 
     corps_existant = issue.get("body") or ""
     nouveau_corps, modifies = _fusionner_entete(corps_existant, champs)
+    if champs["corps"]:
+        nouveau_corps = _ajouter_texte_libre(nouveau_corps, champs["corps"])
 
     if nouveau_corps != corps_existant:
         ok_edit, detail_edit = _modifier_corps_gh(depot, numero, nouveau_corps)
