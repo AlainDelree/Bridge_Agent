@@ -9,6 +9,22 @@ milliers de caractères sur une seule ligne logique, coûteux à relire et
 
 Convention d'ajout : voir §10 de `BRIDGE_AGENT_DOC.md`.
 
+# CHANGELOG-732 — à fusionner dans CHANGELOG.md
+
+## 8 octobre 2026 — issue #732
+
+Alerte explicite quand GitHub est en panne : lors d'un échec de `gh` classé « panne probable » (timeout, erreur réseau, réponse 5xx — jamais une erreur normale 404/401/403/422 ni la limite de débit déjà signalée par le bandeau ⚡), interroge `summary.json` de githubstatus.com (sans authentification) et affiche un message clair en français — plutôt que de laisser l'utilisateur deviner la cause (constat des pannes des 06-07/10/2026).
+
+- **`app/github_status.py`** (nouveau) : `classer_echec_gh(message)` (pure, fondée sur le message d'erreur déjà construit par chaque appelant) ; `verifier_statut()` avec cache serveur ~60s (`SEUIL_CACHE_S`, délai réseau court `TIMEOUT_REQUETE_S`=5s, ne lève jamais) ; trois messages de repli par gravité (incident signalé / GitHub opérationnel malgré l'erreur / GitHub et sa page de statut injoignables) ; suivi d'épisode de panne (`signaler_resultat_gh`, persisté dans `logs/etat_panne_github.json`) ouvert au premier échec « panne probable », refermé au premier succès gh ; route `GET /github-statut`.
+- **Points d'appel branchés** (aucun point central existant trouvé) : listes d'issues (`_lister_issues_labels`), détail (`issue_detail`), création (`creer_issue_gh`), relance (`app/interruption.py::relancer_issue`), labels (`modifier_label_notif`) — chaque réponse JSON d'échec porte désormais `panne_probable`. Classification INLINE (aucun appel réseau dans le chemin de la requête en échec) — la vérification réseau elle-même n'a lieu que côté `/github-statut`, appelée séparément par le JS.
+- **`static/js/socle/panne_github.js`** (nouveau) : `signalerEchecPossible(reponseJson)` — ne déclenche rien sans `panne_probable:true` ; sinon interroge `/github-statut` et affiche un toast (`erreur` pour incident/injoignable, `avertissement` pour cause locale), répété toutes les 60s tant que l'incident dure, puis « GitHub est rétabli. » une fois au retour à la normale. Branché à `resultats.js` (liste), `app.js` (détail, relance — via `window.Bridge.panneGithub`), `creation.js` (création, mono-issue et lot), `panneau_lateral.js` (labels).
+- **Journal des pannes** — `logs/pannes_github.log` (non versionné, taille bornée à `RETENTION_JOURS`≈1 an, purgé à chaque écriture) : une ligne PAR ÉPISODE (jamais par erreur), champs `debut`/`fin`/`duree_s`/`cause`/`incident`/`composants` — jamais de jeton ni de contenu d'issue. **`scripts/resume_pannes_github.py`** (nouveau, lecture seule) : résumé du nombre d'épisodes et de la durée cumulée, par mois et par cause.
+- **Limite constatée, non corrigée** (hors périmètre — Watcher spool non modifié) : un fichier déposé dans `issues_inbox/` pendant une panne GitHub, si `gh issue create` échoue, est déplacé par `scripts/watcher_issues_inbox.py` vers `rejected/` exactement comme un rejet définitif (pas de distinction de cause à cet endroit) — il n'est pas perdu (visible dans `rejected/`, alarme de l'onglet « Résultats inbox ») mais rien ne le reprend automatiquement une fois la panne terminée. Voir `ARCHITECTURE.md` §7.5.
+- Tests de logique pure, sans accès réseau (`tests/test_alerte_panne_github_732.py`, 21 cas ; `static/js/tests/panne_github.test.js`, 10 cas) : classification des échecs, lecture du résumé de statut, cache d'une minute, trois messages de repli, transition incident→rétabli, ouverture/fermeture d'épisode (une ligne, durée, taille bornée), résumé par mois/cause. Suite complète rejouée sans régression (50/50 scripts autonomes, 227 passed pytest, 269 passed `node --test`) — `tests/test_relancer_watcher_574.py` mis à jour (nouveau champ `panne_probable` dans la réponse JSON de `/relancer-issue`).
+- Doc : `ARCHITECTURE.md`, nouvelle section 7 (« Alerte explicite de panne GitHub »), y compris le journal des pannes et sa limite. Rien ajouté à `BRIDGE_AGENT_DOC.md` (réservé aux conversations Claude Chat).
+
+Après fusion : redémarrer `new_issue.py` (`app/*.py` modifié) puis `Ctrl+Maj+R`.
+
 # CHANGELOG-730 — à fusionner dans CHANGELOG.md
 
 ## 8 octobre 2026 — issue #730
