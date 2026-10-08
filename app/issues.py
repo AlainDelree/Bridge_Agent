@@ -31,6 +31,10 @@ from watcher import (est_titre_chef, deduire_type_issue, PAUSE_ENTRE_TENTATIVES,
 # État partagé du quota GraphQL (issue #615) : rafraîchi après chaque appel gh
 # SIGNIFICATIF de ce module (création/fermeture d'issue).
 from etat_rate_limit import maj_rate_limit
+# Alerte explicite de panne GitHub (issue #732) : classification d'un échec gh
+# (panne probable ou erreur normale) + suivi d'épisode, branchés sur les points
+# d'appel gh principaux de ce module (listes, détail, création, labels).
+from app import github_status
 
 log = logging.getLogger(__name__)
 
@@ -324,23 +328,29 @@ def creer_issue_gh(depot: str, titre: str, labels: str, chemin_body: str, *,
             res = subprocess.run(commande, capture_output=True, text=True, encoding="utf-8", errors="replace",
                                   timeout=timeout, env=env)
         except subprocess.TimeoutExpired:
+            github_status.signaler_resultat_gh(False, panne_probable=True, origine="creer_issue_gh")
             return False, "Timeout (gh n'a pas répondu en 30s).", labels_courants, labels_omis
         except FileNotFoundError:
+            github_status.signaler_resultat_gh(False, panne_probable=False, origine="creer_issue_gh")
             return False, "gh introuvable dans le PATH.", labels_courants, labels_omis
         except Exception as e:
             return False, str(e), labels_courants, labels_omis
         if res.returncode == 0:
+            github_status.signaler_resultat_gh(True, origine="creer_issue_gh")
             return True, res.stdout.strip(), labels_courants, labels_omis
         m = _LABEL_INTROUVABLE_RE.search(res.stderr or "")
         if not m or m.group(1) not in labels_courants:
-            return (False, res.stderr.strip() or "Erreur inconnue de gh.",
-                     labels_courants, labels_omis)
+            msg = res.stderr.strip() or "Erreur inconnue de gh."
+            github_status.signaler_resultat_gh(
+                False, panne_probable=github_status.classer_echec_gh(msg), origine="creer_issue_gh")
+            return (False, msg, labels_courants, labels_omis)
         label_absent = m.group(1)
         log.warning(f"Label « {label_absent} » absent du dépôt {depot} — omis de "
                     "cette création plutôt que de la faire échouer (gh label "
                     "create manquant sur ce dépôt, cf. issue #648).")
         labels_courants.remove(label_absent)
         labels_omis.append(label_absent)
+    github_status.signaler_resultat_gh(False, panne_probable=False, origine="creer_issue_gh")
     return (False, "Trop de labels manquants successifs sur ce dépôt.",
              labels_courants, labels_omis)
 
@@ -510,7 +520,8 @@ def envoyer():
             return jsonify(succes=True, url=resultat, watcher_demarre=watcher_demarre,
                            ccw_demarre=ccw_demarre, labels_omis=labels_omis)
         else:
-            return jsonify(succes=False, erreur=resultat)
+            return jsonify(succes=False, erreur=resultat,
+                           panne_probable=github_status.classer_echec_gh(resultat))
     except Exception as e:
         return jsonify(succes=False, erreur=str(e))
     finally:
@@ -806,13 +817,19 @@ def _lister_issues_labels(depot: str, limite: int, state: str = "all"):
                 capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30
             )
         except subprocess.TimeoutExpired:
-            return None, (jsonify(erreur="Timeout (gh n'a pas répondu en 30s)."), 504)
+            github_status.signaler_resultat_gh(False, panne_probable=True, origine="issues_liste")
+            return None, (jsonify(erreur="Timeout (gh n'a pas répondu en 30s).",
+                                   panne_probable=True), 504)
         except FileNotFoundError:
+            github_status.signaler_resultat_gh(False, panne_probable=False, origine="issues_liste")
             return None, (jsonify(erreur="gh introuvable dans le PATH."), 500)
         except Exception as e:
             return None, (jsonify(erreur=str(e)), 500)
         if res.returncode != 0:
-            return None, (jsonify(erreur=res.stderr.strip() or "Erreur de gh."), 502)
+            msg = res.stderr.strip() or "Erreur de gh."
+            panne = github_status.classer_echec_gh(msg)
+            github_status.signaler_resultat_gh(False, panne_probable=panne, origine="issues_liste")
+            return None, (jsonify(erreur=msg, panne_probable=panne), 502)
         for it in json.loads(res.stdout or "[]"):
             # Dédoublonnage par numéro : une issue portant les deux labels
             # (cas rare, non nominal) ne doit apparaître qu'une fois.
@@ -820,6 +837,7 @@ def _lister_issues_labels(depot: str, limite: int, state: str = "all"):
                 continue
             vus.add(it.get("number"))
             issues.append(it)
+    github_status.signaler_resultat_gh(True, origine="issues_liste")
     issues.sort(key=lambda i: i.get("createdAt") or "", reverse=True)
     return issues[:limite], None
 
@@ -912,16 +930,22 @@ def issue_detail(nom_projet, numero):
             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30
         )
         if res.returncode != 0:
-            return jsonify(erreur=res.stderr.strip() or "Erreur de gh."), 502
+            msg = res.stderr.strip() or "Erreur de gh."
+            panne = github_status.classer_echec_gh(msg)
+            github_status.signaler_resultat_gh(False, panne_probable=panne, origine="issue_detail")
+            return jsonify(erreur=msg, panne_probable=panne), 502
         detail = json.loads(res.stdout or "{}")
         # Modèle effectif (corps) + défaut projet (issue #638) : le détail
         # conserve son corps (affiché tel quel), on ajoute juste les deux champs.
         detail["modele"] = extraire_modele_entete(detail.get("body") or "")
         detail["modele_defaut"] = modele_defaut_projet(cfg)
+        github_status.signaler_resultat_gh(True, origine="issue_detail")
         return jsonify(detail)
     except subprocess.TimeoutExpired:
-        return jsonify(erreur="Timeout (gh n'a pas répondu en 30s)."), 504
+        github_status.signaler_resultat_gh(False, panne_probable=True, origine="issue_detail")
+        return jsonify(erreur="Timeout (gh n'a pas répondu en 30s).", panne_probable=True), 504
     except FileNotFoundError:
+        github_status.signaler_resultat_gh(False, panne_probable=False, origine="issue_detail")
         return jsonify(erreur="gh introuvable dans le PATH."), 500
     except Exception as e:
         return jsonify(erreur=str(e)), 500
@@ -1477,12 +1501,17 @@ def modifier_label_notif():
             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30
         )
         if res.returncode == 0:
+            github_status.signaler_resultat_gh(True, origine="modifier_label_notif")
             return jsonify(succes=True)
-        return jsonify(succes=False,
-                       erreur=res.stderr.strip() or "Erreur inconnue de gh.")
+        msg = res.stderr.strip() or "Erreur inconnue de gh."
+        panne = github_status.classer_echec_gh(msg)
+        github_status.signaler_resultat_gh(False, panne_probable=panne, origine="modifier_label_notif")
+        return jsonify(succes=False, erreur=msg, panne_probable=panne)
     except subprocess.TimeoutExpired:
-        return jsonify(succes=False, erreur="Timeout (gh n'a pas répondu en 30s).")
+        github_status.signaler_resultat_gh(False, panne_probable=True, origine="modifier_label_notif")
+        return jsonify(succes=False, erreur="Timeout (gh n'a pas répondu en 30s).", panne_probable=True)
     except FileNotFoundError:
+        github_status.signaler_resultat_gh(False, panne_probable=False, origine="modifier_label_notif")
         return jsonify(succes=False, erreur="gh introuvable dans le PATH.")
     except Exception as e:
         return jsonify(succes=False, erreur=str(e))

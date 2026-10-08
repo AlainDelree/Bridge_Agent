@@ -147,7 +147,10 @@ def scenario_label_for_windows_demarre_ccw_sans_toucher_au_watcher():
     assert not appels["demarrer_watcher_appele"], "demarrer_watcher ne doit pas être appelé pour for-windows"
     assert appels["ccw_appels"] == ["bridge_agent"], appels["ccw_appels"]
     assert "redémarré" not in appels["commentaire"], appels["commentaire"]
-    assert set(r) == {"succes", "statut_global", "etapes", "watcher_demarre", "watcher_pid"}, r
+    # panne_probable (issue #732) : classification de l'échec gh éventuel,
+    # toujours présente dans la réponse — False ici (relance réussie).
+    assert set(r) == {"succes", "statut_global", "etapes", "watcher_demarre",
+                       "watcher_pid", "panne_probable"}, r
     return {"ccw_appels": appels["ccw_appels"]}
 
 

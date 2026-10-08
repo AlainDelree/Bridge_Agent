@@ -39,6 +39,7 @@
 import * as dom from './socle/dom.js';
 import { appelerAncien } from './socle/pont.js';
 import * as persistance from './socle/persistance.js';
+import { signalerEchecPossible } from './socle/panne_github.js';
 
 // Échappement HTML : brique unique du socle (comme panneau_lateral.js), à la
 // place de l'ancien escapeHtml d'app.js — même rôle, sécurisé identiquement.
@@ -612,6 +613,9 @@ async function envoyerIssue() {
         }
         viderFormulaire(false);
       } else {
+        // Alerte explicite de panne GitHub (issue #732) : déclenchée seulement
+        // si le serveur a classé cet échec de création comme « panne probable ».
+        signalerEchecPossible(json);
         afficherMessage('Erreur : ' + json.erreur, 'erreur');
       }
     } catch(e) {
@@ -1158,6 +1162,7 @@ async function envoyerLot() {
           resultats.push({succes: true, titre: bloc.titre, projet: projet,
                           url: json.url, incoherence: incoherence});
         } else {
+          signalerEchecPossible(json);   // issue #732, même logique que l'envoi mono-issue
           resultats.push({succes: false, titre: bloc.titre, projet: projet,
                           erreur: json.erreur || 'erreur inconnue'});
         }

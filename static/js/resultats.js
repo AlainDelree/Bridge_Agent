@@ -30,6 +30,7 @@ import { sse } from './socle/sse.js';
 import { appelerAncien } from './socle/pont.js';
 import * as persistance from './socle/persistance.js';
 import { afficherIconeInterruption, normaliserNomsLabels } from './actions_ligne.js';
+import { signalerEchecPossible, extraireJsonErreur } from './socle/panne_github.js';
 // Rechargement de l'état des cases « traité/lu » (issue #729) : pas de cycle
 // d'import (resultats_coches.js n'importe jamais resultats.js), donc import ES
 // direct plutôt qu'un aller-retour par le pont (réservé new↔ancien).
@@ -660,7 +661,7 @@ async function chargerListe(nomsAFetcher) {
       if (!Array.isArray(liste)) return { projet: nom, succes: false, issues: [] };
       return { projet: nom, succes: true, issues: liste };
     } catch (e) {
-      return { projet: nom, succes: false, issues: [] };
+      return { projet: nom, succes: false, issues: [], erreur: e };
     }
   }));
   appelerAncien('majIndicateurListe', false);
@@ -671,6 +672,12 @@ async function chargerListe(nomsAFetcher) {
   if (echecs.length) {
     toasts.erreur('Résultats — échec de chargement : ' + echecs.join(', ')
                 + ' (données précédentes conservées).');
+    // Alerte explicite de panne GitHub (issue #732) : signalerEchecPossible
+    // ignore elle-même tout JSON sans panne_probable:true (api.get lève une
+    // ErreurApi dont .corps est le texte JSON brut de la réponse en échec).
+    for (const c of chargements) {
+      if (!c.succes) signalerEchecPossible(extraireJsonErreur(c.erreur));
+    }
   }
   const fusionnee = fusionnerChargement(listeCourante(), nomsFetch, chargements);
   store.remplacerIssues(fusionnee);

@@ -27,6 +27,7 @@ import { toasts, initJournalMessages } from './toasts.js';
 import * as dom from './dom.js';
 import { sse } from './sse.js';
 import * as persistance from './persistance.js';
+import { signalerEchecPossible } from './panne_github.js';
 import { installerPont } from './pont.js';
 import { initialiserOnglets, activerOngletParDefaut } from '../onglets.js';
 // Module par fonctionnalité — onglet Résultats (refonte étape 3, issue #627).
@@ -66,7 +67,13 @@ dom.installerDelegation();
 // Pont de transition : unique point de contact avec l'ancien code, à retirer à
 // la dernière étape de la refonte. `resultats` y est publié pour qu'app.js pilote
 // l'onglet Résultats (activation, ↻, badges) pendant la transition (issue #627).
-installerPont({ store, api, toasts, dom, sse, persistance, resultats, resultatsCoches, actionsLigne });
+installerPont({
+  store, api, toasts, dom, sse, persistance, resultats, resultatsCoches, actionsLigne,
+  // Alerte explicite de panne GitHub (issue #732) : exposée pour l'ancien
+  // app.js (script classique), qui appelle window.Bridge.panneGithub.
+  // signalerEchecPossible(...) sur ses propres fetch('/issue/...')/fetch('/relancer-issue').
+  panneGithub: { signalerEchecPossible },
+});
 
 // Onglet Résultats (issue #627) : ouvre l'UNIQUE connexion /stream et s'abonne
 // aux transitions d'issue ET à store.ongletActif (issue #632). Le chargement

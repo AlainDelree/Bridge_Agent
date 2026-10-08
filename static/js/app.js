@@ -1423,6 +1423,10 @@ async function afficherIssue(nom, numero) {
     // Une autre issue a été demandée entre-temps : on n'écrase pas son affichage.
     if (seq !== afficherIssueSeq) return;
     if (it.erreur) {
+      // Alerte explicite de panne GitHub (issue #732) : déclenchée seulement
+      // si le serveur a classé cet échec comme « panne probable » (timeout,
+      // réseau, 5xx) — jamais sur une erreur normale (404…).
+      if (window.Bridge && window.Bridge.panneGithub) window.Bridge.panneGithub.signalerEchecPossible(it);
       if (htmlAffiche === null) {
         zone.innerHTML = '<div class="issue-vide">Erreur : ' + escapeHtml(it.erreur) + '</div>';
       }
@@ -2290,6 +2294,9 @@ async function relancerIssue(nom, numero) {
     return;
   }
   if (!resultat.succes || resultat.statut_global === 'echec') {
+    // Alerte explicite de panne GitHub (issue #732) : voir afficherIssue()
+    // ci-dessus pour la même logique (panne_probable posé côté serveur).
+    if (window.Bridge && window.Bridge.panneGithub) window.Bridge.panneGithub.signalerEchecPossible(resultat);
     const detail = (resultat.etapes || []).map(e => e.message).filter(Boolean).join(' / ');
     alert('Erreur : ' + (resultat.erreur || detail || 'échec de la relance.'));
     return;

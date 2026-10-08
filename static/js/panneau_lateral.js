@@ -49,6 +49,7 @@
 import { store } from './socle/store.js';
 import { api } from './socle/api.js';
 import { toasts } from './socle/toasts.js';
+import { signalerEchecPossible } from './socle/panne_github.js';
 import * as dom from './socle/dom.js';
 import * as persistance from './socle/persistance.js';
 import { appelerAncien } from './socle/pont.js';
@@ -434,7 +435,12 @@ async function toggleLabelNotif(nom, numero, label, cb) {
     const json = await api.post('/modifier-label-notif',
       { projet: nom, numero: numero, label: label, actif: actif }, { silencieux: true });
     ok = !!(json && json.succes);
-    if (!ok) erreur = (json && json.erreur) || 'échec de la mise à jour du label.';
+    if (!ok) {
+      erreur = (json && json.erreur) || 'échec de la mise à jour du label.';
+      // Alerte explicite de panne GitHub (issue #732) : cette route répond
+      // toujours en HTTP 200 (succes:false en JSON) — pas d'ErreurApi ici.
+      signalerEchecPossible(json);
+    }
   } catch (e) {
     erreur = 'Erreur réseau : ' + e.message;
   }

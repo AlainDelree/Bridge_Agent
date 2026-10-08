@@ -303,6 +303,7 @@ static/js/socle/
 │                     destructive. Styles auto-injectés (classes `socle-`).
 ├── dom.js            Utilitaires DOM + registre de délégation d'événements.
 ├── persistance.js    localStorage restreint aux préférences d'interface.
+├── panne_github.js   Alerte explicite de panne GitHub (issue #732, voir §7).
 ├── pont.js           Mécanisme de transition ancien⇄nouveau (voir §6.4).
 └── tests/            Tests `node:test` (store, persistance, dom) + README.
 ```
@@ -340,6 +341,9 @@ static/js/socle/
   locales.** Migration terminée à l'issue #644 : app.js n'accède plus DU TOUT
   au `localStorage` en direct, uniquement via `window.Bridge.persistance`
   (pont, cf. §6.4) — c'est désormais le SEUL point d'accès du code JS.
+- **panne_github** — `signalerEchecPossible(reponseJson)`, à appeler avec le
+  JSON d'une réponse en échec d'une route gh surveillée. Voir §7 pour le
+  mécanisme complet (backend + journal des pannes).
 
 ### 6.4 Mécanisme de transition (`pont.js`) — à retirer à la dernière étape
 
@@ -699,6 +703,108 @@ Pour chaque fonctionnalité migrée (étapes suivantes), dans l'ordre :
    zone touchée + le préambule « une seule connexion SSE »).
 
 Quand app.js est vide : retirer le pont (§6.4) et le `<script src=app.js>`.
+
+---
+
+## 7. Alerte explicite de panne GitHub (issue #732)
+
+### 7.1 Pourquoi
+
+Pendant un incident GitHub (constaté les 06 et 07/10/2026), les échecs de `gh`
+affichés (« Résultats — échec de chargement », erreurs 502) ne disaient pas si
+la cause était une panne GitHub, la connexion internet locale ou le jeton —
+il fallait aller consulter soi-même https://www.githubstatus.com/.
+
+### 7.2 Backend — `app/github_status.py`
+
+- `classer_echec_gh(message)` : classification **pure**, fondée sur le message
+  d'erreur déjà construit par chaque appelant (`res.stderr.strip()`, "Timeout
+  (gh n'a pas répondu en 30s).", …) plutôt que sur des booléens d'exception à
+  plomber partout. `True` seulement pour un timeout, une erreur réseau ou une
+  réponse 5xx — jamais pour une erreur normale (404/401/403/422) ni pour la
+  limite de débit (déjà signalée par le bandeau ⚡, §"Indicateur de rate
+  limit" / `app/rate_limit.py`).
+- `verifier_statut()` : interroge `summary.json` de githubstatus.com (API
+  publique, sans authentification), avec un **cache serveur d'environ une
+  minute** (`SEUIL_CACHE_S`) — au plus une requête réseau par minute, quel que
+  soit le nombre d'appels `gh` en échec entre-temps. Délai court
+  (`TIMEOUT_REQUETE_S` = 5s) et ne lève jamais : toute erreur de la
+  vérification elle-même retombe sur le message de repli « injoignable »,
+  jamais sur une erreur visible supplémentaire.
+- Trois messages de repli, par ordre de gravité (`calculer_message_statut`) :
+  incident signalé (nom de l'incident + composants concernés parmi `Issues`,
+  `API Requests`, `Git Operations`, `Webhooks`) → GitHub opérationnel malgré
+  l'erreur (cause probablement locale) → GitHub et sa page de statut tous deux
+  injoignables (connexion internet probable).
+- **Points d'appel branchés** (`signaler_resultat_gh`, cherché avant d'écrire
+  du nouveau code — aucun point central de ce type n'existait) : listes
+  d'issues (`_lister_issues_labels`), détail (`issue_detail`), création
+  (`creer_issue_gh`), relance (`app/interruption.py::relancer_issue`), labels
+  (`modifier_label_notif`) — tous dans `app/issues.py` sauf la relance. Chaque
+  réponse JSON d'échec porte un champ `panne_probable` (calculé par
+  `classer_echec_gh`, aucun appel réseau à cet endroit) que le JS utilise pour
+  décider de vérifier le statut — **jamais dans le chemin de la requête qui a
+  échoué** : la vérification réseau elle-même n'a lieu que dans la route
+  `GET /github-statut`, appelée séparément par le navigateur.
+- Épisodes de panne (pas une erreur individuelle) : `signaler_resultat_gh`
+  ouvre un épisode au premier échec classé `panne_probable`, le referme dès
+  qu'un appel `gh` surveillé réussit de nouveau. Persisté dans
+  `logs/etat_panne_github.json` (survit à un redémarrage de new_issue.py en
+  cours d'épisode) ; sa cause est mise à jour à chaque `verifier_statut()`
+  (y compris celles déclenchées par le polling JS, voir §7.3) pour refléter,
+  à la fermeture, la DERNIÈRE cause connue pendant l'épisode.
+
+### 7.3 Frontend — `static/js/socle/panne_github.js`
+
+`signalerEchecPossible(reponseJson)` ne fait rien si `panne_probable` est
+absent/faux. Sinon, `GET /github-statut` (séparé, non bloquant) affiche un
+toast selon la gravité reçue (`erreur` pour incident/injoignable,
+`avertissement` pour « cause probablement locale ») et, tant que la réponse
+porte `panne:true`, se répète toutes les 60s ; dès le retour à `panne:false`,
+un message « GitHub est rétabli. » s'affiche une seule fois. Branché aux cinq
+points d'appel ci-dessus : `resultats.js` (listes), `app.js` (détail, relance
+— via `window.Bridge.panneGithub`, script classique), `creation.js`
+(création, mono-issue et lot), `panneau_lateral.js` (labels).
+
+### 7.4 Journal des pannes — `logs/pannes_github.log`
+
+Non versionné (sous `logs/`, déjà gitignoré). **Une ligne par épisode**,
+jamais par erreur individuelle, format `cle=valeur` séparé par ` | ` (`debut`,
+`fin`, `duree_s`, `cause`, `incident`, `composants`) — voir
+`github_status.formater_ligne_journal`/`parser_ligne_journal`. Taille bornée à
+`RETENTION_JOURS` (~un an) : purgé à chaque écriture
+(`_purger_anciennes_lignes`). Ne contient jamais de jeton ni de contenu
+d'issue — uniquement des horodatages et des libellés de cause/composant.
+
+`scripts/resume_pannes_github.py` (lecture seule, aucun effet sur le reste du
+fonctionnement) affiche le nombre d'épisodes et la durée cumulée, par mois et
+par cause — pour juger, avec ses propres chiffres, si les coupures viennent de
+GitHub ou de la connexion locale.
+
+**Limite documentée** (issue #732) : ce journal ne voit que les pannes
+survenues PENDANT que `new_issue.py` tournait ET qu'un appel `gh` d'un des
+cinq points surveillés a échoué. Une coupure internet qui empêcherait aussi
+`new_issue.py` de tourner, ou un échec `gh` hors de ces cinq points (ex.
+`annuler_issue`/`fermer_issue`, ou tout appel de `watcher.py`/
+`scripts/watcher_issues_inbox.py`, hors périmètre de cette issue), n'y
+apparaît pas.
+
+### 7.5 Limite constatée, non corrigée — `issues_inbox/` pendant une panne GitHub
+
+Hors périmètre de l'issue #732 (le Watcher spool n'est pas modifié), mais
+vérifié par lecture de code : quand `scripts/watcher_issues_inbox.py` traite
+un fichier et que `gh issue create` échoue (panne GitHub comprise — aucune
+distinction de cause à cet endroit), `traiter_fichier()` appelle `_rejeter()`
+qui déplace le fichier vers `issues_inbox/rejected/` via
+`_deplacer_vers_rejected()` — **exactement comme pour un rejet définitif**
+(PROJET inconnu, titre dupliqué, etc.). Le fichier n'est donc pas perdu (il
+reste visible dans `rejected/`, avec son motif, et déclenche l'alarme de
+l'onglet « Résultats inbox », `app/issues_inbox.py::etat_inbox`), mais rien
+ne le reprend automatiquement une fois la panne terminée — sans intervention
+manuelle (le redéposer dans `issues_inbox/`), un fichier arrivé pendant une
+panne GitHub de quelques minutes finit dans le même état qu'une erreur
+définitive. Même mécanisme pour un lot multi-issues (`_traiter_lot`, déplacé
+vers `rejected/` seulement si TOUS les blocs ont échoué).
 
 ---
 

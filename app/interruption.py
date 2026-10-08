@@ -40,6 +40,7 @@ from pathlib import Path
 from flask import jsonify, request
 
 from app.projets import projet_par_depot
+from app import github_status
 from app.ccw import (
     _preparer, _copier, _executer_ps,
     _lister_projets_vm, _extraire_projets, _message_echec,
@@ -629,6 +630,17 @@ def relancer_issue(depot: str, numero: int, commentaire: str = COMMENTAIRE_RELAN
     etapes.append({"etape": "commentaire", "statut": statut_comment, "message": msg_comment})
 
     statut_global = "echec" if any(e["statut"] == "echec" for e in etapes) else "ok"
+
+    # Alerte explicite de panne GitHub (issue #732, point d'appel « relance ») :
+    # un succès referme un épisode de panne en cours ; un échec classé « panne
+    # probable » (timeout/réseau/5xx — jamais une erreur gh normale) en ouvre un.
+    if statut_global == "ok":
+        github_status.signaler_resultat_gh(True, origine="relancer_issue")
+    else:
+        panne = any(e["statut"] == "echec" and github_status.classer_echec_gh(e["message"])
+                    for e in etapes)
+        github_status.signaler_resultat_gh(False, panne_probable=panne, origine="relancer_issue")
+
     return statut_global, etapes
 
 
@@ -700,5 +712,11 @@ def route_relancer():
         from app.notifications_poller import ajouter_issue_surveillee
         ajouter_issue_surveillee(depot, numero, labels)
 
+    # Même classification que relancer_issue() ci-dessus (issue #732), à
+    # destination du JS : il déclenche la vérification de statut GitHub
+    # seulement sur ce signal, jamais sur un échec « normal » de la relance.
+    panne_probable = any(e["statut"] == "echec" and github_status.classer_echec_gh(e["message"])
+                          for e in etapes)
     return jsonify(succes=True, statut_global=statut_global, etapes=etapes,
-                   watcher_demarre=watcher_demarre, watcher_pid=watcher_pid)
+                   watcher_demarre=watcher_demarre, watcher_pid=watcher_pid,
+                   panne_probable=panne_probable)

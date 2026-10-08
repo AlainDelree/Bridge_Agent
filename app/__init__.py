@@ -122,6 +122,7 @@ def _enregistrer_routes(app: Flask) -> None:
     from app.rate_limit import rate_limit
     from app.cases_cochees import (lire_cases, cocher_case, decocher_case,
                                    importer_cases_route, notifier_case_decochee)
+    from app.github_status import route_statut_github
     from app.vues import index
 
     app.add_url_rule("/login", "login", login, methods=["GET"])
@@ -226,3 +227,7 @@ def _enregistrer_routes(app: Flask) -> None:
     app.add_url_rule("/cases-cochees/<nom_projet>", "lire_cases", login_requis(lire_cases), methods=["GET"])
     app.add_url_rule("/cases-cochees/<nom_projet>/<int:numero>", "cocher_case", login_requis(cocher_case), methods=["POST"])
     app.add_url_rule("/cases-cochees/<nom_projet>/<int:numero>", "decocher_case", login_requis(decocher_case), methods=["DELETE"])
+    # ─── Alerte explicite de panne GitHub (issue #732) : statut courant
+    # (incident/ok/injoignable, cache serveur ~60s) + épisode de panne en
+    # cours, interrogé par le JS après un échec gh classé « panne probable ».
+    app.add_url_rule("/github-statut", "route_statut_github", login_requis(route_statut_github), methods=["GET"])
