@@ -176,6 +176,29 @@ s'appelle `RACINE`.) On l'utilise pour :
 courant : le code marche que l'on lance `python3 new_issue.py` depuis la racine
 ou depuis ailleurs.
 
+### 2.6 Garde-fou `configs/*.conf` et actions légitimes d'Alain (issue #724)
+
+`watcher.py` détecte et annule toute modification de `configs/*.conf` survenue
+pendant le traitement d'une issue (`_empreinte_configs`/
+`_restaurer_configs_modifies`, comparaison du contenu avant/après chaque
+tentative — voir `BRIDGE_AGENT_DOC.md` §12 pour la règle elle-même). Comme
+`configs/` est **commun à tous les projets**, ce garde-fou traiterait à tort
+comme une violation tout geste volontaire d'Alain qui y écrit pendant qu'une
+issue tourne sur un **autre** projet. Trois points de `new_issue.py` qui
+écrivent légitimement dans `configs/` — création de projet
+(`nouveau_projet.ecrire_conf`), suppression (`supprimer_projet._supprimer_conf`)
+et enregistrement de l'onglet Configuration (`app/projets.sauvegarder_conf`) —
+appellent donc `etat_configs_legitimes.enregistrer(nom_fichier)` juste après
+l'écriture disque, horodatée dans `logs/configs_legitimes.json` (purge
+automatique au-delà d'une heure, `DUREE_VALIDITE_S`). `_restaurer_configs_modifies`
+consulte cette trace avant d'agir sur un fichier changé : une action légitime
+postérieure au début du traitement de l'issue n'est ni annulée ni restaurée
+(message INFO au lieu du WARNING habituel). Seuls ces trois points appellent
+`enregistrer()` — le traitement d'une issue (`watcher.py`, `lancer_claude`,
+`traiter_issue`) n'appelle jamais cette fonction, seulement sa contrepartie en
+lecture (`instant_legitime`) : une issue ne peut donc pas s'ajouter elle-même
+à cette trace.
+
 ---
 
 ## 3. Ajouter une nouvelle route — procédure
@@ -805,6 +828,40 @@ manuelle (le redéposer dans `issues_inbox/`), un fichier arrivé pendant une
 panne GitHub de quelques minutes finit dans le même état qu'une erreur
 définitive. Même mécanisme pour un lot multi-issues (`_traiter_lot`, déplacé
 vers `rejected/` seulement si TOUS les blocs ont échoué).
+
+---
+
+## 8. Création et suppression de projet (`nouveau_projet.py` / `supprimer_projet.py`)
+
+Même orchestrateur pour le CLI et le bouton web correspondant (mêmes étapes,
+mêmes messages, comportement idempotent identique).
+
+**`creer_projet()`** (issues #98/#99, complété par #257) : dépôt GitHub
+(`gh repo create` si absent, public par défaut — issue #528) ; génère
+`configs/<nom>.conf` depuis un gabarit interne ; crée les labels GitHub
+requis (idempotent) ; crée `CONTEXTE.md` vide dans le répertoire de travail ;
+si ce répertoire n'est pas encore un dépôt git, `git init` + `git remote add
+origin` en **HTTPS** (jamais SSH) + commit initial, avec **push automatique**
+**seulement si le répertoire était réellement vide** avant cette étape
+(détection par ce que `git add -A` indexe réellement, pas un inventaire brut
+du disque — issues #258/#260, pour ne pas confondre un `venv/` gitignoré
+préexistant avec du contenu à relire avant push) ; enfin régénère
+`BRIDGE_AGENT_DOC.md` (§2/§7, date en bas).
+
+**`supprimer_projet()`** (issue #587, côté CCL/local uniquement — dépôt
+GitHub, labels et côté CCW restent hors scope, traités par une issue dédiée)
+démonte, dans l'ordre inverse de la création : répertoire de travail du
+projet (dépôt git local inclus) ; `configs/<nom>.conf` ; régénération de
+`BRIDGE_AGENT_DOC.md`. Mode `--dry-run`/aperçu disponible, sans toucher au
+disque. Route web protégée par double confirmation (3 cases à cocher + nom
+du projet retapé, revérifié côté serveur).
+
+**Mise à jour de `BRIDGE_AGENT_DOC.md` — commit ET push automatiques (issue
+#645)** : `regenerer_tableaux_projets.committer_pousser_doc()` committe et
+pousse cette mise à jour dans le dépôt Bridge_Agent après une création ou une
+suppression de projet, sans intervention manuelle — un push en échec (réseau,
+conflit…) ne fait pas échouer la création/suppression, seule la doc reste à
+repousser à la main.
 
 ---
 
