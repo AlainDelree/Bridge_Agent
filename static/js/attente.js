@@ -59,14 +59,102 @@ export function decisionBadgeAttente(nb) {
 // replis explicites demandés par l'issue (titre/condition jamais vides à
 // l'écran). `item` = {id, titre, projet, date, condition} tel que renvoyé par
 // GET /issues-attente (voir app/issues_inbox.py::_lire_item_attente).
+// `projetAffiche` (issue #728) : repli « projet inconnu » pour la pastille
+// nominative quand le projet est vide — un bloc issu d'un fichier découpé en
+// lot peut en théorie arriver ici sans PROJET (cf. decouper_corps_en_blocs,
+// scripts/watcher_issues_inbox.py : le contenu avant le premier #Titre: n'
+// appartient à aucun bloc). `projet` reste la valeur brute (vide incluse).
 export function descriptionLigneAttente(item) {
   const it = item || {};
   return {
     titre: it.titre || '(sans titre)',
     projet: it.projet || '',
+    projetAffiche: it.projet || 'projet inconnu',
     date: formaterDateAttente(it.date ? new Date(it.date * 1000) : null),
     condition: it.condition || '(condition non précisée)',
   };
+}
+
+// Fond neutre de la pastille nominative quand le projet est vide/inconnu
+// (issue #728) — signale l'absence d'identité de projet plutôt que de ne
+// rien afficher ; même gris que l'ancien repli de couleurProjet.
+const COULEUR_PROJET_INCONNU = '#888';
+
+// Couleur de fond de la pastille nominative : couleur du projet (réutilise
+// couleurProjet de l'ancien code via le pont — AUCUNE table de couleurs
+// dupliquée ici), ou le gris neutre ci-dessus si le projet est vide.
+export function couleurFondPastilleProjet(projet) {
+  if (!projet) return COULEUR_PROJET_INCONNU;
+  return appelerAncien('couleurProjet', projet) || COULEUR_PROJET_INCONNU;
+}
+
+// ─── Couleur de texte selon le fond (issue #728) ───────────────────────────
+// Choisit noir ou blanc selon la couleur de fond fournie (formats produits
+// par couleurProjet/couleurHashProjet côté app.js : hex #RGB/#RRGGBB ou
+// hsl(h, s%, l%)) — celui des deux qui offre le MEILLEUR contraste WCAG,
+// même formule que _contraste_avec_noir de palette.py, appliquée ici à la
+// couleur déjà calculée plutôt qu'à l'inverse (générer une clarté qui
+// garantit le noir). Fond non reconnu → noir (comportement sans régression :
+// toutes les couleurs de projet existantes garantissent déjà un contraste
+// noir >= 4.5:1, voir palette.py). Logique pure, testée sous Node.
+function analyserCouleurFond(couleur) {
+  const c = (couleur || '').trim();
+  const hex6 = /^#([0-9a-f]{6})$/i.exec(c);
+  if (hex6) {
+    const n = parseInt(hex6[1], 16);
+    return { r: (n >> 16) & 255, g: (n >> 8) & 255, b: n & 255 };
+  }
+  const hex3 = /^#([0-9a-f]{3})$/i.exec(c);
+  if (hex3) {
+    const [r, g, b] = hex3[1].split('').map((h) => parseInt(h + h, 16));
+    return { r, g, b };
+  }
+  const hsl = /^hsl\(\s*([\d.]+)\s*,\s*([\d.]+)%\s*,\s*([\d.]+)%\s*\)$/i.exec(c);
+  if (hsl) return hslVersRgb(Number(hsl[1]), Number(hsl[2]), Number(hsl[3]));
+  return null;
+}
+
+function hslVersRgb(h, s, l) {
+  const hh = (((h % 360) + 360) % 360) / 360;
+  const ss = s / 100;
+  const ll = l / 100;
+  if (ss === 0) {
+    const v = Math.round(ll * 255);
+    return { r: v, g: v, b: v };
+  }
+  const q = ll < 0.5 ? ll * (1 + ss) : ll + ss - ll * ss;
+  const p = 2 * ll - q;
+  const canal = (t0) => {
+    let t = t0;
+    if (t < 0) t += 1;
+    if (t > 1) t -= 1;
+    if (t < 1 / 6) return p + (q - p) * 6 * t;
+    if (t < 1 / 2) return q;
+    if (t < 2 / 3) return p + (q - p) * (2 / 3 - t) * 6;
+    return p;
+  };
+  return {
+    r: Math.round(canal(hh + 1 / 3) * 255),
+    g: Math.round(canal(hh) * 255),
+    b: Math.round(canal(hh - 1 / 3) * 255),
+  };
+}
+
+function luminanceRelative({ r, g, b }) {
+  const lin = (canal8bits) => {
+    const v = canal8bits / 255;
+    return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
+  };
+  return 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
+}
+
+export function couleurTexteSurFond(couleurFond) {
+  const rgb = analyserCouleurFond(couleurFond);
+  if (!rgb) return '#000';
+  const l = luminanceRelative(rgb);
+  const contrasteNoir = (l + 0.05) / 0.05;
+  const contrasteBlanc = 1.05 / (l + 0.05);
+  return contrasteNoir >= contrasteBlanc ? '#000' : '#fff';
 }
 
 // Interprète l'échec d'un appel /issues-attente/lancer ou /supprimer : ces
@@ -95,15 +183,15 @@ function zoneListe() {
 
 function construireLigneDOM(item) {
   const desc = descriptionLigneAttente(item);
-  const couleur = appelerAncien('couleurProjet', item.projet) || '#888';
+  const fond = couleurFondPastilleProjet(desc.projet);
+  const texte = couleurTexteSurFond(fond);
   const div = document.createElement('div');
   div.className = 'ligne-attente';
   div.dataset.id = item.id;
   div.innerHTML =
     '<div class="attente-entete">'
-    + '<span class="pastille-ligne" style="background:' + couleur + '"></span>'
+    + '<span class="pastille-projet"></span>'
     + '<span class="attente-titre"></span>'
-    + '<span class="attente-projet"></span>'
     + '<span class="attente-date"></span>'
     + '</div>'
     + '<div class="attente-condition"></div>'
@@ -114,8 +202,11 @@ function construireLigneDOM(item) {
   // Texte posé via textContent (jamais innerHTML) : titre/projet/condition
   // viennent du contenu d'un fichier déposé dans issues_inbox/, jamais fiable
   // à injecter tel quel — même précaution que resultats.js (lignes fichier).
+  const pastille = div.querySelector('.pastille-projet');
+  pastille.style.background = fond;
+  pastille.style.color = texte;
+  pastille.textContent = desc.projetAffiche;
   div.querySelector('.attente-titre').textContent = desc.titre;
-  div.querySelector('.attente-projet').textContent = desc.projet;
   div.querySelector('.attente-date').textContent = desc.date;
   div.querySelector('.attente-condition').textContent = '⏳ Condition : ' + desc.condition;
   return div;

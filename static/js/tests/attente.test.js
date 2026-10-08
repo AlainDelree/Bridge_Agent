@@ -4,10 +4,18 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
+// couleurFondPastilleProjet délègue à l'ancien code via appelerAncien (pont
+// socle → app.js, voir socle/pont.js) : window.couleurProjet doit exister
+// AVANT l'import du module (comme resultats_activation.test.js).
+global.window = globalThis;
+window.couleurProjet = (nom) => (nom === 'bridge_agent' ? '#EB0000' : undefined);
+
 import {
   formaterDateAttente,
   decisionBadgeAttente,
   descriptionLigneAttente,
+  couleurFondPastilleProjet,
+  couleurTexteSurFond,
   messageEchecAttente,
 } from '../attente.js';
 
@@ -63,6 +71,55 @@ test('descriptionLigneAttente : item absent ne lève pas d\'exception', () => {
   const desc = descriptionLigneAttente(null);
   assert.equal(desc.titre, '(sans titre)');
   assert.equal(desc.projet, '');
+  assert.equal(desc.projetAffiche, 'projet inconnu');
+});
+
+// ─── descriptionLigneAttente : projetAffiche (pastille nominative, #728) ───
+
+test('descriptionLigneAttente : projetAffiche reprend le nom du projet', () => {
+  const desc = descriptionLigneAttente({ id: 'a.txt', titre: 'T', projet: 'bridge_agent' });
+  assert.equal(desc.projetAffiche, 'bridge_agent');
+});
+
+test('descriptionLigneAttente : projetAffiche → « projet inconnu » si projet vide', () => {
+  assert.equal(descriptionLigneAttente({ id: 'a.txt', projet: '' }).projetAffiche, 'projet inconnu');
+  assert.equal(descriptionLigneAttente({ id: 'a.txt' }).projetAffiche, 'projet inconnu');
+});
+
+// ─── couleurFondPastilleProjet ──────────────────────────────────────────────
+
+test('couleurFondPastilleProjet : délègue à couleurProjet (ancien code) si projet non vide', () => {
+  assert.equal(couleurFondPastilleProjet('bridge_agent'), '#EB0000');
+});
+
+test('couleurFondPastilleProjet : gris neutre si projet vide/absent — jamais rien', () => {
+  assert.equal(couleurFondPastilleProjet(''), '#888');
+  assert.equal(couleurFondPastilleProjet(undefined), '#888');
+});
+
+// ─── couleurTexteSurFond : noir ou blanc selon le meilleur contraste ───────
+
+test('couleurTexteSurFond : fond noir → texte blanc', () => {
+  assert.equal(couleurTexteSurFond('#000000'), '#fff');
+});
+
+test('couleurTexteSurFond : fond blanc → texte noir', () => {
+  assert.equal(couleurTexteSurFond('#ffffff'), '#000');
+});
+
+test('couleurTexteSurFond : gris de repli « projet inconnu » (#888) → texte noir', () => {
+  assert.equal(couleurTexteSurFond('#888'), '#000');
+});
+
+test('couleurTexteSurFond : hex court (#RGB) et hsl() tous deux reconnus', () => {
+  assert.equal(couleurTexteSurFond('#000'), '#fff');
+  assert.equal(couleurTexteSurFond('hsl(210, 100%, 10%)'), '#fff');
+  assert.equal(couleurTexteSurFond('hsl(60, 100%, 90%)'), '#000');
+});
+
+test('couleurTexteSurFond : couleur non reconnue → noir par défaut (pas de régression)', () => {
+  assert.equal(couleurTexteSurFond('rebeccapurple'), '#000');
+  assert.equal(couleurTexteSurFond(''), '#000');
 });
 
 // ─── messageEchecAttente ────────────────────────────────────────────────────

@@ -963,15 +963,22 @@ module dédié `static/js/attente.js`). Réordonné avant Résultats par l'issue
 #718 — Résultats reste l'onglet actif au lancement du programme malgré ce
 changement d'ordre : l'activation par défaut se fait par NOM
 (`ONGLET_PAR_DEFAUT` dans `static/js/onglets.js`), jamais par position dans la
-barre. Une ligne par élément — titre, pastille couleur du
-projet, date de dépôt, et la **condition mise en évidence** (c'est elle qui
-dit à Alain quand lancer) — avec « Lancer » (rejoint le circuit normal, sans
-changement d'onglet automatique) et « Supprimer » (confirmation requise,
-suppression définitive, aucun archivage). Badge sur l'onglet = `nb_en_attente`
-ci-dessus, visible seulement si > 0, relu du même sondage que le panneau
-« Watcher spool » (`rafraichirInbox`, `static/js/resultats.js`) — pas de
-polling dédié ; la liste se recharge si l'onglet est ouvert quand ce compteur
-change.
+barre. Une ligne par élément — **pastille nominative de projet** (fond coloré
++ NOM du projet, issue #728, remplace l'ancien point de 9px et le nom en
+petit texte gris clair quasi illisible — même esprit visuel que
+`.badge-projet` de l'onglet Résultats ; « projet inconnu » sur fond gris si
+le champ PROJET est vide), titre, date de dépôt, et la **condition mise en
+évidence** (c'est elle qui dit à Alain quand lancer) — avec « Lancer »
+(rejoint le circuit normal, sans changement d'onglet automatique) et
+« Supprimer » (confirmation requise, suppression définitive, aucun
+archivage). Couleur de fond réutilisée telle quelle (`couleurProjet`, aucune
+table dupliquée) ; couleur de texte (noir ou blanc) choisie selon le
+meilleur contraste WCAG avec le fond (`couleurTexteSurFond`,
+`static/js/attente.js`) — pas de légende séparée, la pastille nominative la
+rend inutile. Badge sur l'onglet = `nb_en_attente` ci-dessus, visible
+seulement si > 0, relu du même sondage que le panneau « Watcher spool »
+(`rafraichirInbox`, `static/js/resultats.js`) — pas de polling dédié ; la
+liste se recharge si l'onglet est ouvert quand ce compteur change.
 
 Voir `tests/test_champ_attente_713.py` pour les fonctions pures, le watcher
 avec dossiers temporaires et les trois routes (aucun accès réseau ni `gh`
