@@ -1876,7 +1876,13 @@ relais appelés par le markup inline des lignes).
   `store.casesCochees` (`{ nomProjet: [numero, …] }`), synchronisé avec le
   serveur : **un seul `GET /cases-cochees/<projet>` par projet** au chargement
   (jamais un par issue). L'état survit à un plantage du PC et est **identique
-  quel que soit le navigateur ou l'adresse** (localhost / `--lan`).
+  quel que soit le navigateur ou l'adresse** (localhost / `--lan`). Relu non
+  plus seulement au chargement de la page mais aussi par le ↻, la
+  resynchronisation automatique #705 et le rattrapage à l'activation de
+  l'onglet (issue #729, détail en §17.4) — sans quoi une décoche serveur
+  manquée par l'événement `case_decochee` ci-dessous (ex. deux `RELANCE` coup
+  sur coup pendant que l'onglet n'était pas affiché) laissait la case cochée
+  à l'écran jusqu'à un rechargement complet de la page.
 - **Migration idempotente.** Au premier chargement, les clés héritées
   `resultat-coche:<projet>:<numero>` du `localStorage` sont extraites
   (`extraireCasesLegacy`), envoyées **en une fois** à
@@ -4116,12 +4122,94 @@ déclencheur et un canal SSE dédié comme transport :
   Node (`fusionnerTimingProjet`, voir plus bas).
   Le **fetch unique post-dépassement de #334** est conservé, réservé au décompte
   tombé à zéro. Un projet dont le chargement échoue **reste affiché** (données
-  précédentes conservées) et l'échec est signalé par un **toast**. L'activation
-  de l'onglet ne déclenche **plus aucun** rechargement réseau : un chargement
-  initial unique + les mises à jour SSE ciblées + le ↻ explicite suffisent. La
+  précédentes conservées) et l'échec est signalé par un **toast**. Au-delà du
+  chargement initial unique et des mises à jour SSE ciblées, l'activation de
+  l'onglet peut déclencher un **rechargement discret en arrière-plan** quand la
+  dernière synchro réseau est périmée (issue #729, détail en §17.4 ci-après) :
+  ce n'est donc plus un strict « aucun rechargement réseau hors ↻ ». La
   logique pure (application d'un événement à l'état, calcul des badges de temps,
   fusion du timing) est testée sous Node — `node --test static/js/tests/`. La
   reconnexion après coupure reste native à `EventSource`.
+
+### 17.4 Rattrapage des événements manqués dans l'onglet Résultats (issues #705, #729)
+
+Le canal `/stream` (§17.3) n'alimente la liste et les badges que par des
+événements **ciblés** : un événement manqué (onglet masqué, flux coupé/en
+pause, `RELANCE` qui ne produit jamais de `creation_issue`, §3.14) laisse la
+liste, le décompte ou la case « traité/lu » périmés **sans qu'aucun
+rechargement périodique ne vienne les rattraper**. Trois mécanismes
+complémentaires, tous côté navigateur (`static/js/resultats.js`), couvrent ce
+risque sans jamais toucher au protocole d'événements ni au serveur :
+
+- **Retour au premier plan après masquage prolongé (issue #705).**
+  `document.addEventListener('visibilitychange', …)` (`app.js`) horodate le
+  passage en arrière-plan (`momentMasquageOnglet`) ; au retour, si la durée
+  masquée dépasse `SEUIL_RESYNC_MASQUAGE_MS` (30 s — fonction pure
+  `fautResynchroniserApresMasquage(dureeMasqueeMs)`), déclenche
+  `resynchroniserResultatsAuRetour()`, qui rejoue le **même rafraîchissement
+  que le bouton ↻** (`rafraichirResultats()`). Un renfort du heartbeat
+  navigateur→serveur (`envoyerHeartbeat()` immédiat) accompagne ce retour,
+  contre le throttling des `setInterval` en arrière-plan (issue #157).
+- **Reconnexion SSE après coupure (issue #705).** L'`onOuvert` de
+  `sse.stream.connecter()` (`static/js/resultats.js::surOuvertureSse`)
+  distingue la **toute première** ouverture du canal (page qui vient de
+  charger la liste — aucune resync) d'une **reconnexion** après coupure
+  (fonction pure `fautResynchroniserApresReconnexionSse(premiereOuverture)`),
+  qui déclenche le même `resynchroniserResultatsAuRetour()` que ci-dessus.
+- **Activation de l'onglet, liste déjà chargée (issue #729).** Avant #729,
+  `onActiverOnglet()` (hors tout premier chargement) se contentait de
+  réafficher le store SANS AUCUN accès réseau — un événement manqué survenu
+  pendant que l'onglet était sur Résultats mais inactif (un autre onglet
+  sélectionné sans jamais masquer la page, donc sans déclencher #705) restait
+  invisible jusqu'au ↻ manuel. Désormais : le contenu courant est affiché
+  **immédiatement** (`rendreListeComplete()`, lecture pure du store), **puis**,
+  si la dernière synchro réseau de la liste date de plus que
+  `SEUIL_RESYNC_MASQUAGE_MS` (ou n'a **jamais** eu lieu — fonction pure
+  `fautRechargerAOuverture(dernierSyncMs, maintenant, seuilMs)`, même seuil
+  que #705 : un seul réglage simple à ajuster), liste + décompte + cases
+  cochées sont rechargés **en arrière-plan** (`rechargerEnArrierePlan()`) —
+  sans vider ni bloquer l'affichage déjà posé, le remplacement restant
+  atomique (store mis à jour puis rendu complet d'un coup, comme pour le ↻).
+  Anti-rafale : aucun intervalle dédié, la décision ne se pose qu'À
+  l'activation et se referme d'elle-même dès que la synchro redevient
+  récente — le garde-fou anti-rafale existant de #705
+  (`DELAI_MIN_ENTRE_RESYNCS_AUTO_MS` côté `resynchroniserResultatsAuRetour`,
+  `app.js`) reste par ailleurs inchangé et actif en parallèle. Contrairement
+  à #705 (qui rejoue le ↻, restreint au filtre de projets actifs — issue
+  #428), ce rattrapage à l'activation **n'est pas filtré** : un rattrapage se
+  veut complet, quel que soit le filtre d'affichage courant au moment de
+  l'ouverture.
+- **Cases « traité/lu » désormais incluses dans le ↻ et #705 (issue #729).**
+  Avant #729, `rechargerCases()` (`static/js/resultats_coches.js`) n'était
+  relu qu'au chargement de la page : une décoche serveur manquée par le canal
+  `case_decochee` (§3.15, issue #720 — ex. deux `RELANCE` déposées coup sur
+  coup pendant que l'onglet Résultats n'était pas affiché) laissait la case
+  cochée à l'écran malgré la décoche réelle côté serveur, sans que le ↻ la
+  corrige. `resultats.rafraichir()` (↻, et donc aussi #705 qui le rejoue)
+  appelle désormais `resultatsCoches.rechargerCases(nomsAFetcher)` avec
+  **EXACTEMENT** le même sous-ensemble de projets que la liste/le décompte
+  (respect du filtre de projets de l'issue #428) ; le rattrapage à
+  l'activation ci-dessus l'appelle lui aussi, sans filtre (cohérent avec le
+  reste de son rechargement). Import ES direct de `resultats_coches.js` dans
+  `resultats.js` (pas de cycle : `resultats_coches.js` n'importe jamais
+  `resultats.js`), plutôt qu'un aller-retour par `pont.js` (réservé aux
+  échanges nouveau↔ancien code).
+- **Heure de dernière synchro, affichée près du ↻ (issue #729).** Repère
+  discret (`#resultats-derniere-sync`, juste après le bouton ↻ dans
+  `construireBoutonsFiltre()`, `app.js`) formaté par la fonction pure
+  `formaterHeureSync(ms)` de `resultats.js` (« sync. HH:MM:SS », ou « jamais
+  synchronisé ») — reconstruit à chaque reconstruction de cette barre
+  (chargement initial, ↻, les deux resynchros ci-dessus), donc toujours à
+  jour sans abonnement ni minuterie dédiés.
+
+Logique pure testée sous Node (`static/js/tests/resultats.test.js` :
+`fautResynchroniserApresMasquage`, `fautResynchroniserApresReconnexionSse`,
+`fautRechargerAOuverture`, `formaterHeureSync` ; comportemental, DOM/réseau
+mockés, dans `static/js/tests/resultats_resync_729.test.js` : périmètre de
+projets transmis à `rechargerCases`, déclenchement du rattrapage passé le
+seuil). **Après fusion : `Ctrl+Maj+R` suffit (JS et CSS uniquement) — aucun
+redémarrage de `new_issue.py` ni des watchers, aucun changement de protocole
+d'événements.**
 
 **Badge « modèle forcé » d'une ligne (issue #638)** : une issue peut imposer un
 modèle précis via le champ `| MODELE | … |` de son en-tête (§3). Dans l'onglet

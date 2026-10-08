@@ -19,6 +19,8 @@ import {
   fautResynchroniserApresMasquage,
   fautResynchroniserApresReconnexionSse,
   SEUIL_RESYNC_MASQUAGE_MS,
+  fautRechargerAOuverture,
+  formaterHeureSync,
 } from '../resultats.js';
 
 // Repère temporel fixe pour des calculs déterministes.
@@ -352,4 +354,38 @@ test('fautResynchroniserApresReconnexionSse : première ouverture → pas de res
 
 test('fautResynchroniserApresReconnexionSse : reconnexion après coupure → resync', () => {
   assert.equal(fautResynchroniserApresReconnexionSse(false), true);
+});
+
+// ─── fautRechargerAOuverture / formaterHeureSync ──────────────────────────────
+// (issue #729 : rattrapage à l'activation de l'onglet Résultats) ─────────────
+test('fautRechargerAOuverture : jamais synchronisé (null/undefined) → recharge', () => {
+  assert.equal(fautRechargerAOuverture(null, T0), true);
+  assert.equal(fautRechargerAOuverture(undefined, T0), true);
+});
+
+test('fautRechargerAOuverture : dernière synchro plus ancienne que le seuil → recharge', () => {
+  assert.equal(fautRechargerAOuverture(T0 - SEUIL_RESYNC_MASQUAGE_MS, T0), true);
+  assert.equal(fautRechargerAOuverture(T0 - SEUIL_RESYNC_MASQUAGE_MS - 60000, T0), true);
+});
+
+test('fautRechargerAOuverture : dernière synchro récente (sous le seuil) → pas de recharge', () => {
+  assert.equal(fautRechargerAOuverture(T0, T0), false);
+  assert.equal(fautRechargerAOuverture(T0 - (SEUIL_RESYNC_MASQUAGE_MS - 1), T0), false);
+});
+
+test('fautRechargerAOuverture : seuil personnalisé respecté', () => {
+  assert.equal(fautRechargerAOuverture(T0 - 5000, T0, 10000), false);
+  assert.equal(fautRechargerAOuverture(T0 - 10000, T0, 10000), true);
+});
+
+test('formaterHeureSync : jamais synchronisé', () => {
+  assert.equal(formaterHeureSync(null), 'jamais synchronisé');
+  assert.equal(formaterHeureSync(undefined), 'jamais synchronisé');
+});
+
+test('formaterHeureSync : heure locale paddée HH:MM:SS', () => {
+  const ms = new Date(2026, 0, 5, 9, 5, 3).getTime();   // 09:05:03 (heure locale)
+  assert.equal(formaterHeureSync(ms), 'sync. 09:05:03');
+  const ms2 = new Date(2026, 0, 5, 23, 59, 9).getTime();
+  assert.equal(formaterHeureSync(ms2), 'sync. 23:59:09');
 });

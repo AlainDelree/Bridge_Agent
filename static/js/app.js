@@ -548,6 +548,19 @@ function construireBoutonsFiltre(noms) {
   rafr.textContent = '↻';
   rafr.onclick = rafraichirResultats;
   zone.appendChild(rafr);
+  // Heure de dernière synchronisation réseau de la liste (issue #729), juste
+  // après le ↻ : repère discret pour voir d'un coup d'œil si l'affichage peut
+  // être périmé. Recréé à chaque reconstruction de cette barre (chargement
+  // initial, ↻, resynchro #705/#729) — donc toujours à jour, sans abonnement
+  // dédié ni rafraîchissement par minuterie.
+  const syncInfo = document.createElement('span');
+  syncInfo.id = 'resultats-derniere-sync';
+  syncInfo.className = 'resultats-derniere-sync';
+  syncInfo.title = 'Heure de la dernière synchronisation réseau de la liste '
+    + 'Résultats (liste + décomptes + cases cochées).';
+  syncInfo.textContent = (window.Bridge && window.Bridge.resultats
+    && window.Bridge.resultats.texteDerniereSync && window.Bridge.resultats.texteDerniereSync()) || '';
+  zone.appendChild(syncInfo);
   // Pastilles de notification sur les boutons de filtre projet (issue #381),
   // calculées depuis les données déjà en mémoire — voir majPastillesFiltres().
   majPastillesFiltres();

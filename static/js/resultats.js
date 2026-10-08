@@ -30,6 +30,10 @@ import { sse } from './socle/sse.js';
 import { appelerAncien } from './socle/pont.js';
 import * as persistance from './socle/persistance.js';
 import { afficherIconeInterruption, normaliserNomsLabels } from './actions_ligne.js';
+// Rechargement de l'état des cases « traité/lu » (issue #729) : pas de cycle
+// d'import (resultats_coches.js n'importe jamais resultats.js), donc import ES
+// direct plutôt qu'un aller-retour par le pont (réservé new↔ancien).
+import { resultatsCoches } from './resultats_coches.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 1. LOGIQUE PURE (testée sous Node — voir static/js/tests/resultats.test.js)
@@ -239,6 +243,34 @@ export function fautResynchroniserApresReconnexionSse(premiereOuverture) {
   return !premiereOuverture;
 }
 
+// ─── Resynchronisation à l'OUVERTURE de l'onglet (issue #729) ────────────────
+// #705 ci-dessus rattrape un masquage prolongé et une reconnexion SSE, mais ni
+// lui ni le ↻ ne couvrent le cas d'une RELANCE (qui n'émet aucun
+// creation_issue) ou d'un flux simplement en pause sans jamais avoir déclenché
+// ces deux détecteurs : la liste reste alors périmée jusqu'au ↻ manuel. Même
+// seuil que #705 (SEUIL_RESYNC_MASQUAGE_MS), à dessein : un seul réglage
+// simple pour toute décision « la liste peut-elle être périmée ? ».
+//
+// true si la liste doit être rechargée en arrière-plan à cette activation de
+// l'onglet : jamais synchronisée depuis un vrai aller-retour réseau
+// (`dernierSyncMs` null/undefined), ou dernière synchro plus ancienne que le
+// seuil. Logique pure, testée sous Node.
+export function fautRechargerAOuverture(dernierSyncMs, maintenant, seuilMs = SEUIL_RESYNC_MASQUAGE_MS) {
+  if (dernierSyncMs == null) return true;
+  return (maintenant - dernierSyncMs) >= seuilMs;
+}
+
+// Formate l'heure de dernière synchronisation réseau pour l'affichage discret
+// posé près du ↻ (issue #729) — « jamais synchronisé » tant qu'aucun aller-
+// retour réseau n'a eu lieu. Logique pure (heure locale, comme le « Mis à jour
+// à … » du panneau latéral, static/js/panneau_lateral.js).
+export function formaterHeureSync(ms) {
+  if (ms == null) return 'jamais synchronisé';
+  const d = new Date(ms);
+  const pad = (n) => String(n).padStart(2, '0');
+  return 'sync. ' + pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());
+}
+
 // Fusionne un chargement de liste en CONSERVANT les issues des projets non
 // refetchés ET des projets dont le fetch a ÉCHOUÉ (correctif anomalie #3 :
 // un projet en échec ne disparaît plus en silence). `chargements` =
@@ -422,6 +454,10 @@ const POLL_INBOX_MS = 7000;                 // cadence de /issues-inbox/etat (is
 
 let initialFait = false;                    // le chargement initial (unique) a-t-il eu lieu ?
 let ongletActif = false;
+// Horodatage (ms) du dernier aller-retour réseau de chargerListe() — null tant
+// qu'aucun n'a eu lieu (issue #729, alimente fautRechargerAOuverture et
+// l'affichage discret près du ↻).
+let derniereSyncListeMs = null;
 let intervalTick = null;                    // recalcul 1 s des badges (client seul, aucun réseau)
 let intervalInbox = null;                   // poll /issues-inbox/etat (badge + lignes rejetées, issue #639)
 let lignesFichier = [];                     // lignes « fichier reçu/refusé » (issue #639), en tête de la liste
@@ -628,6 +664,9 @@ async function chargerListe(nomsAFetcher) {
     }
   }));
   appelerAncien('majIndicateurListe', false);
+  // Aller-retour réseau terminé (succès partiel ou total compris) — marque la
+  // synchro pour fautRechargerAOuverture et l'affichage près du ↻ (issue #729).
+  derniereSyncListeMs = maintenant();
   const echecs = chargements.filter(c => !c.succes).map(c => c.projet);
   if (echecs.length) {
     toasts.erreur('Résultats — échec de chargement : ' + echecs.join(', ')
@@ -912,11 +951,34 @@ function onActiverOnglet() {
   ongletActif = true;
   if (!initialFait) {
     initialFait = true;
-    chargerInitial();                  // UNIQUE chargement réseau
+    chargerInitial();                  // UNIQUE chargement réseau initial
   } else {
-    rendreListeComplete();             // simple rendu depuis le store, AUCUN réseau
+    rendreListeComplete();             // réaffichage IMMÉDIAT depuis le store, AUCUN réseau bloquant
+    // Rattrapage d'un événement manqué (issue #729) : si la dernière synchro
+    // réseau de la liste est trop ancienne (ou jamais eue), recharge liste +
+    // décomptes + cases cochées EN ARRIÈRE-PLAN, sans vider ni bloquer
+    // l'affichage déjà posé ci-dessus. Rien à rattraper s'il n'y a aucun
+    // projet configuré.
+    if (nomsProjets().length && fautRechargerAOuverture(derniereSyncListeMs, maintenant())) {
+      rechargerEnArrierePlan();
+    }
   }
   demarrerTick();
+}
+
+// Rechargement discret à l'activation de l'onglet (issue #729), déclenché
+// uniquement quand la dernière synchro réseau est périmée (voir
+// fautRechargerAOuverture ci-dessus). Réutilise chargerListe/chargerTimingTous/
+// resultatsCoches.rechargerCases TELS QUELS : leur remplacement du contenu
+// affiché reste atomique (store mis à jour puis rendu complet d'un coup), donc
+// l'écran n'est jamais vidé pendant l'attente réseau. Volontairement PAS
+// restreint au filtre de projets de l'issue #428 (contrairement à rafraichir
+// ci-dessous) : un rattrapage se veut complet, quel que soit le filtre
+// d'affichage courant au moment de l'ouverture.
+async function rechargerEnArrierePlan() {
+  await chargerListe();
+  await chargerTimingTous();
+  await resultatsCoches.rechargerCases();
 }
 
 function onDesactiverOnglet() {
@@ -929,10 +991,17 @@ async function chargerInitial() {
   await chargerTimingTous();
 }
 
-// ↻ explicite : recharge liste + décompte (seul geste réseau hors initial/SSE).
+// ↻ explicite : recharge liste + décompte + cases cochées (seul geste réseau
+// hors initial/SSE/activation d'onglet). Les cases cochées suivent le MÊME
+// périmètre de projets que la liste et le décompte (issue #729 point 2 :
+// respecte donc le filtre de projets de l'issue #428, déjà appliqué par
+// l'appelant — rafraichirResultats d'app.js — via nomsAFetcher). Également
+// empruntée par la resynchronisation automatique #705
+// (resynchroniserResultatsAuRetour, app.js), qui rejoue le même ↻.
 async function rafraichir(nomsAFetcher) {
   await chargerListe(nomsAFetcher);
   await chargerTimingTous();
+  await resultatsCoches.rechargerCases(nomsAFetcher);
 }
 
 // true dès que le canal /stream s'est ouvert une première fois — distingue
@@ -1006,4 +1075,10 @@ export const resultats = {
   // Exposée pour que l'ancien app.js (visibilitychange) décide d'un ↻ au
   // retour au premier plan via l'unique fonction testée (issue #705).
   fautResynchroniserApresMasquage,
+  // Heure de dernière synchro réseau de la liste, formatée pour l'affichage
+  // discret posé près du ↻ par construireBoutonsFiltre (issue #729) — appelée
+  // par l'ancien app.js à chaque reconstruction de cette barre (chargement
+  // initial, ↻, resynchro #705/#729), donc toujours à jour sans abonnement
+  // dédié.
+  texteDerniereSync: () => formaterHeureSync(derniereSyncListeMs),
 };

@@ -49,6 +49,11 @@
   border-radius:14px;background:#fff;color:#555;cursor:pointer;user-select:none;
   transition:opacity .12s}
 .btn-rafraichir:hover{opacity:.6}
+/* Heure de dernière synchro réseau de la liste (issue #729), juste après le
+   ↻ — aussi discret que .maj-indicateur, mais permanent (pas de display:none
+   conditionnel). */
+.resultats-derniere-sync{font-size:11px;color:#9a978f;font-style:italic;
+  margin:0 2px;user-select:none}
 /* Bouton « Cocher tout » (issue #381), même gabarit que les boutons de filtre. */
 .btn-cocher-tout{font-size:12px;padding:5px 11px;border:1px solid #ccc;
   border-radius:14px;background:#fff;color:#555;cursor:pointer;user-select:none;
