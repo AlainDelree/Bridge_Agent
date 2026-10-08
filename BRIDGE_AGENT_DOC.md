@@ -7,57 +7,26 @@ inter-agents d'Alain. À lire en début de conversation impliquant Bridge_Agent.
 
 ## 1. Vue d'ensemble
 
-Bridge_Agent est un système qui permet à Claude Chat (toi) de déléguer des
-tâches à Claude Code Linux (CCL) via des GitHub Issues. CCL s'exécute sur le
-ThinkPad d'Alain et surveille les issues en continu.
+Bridge_Agent permet à Claude Chat (toi) de déléguer des tâches via des
+GitHub Issues, traitées par l'un de deux agents selon la plateforme requise :
+
+- **CCL (Linux)** — label `for-linux`. S'exécute sur le ThinkPad d'Alain.
+  Choix par défaut pour toute tâche sur un projet standard.
+- **CCW (Windows)** — label `for-windows`. S'exécute sur un poste Windows.
+  Réservé aux tâches qui ont réellement besoin de Windows (builds, tests
+  PowerShell, etc. — détail au §16).
 
 **Flux complet :**
 ```
-Claude Chat → crée une issue → GitHub → watcher.py détecte → CCL exécute
-→ poste le résultat en commentaire → ferme l'issue → notification GSM/bureau
+Claude Chat → crée une issue → GitHub → watcher.py détecte → CCL/CCW exécute
+→ poste le résultat en commentaire → ferme l'issue → notification
 ```
 
-> **Rafraîchissement automatique du clone local en début de cycle (issue #185).**
-> Au début de **chaque cycle de polling** — juste avant de lister les issues
-> ouvertes — `watcher.py` lance un `git pull --ff-only` dans son répertoire de
-> travail (`REP_TRAVAIL`). Le watcher travaille donc toujours sur le code le plus
-> récent poussé sur `origin`, **sans git pull manuel préalable**.
->
-> - **Succès (cas normal)** : le clone est avancé en fast-forward (ou est déjà à
->   jour) — transparent, une simple ligne `[pull] … mis à jour` / `déjà à jour`
->   dans le log.
-> - **Divergence** (des commits locaux non poussés existent — typiquement le
->   `backup + fix` que le watcher committe à chaque tâche en attendant qu'Alain
->   vérifie puis pousse) : le `--ff-only` échoue **proprement**, **RIEN n'est
->   écrasé ni perdu**, et le watcher **poursuit sur le code local existant**.
->   Oublier un `git push` avant qu'un watcher ne tourne ne présente donc
->   **aucun risque** — au pire le watcher tourne sur du code un cran moins récent,
->   jamais sur du code corrompu.
-> - **Réseau indisponible ou dossier hors dépôt git** : simplement journalisé,
->   jamais bloquant — le pull est un confort de fraîcheur, pas une précondition.
->
-> **Même LOGIQUE pour CCL et CCW, mais PAS le même effet (issue #240).** Le
-> pull porte sur `REP_TRAVAIL` — c'est bien le même script, la même logique,
-> aucune configuration supplémentaire par projet. Mais `REP_TRAVAIL` ne
-> désigne PAS forcément le clone qui contient le **code de `watcher.py`
-> lui-même** :
-> - **Côté CCL** : `REP_TRAVAIL` **EST** le clone du dépôt Bridge_Agent, donc
->   ce pull met bien à jour le code du watcher en plus des fichiers projet.
-> - **Côté CCW en modèle unifié** (#231) : `REP_TRAVAIL = C:\CCW_Share`
->   n'est **même pas un dépôt git** (§16), et le clone qui contient
->   `watcher.py` (`C:\CCW\Bridge_Agent`) vit **ailleurs** — ce pull ne le
->   touche donc **jamais**. Voir le bloc d'avertissement du §16 pour la
->   procédure de mise à jour de ce clone, distincte et non automatique.
->
-> **Projets à périmètre dynamique.** Certains projets ont un dépôt-cible
-> défini **par l'issue elle-même** plutôt que par `REP_TRAVAIL` (dépôts
-> d'audit, pas le clone de travail du watcher) : ce pull automatique ne les
-> concerne pas et ne les rafraîchit jamais — volontairement, ce n'est pas un
-> oubli.
->
-> Rien n'empêche de continuer à faire un `git pull` (ou à relancer le watcher)
-> **manuellement** si l'on veut la mise à jour immédiate, sans attendre le
-> prochain cycle de polling — c'est désormais un confort, plus une nécessité.
+> **Rafraîchissement automatique (issue #185).** En début de chaque cycle de
+> polling, `watcher.py` met à jour son code (`git pull --ff-only`) avant de
+> lister les issues : aucun `git push` manuel préalable n'est requis, et ce
+> pull échoue proprement sans rien écraser s'il existe des commits locaux
+> pas encore poussés.
 
 ---
 
@@ -88,522 +57,123 @@ Claude Chat → crée une issue → GitHub → watcher.py détecte → CCL exéc
 Chaque projet a son propre watcher (`watcher.py --config configs/<nom>.conf`)
 et son propre journal de log (`logs/watcher-<nom>.log`).
 
-**Colonne « Couleur » (issue #608)** : couleur d'accent RÉELLEMENT affichée
-pour ce projet côté interface web (pastilles, badges, fenêtres de
-confirmation), au format hexadécimal — pas nécessairement la valeur brute du
-champ `COULEUR` de son `.conf` (voir « Couleur d'accent des projets »
-ci-dessous pour la règle de priorité et le piège documenté des 6 projets dont
-le `.conf` n'est plus lu). Cette colonne est la seule source publique de
-cette information pour un lecteur externe au périmètre de Bridge_Agent (ex.
-`relecture_web`, qui n'a pas accès à `configs/`).
-
 ---
 
 ## 3. Créer une issue — la méthode normale : watcher `issues_inbox` (issue #483)
 
-### 3.1 Objectif
+### 3.1 Objectif et workflow
 
-Jusqu'ici, une issue générée par Claude Chat devait être copiée-collée à la
-main dans l'onglet **« Nouvelle issue »** de `new_issue.py` (§20). Le watcher
-**`scripts/watcher_issues_inbox.py`** automatise ce geste : Claude Chat (ou
-Alain en CLI) dépose un fichier `.txt` dans **`~/Bridge_Agent/issues_inbox/`**,
-le watcher le détecte, le valide, crée l'issue via `gh issue create` et
-nettoie — sans repasser par le formulaire web.
+Une issue générée par Claude Chat **ne se colle jamais dans le formulaire
+web** (§20) : la méthode normale consiste à déposer un fichier `.txt` dans
+**`~/Bridge_Agent/issues_inbox/`**. Un watcher dédié
+(`scripts/watcher_issues_inbox.py`) le détecte au cycle de polling suivant,
+le valide, crée l'issue via `gh issue create` (mêmes labels/en-tête que le
+formulaire web) puis supprime le fichier. Un fichier rejeté (en-tête
+malformé, projet inconnu, titre déjà porté par une issue ouverte...) est
+déplacé dans `issues_inbox/rejected/`, jamais retraité automatiquement.
 
 ### 3.2 Structure disque
 
-- **`issues_inbox/`** (gitignoré, créé automatiquement au premier lancement
-  du watcher s'il n'existe pas) : fichiers `.txt` en attente, nommage libre
-  (le watcher ne se fie qu'au contenu, pas au nom de fichier).
-- **`issues_inbox/rejected/`** : fichiers rejetés (en-tête malformé, projet
-  inconnu, échec de `gh issue create`...), renommés
-  `<nom-original>__REJETE-<slug-du-motif>.txt` pour que le motif soit visible
-  sans ouvrir le fichier. Laissés en place pour correction manuelle — le
-  watcher ne les retraite jamais automatiquement.
-- **`issues_inbox/rejected/.motifs/`** (issue #631) : un sidecar
-  `<nom-du-fichier-rejeté>.motif` par fichier de `rejected/`, écrit par
-  `_deplacer_vers_rejected()` au moment du renommage — conserve le motif de
-  refus **en texte intégral** (le nom du fichier lui-même ne porte qu'un
-  slug tronqué à 40 caractères, sans accents). Lu par
-  `GET /issues-inbox/etat` (`app/issues_inbox.py::_motif_rejet`) pour exposer
-  le motif complet, y compris après un redémarrage de `new_issue.py` (simple
-  lecture disque, aucun état en mémoire). Sous-dossier dédié plutôt qu'un
-  fichier `<nom>.motif` posé directement dans `rejected/` : sinon son nom
-  matcherait aussi tout code énumérant `rejected/` par motif de nom (ex. un
-  glob `*REJETE*`), le confondant avec un vrai fichier rejeté.
+- **`issues_inbox/`** (gitignoré) : fichiers `.txt` en attente, nommage libre.
+- **`issues_inbox/rejected/`** : fichiers rejetés, laissés en place pour
+  correction manuelle.
+- **`issues_inbox/en_attente/`** : fichiers portant un champ `ATTENTE` non
+  vide, mis de côté avant création (voir §3.16).
 
 ### 3.3 Format attendu du fichier
 
-Même format que celui reconnu par le formulaire web (§20) : un en-tête
-`| CHAMP | Valeur |` optionnel et une ligne `#Titre: ...`,
-dans **l'un ou l'autre ordre** (issue #512) — en-tête avant `#Titre:` ou
-`#Titre:` avant l'en-tête, les deux sont équivalents et interchangeables —
-puis le corps. Champs d'en-tête reconnus, tous optionnels sauf `PROJET` :
+Un en-tête `| CHAMP | Valeur |` optionnel et une ligne `#Titre: ...`, dans
+**l'un ou l'autre ordre** (issue #512) — en-tête avant `#Titre:` ou
+`#Titre:` avant l'en-tête, les deux sont équivalents — puis le corps.
+Champs d'en-tête reconnus, tous optionnels sauf `PROJET` :
 
 | Champ       | Rôle                                                                |
 |-------------|----------------------------------------------------------------------|
 | `PROJET`    | **Obligatoire** — doit correspondre à `configs/<PROJET>.conf`        |
-| `REDACTEUR` | Optionnel — nom du projet depuis le contexte duquel Claude Chat a rédigé l'issue (`bridge_agent`, `scrabble`, `relecture_bridge`, etc.). Validé pour cohérence avec `PROJET` (issue #599, voir §3.4) — absent, aucune validation (rétrocompatibilité). Ne remplace jamais `PROJET` : pour une issue `for-windows` passant par le canal CCW, seul `REDACTEUR` vaut `bridge_agent`, `PROJET` reste le projet réellement concerné (issue #665). |
+| `REDACTEUR` | Optionnel — nom du projet depuis lequel Claude Chat écrit, validé pour cohérence avec `PROJET` (règle complète au §3.4). |
 | `TIMEOUT`   | Nombre (secondes, suffixe `s` toléré) — sinon défaut du projet       |
-| `MODELE`    | Doit être une valeur reconnue (`claude-sonnet-5`, etc.) si fourni    |
+| `MODELE`    | Doit être une valeur reconnue (§6) si fourni                        |
 | `MODE`      | Reconnu de façon tolérante (§5) — absent/non reconnu → `lecture`     |
 | `LABELS`    | Labels GitHub additionnels, séparés par des virgules                 |
-| `ATTENTE`   | Optionnel — texte libre, en une phrase, de la condition qui retarde cette issue (ex. « après la fusion de l'étape C et l'arrêt de Rummikub »). Valeur non vide → l'issue n'est PAS créée sur GitHub, elle est mise de côté dans `issues_inbox/en_attente/` (issue #713, voir §3.16). Vide ou absent → traitée tout de suite, comme aujourd'hui. **Claude Chat doit poser ce champ lui-même** dès qu'une issue est « à lancer après... » — pas seulement le mentionner dans sa réponse. |
+| `ATTENTE`   | Optionnel — condition en une phrase qui retarde la création de l'issue jusqu'à levée manuelle (§3.16) ; à poser par Claude Chat lui-même dès qu'une tâche est « à lancer après... ». |
+| `RELANCE`   | Optionnel — `#N` d'une issue `needs-human` déjà ouverte à corriger/relancer plutôt que d'en créer une nouvelle (voir §3.14). |
 
-> ⚠️ **Choix du MODE quand la tâche exécute un script (issue #722).** Avant
-> de poser `MODE`, relire la « Tâche demandée » rédigée : si elle contient un
-> des mots déclencheurs **exécuter, lancer, mesurer, simuler, tester**,
-> `python3`, `pytest`, **script** (ou un équivalent évident), le mode
-> `lecture` (défaut) est presque toujours le mauvais choix — en lecture
-> seule, aucune commande en dehors de la courte allowlist du §5 n'est
-> exécutée, `python3` et tout script compris. Choisir `| MODE | lecture
-> active |` si le script ne doit pas toucher au projet (analyse, simulation,
-> mesure), ou `| MODE | écriture |` s'il doit le modifier. Ce refus ne
-> concerne pas les issues déjà en écriture.
+> ⚠️ **Choix du MODE quand la tâche exécute un script (issue #722).** Si la
+> « Tâche demandée » contient un mot déclencheur (**exécuter, lancer,
+> mesurer, simuler, tester**, `python3`, `pytest`, **script**...), le mode
+> `lecture` (défaut) ne convient presque jamais : en lecture seule, aucune
+> commande en dehors d'une courte allowlist n'est exécutée, `python3` et
+> tout script compris (voir §5). Choisir `| MODE | lecture active |` si le
+> script ne doit pas toucher au projet, ou `| MODE | écriture |` s'il doit
+> le modifier.
 
-Label de notification par défaut (issue #490) : `construire_labels()` pose
-systématiquement **`notif_pc`** (miroir du comportement le plus courant côté
-formulaire web), sauf si `LABELS` demande déjà explicitement `notif_gsm` ou
-`notif_tous` — dans ce cas `notif_pc` n'est pas ajouté en plus, pour ne
-jamais empiler plusieurs labels de notification. Sans ce label, une issue
-créée via `issues_inbox/` ne déclenchait aucun bip à sa clôture
-(`notifications.bip()`, cf. `watcher.py`), contrairement à celles créées via
-le formulaire.
-
-Ce défaut (issue #492) reproduit le comportement du tout premier usage du
-formulaire web, pas un état courant : côté formulaire, le label de
-notification coché reflète en réalité `localStorage` (clé
-`bridge_notif_pc`, issue #93), mémorisé côté navigateur d'Alain — un état
-que le watcher spool ne peut pas lire (pas de serveur web ni de session
-navigateur impliqués). `construire_labels()` ne cherche donc jamais à
-synchroniser dynamiquement ce choix avec le formulaire ; seul le champ
-`LABELS` explicite du fichier permet de s'écarter du défaut `notif_pc`.
-
-Le fichier est reparsé avec les mêmes regex que `static/js/app.js` (détection
-de champ d'en-tête à la frappe côté formulaire web), pour ne jamais diverger
-du format déjà produit par Claude Chat.
-
-Recherche des champs bornée au début du fichier (issue #512) :
-`lire_champ_entete`/`retirer_ligne_entete` (et leurs miroirs JS
-`lireChampEntete`/`retirerLigneEntete`) ne cherchent chaque champ que dans les
-`ZONE_ENTETE_LIGNES` (25) premières lignes du fichier/corps — jamais dans
-l'intégralité du texte. Sans cette limite, une mention illustrative d'un champ
-(ex. un exemple `| PROJET | mon_projet |` cité dans le corps explicatif d'une
-issue, à titre pédagogique) pouvait être interprétée à tort comme le
-véritable en-tête. Le véritable en-tête tenant toujours largement dans cette
-marge, la limite n'affecte jamais un fichier bien formé.
+Label de notification par défaut : `notif_pc` est posé systématiquement,
+sauf si `LABELS` demande déjà explicitement `notif_gsm` ou `notif_tous`.
 
 **Lot multi-issues (issue #508) :** un fichier peut contenir plusieurs blocs
-`#Titre:` à la suite — voir §3.13 pour le détail. Dans ce cas (≥ 2 occurrences
-de `#Titre:`), chaque bloc porte ses propres champs d'en-tête, y compris son
-propre `MODE` (mode mixte, les trois valeurs) : rien ne force artificiellement
-un mode unique pour tout le fichier, `MODE` étant lu par bloc exactement comme
-`PROJET`/`TIMEOUT`/`MODELE`/`LABELS`. Le format « en-tête et `#Titre:`, dans
-l'un ou l'autre ordre » décrit ci-dessus ne s'applique qu'au fichier à **un
-seul** bloc (0 ou 1 occurrence de `#Titre:`) : un contenu placé avant le
-premier `#Titre:` d'un fichier à 2 blocs ou plus n'appartient à aucun bloc et
-est ignoré (même convention que `decouperCorpsEnBlocs` côté formulaire web,
-§20).
+`#Titre:` à la suite — voir §3.13.
 
-### 3.4 Validation avant création
+**Exemple canonique :**
+```markdown
+| PROJET | bridge_agent |
+| MODE   | écriture     |
+
+#Titre: Titre court et actionnable
+
+## Contexte
+Pourquoi cette tâche existe.
+
+## Tâche demandée
+Description précise. Indiquer explicitement si LECTURE SEULE.
+
+## Résultat attendu
+Ce que CCL doit produire ou confirmer.
+```
+
+### 3.4 Validation avant création et règles de rédaction
 
 Un fichier est rejeté (déplacé vers `rejected/`, jamais créé sur GitHub) si :
 `PROJET` absent/vide, `configs/<PROJET>.conf` introuvable ou invalide,
-`#Titre:` absent/vide, `MODELE` fourni mais non reconnu, ou `TIMEOUT` fourni
-mais non numérique. Un échec de `gh issue create` (réseau, dépôt inaccessible,
-timeout de 30s...) provoque le même sort, avec le message d'erreur de `gh`
-en détail.
+`#Titre:` absent/vide, `MODELE` fourni mais non reconnu, `TIMEOUT` fourni
+mais non numérique, ou si le titre est déjà porté par une issue **ouverte**
+du même dépôt (anti-doublon — utiliser `RELANCE`, §3.14, pour corriger une
+issue déjà ouverte plutôt que de la redéposer).
 
-Anti-doublon (issue #491) : juste après cette validation et avant l'appel à
-`gh issue create`, le watcher réutilise **telle quelle**
-`_issue_ouverte_meme_titre(cfg, titre)` de `app/issues.py` (garde du formulaire
-web, issue #189) pour vérifier qu'aucune issue **OUVERTE** du même dépôt ne
-porte déjà exactement ce titre (comparaison stricte après `strip()`). Si oui →
-rejet (motif : `doublon : une issue #<n> portant ce titre est déjà ouverte`),
-même sort que les autres validations ci-dessus. Comme pour le formulaire,
-c'est du best-effort : un échec de l'appel `gh issue list` sous-jacent
-(réseau, timeout) fait retourner `None` à la fonction, et la création se
-poursuit normalement plutôt que d'être bloquée par une panne de vérification.
-Aucune logique dupliquée entre les deux flux (formulaire web et
-`issues_inbox/`) : une seule fonction, importée par les deux.
-
-**Cohérence `REDACTEUR` / `PROJET` (issue #599).** Claude Chat peut rédiger
-une issue en confondant le contexte projet actif (distraction, erreur), et
-Alain peut la déposer dans `issues_inbox/` sans avoir bien relu le champ
-`PROJET` — jusqu'ici, aucun filet de sécurité côté watcher ne détectait cette
-incohérence. Quand le champ optionnel `REDACTEUR` est présent, `valider()`
-appelle `valider_redacteur()` (`scripts/watcher_issues_inbox.py`) **avant**
-tout autre traitement (avant même la vérification du titre) :
-
-1. `REDACTEUR == PROJET` → OK, traitement normal (cas courant).
-2. Label `for-windows` présent **ET** `REDACTEUR == bridge_agent` **ET** le
-   projet visé par `PROJET` **n'a pas (encore) son propre service CCW dédié**
-   (modèle multi-projets #170, `CCW-Watcher-<Projet>`, voir §16) → OK. Cette
-   exception ne vaut QUE pour un projet encore dépendant du canal central
-   partagé `bridge_agent` faute de service propre — pas pour tout
-   `for-windows` indistinctement (issue #684) : un projet qui **a** son
-   service dédié bascule sur le cas `for-windows` + `REDACTEUR == PROJET`,
-   déjà couvert par la règle 1, et la règle 2 ne s'applique alors plus à lui.
-   Exemple constaté le 28/09/2026 : Rummikub venait de recevoir son propre
-   service `CCW-Watcher-Rummikub` ; une issue `for-windows` le concernant
-   rédigée avec `REDACTEUR: bridge_agent` en invoquant cette règle 2 était
-   donc erronée — `REDACTEUR` aurait dû valoir `rummikub`.
-
-   **Attention — cette règle ne porte QUE sur `REDACTEUR`, jamais sur
-   `PROJET` (issue #665).** `PROJET` ne devient **JAMAIS** `bridge_agent` du
-   seul fait qu'une issue passe par le canal CCW — seul `REDACTEUR` le
-   devient. `PROJET` désigne toujours le projet réellement concerné par la
-   tâche (c'est lui qui choisit la file de traitement) ; `REDACTEUR` désigne
-   seulement le contexte de rédaction. Les deux champs ne sont pas
-   interchangeables. Exemple typique, une issue `for-windows` de build
-   Actualise (projet encore sans service CCW dédié) :
-
-   ```
-   | PROJET     | actualise    |   ← le projet réellement concerné, jamais bridge_agent ici
-   | REDACTEUR  | bridge_agent |   ← uniquement ce champ prend « bridge_agent » (canal CCW)
-   ```
-
-   Mettre `PROJET = bridge_agent` sur une telle issue passerait la
-   validation (règle 1 : `REDACTEUR == PROJET`) mais l'enverrait dans la file
-   de `bridge_agent` au lieu de celle d'`actualise` — erreur constatée en
-   usage réel sur #661 et #664. `PROJET = bridge_agent` n'est correct que si
-   la tâche porte réellement sur le dépôt bridge_agent lui-même.
-3. Tout autre cas → rejet, même sort que les autres validations ci-dessus,
-   avec un message explicite indiquant la discordance (`REDACTEUR` ≠
-   `PROJET`) — fichier déplacé dans `issues_inbox/rejected/`, ligne
-   `REJECTED` journalisée dans `issues_inbox.log`.
-
-`REDACTEUR` **absent** → aucune validation, traitement normal
-(rétrocompatibilité avec les issues existantes, qui ne portent pas ce champ).
-Depuis l'issue #647, ce cas précis (absent — jamais l'incohérence du cas 3
-ci-dessus, qui reste un rejet inchangé) pose en plus le label GitHub
-`sans-redacteur` sur l'issue créée : signal purement **visuel**, jamais
-bloquant, pour qu'Alain repère dans l'onglet Résultats une issue rédigée par
-Claude Chat sans indication de projet d'origine (risque réel dans une
-conversation longue abordant plusieurs projets sans changer de session) et
-lui demande de relire la documentation à jour. Voir §17.3 (« Badge « sans
-REDACTEUR » ») pour le détail du badge côté navigateur.
-
-### 3.5 Journalisation (rotation par nombre de lignes)
-
-Chaque traitement (réussi ou rejeté) ajoute une ligne à
-**`logs/issues_inbox.log`** :
-`<horodatage> | <projet> | OK|REJECTED | <titre> [— <détail si rejet>]`.
-Pour un fichier multi-blocs (§3.13), **une ligne par bloc**, jamais une ligne
-groupée pour tout le fichier. Rotation propre à ce watcher, **distincte** de la rotation par taille des
-autres watchers (§13) : dès que le fichier dépasse **`MAX_LOG_LINES`**
-(défaut 50), les lignes les plus anciennes sont supprimées — pas de fichier
-`.1`/`.2`, un seul fichier plat borné en permanence à 50 lignes.
-
-### 3.6 Concurrence
-
-Avant de traiter un fichier `.txt`, le watcher vérifie que sa date de
-dernière modification remonte à **au moins 1 seconde** — sinon il le laisse
-pour le cycle de polling suivant, pour ne jamais lire un fichier encore en
-cours d'écriture (dépôt via un outil qui écrit progressivement).
-
-### 3.7 Config (optionnelle)
-
-`configs/watcher_issues_inbox.conf` — clés `NOM`, `REP_TRAVAIL`,
-`POLLING_INTERVAL` (défaut 5s), `MAX_LOG_LINES` (défaut 50), `INBOX_DIR`,
-`REJECTED_DIR`, `GH_TOKEN`. Toutes optionnelles : le watcher tourne avec des
-défauts sensés (dossiers sous `~/Bridge_Agent`) même sans ce fichier.
-**Ce `.conf` n'est pas créé automatiquement par CCL** — garde-fou §11 (CCL ne
-modifie/crée jamais `configs/*.conf`) : c'est à Alain de le créer à la main
-s'il veut surcharger les défauts.
-
-Lancement : `python3 scripts/watcher_issues_inbox.py` (boucle continue),
-`--config <chemin>` pour un `.conf` alternatif, `--once` pour un seul cycle
-(tests). Peut être supervisé en systemd/NSSM comme les autres watchers (§13),
-en dehors du cycle de vie de `watcher.py` (générique, par projet) puisqu'il
-ne traite pas des issues GitHub existantes mais alimente leur création.
-
-### 3.8 Suivi inbox fusionné dans l'onglet Résultats (issue #639)
-
-> **Historique.** Un onglet séparé « Résultats inbox » a existé de l'issue #483
-> à l'issue #636. Il a été **supprimé (issue #639, refonte web étape 9b)** et son
-> contenu utile réparti dans l'onglet Résultats et le panneau latéral. La route
-> serveur **`GET /issues-inbox/etat`** (`app/issues_inbox.py`, pure lecture
-> disque — aucun appel `gh`) est **inchangée** ; seul son affichage a bougé.
-
-Le suivi des dépôts `issues_inbox/` se fait désormais **dans la liste Résultats
-elle-même**, alimenté à la fois par trois événements SSE `/stream` (issue #631,
-étape 9a) et par le polling `/issues-inbox/etat` :
-
-- **Lignes en direct** (`static/js/resultats.js`, événements SSE) : au dépôt d'un
-  fichier, une ligne **« 📥 fichier reçu : <nom> »** apparaît en tête de la liste
-  (événement `fichier_recu`), **sans** case à cocher ni badges de temps. Chaque
-  issue créée depuis ce fichier (`creation_issue`, qui porte le nom du fichier)
-  **remplace** cette ligne par la ligne d'issue normale (uniquement pour la 1ʳᵉ
-  création d'un fichier multi-issues ; les suivantes s'ajoutent sans doublon).
-  Chaque bloc refusé (`fichier_refuse`) transforme la ligne « reçu » — ou, à
-  défaut, insère directement — une **ligne rouge « ✕ fichier refusé : <nom> —
-  <motif> »** (repli « refusé, motif indisponible »). Un lot multi-blocs
-  partiellement refusé produit donc une ligne rouge distincte par bloc refusé.
-  **Exception (issues #716, #719)** : `fichier_recu` n'est PAS émis pour un
-  fichier (ou lot) dont **tous** les blocs restants sont des `ATTENTE` (§3.16)
-  et/ou des `RELANCE` (§3.14) — ces deux chemins ne créent jamais d'issue, donc
-  rien ne remplacerait/n'enlèverait jamais la ligne « reçu » si elle était
-  émise ; elle resterait affichée indéfiniment jusqu'au rechargement. Un bloc
-  `RELANCE` **refusé** garde sa propre ligne rouge (`fichier_refuse`), inchangé
-  — voir §3.15.
-- **Exclusion propre** : ces lignes sont rendues en `.ligne-fichier` (jamais
-  `.ligne-issue`) et **absentes de `store.issues`** — elles échappent donc
-  nativement aux filtres, au quota d'affichage, aux pastilles, à la case à
-  cocher / « Cocher tout » / « Tout à zéro » et au badge modèle.
-- **Alarme** pilotée **uniquement** par l'état du dossier
-  `issues_inbox/rejected/` (via `/issues-inbox/etat`) — non vide → badge 🚨
-  clignotant, désormais porté par **l'onglet Résultats** (visible même hors de
-  cette vue). Volontairement **pas** de parsing de log pour cette décision
-  (§ Tâche demandée de l'issue #483).
-- **Reconstruction au rechargement** : les lignes en direct sont **éphémères**
-  (perdues au F5), sauf les fichiers **encore rejetés** — le polling
-  `/issues-inbox/etat` (7s, `static/js/resultats.js`, continu quel que soit
-  l'onglet actif) **reconstitue une ligne rouge par fichier de `rejetes`** et la
-  **purge** dès que le fichier quitte `rejected/` (traité/nettoyé à la main).
-- **Historique** des dernières lignes de `logs/issues_inbox.log` : déplacé dans
-  le **panneau latéral** (`static/js/panneau_lateral.js`), sous le contrôle du
-  watcher spool, dans un repli discret « Historique récent » (`<details>` fermé
-  par défaut) — même source `/issues-inbox/etat`, purement informatif.
-
-### 3.9 Workflow utilisateur final
-
-1. Claude Chat (ou Alain) dépose un fichier `.txt` dans `issues_inbox/`.
-2. Le watcher le détecte au cycle de polling suivant, crée l'issue GitHub
-   (mêmes labels/en-tête que le formulaire web), supprime le fichier, journalise.
-3. Alain voit le statut **dans la liste Résultats** de `new_issue.py` (ligne
-   « fichier reçu » puis issue, ou ligne rouge « fichier refusé » — issue #639).
-4. Un fichier rejeté reste visible dans `issues_inbox/rejected/` — alarme
-   (badge 🚨 sur l'onglet Résultats) allumée et ligne rouge reconstituée au
-   rechargement tant qu'il n'est pas corrigé/supprimé à la main.
-
-### 3.10 Pilotage du watcher depuis le panneau Infrastructure (issue #485)
-
-Jusqu'ici, le watcher devait être lancé manuellement en CLI, sans suivi
-depuis l'interface. Il est maintenant pilotable comme les watchers de
-projet (§ « Cycle de vie des watchers », `app/watchers.py`), mais avec sa
-propre logique dans `app/issues_inbox.py` puisqu'il n'y a **qu'un seul**
-watcher spool (pas de paramètre projet).
-
-**Fichier PID** : `logs/watcher-issues_inbox.pid`, même convention que les
-watchers de projet (`logs/watcher-<nom>.pid`). Écrit par le lanceur
-(`demarrer_watcher_inbox()`) au démarrage — le script
-`scripts/watcher_issues_inbox.py` ne l'écrit jamais lui-même, seulement à sa
-propre auto-extinction où il le supprime (avec le fichier d'échéance) pour
-ne jamais laisser un PID orphelin visible dans l'interface.
-
-**Durée configurable au démarrage.** Contrairement aux watchers de projet
-(`DELAI_INACTIVITE_MIN` dans le `.conf`, § « Cycle de vie des watchers »),
-le watcher spool tourne par défaut **indéfiniment** — il n'y a pas de notion
-d'« inactivité » pertinente pour un dossier de dépôt. Au clic sur
-« ▶ Démarrer », un modal (`#modal-duree-watcher-inbox`) propose trois choix
-par case à cocher : Indéfiniment (défaut), 30 min, ou un nombre de minutes
-libre. Le choix est transmis à `POST /issues-inbox/demarrer-watcher`
-(`{duree_min: N}`, 0/absent = indéfini), qui lance le script avec l'argument
-CLI `--duree-min <N>`. L'**auto-extinction est interne au script** (fonction
-`boucle()`), sur le même principe que l'extinction pour inactivité de
-`watcher.py` (horloge **monotone**, insensible à un changement d'heure
-système) : à l'écoulement du délai, arrêt propre (`sys.exit(0)`) après
-suppression de son propre fichier PID et de son fichier d'échéance.
-
-Un fichier d'échéance séparé, **`logs/watcher-issues_inbox.echeance`**
-(epoch, écrit par `demarrer_watcher_inbox()` si une durée a été choisie),
-permet à l'interface d'afficher le temps restant sans dépendre de l'horloge
-interne du process watcher, qui tourne dans un process séparé de Flask.
-
-**Si le watcher tourne déjà** et qu'on clique « ↺ Relancer » avec une
-nouvelle durée : `demarrer_watcher_inbox()` arrête TOUJOURS l'ancien process
-(`SIGTERM`) avant de relancer — pas de refus silencieux, la nouvelle durée
-remplace systématiquement l'ancienne, quel que soit l'état courant.
-
-Depuis l'issue #496 (§3.12), ces boutons manuels ne pilotent plus le cas
-normal — devenu automatique — mais servent d'**override ponctuel** pendant
-que `new_issue.py` tourne (ex. couper temporairement le spool sans fermer
-toute l'interface, ou le relancer avec une durée bornée).
-
-### 3.11 Démarrage auto du watcher CCL du projet après création d'issue (issue #486)
-
-Pour un vrai fonctionnement « pool d'impression » (dépose et oublie), le
-watcher spool ne se contente pas de créer l'issue : dans `traiter_fichier()`,
-juste après suppression du fichier traité et avant la ligne de log `OK`, il
-vérifie si le watcher CCL du projet concerné (`watcher.py --config
-configs/<projet>.conf`) est déjà actif, et le démarre sinon — faute de quoi
-l'issue resterait en attente indéfiniment tant qu'Alain ne lance pas ce
-watcher à la main depuis le panneau Infrastructure.
-
-Réutilise directement `demarrer_watcher(cfg_projet, forcer=False)` de
-`app/watchers.py` (import direct, même principe que l'import déjà fait de
-`watcher.py::charger_config/lire_conf/est_titre_chef`) — pas de logique
-dupliquée :
-
-- **Watcher déjà actif** : `demarrer_watcher(forcer=False)` ne fait rien
-  (pas de `SIGTERM`, pas de redémarrage) — contrairement au comportement du
-  watcher spool lui-même sur relance (§3.10), il ne faut surtout pas
-  interrompre un traitement d'issue potentiellement en cours sur ce projet.
-- **Watcher inactif** : démarré avec les mêmes modalités que le bouton
-  « ▶ Lancer » du panneau Infrastructure (`subprocess.Popen` +
-  `logs/watcher-<projet>.pid`).
-
-Traçabilité : si le watcher a dû être démarré, la ligne `OK` de
-`logs/issues_inbox.log` (§3.5) est complétée par le suffixe
-`— watcher CCL démarré (pid <pid>)` ; sinon la ligne reste inchangée (watcher
-déjà actif). Un échec de démarrage (exception de `demarrer_watcher`) est
-seulement journalisé en `WARNING` du logger du watcher — n'empêche jamais la
-création de l'issue elle-même, déjà actée à ce stade.
-
-**Arrêt manuel.** `POST /issues-inbox/arreter-watcher` envoie un `SIGTERM`
-et nettoie PID + échéance. Le watcher spool expose un bouton « ⏹ Arrêter »
-explicite dans le panneau : son comportement par défaut étant
-« Indéfiniment », il doit pouvoir être coupé manuellement à tout moment
-(même bouton, même confirmation, que celui des watchers CCL de projet dans
-`#pl-zone-monitoring` — issue #655, ci-dessous).
-
-**Interface — zone `#pl-zone-extras`.** Cette zone du panneau latéral
-« Infrastructure » (onglet Résultats, colonne à côté de la liste depuis
-l'issue #628 — auparavant un overlay flottant), réservée aux futurs boutons
-depuis l'issue #380 et restée vide jusqu'ici, est occupée par
-`rendrePanneauLateralExtras()` (`static/js/panneau_lateral.js`) : une ligne d'état
-🟢/⚫ « Watcher spool (issues_inbox) », alimentée par le même
-`GET /issues-inbox/etat` que l'onglet « Résultats inbox » (étendu avec
-`watcher_actif`/`watcher_pid`/`watcher_restant_s`). Watcher actif : temps
-restant avant extinction (ou « indéfini »), boutons « ↺ Relancer » et
-« ⏹ Arrêter ». Watcher inactif : bouton « ▶ Démarrer ». Les deux boutons de
-démarrage ouvrent le modal de choix de durée. Rafraîchie sur le même cycle
-que le reste du panneau (30 s, `rafraichirPanneauLateralResultats`).
-
-### 3.12 Cycle de vie lié à `new_issue.py` (issue #496)
-
-**Problème structurel.** Un vrai démarrage automatique « à la dépose d'un
-fichier » est impossible : l'événement déclencheur serait le dépôt dans
-`issues_inbox/`, mais si le watcher spool est éteint, rien ne surveille ce
-dossier pour détecter ce dépôt. Une sentinelle séparée a été envisagée puis
-jugée disproportionnée : dans l'usage réel d'Alain, `new_issue.py` est
-systématiquement ouvert pendant les périodes de travail (c'est là qu'il
-consulte les résultats) et fermé le reste du temps — un fichier déposé
-pendant que `new_issue.py` est fermé n'a de toute façon pas d'intérêt
-pratique à être traité immédiatement, puisque le résultat ne serait vu
-qu'au prochain démarrage de l'interface.
-
-**Décision retenue.** Le cycle de vie du watcher spool est lié directement à
-celui du **processus `new_issue.py`** lui-même, plutôt qu'à une durée choisie
-manuellement (§3.10) ou à une horloge d'inactivité indépendante :
-
-- **Démarrage** — juste après l'enregistrement des gestionnaires de signal
-  dans `main()` (avant le démarrage du tunnel `--externe` et des threads de
-  surveillance), `new_issue.py` teste `watcher_inbox_actif()` et, s'il est
-  inactif, appelle `demarrer_watcher_inbox()` sans `duree_min` (indéfini).
-  S'il tourne déjà (relance après un plantage, ou manip manuelle antérieure),
-  rien n'est fait : `demarrer_watcher_inbox()` **redémarre toujours** le
-  process existant (§3.10), ce qui couperait inutilement un watcher déjà en
-  cours de traitement.
-- **Arrêt** — le gestionnaire `gestionnaire_arret` (`SIGINT`/`SIGTERM`)
-  appelle `arreter_watcher_inbox()` de façon **inconditionnelle**, avant
-  `arreter_tunnel()` et la fin du process (`os._exit(0)` différé de 1,5 s) :
-  même mécanisme que le bouton « ⏹ Arrêter » (`SIGTERM` + nettoyage PID et
-  fichier d'échéance). Le watcher spool est donc coupé même s'il tournait
-  suite à un override manuel (relance avec une durée choisie) fait pendant la
-  session.
-- **Tous modes** (local/`--lan`/`--externe`) et les deux points d'entrée
-  (`python3 new_issue.py` et `./lancer_new_issue.sh`) sont concernés : le
-  wrapper `lancer_new_issue.sh` (§10, issue #150) ne fait qu'exécuter
-  `new_issue.py` comme process enfant du même groupe — un `Ctrl-C` (donc
-  `SIGINT`) atteint directement `new_issue.py`, qui gère l'arrêt lui-même ;
-  aucune modification du wrapper n'était nécessaire.
-- **Override manuel conservé.** Les boutons « ▶ Démarrer » / « ↺ Relancer » /
-  « ⏹ Arrêter » du panneau Infrastructure (§3.10), avec choix de durée,
-  restent pleinement fonctionnels pendant que `new_issue.py` tourne — ils ne
-  pilotent plus le cas normal (devenu automatique) mais un override ponctuel
-  (ex. couper temporairement sans fermer toute l'interface).
-
-**Valeur par défaut du modal de durée inchangée (« Indéfiniment »).**
-L'auto-démarrage ne fixe jamais de durée : le cas normal ne passe donc plus
-jamais par ce modal. Un clic sur « ▶ Démarrer »/« ↺ Relancer » pendant que
-`new_issue.py` tourne est désormais toujours un override délibéré ; garder
-« Indéfiniment » comme choix par défaut reste l'hypothèse la plus sûre (ne
-pas couper le watcher tout seul par surprise), une durée bornée restant un
-choix explicite quand Alain veut couper temporairement sans fermer toute
-l'interface.
-
-**Fichier déposé pendant que `new_issue.py` est fermé.** Il attend
-simplement dans `issues_inbox/` jusqu'au prochain démarrage de l'interface,
-qui relance alors le watcher spool et le traite au premier cycle de
-polling — comportement assumé (voir « Problème structurel » ci-dessus), pas
-un bug.
+**Règle `REDACTEUR` (cas normal).** `REDACTEUR` doit être égal à `PROJET` —
+y compris pour les projets qui ont leur propre service CCW dédié (Scrabble,
+Rummikub, Actualise), dont les issues `for-windows` passent par ce service.
+**Possibilité supplémentaire**, acceptée par le code pour n'importe quel
+projet : le label `for-windows` avec `REDACTEUR=bridge_agent` envoie
+l'issue au service CCW central de Bridge_Agent plutôt qu'au service dédié
+du projet — à réserver à un besoin CCW exceptionnel sur ce projet. Dans ce
+cas, indiquer aussi `SOUS_DOSSIER` (chemin du projet sous le dossier
+partagé) : ce service central travaille dans un dossier parent commun à
+tous les projets, pas dans le dossier d'un seul projet. Tout autre
+`REDACTEUR` que ces deux cas → rejet. `REDACTEUR` absent → aucune
+validation (rétrocompatibilité), mais pose le label informatif
+`sans-redacteur` sur l'issue créée.
 
 ### 3.13 Lots multi-issues par fichier — mode mixte (issue #508)
 
-**Contexte.** Découvert lors de l'issue #500 (lot de 5 issues déposé en un
-seul fichier `.txt`) : jusqu'ici le watcher spool ne traitait qu'**une seule
-issue par fichier**, alors que le formulaire web savait déjà découper un
-corps collé en plusieurs blocs (§20, `decouperCorpsEnBlocs`,
-`envoyerLot`). Seule la première issue du lot avait été créée ; les suivantes
-avaient dû être redéposées manuellement en fichiers séparés.
+Un fichier peut contenir **plusieurs** blocs `#Titre:` à la suite : dès
+**2 occurrences ou plus**, le fichier bascule en mode lot — chaque bloc va
+de son `#Titre:` jusqu'au `#Titre:` suivant (exclu) ou la fin du fichier, et
+est traité **séquentiellement** comme une issue indépendante (validation,
+anti-doublon, création). Un contenu placé avant le premier `#Titre:` d'un
+fichier à plusieurs blocs n'appartient à aucun bloc et est ignoré. Chaque
+bloc porte son propre `MODE` : un même lot peut librement mélanger lecture,
+lecture active et écriture.
 
-**Découpage (`decouper_corps_en_blocs`, `scripts/watcher_issues_inbox.py`) :**
-miroir Python de `decouperCorpsEnBlocs` de `static/js/app.js` — mêmes règles,
-pour ne jamais diverger du comportement du formulaire web. Le contenu du
-fichier est découpé sur chaque occurrence de `#Titre:` en début de ligne :
-chaque bloc va de son `#Titre:` jusqu'au `#Titre:` suivant (exclu) ou la fin
-du fichier. Un contenu placé avant le premier `#Titre:` d'un fichier à
-plusieurs blocs n'appartient à aucun bloc et est ignoré. **Seuil de bascule
-en mode lot : ≥ 2 occurrences de `#Titre:`** (même seuil que `enModeLot()`
-côté formulaire) — un fichier à 0 ou 1 occurrence reste traité sur son
-contenu **entier**, pas sur ce découpage, pour préserver la convention
-mono-issue existante (en-tête `| CHAMP | Valeur |` pouvant être placé AVANT
-`#Titre:`, §3.3, que ce découpage briserait s'il lui était appliqué).
+### 3.14 Champ `RELANCE` : corriger/relancer une issue `needs-human` existante (issues #516, #567, #726, #727)
 
-**Traitement de chaque bloc (`_traiter_bloc`) :** exactement le même
-traitement qu'un fichier mono-issue — validation (§3.4), anti-doublon
-(`_issue_ouverte_meme_titre`), création via `gh issue create`, démarrage
-auto du watcher CCL du projet concerné (§3.11) — appliqué **séquentiellement,
-jamais en parallèle** (`_traiter_lot`), cohérent avec l'envoi un par un
-d'`envoyerLot` côté formulaire web (aucun conflit `gh` possible).
+Corriger une issue en échec (`needs-human`, ex. un `TIMEOUT` trop court)
+sans sortir du flux `issues_inbox` : redéposer un fichier avec le même
+titre échoue toujours (anti-doublon, §3.4, qui vaut aussi pour une issue
+`needs-human` puisqu'elle reste ouverte) — `RELANCE` est le chemin
+volontaire et distinct pour cibler une issue déjà ouverte.
 
-**Mode mixte, les trois modes (issue #505 côté formulaire, étendu ici au
-watcher spool) :** chaque bloc porte son propre champ `MODE` d'en-tête,
-reconnu par `extraire_champs`/`reconnaitre_mode` exactement comme pour un
-fichier mono-issue (les trois valeurs : `lecture`, `lecture active` /
-`mode_scratch`, `écriture` / `mode_write` — absent/non reconnu → `lecture`
-par défaut). Rien dans le découpage ni dans `_traiter_bloc` ne force un mode
-unique pour tout le fichier : un même lot peut donc librement mélanger les
-trois modes, un par bloc. Côté formulaire web, `modeEffectifBloc()` (repli
-sur le radio du formulaire si le bloc ne porte pas de `MODE` propre) assure
-la même règle, cf. §20 « Envoi en lot ».
-
-**Disposition du fichier selon les résultats.** Chaque bloc est journalisé
-individuellement dans `logs/issues_inbox.log` (§3.5), succès ou échec. Le
-fichier n'est supprimé qu'une fois **tous** les blocs traités :
-- **au moins un bloc réussi** (même si d'autres ont échoué) → le fichier est
-  supprimé normalement, comme un lot entièrement réussi. Un échec partiel ne
-  doit pas re-proposer indéfiniment au prochain cycle les blocs déjà réussis
-  (qui recréeraient des doublons, bloqués ensuite par l'anti-doublon avec un
-  message trompeur) ;
-- **tous les blocs ont échoué** → le fichier est déplacé vers `rejected/`
-  (même mécanisme que le rejet mono-issue, §3.2), avec un motif de nom
-  résumant le nombre de blocs en échec. Aucune ligne de log supplémentaire à
-  ce déplacement : chaque motif d'échec a déjà été journalisé individuellement
-  ci-dessus.
-
-### 3.14 Champ `RELANCE` : corriger/relancer une issue `needs-human` existante (issues #516, #567)
-
-**Problème résolu.** Corriger une issue en échec (`needs-human`) —
-typiquement pour ajuster un `TIMEOUT` trop court après un échec par
-dépassement — obligeait jusqu'ici à sortir du flux `issues_inbox` : éditer le
-corps à la main sur GitHub, puis retirer `needs-human` (bouton
-« 🔄 Relancer », §13 « Relancer une issue bloquée en needs-human », issue
-#460). Redéposer un `.txt` avec le même
-titre échouait systématiquement : l'anti-doublon (§3.4) rejette tout titre
-déjà porté par une issue OUVERTE — ce qui inclut justement `needs-human`,
-puisqu'elle reste ouverte. Ce comportement de l'anti-doublon reste correct et
-inchangé ; `RELANCE` ajoute un chemin **volontaire** et **distinct** pour
-cibler une issue déjà ouverte, en cohérence avec le champ `SUITE_DE`
-existant (§6) qui référence lui aussi une issue par `#N`.
-
-**Format.** `| RELANCE | #N |` dans l'en-tête (même zone bornée que les
-autres champs, §3.3) — la présence de ce champ détourne **tout le bloc** vers
-le chemin de relance, avant toute validation/anti-doublon de création :
-`#Titre:` n'est plus requis (ignoré s'il est présent) et aucune issue n'est
-jamais créée pour ce bloc.
+**Format** : `| RELANCE | #N |` dans l'en-tête — détourne tout le bloc vers
+la relance, `#Titre:` n'est alors plus requis et aucune issue n'est créée.
 
 ```markdown
 | PROJET  | bridge_agent |
@@ -615,374 +185,43 @@ Reprendre le travail déjà committé dans le worktree plutôt que repartir
 de zéro.
 ```
 
-**Validation avant modification (`valider_relance`, `_recuperer_issue`,
-`scripts/watcher_issues_inbox.py`) :**
-- `PROJET` doit désigner un `configs/<PROJET>.conf` valide (résout le dépôt
-  GitHub cible, `cfg_projet.depot`) ;
-- `RELANCE` doit être un numéro exploitable (`#N` ou `N`) ;
-- `gh issue view <N> --repo <depot>` doit réussir — échoue déjà si l'issue
-  n'existe pas ou n'appartient pas à ce dépôt, ce qui couvre la vérification
-  « bon dépôt/projet » sans logique supplémentaire ;
-- l'issue doit être **OUVERTE** (`state == "OPEN"`).
-Tout échec → rejet vers `rejected/` avec motif clair, même mécanique que
-§3.4 (`_rejeter`).
+L'issue ciblée doit être **ouverte** et appartenir au dépôt du `PROJET`
+indiqué, sinon rejet. Champs corrigibles dans son corps : `TIMEOUT`,
+`MODELE`, `SOUS_DOSSIER` et `REPO_CIBLE` (une ligne déjà présente est
+corrigée, jamais insérée) — `MODE` et `LABELS` ne sont pas corrigibles par
+ce chemin. Le texte libre du fichier (au-delà de l'en-tête et de
+`#Titre:`) est ajouté en fin de corps de l'issue, dans une section
+horodatée `## Relance du <date>` — c'est donc bien lu par CCL à la reprise.
 
-**Champs corrigibles dans le corps : `TIMEOUT`, `MODELE`, `SOUS_DOSSIER` et
-`REPO_CIBLE`** (`_fusionner_entete`/`_maj_ligne_entete`). Ces quatre champs
-sont des paramètres de chemin/configuration purement opérationnels dans le
-corps GitHub existant de l'issue ciblée, sans implication de sécurité — la
-fonction **corrige une ligne déjà présente**, elle n'en insère jamais une
-nouvelle. `MODE` est volontairement exclu : le mode réellement appliqué est
-armé par le label GitHub `mode_write`/`mode_scratch` (§5), pas par le texte
-du corps ; le changer sans resynchroniser ce label serait trompeur, et
-resynchroniser un label qui arme l'écriture pour CCL depuis ce chemin
-ouvrirait une voie de contournement du garde-fou d'auteur d'issue (issue
-#563) — jugé hors-scope, y compris après l'élargissement de #567. `LABELS`
-est exclu aussi : ce champ n'apparaît jamais dans le corps (`construire_body`
-ne l'y écrit pas, §3.3) — « corriger le corps » n'a pas de sens pour lui ici.
+**Modèle recommandé pour ce texte libre (issue #727)** : la cause de
+l'échec, puis la correction apportée (ex. le nouveau `TIMEOUT`). Après un
+échec par dépassement de délai, ajouter une phrase du type « Un travail
+partiel existe peut-être déjà dans le worktree : le vérifier et le
+compléter plutôt que de repartir de zéro. »
 
-`SOUS_DOSSIER` (#550) et `REPO_CIBLE` (#125) ont été ajoutés aux champs
-corrigibles par l'issue #567, retour d'expérience après un premier usage réel
-de `RELANCE` (#566) : ce sont deux champs de la même famille que `TIMEOUT`
-(un paramètre mal réglé peut provoquer un `needs-human`, sans impliquer le
-contournement d'un contrôle de sécurité). Leur correction réutilise **les
-mêmes validateurs qu'à la première exécution de l'issue**
-(`valider_sous_dossier`/`valider_repo_cible`, `watcher.py`) : une valeur
-invalide est rejetée par `valider_relance` exactement comme elle l'aurait été
-à la création, jamais acceptée silencieusement. `REPO_CIBLE` vérifie en plus
-que le projet a `PERIMETRE_DYNAMIQUE = true` dans son `.conf` — ce garde-fou
-n'est pas propre à `RELANCE` : `watcher.py` l'applique de toute façon à
-**chaque** traitement de l'issue, quel que soit le chemin par lequel son
-corps a été corrigé (RELANCE ou édition manuelle sur GitHub), donc `RELANCE`
-ne peut pas s'en affranchir. Le vérifier aussi dans `valider_relance` ne fait
-qu'échouer tôt avec un message clair, plutôt que de laisser passer une
-correction qui resterait de toute façon sans effet.
-
-**Texte libre ajouté au corps de l'issue, désormais lu par CCL (issue #726).**
-Le texte libre du fichier RELANCE (au-delà de l'en-tête et de `#Titre:`,
-`champs["corps"]`) n'était auparavant recopié que dans le commentaire de
-trace (ci-dessous) — jamais vu par CCL, qui ne lit que le corps de l'issue
-(`watcher.py`), pas ses commentaires. Pour transmettre une consigne de
-reprise (précisions, cause supposée de l'échec…), il fallait donc éditer le
-corps à la main sur GitHub avant de relancer. Corrigé par
-`_ajouter_texte_libre()` (`scripts/watcher_issues_inbox.py`) : si le texte
-libre est non vide, il est ajouté en **fin de corps**, sous une section
-horodatée `## Relance du <date>`, dans la **même** mise à jour du corps que
-la fusion des champs d'en-tête ci-dessus (un seul appel `_modifier_corps_gh`)
-— le watcher voit donc le corps à jour dès sa prochaine lecture. Texte libre
-vide : corps inchangé par ce mécanisme (seule la fusion d'en-tête s'applique,
-comme avant #726). Relances successives : chaque section s'ajoute à la fin,
-la plus récente en dernier, sans jamais effacer les précédentes.
-
-Garantie structurelle : la nouvelle section est toujours **hors de la zone
-d'en-tête bornée** (`ZONE_ENTETE_LIGNES`, §3.3) — `_ajouter_texte_libre()`
-complète le corps avec des lignes vides jusqu'à cette limite avant d'ajouter
-la section si le corps existant est plus court. Sans cette marge, un texte
-libre imitant une ligne d'en-tête (ex. `| MODE | écriture |`) pourrait sinon
-tomber dans cette même zone et être relu, à tort, comme un véritable champ
-par `lire_champ_entete`/`_maj_ligne_entete` lors d'une relance ultérieure.
-Le mode réellement appliqué à CCL reste de toute façon armé par le label
-GitHub (§3.14 ci-dessus, #563) : ce mécanisme n'ouvre aucune voie vers le
-mode écriture, texte libre ou pas.
-
-**Modèle recommandé pour le texte libre (issue #727).** Pour que CCL
-comprenne la correction sans devoir deviner son contexte, structurer ce texte
-libre en deux temps : la cause de l'échec, puis la correction apportée (ex.
-le nouveau `TIMEOUT`). Après un échec par dépassement de délai, ajouter en
-plus une phrase de reprise du type « Un travail partiel existe peut-être
-déjà dans le worktree : le vérifier et le compléter plutôt que de repartir
-de zéro. » Cette dernière phrase est facultative — le prompt de CCL contient
-déjà un rappel équivalent quand le worktree est repris sur relance (issue
-#725) — mais la répéter ici renforce le message au moment où CCL lit le
-corps de l'issue.
-
-**Retrait de `needs-human` + commentaire de trace : réutilisation de
-`app.interruption.relancer_issue()`**, extraite du cœur de `route_relancer()`
-(bouton « 🔄 Relancer », issue #460) précisément pour ce réemploi — aucune
-logique de retrait de label / pose de commentaire dupliquée entre les deux
-flux. Le commentaire posté diffère de celui du bouton (mention explicite
-d'issues_inbox/RELANCE) et résume les champs effectivement corrigés, plus le
-texte libre éventuel du fichier (au-delà de l'en-tête et de `#Titre:`) —
-**conservé tel quel** (issue #726) : il reste l'historique visible sur
-GitHub, en complément — pas en remplacement — de son ajout au corps
-ci-dessus.
-
-**Non traité par ce chemin** (hors-scope, cf. ci-dessus) : changement de
-`MODE`/labels via `RELANCE`, insertion d'un champ absent du corps cible,
-renommage du titre GitHub. Une correction plus large reste possible à la
-main sur GitHub, comme avant #516.
-
-**Ligne « fichier reçu » dans Résultats (issue #719).** Un bloc `RELANCE`
-réussi ne crée jamais d'issue (voir ci-dessus) — rien n'émettrait donc jamais
-`creation_issue` pour lui. Avant #719, la ligne « 📥 fichier reçu : <nom> »
-(§3.8, §3.15) était malgré tout affichée dès la prise en charge du fichier et
-restait ensuite affichée indéfiniment, jusqu'au rechargement de la page
-(constaté en réel le 05/10/2026 avec `relance_issue_126.txt`) — même
-mécanisme que l'incident corrigé par #716 pour le champ `ATTENTE` (§3.16).
-Corrigé en sautant l'émission de `fichier_recu` dès que `traiter_fichier`
-sait, avant de la notifier, que **tous** les blocs restants du fichier sont
-des `RELANCE` (`relance_demandee()`, miroir de `lire_condition_attente()`
-pour `ATTENTE`) : fichier mono-issue entier `RELANCE`, ou lot dont aucun bloc
-restant (après filtrage `ATTENTE` éventuel) ne crée d'issue. Un lot
-**mixte** (`RELANCE` + création normale) continue d'émettre `fichier_recu`
-normalement — remplacé par la première issue créée, comme avant. Une
-`RELANCE` **refusée** (issue cible introuvable, fermée, dépôt incorrect...)
-garde son propre `fichier_refuse` (§3.15), affiché comme avant #719 — seule
-la ligne « reçu » fantôme disparaît.
-
-**Formulaire web.** Pas de reprise dans `new_issue.py`/`static/js/app.js` :
-le formulaire sert à **créer** des issues, et dispose déjà d'un chemin dédié
-pour cibler une issue existante (bouton « 🔄 Relancer », §13) — dupliquer
-`RELANCE` là n'apporterait rien.
-
-**Décoche automatique de la case « traité/lu » (issue #720).** Une issue
-relancée va produire un **nouveau** résultat : si Alain l'avait déjà cochée
-avant l'échec, la case doit redevenir décochée pour qu'il la revoie comme à
-traiter (état serveur §629/#636, voir « État serveur des cases cochées »
-ci-dessous). `scripts/watcher_issues_inbox.py` ne peut pas écrire lui-même
-dans `logs/etat_cases_cochees.json` (fichier possédé par le process
-`new_issue.py` ; écriture concurrente entre les deux process, risque de
-collision) — dès que `relancer_issue()` ci-dessus réussit (`statut_global ==
-"ok"`), `_notifier_case_decochee(projet, numero)` POSTe **best-effort** vers
-`POST /notifier-case-decochee` (`app/cases_cochees.py::notifier_case_decochee`,
-même famille que les émetteurs du §3.15 ci-dessous : pas de `login_requis`,
-échec silencieux si `new_issue.py` n'est pas lancé). Cette route réutilise
-l'opération de décochage existante (`etat_cases_cochees.decocher_issue`,
-**idempotente** — aucun effet/erreur si la case n'était pas cochée) puis
-diffuse l'événement SSE `case_decochee` (voir §3.15) pour que la case se
-décoche **instantanément** dans un onglet Résultats déjà ouvert, sans
-attendre le prochain chargement par projet. Une `RELANCE` **refusée** (issue
-introuvable, fermée, dépôt incorrect…) n'appelle jamais ce chemin : la case
-ne change pas. `new_issue.py` non lancé au moment du dépôt : la `RELANCE`
-elle-même reste réussie comme avant (label retiré, commentaire posté) — seule
-cette décoche est perdue, silencieusement.
-
-**Même décoche depuis le bouton « 🔄 Relancer » (issue #721).** Le bouton
-« 🔄 Relancer » d'une ligne Résultats (`route_relancer()`, §13 « Relancer
-une issue bloquée en needs-human ») réutilise la **même** `relancer_issue()`
-que ce chemin `RELANCE`, et depuis #721 décoche aussi la case : le résultat
-est identique quelle que soit la façon de relancer. `route_relancer()`
-s'exécute dans le **même process** que l'état des cases (`new_issue.py`
-lui-même), donc pas de notification réseau comme ci-dessus — appel direct
-à `app/cases_cochees.py::decocher_et_diffuser(projet, numero)`, la fonction
-factorisée qui porte la logique partagée par les deux chemins (décoche
-l'état serveur puis diffuse l'événement SSE `case_decochee`). Déclenché
-seulement si `relancer_issue()` a réussi (`statut_global == "ok"`) et si le
-dépôt correspond à un projet configuré localement (`cfg` non `None` —
-sinon pas de case possible pour ce dépôt).
-
-Tests : `tests/test_decoche_relance_720.py` (route Flask isolée du vrai
-`logs/etat_cases_cochees.json`, et `_traiter_relance`/`traiter_fichier` avec
-`_poster_best_effort` intercepté, comme `tests/test_champ_relance_516.py` et
-`tests/test_pas_de_ligne_fichier_recu_si_relance_719.py` — aucun appel
-réseau ni `gh` réel) + `static/js/tests/resultats_coches.test.js`
-(`appliquerCaseDecochee`, logique pure de réception de l'événement) +
-`tests/test_decoche_bouton_relancer_721.py` (`route_relancer()` isolée du
-vrai `logs/etat_cases_cochees.json`, mêmes gardes-fous que
-`tests/test_relancer_watcher_574.py` — aucun appel `gh` réel).
-
-**Texte libre ajouté au corps (issue #726) :** `tests/test_texte_libre_relance_726.py`
-(`_ajouter_texte_libre()` seule — section horodatée, texte vide, empilement
-de deux relances successives, texte imitant des lignes d'en-tête jamais lu
-comme un champ — et `_traiter_relance()` de bout en bout — fusion d'en-tête
-+ texte libre en une seule mise à jour du corps, rejet sans toucher
-`needs-human` si cette mise à jour échoue — aucun appel `gh` réel).
-
-### 3.15 Événements SSE émis (issues #631, #627, #634)
-
-Avant #631, aucun événement n'était émis ni au dépôt d'un fichier dans
-`issues_inbox/` ni à la création d'une issue : la nouvelle issue n'apparaissait
-dans l'onglet Résultats qu'à sa prise en charge par le watcher CCL (ACK,
-`debut_issue`, §17.3) ou après un rafraîchissement manuel (↻). Trois nouveaux
-événements sur le canal SSE `/stream` couvrent tout le cycle de vie d'un
-fichier déposé — **backend seul à l'origine (#631)** ; `fichier_recu` et
-`fichier_refuse` sont désormais consommés par l'onglet Résultats depuis la
-fusion de l'onglet « Résultats inbox » dans Résultats (étape 9b, #639 — voir
-§3.8) ; **`creation_issue` est consommé côté navigateur depuis #627** (voir
-§17.3, « Côté navigateur ») et **enrichi depuis #634** (labels + données de
-temps, voir ci-dessous). Même famille que
-`/notifier-fin-issue`/`/notifier-debut-issue` (`app/fin_issue.py`, §17.3) :
-appel POST **best-effort** (timeout court, échec silencieux si
-`new_issue.py` n'est pas lancé), pas de `login_requis` (appelées par un
-script local, pas par un navigateur).
-
-- **`fichier_recu`** — `POST /notifier-fichier-recu`, émis par
-  `scripts/watcher_issues_inbox.py::traiter_fichier()` dès la prise en charge
-  d'un fichier (AVANT tout parsing/validation — le fichier peut malgré tout
-  finir refusé). Corps/événement : `{"fichier": <nom>}`. **Exception (issues
-  #716, #713 ; #719, #516)** : jamais émis pour un fichier (ou lot) dont tous
-  les blocs restants sont des `ATTENTE` et/ou des `RELANCE` — ni l'un ni
-  l'autre ne crée jamais d'issue, donc rien ne remplacerait/n'enlèverait
-  jamais cette ligne (voir §3.14, §3.16).
-- **`creation_issue`** — `POST /notifier-creation-issue`, émis après **chaque
-  création réussie** d'une issue (jamais pour un bloc `RELANCE`, qui n'en crée
-  aucune — voir §3.14). Deux émetteurs :
-  - `scripts/watcher_issues_inbox.py` (process séparé) → POST sur la route ;
-  - `app.issues.envoyer()` (formulaire web, MÊME process que `new_issue.py`)
-    → appel direct à `app.fin_issue.emettre_creation_issue()`, sans HTTP,
-    même principe que l'ajout à la liste surveillée du poller (issue #624).
-  Événement : `{"projet", "numero", "titre", "fichier", "labels", "timing"}` —
-  `fichier` est le nom du fichier d'origine dans `issues_inbox/`, absent
-  (`null`) pour une création via le formulaire. `labels`/`timing` (**issue
-  #634**) : tout ce qui est déjà connu localement au moment de la création,
-  SANS appel GitHub supplémentaire — `labels` est la liste des labels
-  effectivement posés par `gh issue create` ; `timing` a exactement la même
-  forme que ce que `/issues-en-attente` calcule pour cette issue (`timeout`,
-  `max_essais`, `backoff`, `priorite`, `sans_limite`, `estimation`), à la
-  seule différence que `debut` y vaut toujours `null` (l'issue est « en
-  file », jamais encore prise en charge). Les deux chemins de création
-  calculent ce `timing` via la même fonction `app.issues.donnees_temps_creation()`
-  — source UNIQUE, réutilisée par `issues_en_attente()` elle-même
-  (`app/issues.py`, route `/issues-en-attente`) pour ne jamais diverger entre
-  les deux. `scripts/watcher_issues_inbox.py` le calcule dans
-  `_traiter_bloc()` juste après un `gh issue create` réussi et le transmet à
-  `_notifier_creation_issue()`.
-- **`fichier_refuse`** — `POST /notifier-fichier-refuse`, émis pour **chaque
-  bloc refusé** (fichier mono-issue entier, ou un bloc d'un lot multi-issues,
-  §3.13) : un événement par bloc, dans l'ordre de traitement — jamais groupé
-  pour tout le fichier. Événement : `{"fichier", "titre", "motif"}` (`titre`
-  `null` si le bloc n'a même pas livré de `#Titre:` exploitable).
-- **`case_decochee`** (issue #720) — `POST /notifier-case-decochee`, émis par
-  `scripts/watcher_issues_inbox.py::_traiter_relance()` après **chaque
-  `RELANCE` réussie** (jamais pour une `RELANCE` refusée, ni pour une
-  création normale). Événement : `{"projet", "numero"}`. Contrairement aux
-  trois événements ci-dessus, celui-ci a un effet de bord côté serveur AVANT
-  la diffusion : la route décoche réellement `logs/etat_cases_cochees.json`
-  (`etat_cases_cochees.decocher_issue`, idempotente) puisqu'un process séparé
-  ne peut pas l'écrire lui-même (voir §3.14). Consommé côté navigateur par
-  `static/js/resultats_coches.js` (pas `resultats.js` — la case « traité/lu »
-  est une préoccupation distincte, voir l'en-tête du module) : retire
-  (projet, numéro) de `store.casesCochees` et resynchronise le DOM, sans
-  rafraîchir le reste de la ligne (état/labels) — un rafraîchissement complet
-  de la ligne n'apporterait rien d'instantané ici, puisque `RELANCE` ne
-  change pas l'état `OPEN`/`needs-human` affiché avant que le watcher cible
-  n'ACKe réellement l'issue (ce que `debut_issue` couvre déjà, §17.3).
-
-Pour un fichier multi-blocs (§3.13), la séquence est donc : un `fichier_recu`,
-puis un `creation_issue`/`fichier_refuse` par bloc EXPLOITABLE (un bloc
-`RELANCE` réussi n'émet ni l'un ni l'autre), dans l'ordre du fichier — jamais
-un événement groupé pour tout le lot. **Sauf** si *tous* les blocs restants
-sont des `RELANCE` (et/ou `ATTENTE`) : dans ce cas, `fichier_recu` lui-même
-est sauté (voir ci-dessus) — la séquence ne contient alors qu'un
-`fichier_refuse` par bloc `RELANCE` refusé, s'il y en a, et rien d'autre si
-tous réussissent. Voir `tests/test_evenements_issues_inbox_631.py` pour la
-construction et l'ordre exacts de ces séquences (aucun appel réseau ni `gh`
-réel : `_poster_best_effort` et `_traiter_bloc` sont substitués), et
-`tests/test_pas_de_ligne_fichier_recu_si_attente_716.py`/
-`tests/test_pas_de_ligne_fichier_recu_si_relance_719.py` pour l'exception
-elle-même.
+Hors périmètre de ce chemin : changer `MODE`/labels, insérer un champ
+absent du corps cible, renommer le titre GitHub — une correction plus
+large reste possible à la main sur GitHub.
 
 ### 3.16 Champ `ATTENTE` : mettre une issue de côté avant sa création (issue #713)
 
-**Problème résolu.** Alain reçoit des issues à lancer tout de suite et
-d'autres à lancer plus tard (après la fusion d'une autre issue, après une
-vérification manuelle...). Jusqu'ici rien ne distinguait les deux dans
-`issues_inbox/` : les fichiers s'accumulaient et il fallait se souvenir de ce
-qui était déjà parti. `ATTENTE` ajoute un troisième état, **avant** la
-création — à ne pas confondre avec `needs-human` (§13), qui s'applique à une
-issue déjà créée et déjà en échec.
+Pour une issue à lancer plus tard (après la fusion d'une autre étape, après
+une vérification manuelle...) plutôt que tout de suite — à ne pas confondre
+avec `needs-human`, qui s'applique à une issue déjà créée et déjà en échec.
 
-**Format.** `| ATTENTE | <condition en une phrase> |` dans l'en-tête (même
-zone bornée §3.3, même tolérance de casse que les autres champs — lu par
-`lire_condition_attente()`, miroir direct de `lire_champ_entete`). La
-`VALEUR` est un texte libre écrit par Claude Chat, ex. « après la fusion de
-l'étape C et l'arrêt de Rummikub ». **Valeur vide ou champ absent → traitée
-tout de suite**, exactement comme avant #713. **Aucune vérification
-automatique de la condition** — c'est une décision qu'Alain seul prend, en
-relisant le texte, jamais un calcul du watcher.
+**Format** : `| ATTENTE | <condition en une phrase> |` dans l'en-tête, texte
+libre écrit par Claude Chat (ex. « après la fusion de l'étape C et l'arrêt
+de Rummikub »). Valeur vide ou champ absent → traitée tout de suite, comme
+d'habitude.
 
-```markdown
-| PROJET  | bridge_agent |
-| ATTENTE | après la fusion de l'étape C et l'arrêt de Rummikub |
-
-#Titre: Étape D — ...
-```
-
-**Avant toute validation/création (`traiter_fichier`).** Une valeur non vide
-détourne tout le bloc, de la même famille que `RELANCE` (§3.14) mais en
-amont : aucune validation (§3.4), aucun anti-doublon, aucun `gh issue
-create`.
-- **Fichier mono-issue** portant le champ → déplacé **tel quel** (jamais
-  modifié) vers `issues_inbox/en_attente/` (suffixe numérique en cas de
-  collision de nom, même principe que `rejected/`) ; ligne de journal dédiée
-  `EN_ATTENTE` dans `logs/issues_inbox.log`.
-- **Lot (§3.13)** : chaque bloc portant le champ est **écrit à part** dans
-  `en_attente/` **avant** tout traitement des autres blocs du lot — rien ne
-  doit pouvoir se perdre si le reste du lot échoue ensuite. Les blocs restants
-  suivent la logique de lot existante (`_traiter_lot`) sans changement. Si
-  aucun bloc ne reste (lot entièrement en attente), le fichier d'origine est
-  simplement supprimé (rien n'a été créé, rien n'a échoué). **Cas limite** :
-  si tous les blocs restants échouent ensuite, `_traiter_lot` déplace le
-  fichier **d'origine entier** vers `rejected/` (comportement #508 inchangé)
-  — qui contient alors aussi une copie des blocs déjà mis en attente. Doublon
-  sans conséquence : ces blocs existent déjà, intacts, dans `en_attente/` ; le
-  fichier rejeté n'est jamais retraité automatiquement (§3.2).
-- **Fichier sans ce champ** : aucun changement, circuit identique à avant
-  #713.
-
-`issues_inbox/en_attente/` est un sous-dossier, naturellement ignoré par
-`traiter_dossier()` (qui ne parcourt que les FICHIERS de la racine du dossier
-d'entrée), exactement comme `rejected/`.
-
-**Lancer ou supprimer un élément en attente (`app/issues_inbox.py`),
-protégées par la même authentification que les routes voisines :**
-- `GET /issues-attente` — liste triée du **plus ancien au plus récent** (pour
-  ne jamais oublier les plus vieux), un objet par élément :
-  `{id, titre, projet, date, condition}` — `id` est le nom de fichier dans
-  `en_attente/`, `condition` le texte lu par `lire_condition_attente()`.
-- `POST /issues-attente/lancer` — `{id: <nom de fichier>}`. Valide l'identifiant
-  (simple nom de fichier existant dans `en_attente/`, **aucune séparation de
-  chemin** — refus de tout `/`, `\`, `.`/`..`) ; retire le champ `ATTENTE`
-  (`retirer_champ_attente()`, il n'a plus de sens une fois envoyé et ne doit
-  pas brouiller CCL) ; écrit le résultat dans `issues_inbox/` de façon
-  **atomique** — fichier temporaire dans le MÊME dossier puis `os.replace()`
-  — pour que le watcher ne lise jamais un fichier à moitié écrit (cf.
-  `_fichier_pret`, §3.6) ; supprime enfin l'élément d'`en_attente/`. Si
-  l'écriture échoue, l'élément reste en place (rien n'est perdu). L'issue
-  renvoyée au circuit normal repasse par **toutes** ses validations
-  habituelles (§3.4), exactement comme un fichier déposé directement.
-- `POST /issues-attente/supprimer` — `{id: <nom de fichier>}`, même
-  validation d'identifiant. Supprime simplement le fichier — **aucun
-  archivage** : le texte d'origine reste dans la conversation Claude Chat qui
-  l'a produit.
-
-`GET /issues-inbox/etat` (§3.8) expose en plus **`nb_en_attente`** — compteur
-durable relu du disque à chaque appel, jamais compté comme un fichier à
-traiter. Choix volontaire de l'ajouter à une route déjà interrogée en continu
-par le panneau « Watcher spool » plutôt que d'ouvrir un nouveau canal
-d'événements, qui risquerait d'être manqué (cf. #705).
-
-**Formulaire web** : ignore cette convention — `ATTENTE` n'existe que côté
-`issues_inbox/`, 99 % des dépôts d'issues passant par ce dossier. **Hors
-périmètre de #713** : l'onglet qui affiche ces éléments côté interface (issue
-suivante, 2/2) et toute vérification automatique de la condition.
-
-**Onglet « En attente » (issue #714, 2/2)** : avant Résultats dans la barre
-d'onglets, pour plus de visibilité (`templates/fragments/onglet_attente.html`,
-module dédié `static/js/attente.js`). Réordonné avant Résultats par l'issue
-#718 — Résultats reste l'onglet actif au lancement du programme malgré ce
-changement d'ordre : l'activation par défaut se fait par NOM
-(`ONGLET_PAR_DEFAUT` dans `static/js/onglets.js`), jamais par position dans la
-barre. Une ligne par élément — **pastille nominative de projet** (fond coloré
-+ NOM du projet, issue #728, remplace l'ancien point de 9px et le nom en
-petit texte gris clair quasi illisible — même esprit visuel que
-`.badge-projet` de l'onglet Résultats ; « projet inconnu » sur fond gris si
-le champ PROJET est vide), titre, date de dépôt, et la **condition mise en
-évidence** (c'est elle qui dit à Alain quand lancer) — avec « Lancer »
-(rejoint le circuit normal, sans changement d'onglet automatique) et
-« Supprimer » (confirmation requise, suppression définitive, aucun
-archivage). Couleur de fond réutilisée telle quelle (`couleurProjet`, aucune
-table dupliquée) ; couleur de texte (noir ou blanc) choisie selon le
-meilleur contraste WCAG avec le fond (`couleurTexteSurFond`,
-`static/js/attente.js`) — pas de légende séparée, la pastille nominative la
-rend inutile. Badge sur l'onglet = `nb_en_attente` ci-dessus, visible
-seulement si > 0, relu du même sondage que le panneau « Watcher spool »
-(`rafraichirInbox`, `static/js/resultats.js`) — pas de polling dédié ; la
-liste se recharge si l'onglet est ouvert quand ce compteur change.
-
-Voir `tests/test_champ_attente_713.py` pour les fonctions pures, le watcher
-avec dossiers temporaires et les trois routes (aucun accès réseau ni `gh`
-réel).
+Une valeur non vide détourne tout le bloc **avant** toute validation ou
+création (même famille que `RELANCE`, mais en amont) : le fichier est
+déplacé tel quel vers `issues_inbox/en_attente/`, aucune issue n'est créée.
+**Aucune vérification automatique de la condition** — c'est Alain seul qui
+juge, en relisant le texte, puis déclenche l'envoi depuis l'interface
+(onglet dédié « En attente »). Pour un lot (§3.13), chaque bloc portant le
+champ est mis de côté individuellement ; les autres blocs suivent le
+circuit normal.
 
 ---
 
@@ -990,116 +229,66 @@ réel).
 
 | Label | Effet |
 |-------|-------|
-| `for-linux` | **Requis** — le watcher ne voit que ces issues |
+| `for-linux` | **Requis** — le watcher CCL ne voit que ces issues |
+| `for-windows` | **Requis** — le watcher CCW ne voit que ces issues |
 | `bridge` | Marque l'issue comme tâche bridge (traçabilité) |
-| `mode_write` | **ARME le mode écriture** — CCL peut modifier des fichiers |
-| `mode_scratch` | **ARME la lecture active** — écriture confinée à un dossier scratch, jamais dans le projet (voir §5) |
+| `mode_write` | **ARME le mode écriture** — CCL/CCW peut modifier des fichiers |
 | `needs-human` | Posé automatiquement après 3 échecs — stoppe le retraitement |
 | `done` | Posé automatiquement au succès |
 | `notif_pc` | Ajoute une notification bureau (notify-send) |
 | `notif_gsm` | Ajoute une notification push (ntfy) |
 | `notif_tous` | notify-send + ntfy |
-| `sans-redacteur` | Posé automatiquement (issue #647) quand `REDACTEUR` est absent de l'en-tête — purement informatif, voir §3.4/§17.3 |
+| `sans-redacteur` | Posé automatiquement quand `REDACTEUR` est absent de l'en-tête — purement informatif, voir §3.4 |
 
 > Sans label `notif_pc` / `notif_gsm` / `notif_tous`, aucune notification
 > sonore ou push n'est déclenchée. Le bip est strictement opt-in.
+
+> `mode_scratch` (lecture active, voir §5) n'est pas dans cette liste : il
+> n'est **pas provisionné automatiquement** sur un nouveau projet — il doit
+> être créé à la main sur le dépôt GitHub avant de pouvoir l'utiliser.
 
 ---
 
 ## 5. Modes lecture seule / lecture active / écriture
 
-Le watcher pilote un MODE à trois valeurs (issue #327 — remplace un ancien
-booléen qui ne pouvait distinguer que deux états), déduit des labels de
-l'issue par ordre de priorité : `mode_write` (écriture) > `mode_scratch`
-(lecture active) > aucun des deux (lecture seule, défaut).
+Le watcher pilote un MODE à trois valeurs, déduit des labels de l'issue par
+ordre de priorité : `mode_write` (écriture) > `mode_scratch` (lecture
+active) > aucun des deux (lecture seule, défaut).
 
-**Lecture seule (défaut)** — CCL peut lire, analyser, grep, rapporter.
-Ne peut PAS écrire de fichier ni exécuter de commande modifiant le système.
+**Lecture seule (défaut)** — CCL peut lire, analyser, grep, rapporter. Ne
+peut PAS écrire de fichier ni exécuter de commande modifiant le système.
 Idéal pour : diagnostics, audits, lectures de fichiers, comptages.
-- Ce mode n'a **jamais** `--dangerously-skip-permissions` (contrairement aux
-  deux autres modes ci-dessous) : toute commande hors allowlist Claude Code
-  reste bloquée derrière une demande d'approbation — inatteignable en session
-  non-interactive, donc un échec sûr (fail-safe), pas un blocage à débloquer
-  à l'aveugle.
-- **Allowlist ciblée (`--allowedTools`, issue #542)** : `git fetch` (ne touche
-  jamais l'arbre de travail), `git pull --ff-only` (échoue plutôt que de
-  merger — même opération que le `git pull --ff-only` automatique du watcher
-  en début de cycle sur `REP_TRAVAIL`, §1) et `Add-Type -AssemblyName` côté
-  CCW (charge un assembly .NET nommé depuis le GAC, sans exécuter de code
-  arbitraire — `Add-Type -TypeDefinition`, qui compile du C#, reste bloqué).
-  Ces trois commandes étaient auparavant bloquées par la demande d'approbation
-  interactive de Claude Code, jamais satisfiable en session non-interactive
-  (`claude --print`) — constaté sur CCW lors du diagnostic #541. `git
-  status`/`log`/`diff`/`show` n'ont pas besoin d'être dans cette liste : déjà
-  autorisés sans approbation par l'heuristique interne de Claude Code. Voir
-  `OUTILS_LECTURE_AUTORISES` dans `watcher.py` pour le détail et le
-  raisonnement de chaque entrée.
 
 > ⚠️ **Aucun script ne s'exécute en lecture seule (issue #722).** En dehors
-> des commandes listées ci-dessus, tout le reste est bloqué derrière une
-> approbation interactive inatteignable — `python3`, `pytest`, un shell
-> script, peu importe le langage : aucune exception. Une tâche qui doit
-> **exécuter** un script d'analyse, de simulation ou de mesure, sans toucher
-> au projet, doit choisir la **lecture active** (`| MODE | lecture active |`,
-> voir ci-dessous) : écriture confinée au dossier scratch, contrôle
-> avant/après. Une tâche qui doit exécuter un script **modifiant** le projet
-> doit choisir l'**écriture** (`| MODE | écriture |`) — ce refus ne concerne
-> en rien les issues en écriture, qui exécutent `python3`/`pytest`/
-> `py_compile` sans aucune difficulté.
+> d'une courte allowlist (`git fetch`, `git pull --ff-only`, et l'équivalent
+> CCW de chargement d'assembly), tout le reste est bloqué derrière une
+> approbation interactive inatteignable en session non-interactive —
+> `python3`, `pytest`, un shell script, peu importe le langage : aucune
+> exception. Une tâche qui doit **exécuter** un script d'analyse, de
+> simulation ou de mesure, sans toucher au projet, doit choisir la
+> **lecture active** (`| MODE | lecture active |`, ci-dessous) ; une tâche
+> qui doit exécuter un script **modifiant** le projet doit choisir
+> l'**écriture** (`| MODE | écriture |`).
 
-**Lecture active (`mode_scratch`, issue #327)** — CCL peut écrire, mais
-**UNIQUEMENT** dans un dossier scratch dédié, jamais dans le projet. Utile
-aux outils d'analyse qui exigent un vrai fichier de config sur disque (ex.
-eslint flat config ≥ 9, autres linters) — impossible à satisfaire en lecture
-seule. Le livrable attendu reste un **rapport** de lecture, comme en lecture
-seule : la lecture active n'autorise pas de modifier le projet, seulement
-d'y faire tourner des outils qui ont besoin d'écrire un fichier temporaire.
-- Chemin scratch : `/tmp/bridge_scratch_<projet>/` (`<projet>` = `NOM` du
-  `.conf`), créé par le watcher juste avant le lancement de CCL, supprimé
-  juste après (succès, échec ou timeout confondus) — rien n'y survit d'une
-  tâche à l'autre.
-- Défense en profondeur à deux niveaux (même schéma que le garde-fou
-  `configs/*.conf`, §11/#318) :
-  - **Niveau 1 (prompt)** : un bloc de garde-fou dédié indique explicitement
-    à CCL le chemin scratch exact et lui interdit toute écriture ailleurs
-    (notamment le répertoire de travail du projet), tout `git commit`/`git
-    push`, et toute commande destructrice.
-  - **Niveau 2 (détection technique a posteriori)** : le watcher prend une
-    empreinte de l'état git du répertoire de travail juste avant le
-    lancement de CCL, et la compare juste après. Toute écriture détectée
-    dans le projet (malgré la consigne de niveau 1) est **restaurée**
-    automatiquement et l'issue est marquée en échec (`needs-human`) — le
-    prompt seul ne suffit pas à garantir le confinement, cf. non-déterminisme
-    du modèle (issues #290/#291).
-- Comme la lecture seule, aucun backup du projet n'est nécessaire (le projet
-  n'est jamais modifié par construction) ; `--dangerously-skip-permissions`
-  est ajouté (nécessaire pour écrire dans le scratch), d'où l'importance du
-  niveau 2 puisque ce flag désarme aussi les protections de Claude Code.
+**Lecture active (`mode_scratch`)** — CCL peut écrire, mais **UNIQUEMENT**
+dans un dossier scratch dédié (`/tmp/bridge_scratch_<projet>/`, détruit
+après la tâche), jamais dans le projet. Utile aux outils d'analyse qui
+exigent un vrai fichier de config sur disque. Le livrable attendu reste un
+**rapport**, comme en lecture seule — ce mode n'autorise pas de modifier le
+projet. Défense en profondeur : une consigne de prompt interdit toute
+écriture hors du scratch, et une vérification technique après coup détecte
+et restaure automatiquement toute écriture malgré tout survenue dans le
+projet (échec marqué `needs-human`).
 
 **Mode écriture (`mode_write`)** — CCL peut modifier des fichiers, exécuter
-des commandes, faire des commits git.
-Garde-fous automatiques :
+des commandes, faire des commits git. Garde-fous automatiques :
 - Backup pinné **avant** toute modification (via `CMD_BACKUP` du `.conf`)
 - **JAMAIS `git push`** — Alain pousse lui-même après vérification
 - Aucune commande destructrice sans demande explicite
 - Périmètre strict : CCL ne travaille que dans le dossier configuré
 
-> **Rapport de fin de tâche (issue #513)** : le format de réponse imposé par
-> le prompt (`lancer_claude`, `watcher.py`) précise désormais le chemin
-> absolu du dossier de travail effectivement utilisé pour cette exécution
-> (`Commits (dans <chemin>) : xxx (backup) + yyy (fix)`) — ce chemin est
-> `cwd_effectif`, c'est-à-dire `REP_TRAVAIL` du `.conf`, ou le worktree
-> git isolé de la tâche (parallélisation `mode_write`, voir plus bas), ou le
-> `REPO_CIBLE` d'un périmètre dynamique (§7), selon le cas. Même mécanisme
-> côté CCL et CCW (`watcher.py` est un script unique partagé par les deux
-> plateformes) : le chemin affiché est toujours celui du clone réel où les
-> commits ont été effectués, ce qui évite de chercher au mauvais endroit
-> quand plusieurs worktrees/clones du même dépôt coexistent (incident vécu
-> sur le projet Scrabble, commits faits dans le clone CCW `C:\CCW\scrabble`
-> alors qu'ils étaient cherchés dans le worktree CCL habituel).
-
 > `configs/*.conf` reste interdit à l'écriture **quel que soit le mode**
-> (lecture active comme écriture) — garde-fou technique #318, voir §11.
+> (lecture active comme écriture) — garde-fou technique, voir §11.
 
 ---
 
@@ -1109,24 +298,23 @@ Le watcher lit ces champs dans le tableau markdown de l'en-tête :
 
 | Champ | Valeur | Effet |
 |-------|--------|-------|
-| `MODE` | `lecture` ou `écriture` | Auto-détecté par `new_issue.py` (§20, issue #326) pour pré-sélectionner le radio Mode du formulaire ; c'est ce radio, pas la valeur du champ, qui arme (ou non) le label `mode_write` posé sur l'issue — donc le mode écriture de CCL. Défaut lecture si absent/non reconnu. Voir §5 pour le comportement de chaque mode. |
+| `MODE` | `lecture`, `lecture active` ou `écriture` | Défaut `lecture` si absent/non reconnu. Voir §5 pour le comportement de chaque mode. |
 | `PRIORITE` | `haute` ou `critique` | Retry infini (au lieu de 3 max) |
 | `TIMEOUT` | ex. `600s` | Surcharge le timeout par défaut (300s) |
-| `MODELE` | ex. `claude-opus-4-5` | Force un modèle CCL spécifique pour cette issue |
-| `PROJET` | ex. `bridge_agent` | Détection d'incohérence dans `new_issue.py` (issue #44). Inséré automatiquement par l'interface. Claude Chat doit l'inclure dans toutes les issues qu'il génère. |
-| `TYPE` | `chef` ou `ouvrier` | Identifie le rôle de l'issue dans le pattern multi-agent. `chef` = orchestre les ouvriers. `ouvrier` = sous-tâche créée par le chef, masquée par défaut dans l'onglet Résultats. Absent = issue normale. |
-| `FICHIER_CONTEXTE` | ex. chemin relatif | Fichier additionnel fourni en contexte à CCL pour cette issue (modifiable via l'onglet Configuration, voir §12) |
-| `SUITE_DE` | ex. `#5` | Indique que cette issue fait suite à l'issue #N (discussion ou tâche complémentaire). Absent = issue inédite. |
-| `RELANCE` | ex. `#612` | **Spécifique à `issues_inbox/`** (issue #516, voir §3.14) — présent, détourne le fichier déposé vers la correction/relance de l'issue #N déjà ouverte (`TIMEOUT`/`MODELE` du fichier fusionnés dans son corps, `needs-human` retiré) plutôt que de créer une nouvelle issue. Le texte libre éventuel du fichier (hors en-tête) est lui aussi ajouté au corps, en section horodatée distincte (issue #726) — c'est donc bien lu par CCL à la reprise. N'a aucun effet une fois l'issue créée — lu uniquement au dépôt du fichier, jamais par `watcher.py`. |
-| `REDACTEUR` | ex. `bridge_agent` | **Spécifique à `issues_inbox/`** (issue #599, voir §3.4) — optionnel, nom du projet depuis le contexte duquel Claude Chat a rédigé l'issue. Validé pour cohérence avec `PROJET` avant création (`REDACTEUR == PROJET`, ou label `for-windows` + `REDACTEUR == bridge_agent` pour le canal CCW **uniquement si le projet visé n'a pas encore son propre service CCW dédié** — `CCW-Watcher-<Projet>`, modèle multi-projets #170, voir §16 — sinon c'est le cas `REDACTEUR == PROJET` qui s'applique ; dans le cas canal CCW partagé, seul `REDACTEUR` vaut `bridge_agent`, `PROJET` reste le projet réellement concerné, ex. `actualise`, jamais `bridge_agent` du seul fait du canal CCW, issues #665/#684) ; discordance → rejet vers `rejected/`. Absent = aucune validation. Lu uniquement au dépôt du fichier, jamais par `watcher.py`. |
-| `COMPLEXITE` | `rapide` / `court` / `normal` / `lourd` | 4e dimension de la clé EWMA de calibration TIMEOUT (issue #434, voir §19), estimée par Claude Chat au moment de rédiger l'issue. Absent ou valeur non reconnue = `normal` (défaut, ~300s). CCL/CCW doit l'inclure dans les issues chef/ouvrier qu'il crée (voir `consignes/globales.md`) ; pour les issues de Claude Chat, c'est géré côté doc/prompt. |
-| `RESEAU` | `oui` ou `non` | Tag réseau pour la calibration TIMEOUT (issue #220/#435, voir §19) : `oui` = issue impliquant de lourdes opérations réseau (téléchargements, builds avec fetch, etc.), `non` = issue purement locale. Lu par `_detecter_tag_reseau(body)`. Absent ou valeur non reconnue = `None` (F ignoré, facteur d'ambiance neutre). Optionnel (voir `consignes/globales.md`). |
+| `MODELE` | une des valeurs reconnues (`app/projets.py`) : `claude-sonnet-5`, `claude-opus-4-8`, `claude-haiku-4-5`, `claude-fable-5` | Force un modèle CCL spécifique pour cette issue |
+| `PROJET` | ex. `bridge_agent` | Détection d'incohérence par `new_issue.py`. Claude Chat doit l'inclure dans toutes les issues qu'il génère, avec le nom exact du projet cible. |
+| `TYPE` | `chef` ou `ouvrier` | Identifie le rôle de l'issue dans le pattern multi-agent (voir §14). `chef` = orchestre les ouvriers. `ouvrier` = sous-tâche créée par le chef. Absent = issue normale. |
+| `SUITE_DE` | ex. `#5` | Indique que cette issue fait suite à l'issue #N. Absent = issue inédite. |
+| `RELANCE` | ex. `#612` | **Spécifique à `issues_inbox/`**, voir §3.14 — détourne le fichier déposé vers la correction/relance de l'issue #N déjà ouverte plutôt que de créer une nouvelle issue. |
+| `REDACTEUR` | ex. `bridge_agent` | **Spécifique à `issues_inbox/`**, voir §3.4 pour la règle complète — nom du projet depuis le contexte duquel Claude Chat a rédigé l'issue, validé pour cohérence avec `PROJET`. |
+| `COMPLEXITE` | `rapide` / `court` / `normal` / `lourd` | 4e dimension de la calibration automatique du TIMEOUT (voir §19), estimée par Claude Chat au moment de rédiger l'issue. Absent ou non reconnu = `normal`. |
+| `RESEAU` | `oui` ou `non` | Tag réseau pour la calibration TIMEOUT (voir §19) : `oui` = issue impliquant de lourdes opérations réseau, `non` = purement locale. Optionnel. |
 
 Format dans le corps :
 ```markdown
 | PRIORITE | haute |
 | TIMEOUT  | 600s  |
-| MODELE   | claude-opus-4-5 |
+| MODELE   | claude-opus-4-8 |
 | PROJET   | bridge_agent |
 ```
 
@@ -1134,9 +322,13 @@ Format dans le corps :
 > des issues qu'il génère, avec le nom exact du projet cible
 > (`bridge_agent`, `alchess`, `ff_galerie`).
 
-> ℹ️ Le champ `| LABELS | … |` (issue #161) n'est **pas** lu par le watcher :
-> il est consommé par `new_issue.py` au moment de la création pour ajouter des
-> labels supplémentaires (ex. `for-windows`) à ceux posés d'office. Voir §20.
+> ℹ️ Le champ `| LABELS | … |` n'est **pas** lu par le watcher `issues_inbox` :
+> il est consommé par `new_issue.py` (formulaire web, §20) pour ajouter des
+> labels supplémentaires à ceux posés d'office.
+
+`TYPE` ne documente que les valeurs `chef`/`ouvrier` — les valeurs `spec_*`
+rencontrées par ailleurs sont des reliquats d'un ancien pattern, traités à
+part.
 
 ---
 
@@ -1171,101 +363,29 @@ hors périmètre même si l'issue le demande explicitement :
 
 ## 8. Sécurité
 
-- **Défense en profondeur** : SSL + mot de passe (mode externe) + watcher
-  éteint par défaut + périmètre CCL + git comme filet de retour arrière.
-- **Mot de passe** : stocké hashé sha256 dans `configs/bridge_agent.conf`.
-  Générer/changer : `python3 new_issue.py --set-password`
-- **configs/*.conf** : gitignoré — jamais versionné (contient topic ntfy et
-  mot de passe hashé).
-- **ssl/** : gitignoré — certificat auto-signé, clé privée jamais versionnée.
-- **Repo public** : le dépôt GitHub est public — le code source est lisible
-  par tous. C'est sans risque car tout ce qui est sensible est gitignoré :
-  `configs/*.conf` (topic ntfy, mot de passe hashé), `ssl/` (clé privée),
-  `logs/`, `venv/`. Le repo ne contient que du code et de la documentation.
-
-### Filtrage des issues traitées : labels + auteur (issues #477, #563)
-
-`lister_issues()` (`watcher.py`) applique deux gardes-fous successifs, aux
-comportements délibérément différents, avant qu'une issue ne devienne
-éligible au traitement :
-
-1. **Labels** (issue #477) — en plus du filtre `--label CFG.label` de `gh
-   issue list`, toute issue ne portant ni `for-linux` ni `for-windows` est
-   ignorée **silencieusement** (aucun log). Certains dépôts (ex.
-   `FF_Galerie`) génèrent leurs propres issues applicatives (alertes, bugs
-   production) qui ne sont pas destinées au bridge — un non-match de label
-   est un événement banal, pas digne d'un log.
-2. **Auteur** (issue #563) — l'auteur de l'issue (champ `author.login` de
-   `gh issue list --json ...,author`) doit figurer dans la constante
-   `AUTEURS_AUTORISES` (en tête de `watcher.py`, contient au minimum
-   `AlainDelree`). Avant cette issue, la seule protection contre une issue
-   créée par un tiers était **indirecte** : poser un label exige les droits
-   d'écriture sur le dépôt GitHub, donc un inconnu sur un dépôt public ne
-   pouvait pas rendre sa propre issue éligible. Cette protection cesse
-   d'être suffisante dès qu'un collaborateur existe sur le dépôt (cas réel :
-   `GestionMail`) — un collaborateur avec droits d'écriture pourrait en
-   théorie labelliser une issue qu'il n'a pas écrite lui-même et la faire
-   traiter en `mode_write`, voire déclencher `CREATION` (bootstrap
-   automatique d'un service CCW, §16.6). Une issue par ailleurs éligible
-   (bons labels) mais d'auteur non autorisé est donc ignorée avec un
-   **`log.warning` explicite** — à la différence du filtre #477, c'est un
-   événement digne d'attention : quelqu'un d'autorisé en écriture a
-   labellisé une issue qui ne vient pas d'un auteur autorisé. Ce filtre
-   s'applique dans `lister_issues()`, donc en amont de TOUT traitement — les
-   trois modes (lecture, écriture, `CREATION`) en bénéficient uniformément,
-   sans exception.
+Seul un auteur autorisé (`AUTEURS_AUTORISES` dans `watcher.py`, contient au
+minimum `AlainDelree`) peut faire traiter une issue — quel que soit le
+label posé dessus. Une issue par ailleurs éligible (bons labels) mais
+d'auteur non autorisé est ignorée, quel que soit le mode (lecture,
+écriture, bootstrap CCW).
 
 ---
 
 ## 9. Accès externe
 
-URL publique via tunnel Cloudflare :
-```
-https://bridge.frederiqueferette.be
-```
-
-Lancé automatiquement par `python3 new_issue.py --externe`.
-Nécessite : cloudflared installé + `~/.cloudflared/config.yml` configuré
-+ `MOT_DE_PASSE` dans le `.conf`.
-
-**Accès réseau local — mode `--lan` (issue #461).** Mode intermédiaire entre
-local et externe : `python3 new_issue.py --lan` fait écouter Flask sur
-`0.0.0.0:5100` (toutes les interfaces réseau) sans démarrer le tunnel
-Cloudflare et sans exiger de mot de passe (`MODE_EXTERNE` reste `False`,
-donc `@login_requis` ne s'active pas — cf. `app/auth.py`). Destiné à un
-accès depuis un autre poste du réseau local de confiance (ex. le PC fixe
-Windows sur le même réseau), sans aucune exposition vers l'extérieur.
-`lancer_new_issue.sh --lan` fait de même avec journalisation.
-
-**Accès à la doc sans token** : le repo étant public, `BRIDGE_AGENT_DOC.md`
-est accessible directement (sans authentification) — utile pour les
-instructions personnalisées Claude :
-```
-https://raw.githubusercontent.com/AlainDelree/Bridge_Agent/master/BRIDGE_AGENT_DOC.md
-```
-
-⚠️ Pour une lecture fiable et à jour par Claude Chat, privilégier une
-récupération via curl/bash plutôt que web_fetch, qui peut servir une
-version mise en cache de cette page :
+**Lire la doc par curl** (le dépôt est public, pas d'authentification requise) :
 ```bash
 curl -sL https://raw.githubusercontent.com/AlainDelree/Bridge_Agent/master/BRIDGE_AGENT_DOC.md
 ```
-Si l'outil terminal n'est pas disponible dans la conversation, se rabattre
-sur web_fetch en étant conscient du risque de contenu obsolète.
 
-⚠️ **Cache CDN après un push très récent.** Même `curl` peut, dans les
-toutes premières minutes suivant un `git push`, servir une version encore
-mise en cache par le CDN GitHub (raw.githubusercontent.com), avant que
-l'invalidation ne se propage. Si un `git push` sur `BRIDGE_AGENT_DOC.md`
-vient d'avoir lieu (il y a quelques minutes) et que le contenu lu ne semble
-pas refléter ce changement, ajouter un paramètre anti-cache à l'URL **avant
-de conclure à une absence réelle du contenu** :
+⚠️ **Cache CDN après un push très récent.** Dans les toutes premières minutes
+suivant un `git push` sur `BRIDGE_AGENT_DOC.md`, `curl` peut encore servir
+une version mise en cache par le CDN GitHub. Si le contenu lu ne semble pas
+refléter un push très récent, ajouter un paramètre anti-cache avant de
+conclure à une absence réelle du contenu :
 ```bash
 curl -sL "https://raw.githubusercontent.com/AlainDelree/Bridge_Agent/master/BRIDGE_AGENT_DOC.md?nocache=$(date +%s)"
 ```
-Ce contournement n'est utile qu'en cas de push très récent (quelques
-minutes) ; dans le cas général, un `curl` simple sans paramètre reste la
-méthode par défaut recommandée.
 
 ---
 
@@ -4899,7 +4019,7 @@ de création d'issue, seul valable pour du contenu qu'il produit.
 
 ---
 
-*Dernière mise à jour : 6 octobre 2026 — issue #629 (étape 5a de la
+*Dernière mise à jour : 8 octobre 2026 — issue #629 (étape 5a de la
 refonte web, §6 d'`ARCHITECTURE.md`) : nouveau backend d'état serveur pour
 la case « traité/lu » de l'onglet Résultats, jusqu'ici 100% localStorage
 (issue #154) — `etat_cases_cochees.py` (fichier JSON sous `logs/`, écriture
