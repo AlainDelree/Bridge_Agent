@@ -23,7 +23,7 @@
 
 import { store } from './store.js';
 import { api } from './api.js';
-import { toasts } from './toasts.js';
+import { toasts, initJournalMessages } from './toasts.js';
 import * as dom from './dom.js';
 import { sse } from './sse.js';
 import * as persistance from './persistance.js';
@@ -115,6 +115,11 @@ initialiserConfig();
 // de store.ongletActif.
 initAttente();
 
+// Journal des messages éphémères (issue #730) : icône + pastille de l'en-tête
+// (templates/fragments/entete.html), panneau construit à la demande par
+// toasts.js — aucun autre module n'a besoin d'être modifié pour y apparaître.
+initJournalMessages();
+
 // Activation de l'onglet par défaut (Résultats) — APPELÉE EN DERNIER,
 // volontairement : resultats.js et panneau_lateral.js se sont abonnés à
 // store.ongletActif juste au-dessus, et store.set() notifie toujours ses
@@ -136,3 +141,4 @@ console.debug('[socle] onglet CCW sorti d\'app.js (issue #649).');
 console.debug('[socle] actions sur la ligne (needs-human/interrompre/son) actives (issue #641).');
 console.debug('[socle] onglet Journal watcher piloté par import direct (issue #650).');
 console.debug('[socle] onglet Configuration piloté par import direct (issue #651).');
+console.debug('[socle] journal des messages (toasts) consultable (issue #730).');

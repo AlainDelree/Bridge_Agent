@@ -8,6 +8,12 @@
          l'onglet actif, rafraîchi côté JS toutes les 30s (rafraichirRateLimit). -->
     <span id="rate-limit-widget" class="rate-limit rl-gris" title="Quota GitHub GraphQL">⚡ …</span>
     <span class="statut">{{ projets|length }} projet(s) disponible(s)</span>
+    <!-- Journal des messages éphémères (toasts), issue #730 : icône discrète
+         + pastille de non-lus, panneau construit par static/js/socle/toasts.js
+         (initJournalMessages). -->
+    <button id="toasts-journal-bouton" class="toasts-journal-bouton" type="button"
+            title="Historique des messages" aria-label="Historique des messages">🗒️<span
+      id="toasts-journal-badge" class="toasts-journal-badge" hidden>0</span></button>
     {% if auth_active %}
     <button class="danger" onclick="if(confirm('Se déconnecter ?')) location.href='/logout'"
             style="font-size:12px;padding:5px 12px">Déconnexion</button>

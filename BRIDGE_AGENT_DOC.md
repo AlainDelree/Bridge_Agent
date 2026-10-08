@@ -1936,6 +1936,58 @@ du `localStorage`, périmètre `premieresParProjet`, `appliquerCaseDecochee`
 depuis l'issue #720, et `ligneIdentite`/`prefixerIdentite`/
 `texteCopieAvecIdentite` depuis l'issue #723).
 
+### Journal des messages éphémères (toasts) — pause au survol, erreurs persistantes (issue #730)
+
+Les messages non bloquants (`toasts.info/succes/erreur/avertissement`,
+**static/js/socle/toasts.js**) sont le remplaçant unique de `alert()` dans
+l'interface. L'issue #730 corrige trois défauts : trop brefs pour être lus,
+jamais consultables une fois disparus, et aucune distinction de durée selon la
+gravité. Tout passe par le même point d'entrée (`afficher`) : **aucun appelant
+existant n'a eu besoin d'être modifié**.
+
+- **Durée de vie selon le type** (`dureeAffichage`). `info`/`succes`
+  disparaissent seuls après 4s (`DUREE_DEFAUT_MS`, inchangé) ; `erreur`/
+  `avertissement` ne se ferment plus JAMAIS automatiquement — seul un bouton
+  « × », toujours visible sur ces deux types, les retire. Les fenêtres de
+  confirmation (`toasts.confirmer`) sont hors périmètre, inchangées.
+- **Pause au survol.** Tant que la souris est sur un toast auto-effaçable
+  (`mouseenter`), son minuteur est gelé — `calculerDelaiRestant(dureeRestante,
+  debutActif, maintenant)` calcule le temps qu'il reste à courir. Au départ de
+  la souris (`mouseleave`), un nouveau `setTimeout` reprend avec ce temps
+  restant. Un clic ailleurs sur le toast (hors bouton « × ») le ferme
+  immédiatement, comme avant #730 — réservé aux types auto-effaçables.
+- **Journal consultable.** Chaque appel à `afficher` (donc TOUS les messages,
+  quel que soit l'appelant) est consigné par `journaliser` dans un historique
+  borné à 50 entrées (`JOURNAL_TAILLE_MAX`, FIFO — `ajouterEntreeJournal`),
+  avec horodatage et type. Une icône discrète dans l'en-tête
+  (`#toasts-journal-bouton`, `templates/fragments/entete.html`) ouvre un
+  panneau listant ces messages du plus récent au plus ancien ; une pastille
+  (`#toasts-journal-badge`) affiche le nombre de messages non consultés
+  depuis la dernière ouverture (`majNonLusApresAjout` — remis à zéro à
+  l'ouverture du panneau). Branchement unique : `initJournalMessages()`,
+  appelée une fois par `socle/index.js` (délégation du clic sur l'icône +
+  clic en dehors pour refermer).
+- **Persistance du journal.** Stocké en **`sessionStorage`** (pas
+  `localStorage`, et donc **hors** de `persistance.js` qui lui reste
+  restreint aux préférences d'interface) sous une clé dédiée
+  (`bridge_toasts_journal`) : survit à un rechargement de la page dans le même
+  onglet, sans avoir besoin d'être conservé au-delà — un nouvel onglet/une
+  nouvelle session repart d'un journal vide.
+- **Aucune donnée sensible au-delà de l'écran.** Le journal ne stocke que ce
+  qui est déjà affiché à l'écran (texte, type, horodatage) — rien côté
+  serveur, aucun watcher ni notification sonore concernés.
+
+Tests de logique pure (`static/js/tests/toasts.test.js`) : `dureeAffichage`
+(durée par type, erreur/avertissement sans fermeture automatique),
+`ajouterEntreeJournal` (taille maximale, ordre FIFO, pureté),
+`majNonLusApresAjout` (compteur de non-lus selon l'état du panneau),
+`calculerDelaiRestant` (pause/reprise du compte à rebours, jamais négatif) et
+`formaterHeureJournal` (horodatage affiché). Vérification manuelle en
+navigateur réel (Playwright) : pause au survol au-delà de la durée d'origine,
+reprise après le survol, non-fermeture automatique d'une erreur, badge
+masqué/pastille après ouverture du panneau, fermeture par le bouton « × »,
+et persistance du journal après un rechargement de page (`sessionStorage`).
+
 ### Couleur d'accent des projets (issues #120, #121, #534, #535, #539, #540)
 
 Trois niveaux de priorité déterminent la couleur affichée d'un projet
