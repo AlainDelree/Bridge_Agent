@@ -1012,13 +1012,12 @@ def est_titre_chef(titre: str) -> bool:
 
 # Types d'issue reconnus pour l'historique des durées (issue #108). L'ordre du
 # tuple n'a pas d'importance ; « normal » est le repli.
-TYPES_ISSUE = ("chef", "ouvrier", "spec_vue", "spec_metier", "spec_persistance", "normal")
+TYPES_ISSUE = ("chef", "ouvrier", "normal")
 
 
 def _classer_valeur_type(valeur: str) -> str | None:
     """Normalise une valeur brute (champ TYPE) vers un type canonique, ou None si
-    elle ne correspond à rien de connu. Tolère les variantes (métier/metier,
-    spec_vue/vue, …)."""
+    elle ne correspond à rien de connu."""
     v = (valeur or "").strip().lower()
     if not v:
         return None
@@ -1026,20 +1025,14 @@ def _classer_valeur_type(valeur: str) -> str | None:
         return "ouvrier"
     if "chef" in v:
         return "chef"
-    if "persistance" in v:
-        return "spec_persistance"
-    if "métier" in v or "metier" in v:
-        return "spec_metier"
-    if "vue" in v:
-        return "spec_vue"
     return None
 
 
 def deduire_type_issue(titre: str, body: str) -> str:
     """Déduit le TYPE d'une issue pour l'historique des durées (issue #108).
     Renvoie l'un de TYPES_ISSUE. Priorité : champ « | TYPE | … | » de l'en-tête
-    bridge (source explicite, seul canal pour les spec_*), puis préfixe du titre
-    (Chef/Ouvrier, cohérent avec est_titre_chef et app.js), sinon « normal »."""
+    bridge, puis préfixe du titre (Chef/Ouvrier, cohérent avec est_titre_chef et
+    app.js), sinon « normal »."""
     for ligne in (body or "").splitlines():
         if "| TYPE" in ligne.upper():
             parts = ligne.split("|")
@@ -1047,8 +1040,7 @@ def deduire_type_issue(titre: str, body: str) -> str:
                 t = _classer_valeur_type(parts[2])
                 if t:
                     return t
-    # Repli sur le préfixe du titre : on n'y accepte QUE chef/ouvrier (un titre
-    # « Ajouter la vue X » ne doit pas devenir spec_vue par accident).
+    # Repli sur le préfixe du titre : on n'y accepte QUE chef/ouvrier.
     prefixe = _classer_valeur_type((titre or "").strip().split(":")[0])
     if prefixe in ("chef", "ouvrier"):
         return prefixe
