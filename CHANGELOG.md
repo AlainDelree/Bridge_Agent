@@ -9,6 +9,20 @@ milliers de caractères sur une seule ligne logique, coûteux à relire et
 
 Convention d'ajout : voir §10 de `BRIDGE_AGENT_DOC.md`.
 
+# CHANGELOG-728 — à fusionner dans CHANGELOG.md
+
+## 8 octobre 2026 — issue #728
+
+Onglet « En attente » (interface seule, issue #714 2/2) : **pastille nominative de projet** — remplace le point de 9px et le nom en petit texte gris clair (12px, #888) peu visibles par un repère coloré portant le NOM du projet en début de ligne, même esprit visuel que `.badge-projet` de l'onglet Résultats.
+
+- `static/js/attente.js` : `descriptionLigneAttente` expose désormais `projetAffiche` (repli « projet inconnu » si le projet est vide/absent, `projet` brut conservé). Deux nouvelles fonctions pures exportées : `couleurFondPastilleProjet(projet)` (délègue à l'ancien `couleurProjet` via le pont — aucune table de couleurs dupliquée — ou gris neutre `#888` si le projet est vide) et `couleurTexteSurFond(couleurFond)` (choisit noir ou blanc selon le MEILLEUR contraste WCAG avec le fond fourni, hex `#RGB`/`#RRGGBB` ou `hsl(h, s%, l%)` — mêmes formats que `couleurProjet`/`couleurHashProjet` côté `app.js` — même formule que `_contraste_avec_noir` de `palette.py`). `construireLigneDOM` : les anciens éléments `.pastille-ligne` et `.attente-projet` sont remplacés par un unique `.pastille-projet` (fond + texte posés en inline), placé avant le titre.
+- `static/css/attente.css` : règles `.pastille-ligne`/`.attente-projet` remplacées par `.attente-entete .pastille-projet` (badge arrondi, fond/texte inline posés par le JS) ; pas de légende séparée (elle devient inutile).
+- Cause possible évoquée par l'issue (un bloc issu d'un fichier découpé en lot pourrait arriver en `en_attente/` avec un champ `PROJET` vide, cf. `decouper_corps_en_blocs` qui ignore tout contenu avant le premier `#Titre:`) : confirmée par lecture du code comme un cas limite THÉORIQUE, mais aucun fichier réel n'existe dans ce worktree isolé (`issues_inbox/en_attente/` n'existe pas ici — données d'exécution hors dépôt, hors périmètre de ce worktree) pour le constater empiriquement. Pour la création immédiate (hors `ATTENTE`), `valider()` rejette déjà tout bloc sans `PROJET` avant création — seul le chemin `ATTENTE`, qui court-circuite toute validation (§3.16 du DOC), pourrait laisser passer un `PROJET` vide. **Aucun changement d'`app/issues_inbox.py`** : le repli d'affichage « projet inconnu » (ci-dessus) couvre ce cas défensivement côté interface, qu'il soit atteignable en pratique ou non, conformément au périmètre de l'issue (« serveur uniquement si la cause est confirmée »).
+- Tests : `static/js/tests/attente.test.js` — nouveaux cas pour `projetAffiche` (nom présent / repli « projet inconnu »), `couleurFondPastilleProjet` (délégation à l'ancien code, mocké via `global.window` comme `resultats_activation.test.js` / gris si projet vide) et `couleurTexteSurFond` (fond noir/blanc/gris/`#RGB`/`hsl()`/valeur non reconnue). Suite JS complète rejouée (202 passed, aucune régression) ; `tests/test_champ_attente_713.py` rejoué sans modification (23 passed — aucun changement serveur).
+- `BRIDGE_AGENT_DOC.md`, §3 (« Onglet « En attente » (issue #714, 2/2) ») : paragraphe mis à jour pour décrire la pastille nominative, la source de la couleur de fond (`couleurProjet`, réutilisée) et le choix de la couleur de texte (`couleurTexteSurFond`), et l'absence de légende séparée.
+
+Après fusion : Ctrl+Maj+R (JS/CSS seuls) suffit — aucun redémarrage de `new_issue.py` (aucun changement serveur).
+
 # CHANGELOG-727 — à fusionner dans CHANGELOG.md
 
 ## 8 octobre 2026 — issue #727
