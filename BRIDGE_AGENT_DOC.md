@@ -22,11 +22,9 @@ Claude Chat → crée une issue → GitHub → watcher.py détecte → CCL/CCW e
 → poste le résultat en commentaire → ferme l'issue → notification
 ```
 
-> **Rafraîchissement automatique (issue #185).** En début de chaque cycle de
-> polling, `watcher.py` met à jour son code (`git pull --ff-only`) avant de
-> lister les issues : aucun `git push` manuel préalable n'est requis, et ce
-> pull échoue proprement sans rien écraser s'il existe des commits locaux
-> pas encore poussés.
+> **Rafraîchissement automatique.** En début de chaque cycle de polling,
+> `watcher.py` met à jour son code (`git pull --ff-only`) avant de lister
+> les issues, sans rien écraser s'il existe des commits locaux non poussés.
 
 ---
 
@@ -91,7 +89,7 @@ Champs d'en-tête reconnus, tous optionnels sauf `PROJET` :
 |-------------|----------------------------------------------------------------------|
 | `PROJET`    | **Obligatoire** — doit correspondre à `configs/<PROJET>.conf`        |
 | `REDACTEUR` | Optionnel — nom du projet depuis lequel Claude Chat écrit, validé pour cohérence avec `PROJET` (règle complète au §3.4). |
-| `TIMEOUT`   | Nombre (secondes, suffixe `s` toléré) — sinon défaut du projet       |
+| `TIMEOUT`   | Nombre (secondes, suffixe `s` toléré) — sinon défaut du projet (`TIMEOUT_CLAUDE` du `.conf`, 300 s si non précisé) |
 | `MODELE`    | Doit être une valeur reconnue (§6) si fourni                        |
 | `MODE`      | Reconnu de façon tolérante (§5) — absent/non reconnu → `lecture`     |
 | `LABELS`    | Labels GitHub additionnels, séparés par des virgules                 |
@@ -300,7 +298,7 @@ Le watcher lit ces champs dans le tableau markdown de l'en-tête :
 |-------|--------|-------|
 | `MODE` | `lecture`, `lecture active` ou `écriture` | Défaut `lecture` si absent/non reconnu. Voir §5 pour le comportement de chaque mode. |
 | `PRIORITE` | `haute` ou `critique` | Retry infini (au lieu de 3 max) |
-| `TIMEOUT` | ex. `600s` | Surcharge le timeout par défaut (300s) |
+| `TIMEOUT` | ex. `600s` | Surcharge le défaut du projet (`TIMEOUT_CLAUDE` du `.conf`, 300 s si non précisé) |
 | `MODELE` | une des valeurs reconnues (`app/projets.py`) : `claude-sonnet-5`, `claude-opus-4-8`, `claude-haiku-4-5`, `claude-fable-5` | Force un modèle CCL spécifique pour cette issue |
 | `PROJET` | ex. `bridge_agent` | Détection d'incohérence par `new_issue.py`. Claude Chat doit l'inclure dans toutes les issues qu'il génère, avec le nom exact du projet cible. |
 | `TYPE` | `chef` ou `ouvrier` | Identifie le rôle de l'issue dans le pattern multi-agent (voir §14). `chef` = orchestre les ouvriers. `ouvrier` = sous-tâche créée par le chef. Absent = issue normale. |
@@ -325,10 +323,6 @@ Format dans le corps :
 > ℹ️ Le champ `| LABELS | … |` n'est **pas** lu par le watcher `issues_inbox` :
 > il est consommé par `new_issue.py` (formulaire web) pour ajouter des
 > labels supplémentaires à ceux posés d'office.
-
-`TYPE` ne documente que les valeurs `chef`/`ouvrier` — les valeurs `spec_*`
-rencontrées par ailleurs sont des reliquats d'un ancien pattern, traités à
-part.
 
 ---
 
@@ -393,39 +387,21 @@ curl -sL "https://raw.githubusercontent.com/AlainDelree/Bridge_Agent/master/BRID
 
 Arborescence et détail de l'architecture technique interne : voir `ARCHITECTURE.md`.
 
-**Convention `CHANGELOG.md` (issue #252, élargie par #253)** : l'historique
-complet du projet, une section par issue, la plus récente en premier
-(titres `## <date> — issue #N`), vit dans `CHANGELOG.md` à la racine —
-pas dans ce document. **Toute issue qui modifie le dépôt** — code, CSS,
-consignes, tests, documentation, quel que soit le fichier touché, pas
-seulement celles qui modifient cette doc — doit ajouter sa propre entrée
-en tête de `CHANGELOG.md` dans la même opération (contenu repris tel quel
-de son propre rapport, pas un résumé). Restriction initiale (« qui
-modifie cette doc ») abandonnée par #253 : elle recréait, sous une autre
-forme, le trou que #240 avait dû combler à la main (issues #237/#238/#239,
-du code sans modification de doc, restées sans trace plusieurs jours) —
-premier cas depuis #252 : #250 (correctif de contraste CSS pur), rattrapé
-rétroactivement par #253.
+**Historique du projet** : vit dans `CHANGELOG.md` à la racine, une entrée
+par issue (`## <date> — issue #N`), la plus récente en premier — pas dans ce
+document. Une issue en écriture n'édite jamais `CHANGELOG.md` directement :
+elle écrit sa propre entrée dans un fichier `CHANGELOG-<N>.md` à la racine de
+son worktree, fusionné ensuite dans `CHANGELOG.md` par
+`scripts/fusionner_changelog.py` au moment de la fusion du worktree (détail :
+`WORKTREES.md`).
 
-Le pied de page de ce fichier (paragraphe « Dernière mise à jour : ... »)
-continue, lui, de ne garder que les **trois entrées les plus récentes**
-— mais uniquement parmi les issues qui modifient **cette doc elle-même**
-(`BRIDGE_AGENT_DOC.md`), pas l'ensemble de `CHANGELOG.md` — suivies d'un
-renvoi vers `CHANGELOG.md`. Toute issue qui modifie cette doc doit, dans
-la même opération, en plus du point ci-dessus :
-1. Faire glisser les trois entrées du pied de page d'un cran : la
-   nouvelle entrée prend la première place, l'ancienne 3ᵉ sort du pied de
-   page (elle reste disponible dans `CHANGELOG.md`, elle y est déjà) ;
-2. Conserver impérativement le format de la toute première ligne du pied
-   de page — `*Dernière mise à jour : <date> — ...*`, tiret cadratin
-   juste après la date — car `nouveau_projet.py` en dépend par regex pour
-   mettre à jour la date automatiquement.
-3. Ce format n'apparaît qu'à la **toute dernière ligne du fichier** : une
-   recherche sur « Dernière mise à jour » remonte d'abord cet exemple-ci,
-   dans ce §10 — pas le vrai pied de page, bien plus bas. Toujours viser la
-   fin du fichier, jamais la première occurrence trouvée (piège qui a
-   corrompu ce paragraphe et raté la mise à jour du vrai pied de page lors
-   de l'issue #263, cf. issue #268).
+**Toute issue qui modifie ce document** (`BRIDGE_AGENT_DOC.md`) doit, dans la
+même opération, mettre à jour la toute dernière ligne du fichier — format
+`*Dernière mise à jour : <date> — ...*` (tiret cadratin juste après la date)
+— dont `regenerer_tableaux_projets.py` dépend par regex pour la rafraîchir
+automatiquement. Viser la **toute fin du fichier** : une recherche sur
+« Dernière mise à jour » remonte d'abord cet exemple-ci, pas le vrai pied de
+page, bien plus bas.
 
 ---
 
@@ -474,8 +450,10 @@ la même opération, en plus du point ci-dessus :
   Deux issues touchant les mêmes fichiers ou les mêmes zones de code peuvent
   donc générer un conflit de merge à résoudre manuellement par Alain.
   **Recommandation** : scoper chaque issue sur un périmètre de fichiers aussi
-  distinct que possible des autres issues `mode_write` en cours. Détail du
-  mécanisme et du workflow de fusion : voir [`WORKTREES.md`](WORKTREES.md).
+  distinct que possible des autres issues `mode_write` en cours. Une
+  `RELANCE` (§3.14) reprend le worktree déjà existant de l'issue ciblée
+  plutôt que d'en recréer un neuf. Détail du mécanisme et du workflow de
+  fusion : voir [`WORKTREES.md`](WORKTREES.md).
 
 ---
 
@@ -504,24 +482,13 @@ les petits changements (une ligne CSS, un label, une couleur).
 4. Alain vérifie (`git show`) et pousse
 
 **Exception :** les modifications de `configs/*.conf` (`PERIMETRE`,
-`TOPIC_NTFY`, `FICHIER_CONTEXTE`, etc.) peuvent se faire directement via
-l'onglet Configuration de new_issue.py, ou à la main par Alain — elles
-ne touchent pas au code et sont gitignorées. **Cette exception vaut
-uniquement pour Alain** : CCL/CCW ne modifie **jamais** `configs/*.conf`
-via une issue, même en mode_write (ou en lecture active, mode_scratch,
-depuis #327) et même si l'issue le demande explicitement en toutes
-lettres (issue #318, suite au diagnostic #298 — ce champ texte simple
-n'avait aucun garde-fou contre un élargissement ou un rétrécissement
-silencieux du PÉRIMÈTRE). La règle est injectée à CCL/CCW via
-`consignes/globales.md`, et doublée d'un garde-fou technique dans
-`watcher.py` (`_empreinte_configs` / `_restaurer_configs_modifies`) :
-toute modification de `configs/*.conf` survenue malgré tout au cours
-d'un traitement en écriture ou en lecture active est détectée
-(comparaison du contenu avant/après chaque tentative) et annulée
-automatiquement, avec un WARNING journalisé, sans faire échouer le reste
-du traitement de l'issue (mécanisme technique détaillé dans
-`ARCHITECTURE.md`, y compris les actions légitimes d'Alain sur `configs/`
-pendant qu'une issue tourne sur un autre projet, issue #724).
+`TOPIC_NTFY`, `FICHIER_CONTEXTE`, etc.) sont réservées à **Alain seul** —
+onglet Configuration de `new_issue.py`, ou directement à la main.
+**CCL/CCW ne modifient JAMAIS `configs/*.conf`**, quel que soit le mode
+(écriture comme lecture active) et même si l'issue le demande
+explicitement en toutes lettres : toute modification survenue malgré tout
+est détectée et annulée automatiquement par un garde-fou technique de
+`watcher.py` (mécanisme détaillé dans `ARCHITECTURE.md`).
 
 ### 12.1 Consignes injectées — architecture à trois couches (issues #209, #211)
 
@@ -547,37 +514,6 @@ curl -sL "https://raw.githubusercontent.com/AlainDelree/Bridge_Agent/master/cons
 
 ---
 
-## 13. Commandes utiles
-
-**Gestion de projet en ligne de commande** (équivalents aux boutons web
-« + Nouveau projet » / « 🗑 Supprimer ce projet… ») :
-
-```bash
-python3 nouveau_projet.py
-python3 supprimer_projet.py <nom>
-python3 supprimer_projet.py <nom> --dry-run   # aperçu sans rien toucher au disque
-```
-
-`creer_projet()`/`supprimer_projet()` (orchestrateurs partagés par le script
-CLI et les routes web) committent **et poussent automatiquement** la mise à
-jour de `BRIDGE_AGENT_DOC.md` (§2 Projets actifs, §7 Périmètre, date en bas —
-issue #645) dans le dépôt Bridge_Agent. La suppression de projet ne couvre
-que le côté CCL/local (répertoire de travail, `configs/<nom>.conf`, doc) —
-dépôt GitHub, labels et côté CCW restent hors scope, à traiter par une issue
-dédiée (issue #587). Détail de l'orchestration : voir `ARCHITECTURE.md`.
-
-### Parallélisation mode_write via git worktrees (issue #337)
-
-Les issues `mode_write` tournent chacune dans un `git worktree` isolé ; Alain
-fusionne les branches à la main une fois le travail relu. Une `RELANCE`
-reprend le worktree déjà existant plutôt que d'en recréer un neuf (issue
-#725). Les issues `mode_lecture`/`mode_scratch` restent, elles, toujours
-traitées une à la fois dans le répertoire principal (`REP_TRAVAIL`). Détail
-complet du mécanisme et des procédures de récupération : voir
-[`WORKTREES.md`](WORKTREES.md).
-
----
-
 ## 14. Délégation Chef → Ouvrier (changement d'environnement)
 
 **Principe :** quand une sous-tâche exige un environnement différent de celui
@@ -595,48 +531,17 @@ create`, puis surveille sa fermeture avant de livrer sa réponse.
   puis d'attendre sa fermeture, sans orchestration réelle, est du surcoût
   pur (deux issues, deux invocations `claude`, TIMEOUT long, attente
   synchrone bloquante).
-- L'exemple validé plus bas dans cette section (dictionnaire déposé côté
-  Linux puis rebuild côté Windows) est justement un cas où le chef EST
-  justifié — la règle ci-dessus ne le contredit pas.
-- **⚠️ Contrepartie opérationnelle** : le rallumage automatique du watcher à
-  la création d'une issue `for-linux` ne s'applique PAS aux issues
-  `for-windows`. Avant d'envoyer une issue `for-windows` directe, vérifier
-  dans l'onglet CCW (§16) que le PC fixe est joignable et que le service
-  `CCW-Watcher` est démarré ; sinon l'issue restera ouverte sans aucun
-  signal. (Ne pas confondre avec les services `CCW-Watcher-<Projet>` du
-  modèle multi-projets — actif, voir §16 : ceux-là surveillent les issues
-  du dépôt du projet cible directement, pas les issues `for-windows` de
-  Bridge_Agent.)
+- **⚠️ Contrepartie opérationnelle** : contrairement aux issues `for-linux`,
+  créer une issue `for-windows` ne rallume pas automatiquement son watcher —
+  vérifier dans l'onglet CCW (§16) qu'il est bien démarré avant d'envoyer une
+  issue `for-windows` directe ou un ouvrier.
 
 **Ce n'est pas déclenché automatiquement par `watcher.py`** : le chef agit
 sur instruction explicite de l'issue qui le mandate (pas de détection auto
-du rôle chef).
-
-**⚠️ Contrainte d'exécution synchrone (rappel)** : le chef doit accomplir la
-TOTALITÉ de sa tâche — y compris l'attente de fermeture des ouvriers et la
-synthèse finale — en une seule exécution synchrone et bloquante. Il n'existe
-aucune reprise possible après qu'une issue a été répondue/fermée : ce qui est
-proscrit, c'est de CONCLURE son tour de parole avant la fin réelle et
-vérifiée de l'opération — pas l'arrière-plan en tant que technique, qui reste
-permis à condition d'interroger sa sortie en boucle DANS la même exécution.
-Restent interdits, sans changement : un « monitor », une notification, un
-rappel programmé, et toute formulation du type « je répondrai plus tard ».
-Si une attente est nécessaire, boucler (`sleep` + `gh issue view`) DANS la
-même exécution.
-
-> **Injection automatique (issues #209, #243).** Ce rappel n'est plus à
-> recopier manuellement dans le corps d'une issue. Depuis #243, la contrainte
-> d'exécution synchrone est **universelle** — injectée automatiquement dans
-> TOUTE issue via `consignes/globales.md` (§12.1), pas seulement celles de
-> TYPE `chef` : le mode de défaillance qu'elle prévient (sortir sur une
-> promesse de suivi, un « monitor » ou un rappel programmé) guette toute
-> tâche dont une étape dépasse le timeout d'un appel d'outil — ex. les builds
-> #241/#242, clôturés `done` avec un rapport annonçant attendre une
-> notification alors que le build avait réellement abouti. `consignes/
-> type_chef.md` n'ajoute plus que la spécificité chef : boucler (`sleep` +
-> `gh issue view`) DANS la même exécution en attendant la fermeture des
-> issues ouvrières, puis poster la synthèse finale. Le texte ci-dessus reste
-> dans cette section comme référence documentaire.
+du rôle chef). La contrainte d'exécution synchrone et bloquante (attendre la
+fermeture des ouvriers avant de conclure) est injectée automatiquement dans
+le prompt via `consignes/globales.md` (§12.1) — rien à rappeler dans le
+corps de l'issue chef.
 
 **Format des titres :**
 - **Chef** : titre préfixé par `Chef : ` (ex. `Chef : rebuild Scrabble avec
@@ -650,20 +555,6 @@ CCW, dont le watcher peut nécessiter un rallumage), prévoir un `TIMEOUT`
 généreux dans l'en-tête de l'issue chef (ex. 1800-3600s) pour couvrir le
 cycle complet, plutôt que le timeout par défaut d'une issue simple.
 
-**Exemple validé (build Scrabble, ouvrier CCW) :** un build `.exe` nécessite
-qu'un dictionnaire soit déposé avant le rebuild. Le chef CCL dépose le
-dictionnaire côté Linux, puis crée l'ouvrier CCW pour le rebuild :
-
-```bash
-gh issue create --repo AlainDelree/Bridge_Agent \
-  --label "bridge,for-windows,mode_write" \
-  --title "Ouvrier 1 : rebuild Scrabble .exe après dépôt du dictionnaire" \
-  --body "…"
-```
-
-Le chef attend la fermeture de l'issue ouvrière avant de livrer sa réponse
-finale.
-
 ---
 
 ## 16. Agent Windows CCW
@@ -675,8 +566,8 @@ localement, Alain vérifie et pousse.
 
 La plupart des projets ont leur propre service CCW dédié (`REDACTEUR` =
 `PROJET`, règle normale, §3.4). Pour un besoin CCW exceptionnel sur un
-projet sans service dédié, `| LABELS | for-windows |` avec
-`| REDACTEUR | bridge_agent |` route l'issue vers le service central de
+projet — même s'il a son propre service dédié —, `| LABELS | for-windows |`
+avec `| REDACTEUR | bridge_agent |` route l'issue vers le service central de
 Bridge_Agent (détail complet : §3.4) — indiquer alors aussi `SOUS_DOSSIER`,
 ce service central travaillant dans un dossier partagé entre projets.
 
@@ -717,9 +608,10 @@ contraire dans une issue.
 
 ## 19. Calibration automatique du TIMEOUT (issues #220, #221, #222, #223, #434, #475, #590)
 
-Toujours fixer un `TIMEOUT` dans l'en-tête d'une issue (défaut silencieux
-de 300s si absent, §6). La valeur `TIMEOUT_suggéré` affichée à la fin du
-commentaire de clôture d'une issue est calculée depuis l'historique réel
+Toujours fixer un `TIMEOUT` dans l'en-tête d'une issue (sinon défaut du
+projet, `TIMEOUT_CLAUDE` du `.conf`, 300 s si non précisé — §6). La valeur
+`TIMEOUT_suggéré` affichée à la fin du commentaire de clôture d'une issue
+est calculée depuis l'historique réel
 des durées, bornée entre un plancher et un **plafond de 3600s** (issue
 #590). C'est une **indication, pas une règle** : elle peut être trop haute
 (gonflée après des dépassements répétés) comme trop basse — la confronter
@@ -738,6 +630,6 @@ calibration (constantes actuelles du code : `K_VARIABILITE` = 3, issue
 ---
 
 *Dernière mise à jour : 9 octobre 2026 — nettoyage de la documentation pour
-Claude Chat (issue #736, 3/3).*
+Claude Chat (issue #737, finitions).*
 
 Historique complet : voir [`CHANGELOG.md`](CHANGELOG.md).
