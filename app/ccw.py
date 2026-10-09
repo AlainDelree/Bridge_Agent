@@ -201,6 +201,59 @@ def _ajouter_droit_demarrage_sddl(sddl: str, sid: str) -> tuple[str, bool]:
     return _inserer_ace_sddl(sddl, _ace_demarrage_arret(sid)), True
 
 
+# ─── Utilitaires : renouvellement d'UN SEUL token (issue #743) ─────────────────
+# Comme pour les fonctions SDDL ci-dessus : l'implémentation RÉELLEMENT
+# exécutée est en PowerShell (provisioning/windows/mettre_a_jour_tokens_ccw.ps1,
+# fonction Lire-EnvironnementActuelService + section 2 « Résolution des deux
+# valeurs ») — ce module Python ne tourne jamais sur le PC fixe Windows. Les
+# deux fonctions ci-dessous sont un PORT FIDÈLE du même algorithme, gardé ICI
+# uniquement pour permettre des tests unitaires SANS dépendre de Windows/nssm ;
+# toute modification de l'algorithme doit être répercutée dans LES DEUX
+# implémentations.
+
+def _extraire_valeur_env_service(texte: str, cle: str) -> str | None:
+    """Extrait la valeur de `cle` dans `texte` (une ligne « CLE=valeur » par
+    variable, format de sortie de « nssm get <service> AppEnvironmentExtra »).
+    None si la clé est absente — jamais affichée/journalisée par l'appelant."""
+    for ligne in texte.splitlines():
+        idx = ligne.find("=")
+        if idx < 1:
+            continue
+        if ligne[:idx].strip() == cle:
+            return ligne[idx + 1:].rstrip("\r\n")
+    return None
+
+
+def _resoudre_jetons_renouvellement(
+        gh: str, oauth: str, env_service_texte: str | None) -> tuple[str | None, str | None, str | None]:
+    """(gh_final, oauth_final, erreur). Complète le jeton manquant (chaîne
+    vide) par sa valeur ACTUELLE dans l'environnement du service (lue par
+    nssm get, `env_service_texte` — None si cette lecture a elle-même
+    échoué), sans jamais faire sortir cette valeur de cette fonction.
+
+    - aucun des deux jetons fourni → erreur, rien n'est modifiable ;
+    - un jeton fourni, l'autre reconduit avec succès → (gh_final, oauth_final,
+      None) ;
+    - un jeton fourni, l'autre introuvable dans l'environnement actuel
+      (service neuf, lecture impossible, variable absente) → erreur, AUCUNE
+      valeur n'est retournée (refus sans modification — au moins un jeton
+      composé reste requis, message clair demandant les deux) ;
+    - deux jetons fournis → comportement inchangé, (gh, oauth, None)."""
+    if not gh and not oauth:
+        return None, None, "Au moins un jeton (GH_TOKEN ou CLAUDE_CODE_OAUTH_TOKEN) est requis."
+    if not gh:
+        gh = _extraire_valeur_env_service(env_service_texte, "GH_TOKEN") if env_service_texte else None
+        if not gh:
+            return None, None, ("GH_TOKEN non fourni et introuvable dans l'environnement actuel "
+                                 "du service — fournissez les deux jetons.")
+    if not oauth:
+        oauth = _extraire_valeur_env_service(env_service_texte, "CLAUDE_CODE_OAUTH_TOKEN") if env_service_texte else None
+        if not oauth:
+            return None, None, ("CLAUDE_CODE_OAUTH_TOKEN non fourni et introuvable dans l'environnement "
+                                 "actuel du service — fournissez les deux jetons.")
+    return gh, oauth, None
+
+
 # ─── Utilitaires : commandes ssh/scp ────────────────────────────────────────────
 
 def _base_ssh(hote: str, utilisateur: str, cle_privee: str) -> list[str]:
@@ -426,7 +479,14 @@ def ccw_finaliser_projet():
     Les tokens ne transitent JAMAIS en argument : ils sont écrits dans un fichier
     temporaire 0600 poussé sur le PC fixe via scp, lu côté PC par le script
     PowerShell, puis supprimé des deux côtés (finally Python + finally
-    PowerShell)."""
+    PowerShell).
+
+    Issue #743 : UN SEUL des deux tokens peut être fourni (au moins un est
+    requis) — celui qui est omis n'est simplement PAS écrit dans le fichier de
+    valeurs ; mettre_a_jour_tokens_ccw.ps1 lit alors sa valeur ACTUELLE dans
+    l'environnement du service (nssm get) et la reconduit telle quelle, au
+    lieu de l'effacer (nssm set … AppEnvironmentExtra REMPLACE toute la
+    valeur). Comportement inchangé quand les deux tokens sont fournis."""
     data  = request.json or {}
     nom   = (data.get("nom")   or "").strip()
     topic = (data.get("topic") or "").strip()
@@ -435,9 +495,10 @@ def ccw_finaliser_projet():
     if not nom or re.search(r"[\\/\s]", nom):
         return jsonify(succes=False,
             erreur="Nom de projet requis, sans espace ni séparateur de chemin.")
-    if not gh or not oauth:
+    if not gh and not oauth:
         return jsonify(succes=False,
-            erreur="Les deux tokens (GH_TOKEN et CLAUDE_CODE_OAUTH_TOKEN) sont requis.")
+            erreur="Au moins un des deux tokens (GH_TOKEN ou CLAUDE_CODE_OAUTH_TOKEN) "
+                   "est requis — laissez l'autre champ vide pour conserver sa valeur actuelle.")
     ctx, err = _preparer()
     if err:
         return err
@@ -450,15 +511,18 @@ def ccw_finaliser_projet():
             return jsonify(succes=False, erreur=f"Script introuvable : {s.name}")
 
     # Fichier de valeurs (secrets) local, permissions 0600. Contient TOPIC_NTFY
-    # + les deux tokens en « clé=valeur ». Jamais journalisé.
+    # + les tokens FOURNIS (clé absente = non fourni, reconduction côté
+    # PowerShell — voir docstring) en « clé=valeur ». Jamais journalisé.
     fd, chemin_valeurs = tempfile.mkstemp(prefix="ccw-vals-", suffix=".txt")
     dest_valeurs = DEST_DIR_DISTANT + os.path.basename(chemin_valeurs)
     try:
         os.chmod(chemin_valeurs, 0o600)
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             f.write(f"TOPIC_NTFY={topic}\n")
-            f.write(f"GH_TOKEN={gh}\n")
-            f.write(f"CLAUDE_CODE_OAUTH_TOKEN={oauth}\n")
+            if gh:
+                f.write(f"GH_TOKEN={gh}\n")
+            if oauth:
+                f.write(f"CLAUDE_CODE_OAUTH_TOKEN={oauth}\n")
         try:
             # Pousser les deux scripts (l'auto appelle le tokens via
             # $PSScriptRoot → doivent être dans le même dossier) + le

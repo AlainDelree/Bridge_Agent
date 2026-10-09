@@ -13,6 +13,15 @@
        lisant dans un fichier « clé=valeur » poussé par l'appelant. Ce second
        mode permet à l'onglet CCW (interface web, Linux) de poser les tokens à
        distance via guestcontrol sans saisie manuelle dans la VM.
+
+       Issue #743 : UN SEUL des deux tokens peut être fourni (vide/absent du
+       fichier accepté pour l'autre) — au moins un est requis. Le token omis
+       est alors reconduit TEL QUEL depuis l'environnement ACTUEL du service
+       (« nssm get <service> AppEnvironmentExtra », jamais affiché ni écrit
+       sur disque en dehors de la mise à jour du service elle-même). Si cette
+       lecture échoue ou que la variable y est absente, abandon SANS AUCUNE
+       modification, avec un message clair demandant de fournir les deux
+       tokens. Comportement inchangé quand les deux tokens sont fournis.
     2. Reconstruit AppEnvironmentExtra comme TROIS lignes distinctes : PATH
        (machine + <CompteService>\.local\bin + WindowsApps), GH_TOKEN,
        CLAUDE_CODE_OAUTH_TOKEN — issue #658, point 1. AVANT cette issue, la
@@ -114,6 +123,29 @@ function Lire-ValeurFichier([string]$chemin, [string]$cle) {
     return $null
 }
 
+# Lit la valeur ACTUELLE de `$cle` dans AppEnvironmentExtra du service, via
+# « nssm get » (issue #743 — permet de reconduire un token non fourni sans
+# effacer l'autre, puisque « nssm set » REMPLACE toute la valeur). Chaque
+# variable occupe sa propre ligne dans la sortie de « nssm get » (même
+# convention que ce script lui-même pose, voir section 2 ci-dessous) : même
+# algorithme de recherche que Lire-ValeurFichier, appliqué aux lignes de
+# sortie plutôt qu'à un fichier. $null si la lecture échoue (service/nssm
+# indisponible) ou que la variable est absente. La valeur n'est NI affichée
+# NI écrite sur disque — elle ne sort jamais de cette fonction/de l'appelant
+# direct qui la réinjecte dans AppEnvironmentExtra.
+function Lire-EnvironnementActuelService([string]$nomService, [string]$cle) {
+    $lignes = & nssm get $nomService AppEnvironmentExtra 2>$null
+    if ($LASTEXITCODE -ne 0 -or -not $lignes) { return $null }
+    foreach ($ligne in @($lignes)) {
+        $idx = $ligne.IndexOf('=')
+        if ($idx -lt 1) { continue }
+        if ($ligne.Substring(0, $idx).Trim() -eq $cle) {
+            return $ligne.Substring($idx + 1).TrimEnd("`r", "`n")
+        }
+    }
+    return $null
+}
+
 # ---------------------------------------------------------------------------
 # 0. Vérifications préalables.
 # ---------------------------------------------------------------------------
@@ -157,7 +189,36 @@ if ([string]::IsNullOrWhiteSpace($FichierTokens)) {
 }
 
 # ---------------------------------------------------------------------------
-# 2. Construction des TROIS lignes de AppEnvironmentExtra (PATH, GH_TOKEN,
+# 2. Résolution des DEUX valeurs : au moins une doit être fournie (issue
+#    #743). Celle qui est vide/absente est reconduite depuis l'environnement
+#    ACTUEL du service (Lire-EnvironnementActuelService, ci-dessus) — jamais
+#    affichée ni écrite sur disque. Si elle y est introuvable (service neuf,
+#    lecture impossible), abandon SANS AUCUNE modification : au moins un
+#    jeton composé reste requis dans ce cas précis, message clair.
+# ---------------------------------------------------------------------------
+if ([string]::IsNullOrWhiteSpace($gh) -and [string]::IsNullOrWhiteSpace($oauth)) {
+    Avert 'Aucun jeton fourni — abandon, aucun changement appliqué. Fournissez au moins GH_TOKEN ou CLAUDE_CODE_OAUTH_TOKEN.'
+    exit 1
+}
+if ([string]::IsNullOrWhiteSpace($gh)) {
+    Info 'GH_TOKEN non fourni — lecture de sa valeur actuelle sur le service…'
+    $gh = Lire-EnvironnementActuelService $NomService 'GH_TOKEN'
+    if ([string]::IsNullOrWhiteSpace($gh)) {
+        Avert "GH_TOKEN non fourni et introuvable dans l'environnement actuel du service « $NomService » — abandon, aucun changement appliqué. Fournissez les deux tokens."
+        exit 1
+    }
+}
+if ([string]::IsNullOrWhiteSpace($oauth)) {
+    Info 'CLAUDE_CODE_OAUTH_TOKEN non fourni — lecture de sa valeur actuelle sur le service…'
+    $oauth = Lire-EnvironnementActuelService $NomService 'CLAUDE_CODE_OAUTH_TOKEN'
+    if ([string]::IsNullOrWhiteSpace($oauth)) {
+        Avert "CLAUDE_CODE_OAUTH_TOKEN non fourni et introuvable dans l'environnement actuel du service « $NomService » — abandon, aucun changement appliqué. Fournissez les deux tokens."
+        exit 1
+    }
+}
+
+# ---------------------------------------------------------------------------
+# 3. Construction des TROIS lignes de AppEnvironmentExtra (PATH, GH_TOKEN,
 #    CLAUDE_CODE_OAUTH_TOKEN) — issue #658, point 1.
 #
 #    PATH reconstruit À NEUF (pas préservé depuis l'ancienne valeur) : « nssm
@@ -172,10 +233,6 @@ if ([string]::IsNullOrWhiteSpace($FichierTokens)) {
 #    largement). On travaille en clair le strict minimum, sans jamais
 #    afficher les valeurs.
 # ---------------------------------------------------------------------------
-if ([string]::IsNullOrWhiteSpace($gh) -or [string]::IsNullOrWhiteSpace($oauth)) {
-    Avert 'Une des deux valeurs est vide (ou absente du fichier) — abandon, aucun changement appliqué.'
-    exit 1
-}
 
 $cheminLocalBin = "C:\Users\$CompteService\.local\bin"
 $cheminWindowsApps = "C:\Users\$CompteService\AppData\Local\Microsoft\WindowsApps"
@@ -185,7 +242,7 @@ $ligneGh    = "GH_TOKEN=$gh"
 $ligneOauth = "CLAUDE_CODE_OAUTH_TOKEN=$oauth"
 
 # ---------------------------------------------------------------------------
-# 3. Application via NSSM puis redémarrage du service.
+# 4. Application via NSSM puis redémarrage du service.
 # ---------------------------------------------------------------------------
 try {
     Info "Écriture de AppEnvironmentExtra sur « $NomService » (PATH + GH_TOKEN + CLAUDE_CODE_OAUTH_TOKEN)…"
@@ -200,7 +257,7 @@ try {
 }
 
 # ---------------------------------------------------------------------------
-# 4. Attente puis affichage des dernières lignes de log pour confirmation.
+# 5. Attente puis affichage des dernières lignes de log pour confirmation.
 # ---------------------------------------------------------------------------
 Info "Attente de $DelaiSecondes s (démarrage du watcher)…"
 Start-Sleep -Seconds $DelaiSecondes
@@ -224,7 +281,7 @@ Write-Host '--------------------------------------------------------------------
 Write-Host ''
 
 # ---------------------------------------------------------------------------
-# 5. Résumé : OK si aucune ligne ERROR dans les lignes affichées.
+# 6. Résumé : OK si aucune ligne ERROR dans les lignes affichées.
 # ---------------------------------------------------------------------------
 $erreurs = @($lignes | Where-Object { $_ -match 'ERROR|Bad credentials' })
 

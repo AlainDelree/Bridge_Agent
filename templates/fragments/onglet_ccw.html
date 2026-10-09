@@ -54,7 +54,7 @@
     </div>
     <div class="rangee">
       <div class="champ">
-        <label>GH_TOKEN</label>
+        <label>GH_TOKEN <span style="color:#999;font-weight:400">(vide = conserver l'actuel)</span></label>
         <!-- Anti auto-remplissage (issue #175) : autocomplete="new-password"
              (interprété comme un nouveau champ, pas un login), pas d'attribut
              name reconnu par les gestionnaires de mots de passe, et readonly au
@@ -73,7 +73,7 @@
         </div>
       </div>
       <div class="champ">
-        <label>CLAUDE_CODE_OAUTH_TOKEN</label>
+        <label>CLAUDE_CODE_OAUTH_TOKEN <span style="color:#999;font-weight:400">(vide = conserver l'actuel)</span></label>
         <div style="display:flex;gap:6px;align-items:center">
           <input type="password" id="ccw-fin-oauth" autocomplete="new-password"
                  readonly onfocus="this.removeAttribute('readonly')"
@@ -90,12 +90,43 @@
       🔒 Les tokens ne transitent jamais en argument de commande ni dans un log :
       fichier temporaire poussé sur le PC fixe via SCP, lu par PowerShell, puis
       supprimé des deux côtés. Créez d'abord le token GitHub dédié (repo unique, Issues R/W,
-      expiration alignée — cf. §16).
+      expiration alignée — cf. §16). <strong>Laisser un champ de jeton vide conserve sa
+      valeur actuelle sur le service</strong> (au moins un des deux doit être saisi) ; une
+      fois saisi, un jeton n'est jamais réaffiché après soumission.
     </div>
     <div class="barre-envoi">
       <div style="flex:1"></div>
       <button class="primaire" id="ccw-btn-finaliser" data-action="ccw-finaliser">Finaliser</button>
     </div>
+
+    <!-- Section 5 : poser le même jeton Claude sur tous les services (issue #743) -->
+    <div class="titre-section" style="margin-top:22px">Poser ce jeton Claude sur tous les services CCW</div>
+    <div style="font-size:12px;color:#999;margin-bottom:8px">
+      Une seule saisie de CLAUDE_CODE_OAUTH_TOKEN, appliquée à chaque service
+      CCW-Watcher* listé ci-dessus, en conservant le jeton GitHub propre à
+      chacun. Un service avec une issue en cours est sauté (jamais redémarré
+      de force) ; résumé détaillé par service après exécution.
+    </div>
+    <div class="rangee">
+      <div class="champ">
+        <label>CLAUDE_CODE_OAUTH_TOKEN <span style="color:#999;font-weight:400">(un seul jeton pour tous les services)</span></label>
+        <div style="display:flex;gap:6px;align-items:center">
+          <input type="password" id="ccw-tous-oauth" autocomplete="new-password"
+                 readonly onfocus="this.removeAttribute('readonly')"
+                 onmousedown="this.removeAttribute('readonly')"
+                 style="flex:1;min-width:0">
+          <button type="button" class="oeil-token" tabindex="-1"
+                  title="Afficher / masquer la valeur (vérifier avant de poser)"
+                  style="padding:6px 9px;font-size:14px;line-height:1"
+                  onclick="var i=document.getElementById('ccw-tous-oauth'); var m=i.type==='password'; i.type=m?'text':'password'; this.textContent=m?'🙈':'👁';">👁</button>
+        </div>
+      </div>
+    </div>
+    <div class="barre-envoi">
+      <div style="flex:1"></div>
+      <button class="primaire" id="ccw-btn-tous" data-action="ccw-tous">Poser sur tous les services</button>
+    </div>
+    <div id="ccw-tous-resume" style="display:none;margin-top:6px;margin-bottom:8px"></div>
 
     <!-- Sortie commune (messages + terminal des scripts distants) -->
     <div id="ccw-message" class="message"></div>

@@ -961,6 +961,81 @@ Couvre aussi le tri (désordre, jetons expirés d'abord, égalité par id) et
 le plafond à 3 lignes (exactement 3, 4, 20 jetons ; niveau rouge même si le
 jeton critique est masqué ; ligne des entrées ignorées toujours en dernier).
 
+## 10. Renouveler un seul jeton CCW, et le poser sur tous les services en une fois (issue #743)
+
+Avant #743, le bouton **Finaliser** de l'onglet CCW exigeait TOUJOURS les
+deux jetons (`GH_TOKEN`, propre à chaque service ; `CLAUDE_CODE_OAUTH_TOKEN`,
+identique pour tous) : renouveler le seul jeton Claude obligeait à retrouver
+et recoller, service par service, le `GH_TOKEN` déjà en place — long et
+sujet aux erreurs de collage. Cause : `provisioning/windows/
+mettre_a_jour_tokens_ccw.ps1` reconstruit l'environnement du service en un
+seul `nssm set … AppEnvironmentExtra`, qui **remplace** toute la valeur —
+un jeton non fourni aurait été effacé plutôt que reconduit.
+
+**Un seul jeton peut désormais être fourni** (au moins un reste requis) :
+- `app/ccw.py::ccw_finaliser_projet()` n'écrit dans le fichier de valeurs
+  (clé=valeur, 0600, supprimé des deux côtés — sécurité inchangée) QUE les
+  tokens effectivement fournis ; la clé absente est le signal, côté
+  PowerShell, qu'il faut reconduire l'ancienne valeur plutôt que l'effacer.
+- `mettre_a_jour_tokens_ccw.ps1` (section 2, nouvelle fonction
+  `Lire-EnvironnementActuelService`) lit, pour le jeton omis, sa valeur
+  ACTUELLE via `nssm get <service> AppEnvironmentExtra` — jamais affichée ni
+  écrite sur disque, réinjectée telle quelle dans les trois lignes
+  reconstruites (section 3, PATH + GH_TOKEN + CLAUDE_CODE_OAUTH_TOKEN,
+  inchangé depuis #658). Si cette lecture échoue ou que la variable y est
+  absente (service neuf), abandon **sans aucune modification**, message
+  clair demandant de fournir les deux jetons. Comportement STRICTEMENT
+  inchangé quand les deux jetons sont fournis. `finaliser_projet_ccw_auto.ps1`
+  n'a pas eu besoin d'être modifié : il ne fait que relayer le même fichier
+  de valeurs à `mettre_a_jour_tokens_ccw.ps1` (`-FichierTokens`).
+- Port Python PUR de cet algorithme (`_extraire_valeur_env_service`,
+  `_resoudre_jetons_renouvellement`), même patron que les fonctions SDDL de
+  l'issue #717 (`_sddl_contient_sid` etc.) : jamais exécuté en production
+  (nssm ne tourne que sur le PC fixe Windows), gardé uniquement pour des
+  tests unitaires sans dépendre de Windows. Toute évolution de l'algorithme
+  doit être répercutée dans les deux implémentations.
+
+**Nouvelle action — « Poser ce jeton Claude sur tous les services CCW »**
+(`static/js/ccw.js::ccwPoserTokenTousLesServices`, section dédiée du
+gabarit `templates/fragments/onglet_ccw.html`) : une seule saisie du jeton
+Claude, posée séquentiellement sur chaque service `CCW-Watcher*` connu
+(`obtenirCcwProjetsConnus()`) en **réutilisant** la route `/ccw/finaliser-
+projet` existante (sans `gh_token` ni `topic` — reconduits/ignorés côté
+serveur, voir ci-dessus), jamais de nouvelle route dédiée. Résumé par
+service (`OK` / `à vérifier` / `échec` / `sauté`) affiché après coup
+(`#ccw-tous-resume`) ; un service en échec n'interrompt pas les suivants.
+
+**Garde-fou avant redémarrage — un service occupé n'est jamais interrompu
+de force** (point 4 de l'issue) : `planifierPoseTokenTous()` (logique pure,
+`static/js/ccw.js`) réutilise ce que l'interface sait déjà de l'état « en
+cours » de chaque projet — `appelerAncien('resumeProjetMonitoring', projet)`
+(existant depuis #381/#627, `static/js/app.js`), **aucun appel réseau
+supplémentaire**. `enCours > 0` → service sauté, signalé dans le résumé,
+jamais redémarré ; état non déterminable (fonction absente/retour non
+numérique) → **sauté par défaut**, sauf confirmation explicite de l'opérateur
+via une seconde modale listant les projets concernés.
+
+**Interface** (point 5) : les champs `GH_TOKEN`/`CLAUDE_CODE_OAUTH_TOKEN` de
+la section « Finaliser un projet » indiquent désormais « vide = conserver
+l'actuel » ; un jeton saisi reste masqué (type password + bouton œil), et
+n'est jamais réaffiché après soumission (comportement déjà existant pour
+les deux champs, désormais vrai aussi pour le nouveau champ de la pose
+groupée).
+
+**Tests** : `tests/test_ccw_renouveler_un_seul_jeton_743.py` (logique
+Python pure + route `ccw_finaliser_projet` avec SSH substitué, jamais de
+vraie machine Windows — un seul jeton accepté, aucun jeton refusé sans
+appel SSH, deux jetons fournis inchangés, environnement actuel illisible ⇒
+refus sans modification, aucune valeur de jeton dans les réponses JSON) et
+`static/js/tests/ccw.test.js` (`planifierPoseTokenTous`,
+`resumerResultatsPoseTokenTous` : service occupé sauté, état indéterminable
+sauté par défaut puis posé après confirmation, décompte par statut). Ce que
+CCL n'a pas pu tester (pas de vraie machine Windows) : le format réel de
+sortie de `nssm get <service> AppEnvironmentExtra` (une ligne par variable —
+hypothèse portée par analogie avec `nssm set`, à confirmer par Alain au
+premier renouvellement à jeton unique) et le redémarrage effectif du
+service avec la valeur reconduite.
+
 ---
 
 *Document technique interne — voir `BRIDGE_AGENT_DOC.md` pour l'usage du bridge.*

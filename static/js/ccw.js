@@ -75,6 +75,44 @@ export function selectionRestauree(noms, selectionCourante) {
   return noms.includes(selectionCourante) ? selectionCourante : '';
 }
 
+// Plan d'exécution de « Poser ce jeton Claude sur tous les services » (issue
+// #743, point 4) : pour chaque projet connu, décide s'il faut le traiter
+// (action 'poser') ou le sauter (action 'sauter', jamais redémarré de force).
+//   - resumeParProjet : { <projet>: {enCours, enFile} | null | undefined } —
+//     même forme que appelerAncien('resumeProjetMonitoring', projet), DÉJÀ
+//     calculée en mémoire par l'interface (aucun fetch réseau supplémentaire
+//     ici) ;
+//   - continuerIndetermines : true si l'appelant a déjà obtenu une
+//     confirmation explicite pour les projets dont l'état n'est pas
+//     déterminable (resume absent/non numérique) — sans cette confirmation,
+//     ils sont sautés par précaution plutôt que redémarrés à l'aveugle.
+export function planifierPoseTokenTous(projets, resumeParProjet, continuerIndetermines) {
+  return projets.map(function(p) {
+    const resume = resumeParProjet ? resumeParProjet[p.projet] : null;
+    const determinable = !!resume && typeof resume.enCours === 'number';
+    if (determinable && resume.enCours > 0) {
+      return { projet: p.projet, action: 'sauter', indetermine: false,
+               raison: 'occupé (' + resume.enCours + ' issue(s) en cours)' };
+    }
+    if (!determinable && !continuerIndetermines) {
+      return { projet: p.projet, action: 'sauter', indetermine: true,
+               raison: 'état « en cours » indéterminable, non confirmé' };
+    }
+    return { projet: p.projet, action: 'poser', indetermine: !determinable, raison: '' };
+  });
+}
+
+// Décompte par statut d'un résumé « Poser ce jeton Claude sur tous les
+// services » — un élément par service, {projet, statut, detail}, statut dans
+// {'OK', 'à vérifier', 'échec', 'sauté'}.
+export function resumerResultatsPoseTokenTous(resultats) {
+  const compte = { OK: 0, 'à vérifier': 0, 'échec': 0, 'sauté': 0 };
+  resultats.forEach(function(r) {
+    if (Object.prototype.hasOwnProperty.call(compte, r.statut)) compte[r.statut]++;
+  });
+  return compte;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // ÉTAT PARTAGÉ (issue #375) : dernière liste connue des services CCW, lue par
 // le panneau latéral (import direct, voir en-tête) — jamais interrogée
@@ -403,13 +441,21 @@ async function ccwFinaliserProjet() {
     ccwMessage('ccw-message', 'Choisissez un projet dans la liste déroulante.', 'erreur');
     return;
   }
-  if (!gh || !oauth) {
-    ccwMessage('ccw-message', 'Les deux tokens (GH_TOKEN et CLAUDE_CODE_OAUTH_TOKEN) sont requis.', 'erreur');
+  if (!gh && !oauth) {
+    ccwMessage('ccw-message',
+      'Au moins un des deux tokens (GH_TOKEN ou CLAUDE_CODE_OAUTH_TOKEN) est requis — '
+      + 'laissez l\'autre champ vide pour conserver sa valeur actuelle.', 'erreur');
     return;
   }
+  // Issue #743 : un champ laissé vide conserve la valeur actuelle de CE
+  // token sur le service (lue côté PC fixe, jamais ici) — message de
+  // confirmation adapté selon ce qui est effectivement fourni.
+  const quoiToken = (gh && oauth) ? 'les deux tokens'
+    : gh ? 'le token GH_TOKEN (CLAUDE_CODE_OAUTH_TOKEN conservé tel quel)'
+         : 'le token CLAUDE_CODE_OAUTH_TOKEN (GH_TOKEN conservé tel quel)';
   const ok = await toasts.confirmer(
-    'Finaliser « ' + nom + ' » : écrire TOPIC_NTFY et poser les deux tokens '
-    + 'sur le service, puis le redémarrer ?',
+    'Finaliser « ' + nom + ' » : écrire TOPIC_NTFY et poser ' + quoiToken
+    + ' sur le service, puis le redémarrer ?',
     { texteConfirmer: 'Finaliser' });
   if (!ok) return;
   ccwOccupe('ccw-btn-finaliser', true, 'Finalisation…');
@@ -437,6 +483,105 @@ async function ccwFinaliserProjet() {
   }
 }
 
+// Affiche le résumé par service de « Poser ce jeton Claude sur tous les
+// services » (issue #743, point 3) — une ligne par projet, jamais de valeur
+// de token (seulement projet/statut/detail, tous non sensibles).
+function ccwAfficherResumeTousServices(resultats) {
+  const zone = document.getElementById('ccw-tous-resume');
+  if (!zone) return;
+  if (!resultats.length) { zone.innerHTML = ''; zone.style.display = 'none'; return; }
+  const couleur = { OK: '#2e8b57', 'à vérifier': '#e0a800', 'échec': '#c0392b', 'sauté': '#888' };
+  const icone   = { OK: '✓', 'à vérifier': '⚠', 'échec': '✗', 'sauté': '⏭' };
+  zone.innerHTML = resultats.map(function(r) {
+    return '<div style="padding:3px 0;font-size:13px">'
+      + '<span style="color:' + (couleur[r.statut] || '#888') + '">'
+      + (icone[r.statut] || '?') + ' ' + dom.echapperHtml(r.statut) + '</span>'
+      + ' — ' + dom.echapperHtml(r.projet)
+      + (r.detail ? ' <span style="color:#999">(' + dom.echapperHtml(r.detail) + ')</span>' : '')
+      + '</div>';
+  }).join('');
+  zone.style.display = 'block';
+}
+
+// « Poser ce jeton Claude sur tous les services CCW » (issue #743, point 3) :
+// une seule saisie du jeton Claude, appliquée à chaque service CCW-Watcher*
+// connu, en conservant le jeton GitHub propre à chacun — en RÉUTILISANT la
+// route /ccw/finaliser-projet existante (sans gh_token ni topic, reconduits/
+// ignorés côté serveur, voir ccw_finaliser_projet), un appel SÉQUENTIEL par
+// service (jamais de redémarrages concurrents sur le PC fixe). Un service
+// occupé (point 4 : réutilise resumeProjetMonitoring, déjà en mémoire côté
+// app.js — aucun fetch réseau supplémentaire) est sauté et signalé dans le
+// résumé, jamais redémarré de force ; si son état n'est pas déterminable,
+// une confirmation explicite est demandée avant de le traiter malgré tout.
+async function ccwPoserTokenTousLesServices() {
+  const champOauth = document.getElementById('ccw-tous-oauth');
+  const oauth = champOauth ? champOauth.value : '';
+  if (!oauth) {
+    ccwMessage('ccw-message', 'Le jeton CLAUDE_CODE_OAUTH_TOKEN est requis.', 'erreur');
+    return;
+  }
+  const projets = obtenirCcwProjetsConnus() || [];
+  if (!projets.length) {
+    ccwMessage('ccw-message', 'Aucun service CCW connu — rafraîchissez la liste des projets.', 'erreur');
+    return;
+  }
+  const ok = await toasts.confirmer(
+    'Poser ce jeton Claude (CLAUDE_CODE_OAUTH_TOKEN) sur les ' + projets.length
+    + ' service(s) CCW-Watcher* listé(s) ci-dessus, en conservant le jeton GitHub propre '
+    + 'à chacun, et redémarrer chaque service non occupé ?',
+    { texteConfirmer: 'Poser sur tous' });
+  if (!ok) { if (champOauth) champOauth.value = ''; return; }
+
+  const resumeParProjet = {};
+  projets.forEach(function(p) { resumeParProjet[p.projet] = appelerAncien('resumeProjetMonitoring', p.projet); });
+
+  let plan = planifierPoseTokenTous(projets, resumeParProjet, false);
+  const indetermines = plan.filter(function(e) { return e.indetermine && e.action === 'sauter'; })
+                            .map(function(e) { return e.projet; });
+  if (indetermines.length) {
+    const continuer = await toasts.confirmer(
+      'État « en cours » non déterminable pour : ' + indetermines.join(', ') + '.\n\n'
+      + 'Continuer malgré tout avec ce(s) service(s) (redémarrage possible pendant une '
+      + 'tâche en cours) ?',
+      { texteConfirmer: 'Continuer quand même' });
+    plan = planifierPoseTokenTous(projets, resumeParProjet, continuer);
+  }
+
+  ccwOccupe('ccw-btn-tous', true, 'Pose en cours…');
+  ccwMessage('ccw-message', 'Pose du jeton Claude sur ' + projets.length + ' service(s)…', '');
+  ccwAfficherSortie('');
+  ccwAfficherResumeTousServices([]);
+  const resultats = [];
+  for (const etape of plan) {
+    if (etape.action === 'sauter') {
+      resultats.push({ projet: etape.projet, statut: 'sauté', detail: etape.raison });
+      continue;
+    }
+    try {
+      const j = await api.post('/ccw/finaliser-projet',
+        { nom: etape.projet, topic: '', oauth_token: oauth }, { silencieux: true });
+      if (j.succes && !j.avertissement) {
+        resultats.push({ projet: etape.projet, statut: 'OK', detail: '' });
+      } else if (j.avertissement) {
+        resultats.push({ projet: etape.projet, statut: 'à vérifier', detail: j.erreur || '' });
+      } else {
+        resultats.push({ projet: etape.projet, statut: 'échec', detail: j.erreur || 'Échec.' });
+      }
+    } catch (e) {
+      resultats.push({ projet: etape.projet, statut: 'échec', detail: 'Erreur réseau : ' + e.message });
+    }
+  }
+  if (champOauth) champOauth.value = '';   // jamais réaffiché, même en cas d'échec partiel.
+  ccwOccupe('ccw-btn-tous', false);
+  ccwAfficherResumeTousServices(resultats);
+  const compte = resumerResultatsPoseTokenTous(resultats);
+  ccwMessage('ccw-message',
+    'Pose terminée : ' + compte.OK + ' OK, ' + compte['à vérifier'] + ' à vérifier, '
+    + compte['échec'] + ' échec(s), ' + compte['sauté'] + ' sauté(s).',
+    compte['échec'] ? 'erreur' : (compte['à vérifier'] ? 'avertissement' : 'succes'));
+  ccwChargerProjets();
+}
+
 // ─── Délégation d'événements (remplace les onclick= inline, §6.7 étape 2) ──
 // La ligne (ccw-preselectionner) ignore les clics dont la cible est un
 // <button> : ces clics sont déjà pris en charge par la règle du bouton
@@ -449,6 +594,7 @@ function installerDelegationCcw() {
   dom.surAction('[data-action="ccw-rafraichir"]', 'click', () => ccwChargerProjets());
   dom.surAction('[data-action="ccw-ajouter"]', 'click', () => ccwAjouterProjet());
   dom.surAction('[data-action="ccw-finaliser"]', 'click', () => ccwFinaliserProjet());
+  dom.surAction('[data-action="ccw-tous"]', 'click', () => ccwPoserTokenTousLesServices());
 
   dom.surAction('[data-action="ccw-preselectionner"]', 'click', (e, el) => {
     if (e.target.closest('button')) return;

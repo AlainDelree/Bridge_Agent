@@ -11,6 +11,8 @@ import {
   afficherBoutonArreter,
   selectionRestauree,
   ccwViderChampsFinalisation,
+  planifierPoseTokenTous,
+  resumerResultatsPoseTokenTous,
 } from '../ccw.js';
 
 // ─── couleurEtatCcw ─────────────────────────────────────────────────────────
@@ -82,4 +84,53 @@ test('ccwViderChampsFinalisation : vide topic + GH_TOKEN + OAUTH_TOKEN', () => {
   } finally {
     global.document = documentPrecedent;
   }
+});
+
+// ─── planifierPoseTokenTous / resumerResultatsPoseTokenTous (issue #743) ───
+
+const PROJETS_TROIS = [{ projet: 'Alchess' }, { projet: 'Scrabble' }, { projet: 'Rummikub' }];
+
+test('planifierPoseTokenTous : service occupé (enCours > 0) → sauté, jamais posé', () => {
+  const resume = { Alchess: { enCours: 1, enFile: 0 }, Scrabble: { enCours: 0, enFile: 0 }, Rummikub: { enCours: 0, enFile: 2 } };
+  const plan = planifierPoseTokenTous(PROJETS_TROIS, resume, false);
+  assert.deepEqual(plan.map(e => e.action), ['sauter', 'poser', 'poser']);
+  assert.match(plan[0].raison, /occupé/);
+  assert.equal(plan[0].indetermine, false);
+});
+
+test('planifierPoseTokenTous : état indéterminable (resume absent) → sauté par défaut', () => {
+  const resume = { Alchess: null, Scrabble: { enCours: 0, enFile: 0 }, Rummikub: undefined };
+  const plan = planifierPoseTokenTous(PROJETS_TROIS, resume, false);
+  assert.deepEqual(plan.map(e => e.action), ['sauter', 'poser', 'sauter']);
+  assert.equal(plan[0].indetermine, true);
+  assert.equal(plan[2].indetermine, true);
+});
+
+test('planifierPoseTokenTous : état indéterminable + confirmation explicite → posé', () => {
+  const resume = { Alchess: null, Scrabble: { enCours: 0, enFile: 0 }, Rummikub: undefined };
+  const plan = planifierPoseTokenTous(PROJETS_TROIS, resume, true);
+  assert.deepEqual(plan.map(e => e.action), ['poser', 'poser', 'poser']);
+});
+
+test('planifierPoseTokenTous : occupé l\'emporte même avec confirmation des indéterminés', () => {
+  const resume = { Alchess: { enCours: 2, enFile: 0 }, Scrabble: { enCours: 0, enFile: 0 }, Rummikub: { enCours: 0, enFile: 0 } };
+  const plan = planifierPoseTokenTous(PROJETS_TROIS, resume, true);
+  assert.equal(plan[0].action, 'sauter');
+  assert.match(plan[0].raison, /occupé/);
+});
+
+test('resumerResultatsPoseTokenTous : décompte par statut, aucune valeur de jeton dans le résultat', () => {
+  const resultats = [
+    { projet: 'Alchess',  statut: 'OK',          detail: '' },
+    { projet: 'Scrabble', statut: 'à vérifier',  detail: 'log suspect' },
+    { projet: 'Rummikub', statut: 'échec',       detail: 'Erreur réseau' },
+    { projet: 'Ecole',    statut: 'sauté',       detail: 'occupé (1 issue(s) en cours)' },
+  ];
+  assert.deepEqual(resumerResultatsPoseTokenTous(resultats),
+    { OK: 1, 'à vérifier': 1, 'échec': 1, 'sauté': 1 });
+});
+
+test('resumerResultatsPoseTokenTous : liste vide → tous les compteurs à 0', () => {
+  assert.deepEqual(resumerResultatsPoseTokenTous([]),
+    { OK: 0, 'à vérifier': 0, 'échec': 0, 'sauté': 0 });
 });

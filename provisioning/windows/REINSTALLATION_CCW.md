@@ -135,6 +135,19 @@ masquée, reconstruit **aussi** la ligne `PATH` (issue #658 — sans elle, le
 `provisionner.ps1`, privant à nouveau le service de `claude.exe`), applique
 les trois lignes au service, et redémarre `CCW-Watcher`.
 
+> **Renouveler un seul jeton (issue #743).** À une saisie interactive comme
+> au mode `-FichierTokens` (utilisé par l'onglet **CCW** de l'interface
+> web), laisser une valeur vide conserve le jeton ACTUELLEMENT posé sur le
+> service (lu via `nssm get <service> AppEnvironmentExtra`, jamais affiché)
+> au lieu de l'effacer — au moins un des deux jetons reste requis ; si la
+> valeur actuelle du jeton omis est introuvable (service neuf), le script
+> abandonne SANS rien modifier et demande les deux jetons. Depuis l'onglet
+> CCW, l'action **« Poser ce jeton Claude sur tous les services CCW »**
+> applique une seule saisie de `CLAUDE_CODE_OAUTH_TOKEN` à tous les services
+> `CCW-Watcher*` listés en une fois, en conservant le `GH_TOKEN` propre à
+> chacun (résumé par service ; un service avec une issue en cours est sauté,
+> jamais redémarré de force) — voir `ARCHITECTURE.md` §10.
+
 ### 6. Vérifier que le service tourne
 
 Confirmer que `CCW-Watcher` est bien à l'état `running`, soit localement
