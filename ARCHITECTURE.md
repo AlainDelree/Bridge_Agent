@@ -410,7 +410,7 @@ variable/DOM ancien), retiré avec le reste.
 | Zone | Fragment (`templates/fragments/`) |
 |------|-----------------------------------|
 | Entête (titre, rate-limit, Quitter, Déconnexion) | `entete.html` |
-| Bandeaux (éval Windows, repli REP_TRAVAIL, sélecteur projet) | `bandeaux.html` |
+| Bandeaux (éval Windows, jetons annuaire, repli REP_TRAVAIL, sélecteur projet) | `bandeaux.html` |
 | Barre d'onglets | `onglets.html` |
 | Onglet Nouvelle issue | `onglet_creation.html` |
 | Onglet Résultats (+ inclut le panneau latéral) | `onglet_resultats.html` |
@@ -891,6 +891,58 @@ réécrire les tableaux §2/§7 si `configs/*.conf` ne fournit aucun projet
 renvoyée aux appelants. Protège notamment un worktree CCL isolé (`configs/`
 gitignoré, donc vide hors du clone de travail principal) d'un appel qui
 vidrait sinon les deux tableaux (vécu deux fois, issues #736/#737).
+
+---
+
+## 9. Bandeau d'expiration des jetons de l'annuaire (`app/jetons_annuaire.py`, issue #741)
+
+Le projet séparé **annuairetoken** tient l'annuaire des jetons d'accès
+d'Alain (métadonnées seulement, jamais de valeur de jeton) dans un fichier
+`jetons.json`, hors de ce dépôt et hors git. Bridge_Agent le lit **en
+lecture seule**, jamais ne l'écrit, pour prévenir avant qu'un jeton
+n'expire — même principe que le bandeau « OAuth Token CCW » existant
+(`app/eval_windows.py`), dont `etat_jetons_annuaire()` réutilise directement
+les seuils/niveaux (`_niveau()`, `SEUIL_ORANGE`=14j, `SEUIL_ROUGE`=5j).
+
+**Chemin du fichier** : par défaut `~/.config/annuairetoken/jetons.json`,
+surchargeable par la variable d'environnement `BRIDGE_JETONS_CHEMIN` —
+réglage **global à Bridge_Agent, pas par projet**. Aucun mécanisme de
+réglage global (hors `configs/*.conf`, par projet et interdit en écriture à
+CCL/CCW) n'existe à ce jour dans ce dépôt pour ce genre de valeur ; une
+variable d'environnement a donc été choisie faute d'alternative.
+
+**Format lu (version 1)** : objet JSON `{"version": int, "jetons": [...]}`.
+Chaque entrée de `jetons` : `id`, `service` (requis, sinon entrée ignorée),
+`statut` (`actif`/`abandonné`/`expiré`, sinon ignorée), `expiration`
+(`AAAA-MM-JJ` ou `""` = n'expire jamais ; mal formée → ignorée). `projets`,
+`depots`, `creation`, `note` sont lus par le format mais **pas utilisés** par
+le bandeau (pas de valeur par défaut nécessaire côté Bridge_Agent). Le
+format n'évolue que par ajout de clés : toute clé inconnue est ignorée sans
+erreur.
+
+**Robustesse** (jamais de plantage de l'interface) :
+- fichier absent → aucune alerte, silencieusement (`None`) ;
+- fichier illisible (JSON invalide, ou clés `version`/`jetons` absentes) →
+  message neutre « jetons.json illisible, bandeau désactivé » (niveau
+  `gris`, nouvelle variante CSS de `.bandeau-eval-windows`), détail (chemin
+  + exception) journalisé via `logging.getLogger(__name__).warning(...)` ;
+- entrée individuelle invalide (statut inconnu, date mal formée, id/service
+  manquant) → ignorée, mais comptée et affichée (« N entrée(s) ignorée(s)
+  dans jetons.json ») pour qu'un jeton ne disparaisse jamais en silence ;
+- statut `abandonné`/`expiré`, ou `expiration` vide → jamais d'alerte,
+  jamais compté comme ignoré (entrée valide, juste sans rien à afficher) ;
+- jeton `actif` dont la date est dépassée → niveau `rouge` automatiquement
+  (jours restants négatifs ≤ `SEUIL_ROUGE`), message « expiré depuis N j » ;
+  jours restants = 0 → « expire aujourd'hui ».
+
+**Frontend** : `app/vues.py::index()` passe `jetons_annuaire=
+etat_jetons_annuaire()` au gabarit ; `templates/fragments/bandeaux.html`
+l'affiche dans un second bandeau, juste sous celui de l'éval Windows,
+réutilisant la même classe CSS (`static/css/base.css`).
+
+**Tests** : `tests/test_bandeau_jetons_annuaire_741.py`, fichiers factices
+(`JETON_FACTICE_*`) dans des dossiers `/tmp` jetables via
+`BRIDGE_JETONS_CHEMIN`, jamais sur le vrai fichier d'Alain. Sans réseau.
 
 ---
 

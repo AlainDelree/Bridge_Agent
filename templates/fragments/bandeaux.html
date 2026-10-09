@@ -8,6 +8,17 @@
   </div>
   {% endif %}
 
+  <!-- ─── Bandeau d'avertissement échéance des jetons de l'annuaire (projet
+       séparé annuairetoken, jetons.json lu en lecture seule — issue #741) :
+       visible sur tous les onglets, comme le bandeau éval Windows ci-dessus. ─ -->
+  {% if jetons_annuaire %}
+  <div class="bandeau-eval-windows {{ jetons_annuaire.niveau }}">
+    {% for message in jetons_annuaire.messages %}
+    <div>{{ message }}</div>
+    {% endfor %}
+  </div>
+  {% endif %}
+
   <!-- ─── Bandeau global : tâche(s) mode_write en cours directement dans
        REP_TRAVAIL, hors worktree isolé (repli #589, issue #609) — visible sur
        TOUS les onglets, comme le bandeau éval Windows ci-dessus. Alimenté par
