@@ -158,12 +158,26 @@ def _bump_date(texte: str) -> str:
 
 def regenerer(doc_path: Path = DOC, dossier_configs: Path = DOSSIER_CONFIGS) -> dict:
     """Régénère les tableaux §2/§7 depuis configs/*.conf. Renvoie
-    {existe, modifie, erreur, n_projets, projets}."""
+    {existe, modifie, erreur, n_projets, projets}.
+
+    Garde-fou (issue #739) : si `lire_projets()` ne renvoie AUCUN projet
+    (dossier de configs absent, vide, ou ne contenant aucun `.conf` avec un
+    champ NOM), la régénération est annulée AVANT toute lecture/écriture du
+    document — `erreur` porte le message, `modifie` reste False. Évite
+    qu'un appel depuis un worktree isolé (configs/ gitignoré, donc vide
+    hors du clone de travail principal) ne vide les tableaux §2/§7 (vécu
+    deux fois, issues #736 et #737)."""
     if not doc_path.exists():
         return {"existe": False, "modifie": False, "erreur": None,
                 "n_projets": 0, "projets": []}
 
     projets = lire_projets(dossier_configs)
+    if not projets:
+        return {"existe": True, "modifie": False,
+                "erreur": f"aucun projet trouvé dans {dossier_configs} : "
+                          f"régénération annulée, document inchangé.",
+                "n_projets": 0, "projets": []}
+
     texte = doc_path.read_text(encoding="utf-8")
     original = texte
     try:

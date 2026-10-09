@@ -3,8 +3,9 @@
 régulier et journalise la consommation GraphQL/REST dans un CSV.
 
 Contexte : issue #263 (épuisement du quota GraphQL le 28/07 vers 3h — mesurer
-et attribuer la consommation par composant, sans rien corriger). Méthode
-complète et résultats : BRIDGE_AGENT_DOC.md §13.
+et attribuer la consommation par composant, sans rien corriger). Méthode :
+voir `echantillon()` et les options CLI ci-dessous ; résultats détaillés
+dans le rapport de clôture de l'issue #263 (non dupliqués ici).
 
 Usage :
     python3 scripts/mesurer_api.py --intervalle 30 --duree 600

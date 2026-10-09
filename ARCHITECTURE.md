@@ -885,6 +885,13 @@ suppression de projet, sans intervention manuelle — un push en échec (réseau
 conflit…) ne fait pas échouer la création/suppression, seule la doc reste à
 repousser à la main.
 
+**Garde-fou « aucun `.conf` trouvé » (issue #739)** : `regenerer()` refuse de
+réécrire les tableaux §2/§7 si `configs/*.conf` ne fournit aucun projet
+(dossier absent, vide, ou sans `.conf` valide) — document inchangé, erreur
+renvoyée aux appelants. Protège notamment un worktree CCL isolé (`configs/`
+gitignoré, donc vide hors du clone de travail principal) d'un appel qui
+vidrait sinon les deux tableaux (vécu deux fois, issues #736/#737).
+
 ---
 
 *Document technique interne — voir `BRIDGE_AGENT_DOC.md` pour l'usage du bridge.*

@@ -544,12 +544,15 @@ def mettre_a_jour_doc() -> dict:
     """Régénère les tableaux §2/§7 de BRIDGE_AGENT_DOC.md depuis
     configs/*.conf (délègue à regenerer_tableaux_projets — issue #571). Le
     .conf du nouveau projet est déjà écrit sur disque à ce stade (étape 2
-    de creer_projet), donc la régénération depuis le disque le voit déjà.
-    Renvoie {existe, ok2, ok7, ok_date}."""
+    de creer_projet), donc la régénération depuis le disque le voit déjà —
+    sauf garde-fou (issue #739) : si AUCUN .conf n'est trouvé (cas d'un
+    worktree isolé, sans configs/ rempli), la régénération est annulée et
+    `erreur` porte le message explicite, sans toucher au document.
+    Renvoie {existe, ok2, ok7, ok_date, erreur}."""
     resultat = regenerer_tableaux_projets.regenerer()
     ok = resultat["existe"] and resultat["erreur"] is None
     return {"existe": resultat["existe"], "ok2": ok, "ok7": ok,
-            "ok_date": resultat["modifie"]}
+            "ok_date": resultat["modifie"], "erreur": resultat["erreur"]}
 
 
 def creer_projet(nom: str, depot: str = "", rep: str = "", perimetre: str = "",
@@ -651,6 +654,8 @@ def creer_projet(nom: str, depot: str = "", rep: str = "", perimetre: str = "",
     if not doc["existe"]:
         etapes.append({"etape": "Documentation", "ok": False,
                        "detail": "BRIDGE_AGENT_DOC.md introuvable — non mis à jour."})
+    elif doc["erreur"]:
+        etapes.append({"etape": "Documentation", "ok": False, "detail": doc["erreur"]})
     else:
         ok_doc = doc["ok2"] and doc["ok7"]
         etapes.append({"etape": "Documentation", "ok": ok_doc,

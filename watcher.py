@@ -2259,8 +2259,8 @@ def _watcher_actif(cfg: Config) -> bool:
 def _compter_watchers_actifs() -> int:
     """Nombre de watchers actuellement en cours d'exécution, tous projets
     confondus (issue #220, champ nb_projets_actifs_au_lancement de l'historique
-    des durées). Réutilise les mêmes fichiers PID (logs/watcher-<nom>.pid, §13 du
-    DOC) que detecter_conflit_watcher, plutôt qu'un scan brut du dossier logs/."""
+    des durées). Réutilise les mêmes fichiers PID (logs/watcher-<nom>.pid)
+    que detecter_conflit_watcher, plutôt qu'un scan brut du dossier logs/."""
     return sum(1 for cfg in _lister_projets_connus() if _watcher_actif(cfg))
 
 
