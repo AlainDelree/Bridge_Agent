@@ -52,7 +52,7 @@ from app.ccw import (
 # « from watcher import »), mais on s'assure ici aussi de l'ordre d'import.
 DOSSIER_SCRIPT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(DOSSIER_SCRIPT))
-from watcher import _chemin_verrou, _pid_vivant, DOSSIER_LOGS  # noqa: E402
+from watcher import _chemin_verrou, _pid_vivant, _lister_worktrees_secondaires, DOSSIER_LOGS  # noqa: E402
 
 # Job Object PERSISTANT du watcher (issue #695, côté producteur déjà en
 # place dans watcher.py) : constantes/structure/fonction de nommage, SANS
@@ -208,22 +208,26 @@ def _reaper_best_effort(pid: int) -> None:
 
 
 def _lister_worktrees_actifs(cfg) -> list:
-    """Répertoires frères de REP_TRAVAIL correspondant à des worktrees actifs
-    d'une tâche mode_write (issue #337) : même convention de nommage que
-    `_chemin_worktree` dans watcher.py — `<CFG.nom>-issue<N>`, où N est un
-    numéro d'issue (entier). Scanne le parent de REP_TRAVAIL, jamais
-    REP_TRAVAIL lui-même."""
-    parent = cfg.rep_travail.parent
-    if not parent.is_dir():
-        return []
+    """Worktrees actifs d'une tâche mode_write (issue #337) pour ce projet :
+    même convention de nommage que `_chemin_worktree` dans watcher.py —
+    `<CFG.nom>-issue<N>`, où N est un numéro d'issue (entier).
+
+    Interroge `git worktree list` (`watcher._lister_worktrees_secondaires`)
+    plutôt que de scanner par nom le répertoire PARENT de REP_TRAVAIL (issue
+    #740) : depuis cette issue, les worktrees CCL (Linux) sont créés dans un
+    dossier dédié (~/worktrees par défaut), pas forcément frère du projet —
+    `git worktree list` reste exact quel que soit l'emplacement réel, y
+    compris pour les worktrees hérités restés à l'ancien emplacement et pour
+    CCW (Windows), qui garde cet ancien emplacement sans changement."""
     prefixe = f"{cfg.nom}-issue"
     resultat = []
-    for entree in parent.iterdir():
-        if not entree.is_dir():
+    for w in _lister_worktrees_secondaires(cfg.rep_travail):
+        chemin = Path(w.get("chemin") or "")
+        if not chemin.name:
             continue
-        suffixe = entree.name[len(prefixe):]
-        if entree.name.startswith(prefixe) and suffixe.isdigit():
-            resultat.append(entree)
+        suffixe = chemin.name[len(prefixe):]
+        if chemin.name.startswith(prefixe) and suffixe.isdigit():
+            resultat.append(chemin)
     return resultat
 
 

@@ -39,16 +39,34 @@ périmètre de ce mécanisme (voir §5 « Limites connues »).
   si elle restait bloquée en attendant la fin de `_traiter_issue_synchrone`
   pour la première tâche, elle ne pourrait jamais détecter une deuxième
   issue `mode_write` pendant que la première tourne encore.
-- **Slots suivants dans des worktrees frères.** Toute tâche `mode_write`
+- **Slots suivants dans des worktrees dédiés.** Toute tâche `mode_write`
   détectée pendant qu'au moins un thread est déjà actif, et tant que
-  `MAX_WRITE_PARALLELE` n'est pas atteint, obtient un worktree dédié :
-  `<REP_TRAVAIL>/../<NOM_PROJET>-issue<N>` (répertoire frère de
-  `REP_TRAVAIL`), branche `worktree-issue-<N>`, créés par
+  `MAX_WRITE_PARALLELE` n'est pas atteint, obtient un worktree dédié, nommé
+  `<NOM_PROJET>-issue<N>`, branche `worktree-issue-<N>`, créés par
   `git -C <REP_TRAVAIL> worktree add <chemin> -b worktree-issue-<N>`. Si
   la création échoue (chemin ou branche déjà existants, ou toute autre
   erreur git), repli automatique et silencieux sur le traitement
   séquentiel classique — jamais d'exception propagée, l'issue attend
   simplement qu'un slot se libère au cycle suivant.
+  - **Emplacement (issue #740).** Sous **CCL (Linux)**, `<chemin>` est
+    désormais `~/worktrees/<NOM_PROJET>-issue<N>` — un dossier **dédié**,
+    séparé des dossiers de projets (`DOSSIER_WORKTREES_DEDIE` dans
+    `watcher.py`, variable globale modifiable, PAS un champ de
+    `configs/*.conf` ; créé automatiquement au besoin). Si ce dossier dédié
+    ne peut pas être créé ou n'est pas accessible en écriture, repli
+    automatique sur l'ancien emplacement — répertoire **frère** de
+    `REP_TRAVAIL` (`<REP_TRAVAIL>/../<NOM_PROJET>-issue<N>`) — signalé par
+    un `log.warning` explicite dans `logs/watcher-<projet>.log`, pour
+    qu'aucune issue ne soit bloquée par ce repli. Sous **CCW (Windows)**,
+    aucun changement : `<chemin>` reste le répertoire frère de
+    `REP_TRAVAIL`, comme avant cette issue.
+  - **Worktrees déjà existants : aucune migration.** Les worktrees créés
+    avant l'issue #740 restent à leur ancien emplacement (frère du projet)
+    — aucun déplacement automatique. Ils restent trouvés et réutilisables
+    par une RELANCE (§2 ci-dessous, issue #725) : la recherche interroge
+    `git worktree list` et compare le NOM du dossier, jamais son
+    emplacement. Le nettoyage manuel (§3, étape 5) continue de fonctionner
+    à l'identique, quel que soit l'emplacement du worktree.
 - **Verrou par chemin de travail effectif.** Le verrou anti-collision
   inter-process (issues #189/#322, un fichier sous `logs/verrous/`) est
   désormais posé sur le **chemin de travail effectif** de chaque tâche

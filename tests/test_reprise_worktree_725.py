@@ -360,6 +360,14 @@ def main():
         print("  (ignoré : ce test s'appuie sur bash/git POSIX, non applicable sous Windows)")
         return 0
 
+    # Issue #740 : isole DOSSIER_WORKTREES_DEDIE pour toute la durée de ce
+    # fichier de test — sans ce réglage, _creer_worktree/_chemin_worktree
+    # (appelés par la plupart des scénarios ci-dessous) créeraient et
+    # utiliseraient le VRAI ~/worktrees de la machine qui exécute les tests.
+    dossier_worktrees_dedie_test = tempfile.TemporaryDirectory()
+    ancien_dossier_worktrees_dedie = watcher.DOSSIER_WORKTREES_DEDIE
+    watcher.DOSSIER_WORKTREES_DEDIE = Path(dossier_worktrees_dedie_test.name)
+
     tests = [
         ("(1) relance avec worktree existant valide : repris, aucun -bis créé",
          scenario_relance_worktree_existant_repris),
@@ -383,16 +391,20 @@ def main():
     watcher.log.setLevel(logging.CRITICAL)
 
     echecs = 0
-    for nom, fn in tests:
-        try:
-            rap = fn()
-            print(f"  ✓ {nom}  ({rap})")
-        except AssertionError as e:
-            echecs += 1
-            print(f"  ✗ {nom}\n      {e}")
-        except Exception as e:  # noqa: BLE001
-            echecs += 1
-            print(f"  ✗ {nom} — erreur inattendue : {type(e).__name__}: {e}")
+    try:
+        for nom, fn in tests:
+            try:
+                rap = fn()
+                print(f"  ✓ {nom}  ({rap})")
+            except AssertionError as e:
+                echecs += 1
+                print(f"  ✗ {nom}\n      {e}")
+            except Exception as e:  # noqa: BLE001
+                echecs += 1
+                print(f"  ✗ {nom} — erreur inattendue : {type(e).__name__}: {e}")
+    finally:
+        watcher.DOSSIER_WORKTREES_DEDIE = ancien_dossier_worktrees_dedie
+        dossier_worktrees_dedie_test.cleanup()
 
     if echecs:
         print(f"\n❌ {echecs} scénario(s) en échec.")

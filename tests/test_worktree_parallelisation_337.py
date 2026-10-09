@@ -274,7 +274,11 @@ def _issue_minimale(numero: int, titre: str, labels: list[str]) -> dict:
 
 
 def scenario_chemin_et_branche_worktree():
-    """_chemin_worktree / _branche_worktree : nommage attendu."""
+    """_chemin_worktree / _branche_worktree : nommage attendu — issue #740,
+    le worktree est désormais placé sous DOSSIER_WORKTREES_DEDIE (dossier
+    dédié, pas le répertoire frère de REP_TRAVAIL), toujours nommé
+    `<projet>-issue<N>`. DOSSIER_WORKTREES_DEDIE est déjà isolé vers un
+    tmpdir par `main()` pour toute la durée de ce fichier."""
     ancien_cfg = watcher.CFG
     try:
         watcher.CFG = watcher.Config(
@@ -282,11 +286,140 @@ def scenario_chemin_et_branche_worktree():
             rep_travail=Path("/tmp/nexiste_pas/testproj"), topic_ntfy="x",
         )
         chemin = watcher._chemin_worktree(42)
-        assert chemin == Path("/tmp/nexiste_pas/testproj-issue42"), chemin
+        assert chemin == watcher.DOSSIER_WORKTREES_DEDIE / "testproj-issue42", chemin
+        assert chemin != Path("/tmp/nexiste_pas/testproj-issue42"), \
+            "le worktree ne doit plus être calculé comme frère de REP_TRAVAIL sous Linux (issue #740)"
         assert watcher._branche_worktree(42) == "worktree-issue-42"
     finally:
         watcher.CFG = ancien_cfg
     return {}
+
+
+def scenario_dossier_dedie_cree_si_manquant():
+    """Issue #740 : si DOSSIER_WORKTREES_DEDIE n'existe pas encore sur
+    disque, `_chemin_worktree` le crée au besoin plutôt que d'échouer."""
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+        ancien_cfg = watcher.CFG
+        ancien_dossier_dedie = watcher.DOSSIER_WORKTREES_DEDIE
+        dossier_dedie = tmp_path / "pas_encore_cree" / "worktrees"
+        watcher.DOSSIER_WORKTREES_DEDIE = dossier_dedie
+        try:
+            watcher.CFG = watcher.Config(
+                nom="testproj740", depot="AlainDelree/x",
+                rep_travail=tmp_path / "projet", topic_ntfy="x",
+            )
+            assert not dossier_dedie.exists()
+            chemin = watcher._chemin_worktree(7401)
+            assert dossier_dedie.is_dir(), "le dossier dédié aurait dû être créé au besoin"
+            assert chemin == dossier_dedie / "testproj740-issue7401", chemin
+        finally:
+            watcher.CFG = ancien_cfg
+            watcher.DOSSIER_WORKTREES_DEDIE = ancien_dossier_dedie
+    return {"dossier_dedie_cree_ok": True}
+
+
+def scenario_repli_si_dossier_dedie_inaccessible():
+    """Issue #740 : si DOSSIER_WORKTREES_DEDIE ne peut pas être créé/n'est
+    pas accessible en écriture (ici : son PARENT existe mais est en lecture
+    seule, donc `mkdir` du dossier dédié échoue), repli sur l'ancien
+    emplacement — répertoire frère de REP_TRAVAIL — signalé par un
+    log.warning explicite, pour qu'aucune issue ne soit bloquée."""
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+        rep_travail = tmp_path / "projet"
+        rep_travail.mkdir()
+        parent_readonly = tmp_path / "parent_readonly"
+        parent_readonly.mkdir()
+        dossier_dedie = parent_readonly / "worktrees"
+        os.chmod(parent_readonly, 0o555)
+
+        ancien_cfg = watcher.CFG
+        ancien_dossier_dedie = watcher.DOSSIER_WORKTREES_DEDIE
+        watcher.DOSSIER_WORKTREES_DEDIE = dossier_dedie
+        try:
+            watcher.CFG = watcher.Config(
+                nom="testproj740b", depot="AlainDelree/x",
+                rep_travail=rep_travail, topic_ntfy="x",
+            )
+            with _capturer_logs_watcher() as logs:
+                chemin = watcher._chemin_worktree(7402)
+            assert chemin == rep_travail.parent / "testproj740b-issue7402", \
+                f"repli sur l'ancien emplacement (frère de REP_TRAVAIL) attendu : {chemin}"
+            logs_repli = [m for m in logs if "dossier dédié" in m and "indisponible" in m]
+            assert logs_repli, f"aucun log.warning explicite du repli (issue #740) : {logs}"
+        finally:
+            watcher.CFG = ancien_cfg
+            watcher.DOSSIER_WORKTREES_DEDIE = ancien_dossier_dedie
+            os.chmod(parent_readonly, 0o755)
+    return {"repli_dossier_dedie_ok": True}
+
+
+def scenario_reglage_emplacement_pris_en_compte():
+    """Issue #740 : DOSSIER_WORKTREES_DEDIE est un réglage global simple à
+    changer — un emplacement personnalisé est bien respecté par
+    `_chemin_worktree`, sans toucher à CFG ni à configs/*.conf."""
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+        emplacement_perso = tmp_path / "ailleurs" / "mes_worktrees"
+
+        ancien_cfg = watcher.CFG
+        ancien_dossier_dedie = watcher.DOSSIER_WORKTREES_DEDIE
+        watcher.DOSSIER_WORKTREES_DEDIE = emplacement_perso
+        try:
+            watcher.CFG = watcher.Config(
+                nom="testproj740c", depot="AlainDelree/x",
+                rep_travail=tmp_path / "projet", topic_ntfy="x",
+            )
+            chemin = watcher._chemin_worktree(7403)
+            assert chemin == emplacement_perso / "testproj740c-issue7403", chemin
+        finally:
+            watcher.CFG = ancien_cfg
+            watcher.DOSSIER_WORKTREES_DEDIE = ancien_dossier_dedie
+    return {"reglage_pris_en_compte_ok": True}
+
+
+def scenario_worktree_ancien_emplacement_toujours_trouve_par_relance():
+    """Issue #740 : un worktree déjà créé à l'ANCIEN emplacement (frère de
+    REP_TRAVAIL, comportement d'avant cette issue) reste trouvé et repris
+    par une RELANCE (issue #725) même après le passage au dossier dédié —
+    `_trouver_worktree_reutilisable` interroge `git worktree list` et
+    compare le NOM du dossier, jamais son emplacement."""
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+        rep_travail = tmp_path / "projet"
+        rep_travail.mkdir()
+        _init_depot_git(rep_travail)
+
+        ancien_cfg = watcher.CFG
+        ancien_dossier_dedie = watcher.DOSSIER_WORKTREES_DEDIE
+        watcher.CFG = watcher.Config(
+            nom="testproj740d", depot="AlainDelree/x",
+            rep_travail=rep_travail, topic_ntfy="x",
+        )
+        try:
+            numero = 7404
+            # Worktree créé à l'ANCIEN emplacement (frère de REP_TRAVAIL),
+            # directement via `git worktree add`, sans passer par
+            # `_chemin_worktree` — simule un worktree hérité d'avant #740.
+            chemin_ancien = rep_travail.parent / f"testproj740d-issue{numero}"
+            branche = watcher._branche_worktree(numero)
+            res = subprocess.run(
+                ["git", "-C", str(rep_travail), "worktree", "add", str(chemin_ancien), "-b", branche],
+                capture_output=True, text=True,
+            )
+            assert res.returncode == 0, res.stderr
+
+            # Même avec le dossier dédié pointant ailleurs (comportement
+            # normal post-#740), la relance doit retrouver ce worktree hérité.
+            watcher.DOSSIER_WORKTREES_DEDIE = tmp_path / "worktrees_dedies_sans_rapport"
+            resultat = watcher._trouver_worktree_reutilisable(numero)
+            assert resultat is not None, "le worktree hérité à l'ancien emplacement aurait dû être trouvé"
+            assert resultat[0] == chemin_ancien, resultat
+        finally:
+            watcher.CFG = ancien_cfg
+            watcher.DOSSIER_WORKTREES_DEDIE = ancien_dossier_dedie
+    return {"ancien_emplacement_retrouve_ok": True}
 
 
 def scenario_creer_worktree_succes_et_repli():
@@ -688,7 +821,11 @@ def scenario_max_1_isole_dans_worktree():
             watcher._threads_ecriture.clear()
             watcher._threads_ecriture.extend(ancien_threads)
 
-        chemin_worktree = rep_travail.parent / f"test577seq-issue{numero}"
+        # issue #740 : le worktree dédié est désormais sous DOSSIER_WORKTREES_DEDIE
+        # (isolé vers un tmpdir par main()), plus un répertoire frère de
+        # rep_travail — watcher.CFG (toujours "test577seq" à ce point, jamais
+        # restauré par le bloc `finally` ci-dessus, comme avant cette issue).
+        chemin_worktree = watcher._chemin_worktree(numero)
         assert chemin_worktree.is_dir(), \
             "un worktree dédié aurait dû être créé même à MAX_WRITE_PARALLELE=1 (issue #577)"
 
@@ -1079,8 +1216,24 @@ def main():
         print("  (ignoré : ce test s'appuie sur bash/git POSIX, non applicable sous Windows)")
         return 0
 
+    # Issue #740 : isole DOSSIER_WORKTREES_DEDIE pour toute la durée de ce
+    # fichier de test — sans ce réglage, _chemin_worktree (appelé par la
+    # plupart des scénarios ci-dessous) créerait et utiliserait le VRAI
+    # ~/worktrees de la machine qui exécute les tests.
+    pile = contextlib.ExitStack()
+    dossier_worktrees_dedie_test = pile.enter_context(tempfile.TemporaryDirectory())
+    ancien_dossier_worktrees_dedie = watcher.DOSSIER_WORKTREES_DEDIE
+    watcher.DOSSIER_WORKTREES_DEDIE = Path(dossier_worktrees_dedie_test)
+
     tests = [
         ("_chemin_worktree / _branche_worktree : nommage attendu", scenario_chemin_et_branche_worktree),
+        ("issue #740 — dossier dédié créé s'il manque", scenario_dossier_dedie_cree_si_manquant),
+        ("issue #740 — repli sur l'ancien emplacement si le dossier dédié est inaccessible",
+         scenario_repli_si_dossier_dedie_inaccessible),
+        ("issue #740 — réglage de l'emplacement (DOSSIER_WORKTREES_DEDIE) pris en compte",
+         scenario_reglage_emplacement_pris_en_compte),
+        ("issue #740 — worktree hérité à l'ancien emplacement toujours trouvé par une relance",
+         scenario_worktree_ancien_emplacement_toujours_trouve_par_relance),
         ("_creer_worktree : succès + replis propres (chemin/branche déjà pris)", scenario_creer_worktree_succes_et_repli),
         ("issue #611 — _creer_worktree_avec_retries : réussit via -bis si le nom standard est pris",
          scenario_creer_worktree_avec_retries_reussit_via_bis),
@@ -1110,17 +1263,21 @@ def main():
 
     ancien_cfg = watcher.CFG
     echecs = 0
-    for nom, fn in tests:
-        try:
-            rap = fn()
-            print(f"  ✓ {nom}  ({rap})")
-        except AssertionError as e:
-            echecs += 1
-            print(f"  ✗ {nom}\n      {e}")
-        except Exception as e:  # noqa: BLE001
-            echecs += 1
-            print(f"  ✗ {nom} — erreur inattendue : {type(e).__name__}: {e}")
-    watcher.CFG = ancien_cfg
+    try:
+        for nom, fn in tests:
+            try:
+                rap = fn()
+                print(f"  ✓ {nom}  ({rap})")
+            except AssertionError as e:
+                echecs += 1
+                print(f"  ✗ {nom}\n      {e}")
+            except Exception as e:  # noqa: BLE001
+                echecs += 1
+                print(f"  ✗ {nom} — erreur inattendue : {type(e).__name__}: {e}")
+    finally:
+        watcher.CFG = ancien_cfg
+        watcher.DOSSIER_WORKTREES_DEDIE = ancien_dossier_worktrees_dedie
+        pile.close()
 
     if echecs:
         print(f"\n❌ {echecs} scénario(s) en échec.")
