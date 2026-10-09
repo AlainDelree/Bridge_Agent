@@ -38,12 +38,21 @@ def verifier_nouveau_projet():
       - conf_existe  : configs/<nom>.conf existe déjà (nom pris)
       - depot        : dépôt effectivement vérifié (celui fourni ou le défaut)
       - depot_existe : ce dépôt existe déjà sur GitHub → installation, pas création
-      - depot_defaut / rep_defaut : propositions pré-remplies (modifiables)."""
-    nom = (request.args.get("nom") or "").strip().lower()
+      - depot_defaut / rep_defaut : propositions pré-remplies (modifiables),
+        reprenant la casse telle que saisie dans `nom` (issue #738) — c'est
+        pourquoi `nom` n'est PAS mis en minuscules avant ce calcul, contrairement
+        au `nom` renvoyé (clé interne, toujours en minuscules).
+      - rep_casse_differente : chemin d'un dossier homonyme à casse différente
+        s'il en existe un à l'emplacement du répertoire par défaut proposé et
+        que celui-ci n'existe pas encore (avertissement non bloquant, issue
+        #738) ; '' sinon."""
+    nom_saisi = (request.args.get("nom") or "").strip()
+    nom = nom_saisi.lower()
     depot = (request.args.get("depot") or "").strip()
 
     valide = np_cli.valider_nom(nom)
-    depot_defaut = np_cli.depot_defaut(nom) if valide else ""
+    depot_defaut = np_cli.depot_defaut(nom_saisi) if valide else ""
+    rep_defaut = np_cli.rep_defaut(nom_saisi) if valide else ""
     depot_a_verifier = depot or depot_defaut
 
     return jsonify(
@@ -51,7 +60,8 @@ def verifier_nouveau_projet():
         nom_valide   = valide,
         conf_existe  = np_cli.conf_existe(nom) if valide else False,
         depot_defaut = depot_defaut,
-        rep_defaut   = np_cli.rep_defaut(nom) if valide else "",
+        rep_defaut   = rep_defaut,
+        rep_casse_differente = (np_cli.rep_casse_differente(rep_defaut) or "") if rep_defaut else "",
         depot        = depot_a_verifier,
         depot_existe = bool(depot_a_verifier) and np_cli.depot_existe(depot_a_verifier),
         # Couleurs de la palette encore libres (issue #121) : le modal affiche

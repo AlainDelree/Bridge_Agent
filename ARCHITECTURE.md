@@ -848,6 +848,28 @@ du disque — issues #258/#260, pour ne pas confondre un `venv/` gitignoré
 préexistant avec du contenu à relire avant push) ; enfin régénère
 `BRIDGE_AGENT_DOC.md` (§2/§7, date en bas).
 
+**Casse des valeurs par défaut dépôt/répertoire (issue #738)** : le NOM
+interne (clé, nom du `.conf`, labels) reste toujours calculé en minuscules.
+Mais `depot_defaut()`/`rep_defaut()` reçoivent désormais le nom **tel que
+saisi**, pas sa version mise en minuscules, et `casse_proposee()` décide la
+forme à proposer : un nom contenant au moins une majuscule interne
+(`AnnuaireToken`, `ChessCoach`) est repris tel quel ; un nom entièrement en
+minuscules garde le comportement historique (première lettre capitalisée :
+`rummikub` → `Rummikub`). Avant #738, la casse saisie était perdue en trois
+endroits avant même d'atteindre ces fonctions : `creer_projet()`,
+l'assistant CLI (`etape_nom()`), et la route `verifier_nouveau_projet()`
+(`app/nouveau_projet.py`) mettaient tous le nom en minuscules en entrée — et
+côté JavaScript, `npVerifier()` (`static/js/app.js`) faisait de même avant
+l'appel réseau. Les valeurs proposées restent modifiables à la main, comme
+avant. `rep_casse_differente()` ajoute un avertissement non bloquant : si le
+répertoire proposé n'existe pas encore mais qu'un dossier de même nom à
+casse différente existe déjà dans le même dossier parent (Linux distingue
+les majuscules, contrairement à Windows/macOS par défaut), la route
+`/nouveau-projet/verifier` le signale (`rep_casse_differente` dans la
+réponse JSON) et le modal l'affiche sous le champ répertoire — pour éviter
+de créer un second dossier pointant sur un `.conf` différent de celui déjà
+en place.
+
 **`supprimer_projet()`** (issue #587, côté CCL/local uniquement — dépôt
 GitHub, labels et côté CCW restent hors scope, traités par une issue dédiée)
 démonte, dans l'ordre inverse de la création : répertoire de travail du
