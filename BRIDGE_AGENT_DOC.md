@@ -40,7 +40,7 @@ Claude Chat → crée une issue → GitHub → watcher.py détecte → CCL/CCW e
 |-----|-------------|--------------------------|------------|---------|
 | `actualise` | AlainDelree/Actualise | ~/Actualise | (conf local) | `#009DD6` |
 | `alchess` | AlainDelree/AlChess | ~/NicLink | (conf local) | `#00D68F` |
-| `annuairetoken` | AlainDelree/Annuairetoken | ~/Annuairetoken | (conf local) | `#FFE4CC` |
+| `annuairetoken` | AlainDelree/Annuairetoken | ~/AnnuaireToken | (conf local) | `#FFE4CC` |
 | `apiselect` | AlainDelree/ApiSelect | ~/ApiSelect | (conf local) | `#FFD429` |
 | `bloc_score` | AlainDelree/Bloc_score | ~/Bloc_score | (conf local) | `#FF8595` |
 | `bridge_agent` | AlainDelree/Bridge_Agent | ~/Bridge_Agent | (conf local) | `#EB0000` |
@@ -345,7 +345,7 @@ hors périmètre même si l'issue le demande explicitement :
 |--------|-------------------|
 | `actualise` | /home/alain/Actualise |
 | `alchess` | /home/alain/NicLink |
-| `annuairetoken` | /home/alain/Annuairetoken |
+| `annuairetoken` | /home/alain/AnnuaireToken |
 | `apiselect` | /home/alain/ApiSelect |
 | `bloc_score` | /home/alain/Bloc_score |
 | `bridge_agent` | /home/alain/Bridge_Agent |
@@ -737,7 +737,7 @@ calibration (constantes actuelles du code : `K_VARIABILITE` = 3, issue
 
 ---
 
-*Dernière mise à jour : 8 octobre 2026 — nettoyage de la documentation pour
+*Dernière mise à jour : 9 octobre 2026 — nettoyage de la documentation pour
 Claude Chat (issue #736, 3/3).*
 
 Historique complet : voir [`CHANGELOG.md`](CHANGELOG.md).
