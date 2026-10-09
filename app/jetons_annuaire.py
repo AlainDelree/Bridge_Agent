@@ -24,6 +24,11 @@ STATUTS_CONNUS = ("actif", "abandonné", "expiré")
 VARIABLE_ENV_CHEMIN = "BRIDGE_JETONS_CHEMIN"
 CHEMIN_DEFAUT = Path.home() / ".config" / "annuairetoken" / "jetons.json"
 
+# Nombre maximal de lignes de jetons affichées avant de les remplacer par une
+# ligne de synthèse (issue #742). La ligne « N entrée(s) ignorée(s) » n'est
+# pas comptée dans ce plafond.
+MAX_LIGNES_JETONS = 3
+
 
 def _chemin_jetons() -> Path:
     brut = os.environ.get(VARIABLE_ENV_CHEMIN)
@@ -99,6 +104,8 @@ def etat_jetons_annuaire() -> dict | None:
             texte_jours = f"{jours_restants} j restant(s)"
         alertes.append({
             "niveau": niveau,
+            "jours_restants": jours_restants,
+            "jeton_id": jeton_id,
             "message": f"⚠️ Jeton {service} ({jeton_id}) : {texte_jours}",
         })
 
@@ -107,7 +114,17 @@ def etat_jetons_annuaire() -> dict | None:
 
     niveau_global = "rouge" if any(a["niveau"] == "rouge" for a in alertes) else "orange"
 
-    messages = [a["message"] for a in alertes]
+    alertes.sort(key=lambda a: (a["jours_restants"], a["jeton_id"]))
+
+    visibles = alertes[:MAX_LIGNES_JETONS]
+    masques = alertes[MAX_LIGNES_JETONS:]
+
+    messages = [a["message"] for a in visibles]
+    if masques:
+        n_masques = len(masques)
+        autre = "autre" if n_masques == 1 else "autres"
+        jeton = "jeton" if n_masques == 1 else "jetons"
+        messages.append(f"⚠️ + {n_masques} {autre} {jeton} à renouveler — voir l'annuaire")
     if n_ignores:
         messages.append(f"⚠️ {n_ignores} entrée(s) ignorée(s) dans jetons.json")
 
