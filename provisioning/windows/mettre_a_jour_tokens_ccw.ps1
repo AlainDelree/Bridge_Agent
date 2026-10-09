@@ -158,7 +158,7 @@ $script:LongueurJetonMax = 4096
 # on redécoupe proprement, on coupe les espaces, et on ignore les lignes
 # vides. Fonctionne aussi bien sur une sortie déjà propre (sans aucun NUL).
 function ConvertTo-LignesEnvironnementPropres([string[]]$sortieBrute) {
-    $texte = ($sortieBrute -join "`n").Replace([char]0, '')
+    $texte = ($sortieBrute -join "`n").Replace([string][char]0, '')
     return @($texte -split "`r`n|`r|`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ -ne '' })
 }
 
