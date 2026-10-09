@@ -195,6 +195,148 @@ def test_seulement_entrees_ignorees_bandeau_quand_meme_affiche():
     return {"res": res}
 
 
+def _jetons_en_desordre(jours_restants_liste):
+    """Fabrique des jetons actifs factices, un par valeur de jours_restants
+    donnée, dans l'ORDRE DE LA LISTE fournie (pas trié) — pour vérifier que
+    le tri par urgence s'applique bien, pas l'ordre du fichier."""
+    jetons = []
+    for i, jours in enumerate(jours_restants_liste):
+        echeance = (date.today() + timedelta(days=jours)).isoformat()
+        jetons.append(_jeton_factice(
+            service=f"svc-{i}", id=f"JETON_FACTICE_{i}", expiration=echeance,
+        ))
+    return jetons
+
+
+def test_tri_par_jours_restants_jetons_en_desordre():
+    with tempfile.TemporaryDirectory() as tmp:
+        # 10, 2, 5 jours restants dans le fichier -> attendu triés 2, 5, 10.
+        contenu = {"version": 1, "jetons": _jetons_en_desordre([10, 2, 5])}
+        res = _etat_avec_fichier(Path(tmp), contenu=contenu)
+        assert res is not None
+        ordre = [m for m in res["messages"] if m.startswith("⚠️ Jeton")]
+        assert "svc-1" in ordre[0] and "2 j restant(s)" in ordre[0], res
+        assert "svc-2" in ordre[1] and "5 j restant(s)" in ordre[1], res
+        assert "svc-0" in ordre[2] and "10 j restant(s)" in ordre[2], res
+    return {"res": res}
+
+
+def test_tri_jetons_deja_expires_en_premier():
+    with tempfile.TemporaryDirectory() as tmp:
+        # -3 (déjà expiré), 1, -1 jours restants -> attendu : -3, -1, 1.
+        contenu = {"version": 1, "jetons": _jetons_en_desordre([-3, 1, -1])}
+        res = _etat_avec_fichier(Path(tmp), contenu=contenu)
+        assert res is not None
+        ordre = [m for m in res["messages"] if m.startswith("⚠️ Jeton")]
+        assert "expiré depuis 3 j" in ordre[0], res
+        assert "expiré depuis 1 j" in ordre[1], res
+        assert "1 j restant(s)" in ordre[2], res
+    return {"res": res}
+
+
+def test_tri_egalite_jours_departagee_par_id():
+    with tempfile.TemporaryDirectory() as tmp:
+        echeance = (date.today() + timedelta(days=3)).isoformat()
+        contenu = {"version": 1, "jetons": [
+            _jeton_factice(service="svc-z", id="JETON_FACTICE_Z", expiration=echeance),
+            _jeton_factice(service="svc-a", id="JETON_FACTICE_A", expiration=echeance),
+        ]}
+        res = _etat_avec_fichier(Path(tmp), contenu=contenu)
+        assert res is not None
+        ordre = [m for m in res["messages"] if m.startswith("⚠️ Jeton")]
+        assert "svc-a" in ordre[0], res
+        assert "svc-z" in ordre[1], res
+    return {"res": res}
+
+
+def test_exactement_3_jetons_3_lignes_sans_synthese():
+    with tempfile.TemporaryDirectory() as tmp:
+        contenu = {"version": 1, "jetons": _jetons_en_desordre([1, 2, 3])}
+        res = _etat_avec_fichier(Path(tmp), contenu=contenu)
+        assert res is not None
+        lignes_jetons = [m for m in res["messages"] if m.startswith("⚠️ Jeton")]
+        assert len(lignes_jetons) == 3, res
+        assert not any("autre" in m for m in res["messages"]), res
+    return {"res": res}
+
+
+def test_4_jetons_3_lignes_plus_1_autre():
+    with tempfile.TemporaryDirectory() as tmp:
+        contenu = {"version": 1, "jetons": _jetons_en_desordre([1, 2, 3, 4])}
+        res = _etat_avec_fichier(Path(tmp), contenu=contenu)
+        assert res is not None
+        lignes_jetons = [m for m in res["messages"] if m.startswith("⚠️ Jeton")]
+        assert len(lignes_jetons) == 3, res
+        assert "+ 1 autre jeton à renouveler" in " ".join(res["messages"]), res
+    return {"res": res}
+
+
+def test_20_jetons_3_lignes_plus_17_autres():
+    with tempfile.TemporaryDirectory() as tmp:
+        # Tous à 3 jours restants (seuil orange) pour que les 20 soient en
+        # alerte — au-delà de SEUIL_ORANGE (14 j), un jeton n'est plus affiché.
+        contenu = {"version": 1, "jetons": _jetons_en_desordre([3] * 20)}
+        res = _etat_avec_fichier(Path(tmp), contenu=contenu)
+        assert res is not None
+        lignes_jetons = [m for m in res["messages"] if m.startswith("⚠️ Jeton")]
+        assert len(lignes_jetons) == 3, res
+        assert "+ 17 autres" in " ".join(res["messages"]), res
+    return {"res": res}
+
+
+def test_niveau_rouge_meme_si_jeton_critique_masque():
+    """4 jetons au seuil rouge (jours_restants=2) : les 3 premiers (triés par
+    id) sont visibles, le 4e est masqué par le plafond — le niveau du
+    bandeau doit rester rouge, calculé sur TOUS les jetons en alerte, pas
+    seulement sur les 3 lignes affichées."""
+    with tempfile.TemporaryDirectory() as tmp:
+        contenu = {"version": 1, "jetons": [
+            _jeton_factice(service=f"svc-{c}", id=f"JETON_FACTICE_{c}",
+                            expiration=(date.today() + timedelta(days=2)).isoformat())
+            for c in "ZYXW"
+        ]}
+        res = _etat_avec_fichier(Path(tmp), contenu=contenu)
+        assert res is not None
+        assert res["niveau"] == "rouge", res
+        assert "+ 1 autre" in " ".join(res["messages"]), res
+    return {"res": res}
+
+
+def test_ligne_entrees_ignorees_restee_en_dernier_avec_synthese():
+    with tempfile.TemporaryDirectory() as tmp:
+        jetons = _jetons_en_desordre([1, 2, 3, 4])
+        jetons.append(_jeton_factice(statut="statut-invalide"))
+        contenu = {"version": 1, "jetons": jetons}
+        res = _etat_avec_fichier(Path(tmp), contenu=contenu)
+        assert res is not None
+        assert "1 entrée(s) ignorée(s)" in res["messages"][-1], res
+        assert "autre" in res["messages"][-2], res
+    return {"res": res}
+
+
+def test_comportement_inchange_avec_1_jeton():
+    with tempfile.TemporaryDirectory() as tmp:
+        contenu = {"version": 1, "jetons": _jetons_en_desordre([2])}
+        res = _etat_avec_fichier(Path(tmp), contenu=contenu)
+        assert res is not None
+        assert len([m for m in res["messages"] if m.startswith("⚠️ Jeton")]) == 1, res
+        assert not any("autre" in m for m in res["messages"]), res
+    return {"res": res}
+
+
+def test_comportement_inchange_avec_2_jetons():
+    with tempfile.TemporaryDirectory() as tmp:
+        contenu = {"version": 1, "jetons": _jetons_en_desordre([5, 2])}
+        res = _etat_avec_fichier(Path(tmp), contenu=contenu)
+        assert res is not None
+        ordre = [m for m in res["messages"] if m.startswith("⚠️ Jeton")]
+        assert len(ordre) == 2, res
+        assert "2 j restant(s)" in ordre[0], res
+        assert "5 j restant(s)" in ordre[1], res
+        assert not any("autre" in m for m in res["messages"]), res
+    return {"res": res}
+
+
 def main() -> int:
     tests = [
         ("fichier absent → aucune alerte", test_fichier_absent_aucune_alerte),
@@ -208,6 +350,16 @@ def main() -> int:
         ("jeton actif expirant aujourd'hui → « expire aujourd'hui »", test_jeton_expire_aujourdhui),
         ("entrée invalide ignorée sans faire disparaître les autres", test_entree_invalide_ignoree_sans_faire_disparaitre_les_autres),
         ("seulement des entrées ignorées → bandeau quand même affiché", test_seulement_entrees_ignorees_bandeau_quand_meme_affiche),
+        ("tri par jours restants, jetons en désordre dans le fichier", test_tri_par_jours_restants_jetons_en_desordre),
+        ("tri : jetons déjà expirés d'abord, le plus en retard en tête", test_tri_jetons_deja_expires_en_premier),
+        ("tri : égalité de jours départagée par id", test_tri_egalite_jours_departagee_par_id),
+        ("exactement 3 jetons → 3 lignes, sans synthèse", test_exactement_3_jetons_3_lignes_sans_synthese),
+        ("4 jetons → 3 lignes + « + 1 autre jeton »", test_4_jetons_3_lignes_plus_1_autre),
+        ("20 jetons → 3 lignes + « + 17 autres »", test_20_jetons_3_lignes_plus_17_autres),
+        ("niveau rouge dès qu'un jeton critique existe, même masqué", test_niveau_rouge_meme_si_jeton_critique_masque),
+        ("ligne des entrées ignorées toujours en dernier, après la synthèse", test_ligne_entrees_ignorees_restee_en_dernier_avec_synthese),
+        ("comportement inchangé avec 1 jeton", test_comportement_inchange_avec_1_jeton),
+        ("comportement inchangé avec 2 jetons", test_comportement_inchange_avec_2_jetons),
     ]
     echecs = 0
     for nom, fn in tests:

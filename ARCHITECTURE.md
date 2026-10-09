@@ -940,9 +940,26 @@ etat_jetons_annuaire()` au gabarit ; `templates/fragments/bandeaux.html`
 l'affiche dans un second bandeau, juste sous celui de l'éval Windows,
 réutilisant la même classe CSS (`static/css/base.css`).
 
+**Tri et plafond d'affichage** (issue #742) : les jetons en alerte sont
+triés par urgence — `jours_restants` croissant (les jetons déjà expirés,
+jours négatifs, en premier, le plus en retard d'abord), égalité départagée
+par `id` pour un affichage stable. L'affichage est plafonné à
+`MAX_LIGNES_JETONS` (= 3, constante en tête du module) lignes de jetons ;
+au-delà, les lignes suivantes sont remplacées par une seule ligne de
+synthèse (« ⚠️ + N autre(s) jeton(s) à renouveler — voir l'annuaire »,
+accord singulier/pluriel selon N). Le niveau du bandeau (`rouge`/`orange`)
+reste calculé sur TOUS les jetons en alerte, avant troncature, jamais
+seulement sur les lignes visibles — bien que le tri par urgence garantisse
+déjà qu'un jeton masqué ne peut jamais être plus grave qu'un jeton visible.
+La ligne « N entrée(s) ignorée(s) dans jetons.json » reste distincte :
+toujours en dernier, hors de ce plafond, logique de niveau inchangée.
+
 **Tests** : `tests/test_bandeau_jetons_annuaire_741.py`, fichiers factices
 (`JETON_FACTICE_*`) dans des dossiers `/tmp` jetables via
 `BRIDGE_JETONS_CHEMIN`, jamais sur le vrai fichier d'Alain. Sans réseau.
+Couvre aussi le tri (désordre, jetons expirés d'abord, égalité par id) et
+le plafond à 3 lignes (exactement 3, 4, 20 jetons ; niveau rouge même si le
+jeton critique est masqué ; ligne des entrées ignorées toujours en dernier).
 
 ---
 
