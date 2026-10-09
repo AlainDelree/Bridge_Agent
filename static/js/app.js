@@ -2681,6 +2681,7 @@ function ouvrirNouveauProjet() {
   document.getElementById('np-avertissement-prive').style.display = 'none';
   document.getElementById('np-nom-msg').textContent = '';
   document.getElementById('np-depot-msg').textContent = '';
+  document.getElementById('np-rep-msg').textContent = '';
   document.getElementById('np-compte-rendu').style.display = 'none';
   document.getElementById('np-message').style.display = 'none';
   document.getElementById('np-rappel-git').style.display = 'none';
@@ -2774,19 +2775,25 @@ async function npVerifierDepot() {
 }
 
 async function npVerifier() {
-  const nom       = document.getElementById('np-nom').value.trim().toLowerCase();
+  // Casse telle que tapée transmise AU SERVEUR sans la forcer en minuscules
+  // (issue #738) : depot_defaut/rep_defaut côté serveur en ont besoin pour
+  // proposer AnnuaireToken plutôt qu'Annuairetoken. r.nom (renvoyé par le
+  // serveur, toujours en minuscules) sert ensuite pour les messages portant
+  // sur la clé interne (ex. configs/<nom>.conf).
+  const nomSaisi  = document.getElementById('np-nom').value.trim();
   const depotSaisi = document.getElementById('np-depot').value.trim();
   const nomMsg    = document.getElementById('np-nom-msg');
   const ligneCreer = document.getElementById('np-creer-depot-ligne');
-  if (!nom) {
+  if (!nomSaisi) {
     nomMsg.textContent = '';
     document.getElementById('np-depot-msg').textContent = '';
+    document.getElementById('np-rep-msg').textContent = '';
     ligneCreer.style.display = 'none';
     return;
   }
   let r;
   try {
-    const url = '/nouveau-projet/verifier?nom=' + encodeURIComponent(nom)
+    const url = '/nouveau-projet/verifier?nom=' + encodeURIComponent(nomSaisi)
               + (depotSaisi ? '&depot=' + encodeURIComponent(depotSaisi) : '');
     r = await (await fetch(url)).json();
   } catch (e) {
@@ -2799,7 +2806,7 @@ async function npVerifier() {
     nomMsg.textContent = '⚠ Format invalide (minuscules, chiffres, underscore ; commence par une lettre).';
     nomMsg.style.color = '#a32d2d';
   } else if (r.conf_existe) {
-    nomMsg.textContent = '⚠ configs/' + nom + '.conf existe déjà — choisir un autre nom.';
+    nomMsg.textContent = '⚠ configs/' + r.nom + '.conf existe déjà — choisir un autre nom.';
     nomMsg.style.color = '#a32d2d';
   } else {
     nomMsg.textContent = '✓ Nom disponible.';
@@ -2807,9 +2814,20 @@ async function npVerifier() {
   }
 
   // Pré-remplissage : uniquement les champs que l'utilisateur n'a pas touchés.
+  const repMsg = document.getElementById('np-rep-msg');
   if (r.nom_valide) {
     if (!npDepotEdite && r.depot_defaut) document.getElementById('np-depot').value = r.depot_defaut;
     if (!npRepEdite   && r.rep_defaut)   document.getElementById('np-rep').value   = r.rep_defaut;
+    if (r.rep_casse_differente) {
+      repMsg.textContent = '⚠ Un dossier ' + r.rep_casse_differente
+                          + ' existe déjà avec une casse différente — vérifier '
+                          + "qu'il ne s'agit pas d'un doublon.";
+      repMsg.style.color = '#8a6d00';
+    } else {
+      repMsg.textContent = '';
+    }
+  } else {
+    repMsg.textContent = '';
   }
 
   npAfficherEtatDepot(r);

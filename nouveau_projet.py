@@ -201,14 +201,52 @@ def normaliser_couleur(couleur: str) -> str:
     return dispo[0] if dispo else ""
 
 
-def depot_defaut(nom: str) -> str:
-    """Dépôt GitHub proposé par défaut : owner + nom capitalisé."""
-    return f"{OWNER_DEFAUT}/{nom.capitalize()}"
+def casse_proposee(nom_saisi: str) -> str:
+    """Forme du nom à reprendre dans les valeurs par défaut (dépôt,
+    répertoire) — issue #738. Le NOM interne (clé, .conf, labels) reste
+    toujours en minuscules, mais la casse telle que tapée par l'utilisateur
+    mérite d'être respectée dans ces deux propositions : un nom saisi avec au
+    moins une majuscule interne (AnnuaireToken, ChessCoach) est repris tel
+    quel ; un nom entièrement en minuscules garde le comportement historique
+    (première lettre capitalisée : rummikub → Rummikub, bloc_score →
+    Bloc_score)."""
+    if any(c.isupper() for c in nom_saisi):
+        return nom_saisi
+    return nom_saisi.capitalize()
 
 
-def rep_defaut(nom: str) -> str:
-    """Répertoire de travail CCL proposé par défaut (dépend de l'OS)."""
-    return str(Path.home() / nom.capitalize())
+def depot_defaut(nom_saisi: str) -> str:
+    """Dépôt GitHub proposé par défaut : owner + nom dans la casse saisie
+    (voir casse_proposee)."""
+    return f"{OWNER_DEFAUT}/{casse_proposee(nom_saisi)}"
+
+
+def rep_defaut(nom_saisi: str) -> str:
+    """Répertoire de travail CCL proposé par défaut (dépend de l'OS), nom
+    dans la casse saisie (voir casse_proposee)."""
+    return str(Path.home() / casse_proposee(nom_saisi))
+
+
+def rep_casse_differente(rep: str) -> str | None:
+    """Avertissement non bloquant (issue #738) : si le répertoire proposé
+    `rep` n'existe pas encore mais qu'un dossier de même nom à la casse
+    différente existe déjà dans le même dossier parent (Linux distingue les
+    majuscules — contrairement à Windows/macOS par défaut), renvoie le
+    chemin de ce dossier homonyme ; None si `rep` existe déjà, si son parent
+    est introuvable, ou si aucun homonyme à casse différente n'est trouvé."""
+    rep_path = Path(rep).expanduser()
+    if rep_path.exists():
+        return None
+    parent = rep_path.parent
+    if not parent.is_dir():
+        return None
+    cible = rep_path.name.lower()
+    for enfant in parent.iterdir():
+        if enfant.name == rep_path.name:
+            continue
+        if enfant.name.lower() == cible and enfant.is_dir():
+            return str(enfant)
+    return None
 
 
 def depot_existe(depot: str) -> bool:
@@ -524,7 +562,8 @@ def creer_projet(nom: str, depot: str = "", rep: str = "", perimetre: str = "",
     depot_existait, etapes:[{etape, ok, detail}], erreur}. `public` (issue
     #528) détermine la visibilité du dépôt s'il doit être créé ; sans effet
     si le dépôt existe déjà (sa visibilité n'est alors pas modifiée)."""
-    nom = (nom or "").strip().lower()
+    nom_saisi = (nom or "").strip()
+    nom = nom_saisi.lower()
     if not nom:
         return {"succes": False, "erreur": "Un nom de projet est requis.", "etapes": []}
     if not valider_nom(nom):
@@ -536,8 +575,10 @@ def creer_projet(nom: str, depot: str = "", rep: str = "", perimetre: str = "",
                 "erreur": f"configs/{nom}.conf existe déjà — choisir un autre nom "
                           "ou supprimer l'ancien d'abord."}
 
-    depot = (depot or "").strip() or depot_defaut(nom)
-    rep = (rep or "").strip() or rep_defaut(nom)
+    # Les valeurs par défaut (dépôt, répertoire) reprennent la casse saisie
+    # (issue #738) ; le NOM interne ci-dessus reste en minuscules.
+    depot = (depot or "").strip() or depot_defaut(nom_saisi)
+    rep = (rep or "").strip() or rep_defaut(nom_saisi)
     perimetre = (perimetre or "").strip() or rep
     topic = (topic or "").strip()
     # Couleur d'accent : la couleur choisie si elle est encore libre, sinon la
@@ -636,11 +677,15 @@ def creer_projet(nom: str, depot: str = "", rep: str = "", perimetre: str = "",
             "doc_commit_commande_manuelle": doc_commit["commande_manuelle"] if doc_commit else None}
 
 
-def etape_nom() -> str:
+def etape_nom() -> tuple[str, str]:
+    """Renvoie (nom, nom_saisi) : `nom` est la clé interne, toujours en
+    minuscules (comportement inchangé) ; `nom_saisi` conserve la casse telle
+    que tapée, pour les valeurs par défaut dépôt/répertoire (issue #738)."""
     titre("1. Nom du projet")
     print("   Identifiant court, minuscules + underscore (ex. bridge_agent, alchess).")
     while True:
-        nom = demander("Nom du projet").lower()
+        nom_saisi = demander("Nom du projet")
+        nom = nom_saisi.lower()
         if not nom:
             print("   ⚠️  Un nom est requis.")
             continue
@@ -653,16 +698,17 @@ def etape_nom() -> str:
             print(f"   ⚠️  configs/{nom}.conf existe déjà — choisir un autre nom "
                   "ou supprimer l'ancien d'abord.")
             continue
-        return nom
+        return nom, nom_saisi
 
 
-def etape_depot(nom: str) -> tuple[str, bool]:
+def etape_depot(nom: str, nom_saisi: str) -> tuple[str, bool]:
     """Renvoie (depot, existait_deja). Crée le dépôt s'il n'existe pas et que
     l'utilisateur confirme — public ou privé selon son choix (issue #528),
     défaut public pour rester cohérent avec le comportement historique."""
     titre("2. Dépôt GitHub cible")
-    # Proposition par défaut : owner du dépôt courant + nom capitalisé.
-    depot = demander("Dépôt GitHub (owner/nom)", depot_defaut(nom))
+    # Proposition par défaut : owner du dépôt courant + nom dans la casse
+    # saisie (issue #738).
+    depot = demander("Dépôt GitHub (owner/nom)", depot_defaut(nom_saisi))
 
     if depot_existe(depot):
         print(f"   ✓ Le dépôt {depot} existe déjà → installation dessus "
@@ -690,10 +736,15 @@ def etape_depot(nom: str) -> tuple[str, bool]:
     return depot, False
 
 
-def etape_repertoire(nom: str) -> tuple[str, str]:
+def etape_repertoire(nom_saisi: str) -> tuple[str, str]:
     """Renvoie (rep_travail, perimetre)."""
     titre("3. Répertoire de travail CCL et périmètre")
-    rep = demander("Répertoire de travail CCL", rep_defaut(nom))
+    rep = demander("Répertoire de travail CCL", rep_defaut(nom_saisi))
+    homonyme = rep_casse_differente(rep)
+    if homonyme:
+        print(f"   ⚠️  {rep} n'existe pas, mais un dossier {homonyme} existe "
+              "déjà avec une casse différente — vérifier qu'il ne s'agit pas "
+              "d'un doublon avant de continuer.")
     perimetre = demander("Périmètre autorisé (dossiers, séparés par des virgules)", rep)
     return rep, perimetre
 
@@ -948,9 +999,9 @@ def main() -> None:
     if shutil.which("gh") is None:
         sys.exit("❌ La commande `gh` (GitHub CLI) est requise mais introuvable.")
 
-    nom = etape_nom()
-    depot, depot_existait = etape_depot(nom)
-    rep, perimetre = etape_repertoire(nom)
+    nom, nom_saisi = etape_nom()
+    depot, depot_existait = etape_depot(nom, nom_saisi)
+    rep, perimetre = etape_repertoire(nom_saisi)
     chemin_conf = etape_conf(nom, depot, rep, perimetre)
     labels_crees = etape_labels(depot)
     fichiers_contexte = etape_contexte(rep, avec_specs=False)
