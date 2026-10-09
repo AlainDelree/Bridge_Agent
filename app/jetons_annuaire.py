@@ -1,9 +1,9 @@
 """Bandeau d'avertissement d'échéance des jetons de l'annuaire (issue #741).
 
 Lit en lecture seule le fichier `jetons.json` tenu par le projet séparé
-annuairetoken (métadonnées de jetons d'accès — jamais de valeur de jeton),
-hors de ce dépôt et hors git. Réutilise les mêmes seuils/couleurs que le
-bandeau « OAuth Token CCW » (app/eval_windows.py) via `_niveau()`.
+annuairetoken (métadonnées de jetons d'accès — jamais de valeur de jeton —
+et, depuis l'issue #746, échéance de la licence d'évaluation Windows CCW),
+hors de ce dépôt et hors git.
 """
 
 import json
@@ -12,11 +12,22 @@ import os
 from datetime import date
 from pathlib import Path
 
-from app.eval_windows import _niveau
-
 log = logging.getLogger(__name__)
 
 STATUTS_CONNUS = ("actif", "abandonné", "expiré")
+
+SEUIL_ORANGE = 14  # jours restants à partir desquels le bandeau orange apparaît
+SEUIL_ROUGE = 5    # jours restants (ou dépassement) à partir desquels il passe au rouge
+
+
+def _niveau(jours_restants: int) -> str | None:
+    """Niveau d'alerte ("rouge"/"orange") pour un nombre de jours restants
+    donné, ou None si l'échéance est encore lointaine."""
+    if jours_restants <= SEUIL_ROUGE:
+        return "rouge"
+    if jours_restants <= SEUIL_ORANGE:
+        return "orange"
+    return None
 
 # Chemin par défaut du fichier, surchargeable globalement (pas par projet, pas
 # dans configs/*.conf) par la variable d'environnement BRIDGE_JETONS_CHEMIN —
@@ -106,7 +117,7 @@ def etat_jetons_annuaire() -> dict | None:
             "niveau": niveau,
             "jours_restants": jours_restants,
             "jeton_id": jeton_id,
-            "message": f"⚠️ Jeton {service} ({jeton_id}) : {texte_jours}",
+            "message": f"⚠️ Échéance {service} ({jeton_id}) : {texte_jours}",
         })
 
     if not alertes and not n_ignores:
