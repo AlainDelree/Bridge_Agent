@@ -147,6 +147,22 @@ les trois lignes au service, et redémarre `CCW-Watcher`.
 > `CCW-Watcher*` listés en une fois, en conservant le `GH_TOKEN` propre à
 > chacun (résumé par service ; un service avec une issue en cours est sauté,
 > jamais redémarré de force) — voir `ARCHITECTURE.md` §10.
+>
+> **Particularité nssm — sortie non propre (issue #744).** Un essai réel
+> (service CCW-Watcher-Scrabble) a montré que la sortie de `nssm get
+> <service> AppEnvironmentExtra` n'est PAS du texte propre dans PowerShell :
+> nssm écrit en UTF-16, et la console le redécode parfois comme du texte 8
+> bits (le décodage peut différer entre session interactive et lancement à
+> distance par SSH) — d'où un caractère NUL après chaque caractère de la
+> ligne, et des lignes parasites d'un seul NUL entre variables. Le script
+> nettoie désormais TOUS les NUL avant de redécouper en lignes, et refuse de
+> reconduire un jeton si sa valeur reste douteuse après nettoyage (vide,
+> caractère de contrôle résiduel, variable en double ou absente) — abandon
+> sans aucune modification dans ce cas, message clair. Un jeton reconduit
+> subit aussi un contrôle de longueur plausible avant écriture, et un
+> contrôle de longueur après écriture/redémarrage (relecture, comparaison —
+> jamais la valeur elle-même) : tout écart est signalé « à vérifier » dans
+> le résumé final. Voir `ARCHITECTURE.md` §10.1.
 
 ### 6. Vérifier que le service tourne
 

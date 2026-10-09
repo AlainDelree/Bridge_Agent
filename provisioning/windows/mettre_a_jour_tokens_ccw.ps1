@@ -22,6 +22,18 @@
        lecture échoue ou que la variable y est absente, abandon SANS AUCUNE
        modification, avec un message clair demandant de fournir les deux
        tokens. Comportement inchangé quand les deux tokens sont fournis.
+
+       Issue #744 : la sortie de « nssm get » n'est PAS du texte propre dans
+       tous les contextes d'exécution — nssm écrit en UTF-16, parfois redécodé
+       comme du texte 8 bits (un caractère NUL après chaque caractère, des
+       lignes parasites d'un seul NUL entre variables). La lecture nettoie
+       donc TOUS les NUL avant de redécouper en lignes, puis refuse de
+       reconduire une valeur douteuse (vide, caractère de contrôle résiduel,
+       variable en double ou absente) — abandon sans modification dans ce
+       cas. Un jeton reconduit subit aussi un contrôle de longueur plausible
+       avant écriture, et un contrôle de longueur après écriture/redémarrage
+       (relecture, comparaison, jamais la valeur) — tout écart est signalé
+       « à vérifier » dans le résumé final. Voir ARCHITECTURE.md §10.
     2. Reconstruit AppEnvironmentExtra comme TROIS lignes distinctes : PATH
        (machine + <CompteService>\.local\bin + WindowsApps), GH_TOKEN,
        CLAUDE_CODE_OAUTH_TOKEN — issue #658, point 1. AVANT cette issue, la
@@ -123,27 +135,72 @@ function Lire-ValeurFichier([string]$chemin, [string]$cle) {
     return $null
 }
 
-# Lit la valeur ACTUELLE de `$cle` dans AppEnvironmentExtra du service, via
-# « nssm get » (issue #743 — permet de reconduire un token non fourni sans
-# effacer l'autre, puisque « nssm set » REMPLACE toute la valeur). Chaque
-# variable occupe sa propre ligne dans la sortie de « nssm get » (même
-# convention que ce script lui-même pose, voir section 2 ci-dessous) : même
-# algorithme de recherche que Lire-ValeurFichier, appliqué aux lignes de
-# sortie plutôt qu'à un fichier. $null si la lecture échoue (service/nssm
-# indisponible) ou que la variable est absente. La valeur n'est NI affichée
-# NI écrite sur disque — elle ne sort jamais de cette fonction/de l'appelant
-# direct qui la réinjecte dans AppEnvironmentExtra.
-function Lire-EnvironnementActuelService([string]$nomService, [string]$cle) {
-    $lignes = & nssm get $nomService AppEnvironmentExtra 2>$null
-    if ($LASTEXITCODE -ne 0 -or -not $lignes) { return $null }
-    foreach ($ligne in @($lignes)) {
+# Bornes de plausibilité pour la longueur d'un jeton RECONDUIT (issue #744,
+# point 3) — net de sécurité grossier contre une troncature/duplication
+# passée inaperçue après nettoyage, PAS une validation de format : les deux
+# jetons réels ont des longueurs très différentes (GH_TOKEN classique ~40
+# caractères, fin granularité plus long ; CLAUDE_CODE_OAUTH_TOKEN souvent
+# nettement plus long encore). Jamais la valeur elle-même dans un message —
+# seule cette longueur peut y figurer.
+$script:LongueurJetonMin = 20
+$script:LongueurJetonMax = 4096
+
+# Nettoie la sortie BRUTE de « nssm get <service> AppEnvironmentExtra »
+# (issue #744) : un essai réel (service CCW-Watcher-Scrabble) a montré que
+# cette sortie n'est PAS du texte propre — nssm écrit en UTF-16, mais la
+# console qui l'exécute (notamment lancée à distance, où le décodage peut
+# différer de la session interactive) la redécode parfois comme du texte 8
+# bits. Il en résulte un caractère NUL (code 0) après CHAQUE caractère
+# ORIGINAL, plus des lignes parasites d'un seul NUL entre les variables (le
+# CR et le LF UTF-16 découpés séparément). On NE FAIT PLUS confiance au
+# découpage en lignes déjà effectué par PowerShell en capturant `$lignes` :
+# on rejoint tout, on retire TOUS les NUL (peu importe leur position), PUIS
+# on redécoupe proprement, on coupe les espaces, et on ignore les lignes
+# vides. Fonctionne aussi bien sur une sortie déjà propre (sans aucun NUL).
+function ConvertTo-LignesEnvironnementPropres([string[]]$sortieBrute) {
+    $texte = ($sortieBrute -join "`n").Replace([char]0, '')
+    return @($texte -split "`r`n|`r|`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ -ne '' })
+}
+
+# Extrait la valeur de `$cle` dans des lignes déjà nettoyées
+# (ConvertTo-LignesEnvironnementPropres), en découpant chaque ligne sur le
+# PREMIER signe égal seulement. Ne reconduit JAMAIS une valeur douteuse
+# (issue #744, point 2) : refuse — $null, `$raison` renseignée — si la clé
+# est absente, présente EN DOUBLE, ou si la valeur trouvée est vide ou
+# contient encore un caractère de contrôle (NUL résiduel ou autre). `$raison`
+# ne documente que la NATURE du refus, jamais la valeur.
+function Extraire-ValeurEnvironnementPropre([string[]]$lignesPropres, [string]$cle, [ref]$raison) {
+    $trouvees = @()
+    foreach ($ligne in $lignesPropres) {
         $idx = $ligne.IndexOf('=')
         if ($idx -lt 1) { continue }
         if ($ligne.Substring(0, $idx).Trim() -eq $cle) {
-            return $ligne.Substring($idx + 1).TrimEnd("`r", "`n")
+            $trouvees += $ligne.Substring($idx + 1)
         }
     }
-    return $null
+    if ($trouvees.Count -eq 0) { $raison.Value = 'absente de l''environnement du service'; return $null }
+    if ($trouvees.Count -gt 1) { $raison.Value = "présente $($trouvees.Count) fois dans l'environnement du service"; return $null }
+    $valeur = $trouvees[0]
+    if ([string]::IsNullOrEmpty($valeur)) { $raison.Value = 'valeur vide après nettoyage'; return $null }
+    if ($valeur -match '[\x00-\x1f]') { $raison.Value = 'caractère de contrôle résiduel après nettoyage'; return $null }
+    $raison.Value = $null
+    return $valeur
+}
+
+# Lit la valeur ACTUELLE de `$cle` dans AppEnvironmentExtra du service, via
+# « nssm get » (issue #743 — permet de reconduire un token non fourni sans
+# effacer l'autre, puisque « nssm set » REMPLACE toute la valeur), avec la
+# lecture robuste ci-dessus (issue #744). $null si la lecture échoue
+# (service/nssm indisponible), que la variable est absente, en double, ou
+# que sa valeur est douteuse après nettoyage (`$raison` renseignée dans tous
+# les cas de refus). La valeur n'est NI affichée NI écrite sur disque — elle
+# ne sort jamais de cette fonction/de l'appelant direct qui la réinjecte dans
+# AppEnvironmentExtra.
+function Lire-EnvironnementActuelService([string]$nomService, [string]$cle, [ref]$raison) {
+    $sortieBrute = & nssm get $nomService AppEnvironmentExtra 2>$null
+    if ($LASTEXITCODE -ne 0 -or -not $sortieBrute) { $raison.Value = 'lecture nssm impossible'; return $null }
+    $lignesPropres = ConvertTo-LignesEnvironnementPropres $sortieBrute
+    return Extraire-ValeurEnvironnementPropre $lignesPropres $cle $raison
 }
 
 # ---------------------------------------------------------------------------
@@ -202,17 +259,29 @@ if ([string]::IsNullOrWhiteSpace($gh) -and [string]::IsNullOrWhiteSpace($oauth))
 }
 if ([string]::IsNullOrWhiteSpace($gh)) {
     Info 'GH_TOKEN non fourni — lecture de sa valeur actuelle sur le service…'
-    $gh = Lire-EnvironnementActuelService $NomService 'GH_TOKEN'
+    $raisonGh = $null
+    $gh = Lire-EnvironnementActuelService $NomService 'GH_TOKEN' ([ref]$raisonGh)
     if ([string]::IsNullOrWhiteSpace($gh)) {
-        Avert "GH_TOKEN non fourni et introuvable dans l'environnement actuel du service « $NomService » — abandon, aucun changement appliqué. Fournissez les deux tokens."
+        Avert "GH_TOKEN non fourni et introuvable (ou douteux : $raisonGh) dans l'environnement actuel du service « $NomService » — abandon, aucun changement appliqué. Fournissez les deux tokens."
+        exit 1
+    }
+    # Contrôle de cohérence AVANT écriture (issue #744, point 3) — jamais la
+    # valeur, seule sa longueur peut figurer dans le message.
+    if ($gh.Length -lt $script:LongueurJetonMin -or $gh.Length -gt $script:LongueurJetonMax) {
+        Avert "GH_TOKEN reconduit a une longueur implausible ($($gh.Length) caractères) — abandon, aucun changement appliqué."
         exit 1
     }
 }
 if ([string]::IsNullOrWhiteSpace($oauth)) {
     Info 'CLAUDE_CODE_OAUTH_TOKEN non fourni — lecture de sa valeur actuelle sur le service…'
-    $oauth = Lire-EnvironnementActuelService $NomService 'CLAUDE_CODE_OAUTH_TOKEN'
+    $raisonOauth = $null
+    $oauth = Lire-EnvironnementActuelService $NomService 'CLAUDE_CODE_OAUTH_TOKEN' ([ref]$raisonOauth)
     if ([string]::IsNullOrWhiteSpace($oauth)) {
-        Avert "CLAUDE_CODE_OAUTH_TOKEN non fourni et introuvable dans l'environnement actuel du service « $NomService » — abandon, aucun changement appliqué. Fournissez les deux tokens."
+        Avert "CLAUDE_CODE_OAUTH_TOKEN non fourni et introuvable (ou douteux : $raisonOauth) dans l'environnement actuel du service « $NomService » — abandon, aucun changement appliqué. Fournissez les deux tokens."
+        exit 1
+    }
+    if ($oauth.Length -lt $script:LongueurJetonMin -or $oauth.Length -gt $script:LongueurJetonMax) {
+        Avert "CLAUDE_CODE_OAUTH_TOKEN reconduit a une longueur implausible ($($oauth.Length) caractères) — abandon, aucun changement appliqué."
         exit 1
     }
 }
@@ -241,6 +310,11 @@ $lignePath  = "PATH=$pathMachine;$cheminLocalBin;$cheminWindowsApps"
 $ligneGh    = "GH_TOKEN=$gh"
 $ligneOauth = "CLAUDE_CODE_OAUTH_TOKEN=$oauth"
 
+# Longueurs de ce qui va être ÉCRIT, retenues pour le contrôle après
+# redémarrage (issue #744, point 4) — jamais les valeurs elles-mêmes.
+$longueurGhEcrite    = $gh.Length
+$longueurOauthEcrite = $oauth.Length
+
 # ---------------------------------------------------------------------------
 # 4. Application via NSSM puis redémarrage du service.
 # ---------------------------------------------------------------------------
@@ -255,6 +329,28 @@ try {
     $gh = $null; $oauth = $null; $lignePath = $null; $ligneGh = $null; $ligneOauth = $null
     [System.GC]::Collect()
 }
+
+# ---------------------------------------------------------------------------
+# 4bis. Contrôle APRÈS écriture et redémarrage (issue #744, point 4) : relit
+#       l'environnement du service avec la même lecture robuste, et compare
+#       la LONGUEUR de chaque jeton à ce qui a été écrit. Un écart (longueur
+#       différente, lecture impossible) est signalé « à vérifier » dans le
+#       résumé final — jamais de valeur affichée, seules des longueurs.
+# ---------------------------------------------------------------------------
+$raisonVerifGh = $null
+$ghRelu = Lire-EnvironnementActuelService $NomService 'GH_TOKEN' ([ref]$raisonVerifGh)
+$aVerifierLongueur = $false
+if ($null -eq $ghRelu -or $ghRelu.Length -ne $longueurGhEcrite) {
+    $aVerifierLongueur = $true
+    Avert "GH_TOKEN : longueur relue après redémarrage ne correspond pas à ce qui a été écrit (à vérifier)."
+}
+$raisonVerifOauth = $null
+$oauthRelu = Lire-EnvironnementActuelService $NomService 'CLAUDE_CODE_OAUTH_TOKEN' ([ref]$raisonVerifOauth)
+if ($null -eq $oauthRelu -or $oauthRelu.Length -ne $longueurOauthEcrite) {
+    $aVerifierLongueur = $true
+    Avert "CLAUDE_CODE_OAUTH_TOKEN : longueur relue après redémarrage ne correspond pas à ce qui a été écrit (à vérifier)."
+}
+$ghRelu = $null; $oauthRelu = $null
 
 # ---------------------------------------------------------------------------
 # 5. Attente puis affichage des dernières lignes de log pour confirmation.
@@ -281,7 +377,8 @@ Write-Host '--------------------------------------------------------------------
 Write-Host ''
 
 # ---------------------------------------------------------------------------
-# 6. Résumé : OK si aucune ligne ERROR dans les lignes affichées.
+# 6. Résumé : OK si aucune ligne ERROR dans les lignes affichées ET que le
+#    contrôle de longueur post-redémarrage (4bis) n'a rien signalé.
 # ---------------------------------------------------------------------------
 $erreurs = @($lignes | Where-Object { $_ -match 'ERROR|Bad credentials' })
 
@@ -291,6 +388,9 @@ if (-not (Test-Path $LogService)) {
 } elseif ($erreurs.Count -gt 0) {
     Avert "$($erreurs.Count) ligne(s) suspecte(s) (ERROR / Bad credentials) dans les $NbLignesLog dernières lignes."
     Avert 'À VÉRIFIER MANUELLEMENT : valeurs de tokens, séparateur, état du service.'
+    exit 2
+} elseif ($aVerifierLongueur) {
+    Avert 'À VÉRIFIER MANUELLEMENT : longueur d''un jeton relu après redémarrage différente de ce qui a été écrit.'
     exit 2
 } else {
     Ok "Tokens mis à jour et service redémarré — aucune ligne ERROR dans les $NbLignesLog dernières lignes."

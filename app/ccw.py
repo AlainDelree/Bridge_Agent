@@ -211,17 +211,60 @@ def _ajouter_droit_demarrage_sddl(sddl: str, sid: str) -> tuple[str, bool]:
 # toute modification de l'algorithme doit être répercutée dans LES DEUX
 # implémentations.
 
+# Bornes de plausibilité pour la longueur d'un jeton RECONDUIT (issue #744,
+# point 3) — net de sécurité grossier contre une troncature/duplication
+# passée inaperçue après nettoyage, PAS une validation de format. Mêmes
+# valeurs que le port PowerShell réel (mettre_a_jour_tokens_ccw.ps1).
+LONGUEUR_JETON_MIN = 20
+LONGUEUR_JETON_MAX = 4096
+
+
+def _nettoyer_lignes_env_service(texte_brut: str) -> list[str]:
+    """Nettoie la sortie BRUTE de « nssm get <service> AppEnvironmentExtra »
+    (issue #744) : un essai réel (service CCW-Watcher-Scrabble) a montré que
+    cette sortie n'est PAS du texte propre dans tous les contextes
+    d'exécution — nssm écrit en UTF-16, parfois redécodé comme du texte 8
+    bits (session interactive ou lancement à distance par SSH, où le
+    décodage peut différer). Il en résulte un caractère NUL (code 0) après
+    CHAQUE caractère ORIGINAL, plus des lignes parasites d'un seul NUL entre
+    les variables (le CR et le LF UTF-16 découpés séparément). On retire
+    TOUS les NUL d'abord (peu importe leur position), PUIS on redécoupe en
+    lignes, on coupe les espaces, et on ignore les lignes vides — fonctionne
+    aussi bien sur une sortie déjà propre (sans aucun NUL)."""
+    sans_nuls = texte_brut.replace("\x00", "")
+    return [ligne.strip() for ligne in sans_nuls.splitlines() if ligne.strip()]
+
+
 def _extraire_valeur_env_service(texte: str, cle: str) -> str | None:
-    """Extrait la valeur de `cle` dans `texte` (une ligne « CLE=valeur » par
-    variable, format de sortie de « nssm get <service> AppEnvironmentExtra »).
-    None si la clé est absente — jamais affichée/journalisée par l'appelant."""
-    for ligne in texte.splitlines():
+    """Extrait la valeur de `cle` dans `texte` (sortie, éventuellement brute,
+    de « nssm get <service> AppEnvironmentExtra » — une ligne « CLE=valeur »
+    par variable), en découpant chaque ligne sur le PREMIER signe égal
+    seulement. Ne reconduit JAMAIS une valeur douteuse (issue #744, point 2) :
+    None si la clé est absente, présente EN DOUBLE, ou si la valeur trouvée
+    est vide ou contient encore un caractère de contrôle après nettoyage —
+    jamais affichée/journalisée par l'appelant."""
+    lignes_propres = _nettoyer_lignes_env_service(texte)
+    trouvees = []
+    for ligne in lignes_propres:
         idx = ligne.find("=")
         if idx < 1:
             continue
         if ligne[:idx].strip() == cle:
-            return ligne[idx + 1:].rstrip("\r\n")
-    return None
+            trouvees.append(ligne[idx + 1:])
+    if len(trouvees) != 1:
+        return None
+    valeur = trouvees[0]
+    if not valeur or any(ord(c) < 32 for c in valeur):
+        return None
+    return valeur
+
+
+def _longueur_plausible(valeur: str) -> bool:
+    """Contrôle de cohérence AVANT écriture (issue #744, point 3) : la
+    longueur d'un jeton reconduit doit rester dans une borne plausible —
+    jamais la valeur elle-même, seule sa longueur peut figurer dans un
+    message appelant."""
+    return LONGUEUR_JETON_MIN <= len(valeur) <= LONGUEUR_JETON_MAX
 
 
 def _resoudre_jetons_renouvellement(

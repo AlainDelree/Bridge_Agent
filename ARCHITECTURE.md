@@ -1029,12 +1029,72 @@ appel SSH, deux jetons fournis inchangés, environnement actuel illisible ⇒
 refus sans modification, aucune valeur de jeton dans les réponses JSON) et
 `static/js/tests/ccw.test.js` (`planifierPoseTokenTous`,
 `resumerResultatsPoseTokenTous` : service occupé sauté, état indéterminable
-sauté par défaut puis posé après confirmation, décompte par statut). Ce que
-CCL n'a pas pu tester (pas de vraie machine Windows) : le format réel de
-sortie de `nssm get <service> AppEnvironmentExtra` (une ligne par variable —
-hypothèse portée par analogie avec `nssm set`, à confirmer par Alain au
-premier renouvellement à jeton unique) et le redémarrage effectif du
-service avec la valeur reconduite.
+sauté par défaut puis posé après confirmation, décompte par statut).
+
+### 10.1. Correctif — sortie de `nssm get` corrompue par des NUL UTF-16 (issue #744)
+
+Un essai réel sur le service **CCW-Watcher-Scrabble** a confirmé — et
+infirmé — l'hypothèse de §10 : la sortie de `nssm get <service>
+AppEnvironmentExtra` est bien une ligne par variable, mais ce n'est PAS du
+texte propre dans PowerShell. nssm écrit en UTF-16 ; la console qui
+l'exécute (le décodage diffère entre session interactive et lancement à
+distance par SSH) la redécode parfois comme du texte 8 bits. Résultat
+observé : un caractère **NUL** (code 0) après CHAQUE caractère de la ligne
+(la ligne `GH_TOKEN` faisait 204 caractères pour ~102 utiles), plus des
+lignes parasites d'un seul NUL entre chaque variable (CR et LF UTF-16
+découpés séparément — 9 lignes pour 3 variables). Les anciennes fonctions
+`Lire-EnvironnementActuelService` (PowerShell) et `_extraire_valeur_env_service`
+(port Python), qui cherchaient une ligne « commence par CLE= », ne
+trouvaient rien d'exploitable dans ce cas — risque principal : une
+extraction mal écrite aurait pu reconduire un jeton tronqué/altéré sans
+message d'erreur évident, et le service aurait redémarré avec un jeton
+faux.
+
+**Lecture robuste**, quel que soit le contexte d'exécution :
+1. récupérer TOUTE la sortie, retirer TOUS les NUL (peu importe leur
+   position) — `ConvertTo-LignesEnvironnementPropres` (PowerShell) /
+   `_nettoyer_lignes_env_service` (Python) ;
+2. redécouper en lignes (CR, LF ou CRLF), couper les espaces, ignorer les
+   lignes vides ;
+3. extraire chaque variable en découpant sur le PREMIER signe égal
+   seulement — `Extraire-ValeurEnvironnementPropre` / `_extraire_valeur_env_service`
+   (signature Python inchangée depuis #743, comportement renforcé en
+   interne).
+
+**Ne jamais reconduire une valeur douteuse** (point 2) : refus — sans
+modifier le service — si, après nettoyage, la valeur est vide, contient
+encore un caractère de contrôle, ou si la variable attendue apparaît
+plusieurs fois ou pas du tout.
+
+**Contrôle de longueur** (points 3 et 4, PowerShell uniquement — seul
+`mettre_a_jour_tokens_ccw.ps1` écrit réellement sur le service) :
+- AVANT écriture, la longueur d'un jeton RECONDUIT est comparée à une borne
+  plausible (`LongueurJetonMin`/`LongueurJetonMax`, 20 à 4096 caractères —
+  net de sécurité grossier, pas une validation de format) ; hors bornes →
+  abandon sans modification ;
+- APRÈS écriture et redémarrage, l'environnement du service est relu avec
+  la même lecture robuste, et la longueur de chaque jeton comparée à ce qui
+  a été écrit ; tout écart est signalé « à vérifier » dans le résumé final
+  (code de sortie 2). Jamais de valeur affichée dans ces contrôles — la
+  longueur seule peut figurer dans un message.
+
+Port Python (`app/ccw.py::_longueur_plausible`) : même borne, fonction pure
+testable, non câblée dans `_resoudre_jetons_renouvellement` (qui reste le
+port de la RÉSOLUTION des deux jetons côté #743, comportement inchangé) —
+le contrôle de longueur réel n'existe que côté PowerShell, seul endroit qui
+écrit effectivement sur `nssm`.
+
+**Tests** : `tests/test_lecture_robuste_env_nssm_744.py` — échantillon
+FACTICE reproduisant fidèlement la sortie réelle (texte encodé en UTF-16
+petit-boutiste puis redécodé comme texte 8 bits, exactement comme observé
+sur CCW-Watcher-Scrabble) ; même algorithme sur une sortie déjà propre ;
+lignes vides ignorées ; variable absente/en double ; valeur contenant un
+signe égal ; valeur vide ou caractère de contrôle résiduel refusés ;
+`_longueur_plausible` (bornes) ; aucune valeur de jeton dans les messages
+d'erreur. Ce que CCL n'a pas pu tester (pas de vraie machine Windows) :
+l'exécution réelle de `mettre_a_jour_tokens_ccw.ps1` modifié (contrôles de
+longueur avant/après écriture, redémarrage effectif) — à vérifier par
+Alain au premier renouvellement suivant la fusion de #744.
 
 ---
 
