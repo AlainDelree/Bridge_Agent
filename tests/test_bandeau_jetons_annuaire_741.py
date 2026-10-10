@@ -11,8 +11,8 @@ Couvre :
 - fichier absent → aucune alerte, silencieusement (None) ;
 - fichier JSON invalide / clés version-jetons absentes → message neutre
   « jetons.json illisible, bandeau désactivé », niveau "gris" ;
-- jeton actif proche de l'échéance → niveau orange/rouge selon les mêmes
-  seuils que le bandeau OAuth CCW (app.eval_windows) ;
+- jeton actif proche de l'échéance → niveau orange/rouge selon les seuils
+  de `app.jetons_annuaire` (SEUIL_ORANGE=14j, SEUIL_ROUGE=5j) ;
 - jeton actif dont la date est dépassée → niveau rouge, « expiré depuis N j » ;
 - jeton expirant aujourd'hui (jours_restants == 0) → « expire aujourd'hui » ;
 - statut abandonné/expiré ou sans expiration → jamais d'alerte ;
@@ -214,7 +214,7 @@ def test_tri_par_jours_restants_jetons_en_desordre():
         contenu = {"version": 1, "jetons": _jetons_en_desordre([10, 2, 5])}
         res = _etat_avec_fichier(Path(tmp), contenu=contenu)
         assert res is not None
-        ordre = [m for m in res["messages"] if m.startswith("⚠️ Jeton")]
+        ordre = [m for m in res["messages"] if m.startswith("⚠️ Échéance")]
         assert "svc-1" in ordre[0] and "2 j restant(s)" in ordre[0], res
         assert "svc-2" in ordre[1] and "5 j restant(s)" in ordre[1], res
         assert "svc-0" in ordre[2] and "10 j restant(s)" in ordre[2], res
@@ -227,7 +227,7 @@ def test_tri_jetons_deja_expires_en_premier():
         contenu = {"version": 1, "jetons": _jetons_en_desordre([-3, 1, -1])}
         res = _etat_avec_fichier(Path(tmp), contenu=contenu)
         assert res is not None
-        ordre = [m for m in res["messages"] if m.startswith("⚠️ Jeton")]
+        ordre = [m for m in res["messages"] if m.startswith("⚠️ Échéance")]
         assert "expiré depuis 3 j" in ordre[0], res
         assert "expiré depuis 1 j" in ordre[1], res
         assert "1 j restant(s)" in ordre[2], res
@@ -243,7 +243,7 @@ def test_tri_egalite_jours_departagee_par_id():
         ]}
         res = _etat_avec_fichier(Path(tmp), contenu=contenu)
         assert res is not None
-        ordre = [m for m in res["messages"] if m.startswith("⚠️ Jeton")]
+        ordre = [m for m in res["messages"] if m.startswith("⚠️ Échéance")]
         assert "svc-a" in ordre[0], res
         assert "svc-z" in ordre[1], res
     return {"res": res}
@@ -254,7 +254,7 @@ def test_exactement_3_jetons_3_lignes_sans_synthese():
         contenu = {"version": 1, "jetons": _jetons_en_desordre([1, 2, 3])}
         res = _etat_avec_fichier(Path(tmp), contenu=contenu)
         assert res is not None
-        lignes_jetons = [m for m in res["messages"] if m.startswith("⚠️ Jeton")]
+        lignes_jetons = [m for m in res["messages"] if m.startswith("⚠️ Échéance")]
         assert len(lignes_jetons) == 3, res
         assert not any("autre" in m for m in res["messages"]), res
     return {"res": res}
@@ -265,7 +265,7 @@ def test_4_jetons_3_lignes_plus_1_autre():
         contenu = {"version": 1, "jetons": _jetons_en_desordre([1, 2, 3, 4])}
         res = _etat_avec_fichier(Path(tmp), contenu=contenu)
         assert res is not None
-        lignes_jetons = [m for m in res["messages"] if m.startswith("⚠️ Jeton")]
+        lignes_jetons = [m for m in res["messages"] if m.startswith("⚠️ Échéance")]
         assert len(lignes_jetons) == 3, res
         assert "+ 1 autre jeton à renouveler" in " ".join(res["messages"]), res
     return {"res": res}
@@ -278,7 +278,7 @@ def test_20_jetons_3_lignes_plus_17_autres():
         contenu = {"version": 1, "jetons": _jetons_en_desordre([3] * 20)}
         res = _etat_avec_fichier(Path(tmp), contenu=contenu)
         assert res is not None
-        lignes_jetons = [m for m in res["messages"] if m.startswith("⚠️ Jeton")]
+        lignes_jetons = [m for m in res["messages"] if m.startswith("⚠️ Échéance")]
         assert len(lignes_jetons) == 3, res
         assert "+ 17 autres" in " ".join(res["messages"]), res
     return {"res": res}
@@ -319,7 +319,7 @@ def test_comportement_inchange_avec_1_jeton():
         contenu = {"version": 1, "jetons": _jetons_en_desordre([2])}
         res = _etat_avec_fichier(Path(tmp), contenu=contenu)
         assert res is not None
-        assert len([m for m in res["messages"] if m.startswith("⚠️ Jeton")]) == 1, res
+        assert len([m for m in res["messages"] if m.startswith("⚠️ Échéance")]) == 1, res
         assert not any("autre" in m for m in res["messages"]), res
     return {"res": res}
 
@@ -329,7 +329,7 @@ def test_comportement_inchange_avec_2_jetons():
         contenu = {"version": 1, "jetons": _jetons_en_desordre([5, 2])}
         res = _etat_avec_fichier(Path(tmp), contenu=contenu)
         assert res is not None
-        ordre = [m for m in res["messages"] if m.startswith("⚠️ Jeton")]
+        ordre = [m for m in res["messages"] if m.startswith("⚠️ Échéance")]
         assert len(ordre) == 2, res
         assert "2 j restant(s)" in ordre[0], res
         assert "5 j restant(s)" in ordre[1], res

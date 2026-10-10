@@ -5,6 +5,5 @@
   "eval_jours": 90,
   "date_installation": "2026-08-17",
   "date_expiration": "2026-11-15",
-  "date_expiration_oauth_token": "2026-10-17",
-  "note": "date_installation = date d'installation effective de Windows dans la VM. date_expiration = date_installation + eval_jours. Après expiration, Windows redémarre automatiquement toutes les heures, ce qui casse le service CCW-Watcher : recréer la VM avant (creer_vm_ccw.py --recreate). Si la date d'install réelle diffère, ajuster date_installation ci-dessus ; date_expiration est purement informative et recalculée par le script à partir de date_installation + eval_jours. date_expiration_oauth_token = date d'expiration du CLAUDE_CODE_OAUTH_TOKEN du service CCW-Watcher (indépendante de l'éval Windows) ; à mettre à jour manuellement après chaque renouvellement du token."
+  "note": "date_installation = date d'installation effective de Windows dans la VM. date_expiration = date_installation + eval_jours. Après expiration, Windows redémarre automatiquement toutes les heures, ce qui casse le service CCW-Watcher : recréer la VM avant (creer_vm_ccw.py --recreate). Si la date d'install réelle diffère, ajuster date_installation ci-dessus ; date_expiration est purement informative et recalculée par le script à partir de date_installation + eval_jours. L'échéance de la licence d'évaluation Windows et celle du jeton Claude du service CCW se saisissent désormais dans l'annuaire (projet annuairetoken, issues #741/#742/#746) : mettre à jour la date de la licence Windows dans l'annuaire quand la VM/machine CCW est recréée."
 }

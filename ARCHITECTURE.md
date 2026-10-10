@@ -410,7 +410,7 @@ variable/DOM ancien), retiré avec le reste.
 | Zone | Fragment (`templates/fragments/`) |
 |------|-----------------------------------|
 | Entête (titre, rate-limit, Quitter, Déconnexion) | `entete.html` |
-| Bandeaux (éval Windows, jetons annuaire, repli REP_TRAVAIL, sélecteur projet) | `bandeaux.html` |
+| Bandeaux (échéances annuaire, repli REP_TRAVAIL, sélecteur projet) | `bandeaux.html` |
 | Barre d'onglets | `onglets.html` |
 | Onglet Nouvelle issue | `onglet_creation.html` |
 | Onglet Résultats (+ inclut le panneau latéral) | `onglet_resultats.html` |
@@ -896,13 +896,29 @@ vidrait sinon les deux tableaux (vécu deux fois, issues #736/#737).
 
 ## 9. Bandeau d'expiration des jetons de l'annuaire (`app/jetons_annuaire.py`, issue #741)
 
-Le projet séparé **annuairetoken** tient l'annuaire des jetons d'accès
-d'Alain (métadonnées seulement, jamais de valeur de jeton) dans un fichier
+Le projet séparé **annuairetoken** tient l'annuaire des échéances d'Alain
+(métadonnées seulement, jamais de valeur de jeton) dans un fichier
 `jetons.json`, hors de ce dépôt et hors git. Bridge_Agent le lit **en
-lecture seule**, jamais ne l'écrit, pour prévenir avant qu'un jeton
-n'expire — même principe que le bandeau « OAuth Token CCW » existant
-(`app/eval_windows.py`), dont `etat_jetons_annuaire()` réutilise directement
-les seuils/niveaux (`_niveau()`, `SEUIL_ORANGE`=14j, `SEUIL_ROUGE`=5j).
+lecture seule**, jamais ne l'écrit, pour prévenir avant qu'une échéance
+n'arrive. Les seuils/niveaux (`_niveau()`, `SEUIL_ORANGE`=14j,
+`SEUIL_ROUGE`=5j) vivent directement dans ce module.
+
+**Retrait des bandeaux historiques « Éval Windows CCW » et « OAuth Token
+CCW » (issue #746).** Ces deux bandeaux lisaient
+`provisioning/windows/eval-expiration.json` (`app/eval_windows.py`,
+supprimé) : l'échéance de la licence d'évaluation Windows de la VM
+CCW-Build (issue #454) et celle du `CLAUDE_CODE_OAUTH_TOKEN` du service CCW
+(issue #456). L'annuaire suit désormais ces deux échéances comme deux
+entrées ordinaires de `jetons.json` (saisies côté AnnuaireToken), pour
+éviter le doublon d'affichage et n'avoir plus qu'un seul endroit à tenir à
+jour. Le libellé du bandeau de l'annuaire est donc générique — « Échéance
+`<service>` (`<id>`) », plutôt que « Jeton `<service>` (`<id>`) » — pour
+rester exact face à une entrée qui n'est pas un jeton (la licence Windows).
+`provisioning/windows/eval-expiration.json` garde toutes ses autres clés
+(toujours lu par `verifier_expiration_ccw.py` et la (re)création de la VM) ;
+seule la clé `date_expiration_oauth_token` en a été retirée, devenue
+redondante avec l'annuaire. **La date de la licence Windows doit être mise à
+jour dans l'annuaire quand la VM/machine CCW est recréée.**
 
 **Chemin du fichier** : par défaut `~/.config/annuairetoken/jetons.json`,
 surchargeable par la variable d'environnement `BRIDGE_JETONS_CHEMIN` —
@@ -937,8 +953,9 @@ erreur.
 
 **Frontend** : `app/vues.py::index()` passe `jetons_annuaire=
 etat_jetons_annuaire()` au gabarit ; `templates/fragments/bandeaux.html`
-l'affiche dans un second bandeau, juste sous celui de l'éval Windows,
-réutilisant la même classe CSS (`static/css/base.css`).
+l'affiche dans un bandeau unique, réutilisant la même classe CSS
+(`static/css/base.css`, `.bandeau-eval-windows` — nom de classe conservé
+depuis le bandeau historique #746, inchangé).
 
 **Tri et plafond d'affichage** (issue #742) : les jetons en alerte sont
 triés par urgence — `jours_restants` croissant (les jetons déjà expirés,
@@ -960,6 +977,14 @@ toujours en dernier, hors de ce plafond, logique de niveau inchangée.
 Couvre aussi le tri (désordre, jetons expirés d'abord, égalité par id) et
 le plafond à 3 lignes (exactement 3, 4, 20 jetons ; niveau rouge même si le
 jeton critique est masqué ; ligne des entrées ignorées toujours en dernier).
+`tests/test_retrait_bandeaux_historiques_746.py` couvre spécifiquement le
+retrait (`app/eval_windows.py` absent, `app/vues.py` propre), les seuils
+réutilisés depuis `app/jetons_annuaire.py`, le nouveau libellé « Échéance »
+(jeton classique et entrée de type licence Windows), le rendu du gabarit
+sans l'ancien bandeau, et `eval-expiration.json` sans
+`date_expiration_oauth_token` toujours lu par `verifier_expiration_ccw.py`
+(y compris une ancienne copie qui contiendrait encore cette clé, ignorée
+sans effet).
 
 ## 10. Renouveler un seul jeton CCW, et le poser sur tous les services en une fois (issue #743)
 

@@ -1,16 +1,8 @@
-  <!-- ─── Bandeau d'avertissement échéance éval Windows CCW (issue #454) : visible
-       sur tous les onglets, hors des panneaux, tant que l'échéance approche. ─ -->
-  {% if eval_windows %}
-  <div class="bandeau-eval-windows {{ eval_windows.niveau }}">
-    {% for message in eval_windows.messages %}
-    <div>{{ message }}</div>
-    {% endfor %}
-  </div>
-  {% endif %}
-
-  <!-- ─── Bandeau d'avertissement échéance des jetons de l'annuaire (projet
-       séparé annuairetoken, jetons.json lu en lecture seule — issue #741) :
-       visible sur tous les onglets, comme le bandeau éval Windows ci-dessus. ─ -->
+  <!-- ─── Bandeau d'avertissement échéance des entrées de l'annuaire (projet
+       séparé annuairetoken, jetons.json lu en lecture seule — issue #741),
+       couvrant à la fois le jeton Claude du service CCW et l'échéance de la
+       licence d'évaluation Windows CCW (issue #746) : visible sur tous les
+       onglets, hors des panneaux, tant qu'une échéance approche. ─ -->
   {% if jetons_annuaire %}
   <div class="bandeau-eval-windows {{ jetons_annuaire.niveau }}">
     {% for message in jetons_annuaire.messages %}
@@ -21,7 +13,7 @@
 
   <!-- ─── Bandeau global : tâche(s) mode_write en cours directement dans
        REP_TRAVAIL, hors worktree isolé (repli #589, issue #609) — visible sur
-       TOUS les onglets, comme le bandeau éval Windows ci-dessus. Alimenté par
+       TOUS les onglets, comme le bandeau de l'annuaire ci-dessus. Alimenté par
        rafraichirReplisRepTravail() (polling /watchers, static/js/app.js). ─ -->
   <div id="bandeau-repli-rep-travail" class="bandeau-eval-windows orange" style="display:none"></div>
 
