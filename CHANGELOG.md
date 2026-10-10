@@ -9,6 +9,21 @@ milliers de caractères sur une seule ligne logique, coûteux à relire et
 
 Convention d'ajout : voir §10 de `BRIDGE_AGENT_DOC.md`.
 
+# CHANGELOG-746 — à fusionner dans CHANGELOG.md
+
+## 10 octobre 2026 — issue #746
+
+Retrait des bandeaux historiques « Éval Windows CCW » (#454) et « OAuth Token CCW » (#456), désormais suivis dans l'annuaire (#741/#742) ; libellé du bandeau de l'annuaire rendu générique.
+
+- **`app/eval_windows.py` supprimé** : son appel dans `app/vues.py::index()` (paramètre `eval_windows`) et son bloc `{% if eval_windows %}` dans `templates/fragments/bandeaux.html` retirés. Le CSS (`.bandeau-eval-windows` et variantes `orange`/`rouge`/`gris`, `static/css/base.css`) est conservé tel quel : le bandeau de l'annuaire le réutilise.
+- **Seuils déplacés** : `_niveau()`, `SEUIL_ORANGE` (14j) et `SEUIL_ROUGE` (5j) vivent désormais directement dans `app/jetons_annuaire.py` (plus d'import depuis le module supprimé) — valeurs et comportement strictement inchangés.
+- **Libellé générique** : le message du bandeau de l'annuaire passe de « ⚠️ Jeton `<service>` (`<id>`) : ... » à « ⚠️ Échéance `<service>` (`<id>`) : ... », exact aussi bien pour un jeton que pour une échéance qui n'en est pas une (licence Windows). « N j restant(s) », « expire aujourd'hui », « expiré depuis N j », le tri par urgence, le plafond de 3 lignes et la ligne de synthèse (#742) sont inchangés.
+- **`provisioning/windows/eval-expiration.json`** : clé `date_expiration_oauth_token` retirée (devenue redondante avec l'annuaire), ainsi que la phrase correspondante de `note`. Toutes les autres clés (`machine`, `windows`, `eval_jours`, `date_installation`, `date_expiration`) inchangées — `verifier_expiration_ccw.py` et la (re)création de la VM continuent de lire ce fichier normalement. Une ancienne copie du fichier qui contiendrait encore cette clé est simplement ignorée (clé surnuméraire sans effet, aucun lecteur ne s'y réfère plus).
+- **Tests** : `tests/test_bandeau_jetons_annuaire_741.py` mis à jour (libellé « Échéance », docstring ne citant plus `app.eval_windows`). Nouveau fichier `tests/test_retrait_bandeaux_historiques_746.py` : module supprimé, `app/vues.py` propre, seuils réutilisables depuis `app/jetons_annuaire.py`, libellé générique pour une entrée « licence Windows » comme pour un jeton classique, rendu du gabarit `bandeaux.html` sans l'ancien bandeau (avec et sans bandeau annuaire), `eval-expiration.json` sans la clé retirée toujours lu correctement par `verifier_expiration_ccw.py`, ancienne copie avec la clé surnuméraire ignorée sans effet. Les 58 fichiers de `tests/test_*.py` (`tests/lancer_tous_les_tests.py`) passent.
+- **Documentation** : `ARCHITECTURE.md` §9 réécrit (retrait du bandeau historique, libellé générique, seuils déplacés, mise à jour de la date de licence Windows à faire désormais dans l'annuaire lors d'une recréation de VM/machine CCW) et tableau §6.5 (bandeaux) mis à jour. `provisioning/windows/REINSTALLATION_CCW.md` ne cite ni `eval-expiration.json` ni l'échéance du jeton OAuth CCW : rien à y modifier. `BRIDGE_AGENT_DOC.md` non touché (hors périmètre).
+
+**Rappel de déploiement** : après fusion, redémarrer `new_issue.py` (code serveur `app/vues.py`/`app/jetons_annuaire.py` et gabarit `templates/fragments/bandeaux.html` modifiés).
+
 # CHANGELOG-744 — à fusionner dans CHANGELOG.md
 
 ## 10 octobre 2026 — issue #744
