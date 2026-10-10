@@ -9,6 +9,21 @@ milliers de caractères sur une seule ligne logique, coûteux à relire et
 
 Convention d'ajout : voir §10 de `BRIDGE_AGENT_DOC.md`.
 
+# CHANGELOG-747 — à fusionner dans CHANGELOG.md
+
+## 10 octobre 2026 — issue #747
+
+Journal des toasts : les confirmations d'actions triviales (déjà vues par l'utilisateur à l'écran) n'incrémentent plus la pastille de l'icône du journal des messages.
+
+- **`static/js/socle/toasts.js`** : en-tête du module complété par la règle de comptabilisation (un message qui confirme une action déclenchée et vue par l'utilisateur n'est pas comptabilisé, tout le reste l'est). Nouvelles fonctions pures exportées : `estComptabilise(type, comptabiliseDemande=true)` (force `true` pour `erreur`/`avertissement`, sinon suit l'option demandée) et `entreeComptabilisee(entree)` (lit `entree.comptabilise`, `true` si absent — compatibilité avec une entrée de journal antérieure à cette issue). `majNonLusApresAjout` gagne un troisième paramètre `comptabilise=true` : n'incrémente pas le compteur si faux (le panneau ouvert continue de tout remettre à zéro). `toasts.info/succes/erreur/avertissement` acceptent désormais un dernier argument optionnel `comptabilise` (défaut `true`) ; `journaliser()` stocke ce booléen sur chaque entrée du journal (toujours ajoutée, apparence/durée/fermeture inchangées) ; `chargerJournalSession()` normalise les entrées relues depuis `sessionStorage` via `entreeComptabilisee` pour qu'une ancienne entrée sans le champ reste lue comme comptabilisée, sans erreur.
+- **Messages passés à `comptabilise=false`** (actions triviales déjà vues par l'utilisateur) : `static/js/attente.js` — « Issue lancée … » et « Issue en attente supprimée. » ; `static/js/resultats_coches.js` — « Rapport copié dans le presse-papier. », « Toutes les issues chargées sont déjà cochées. », « Préparation de la copie en cours … » et « Contenu en préparation … ».
+- **Restent comptabilisés** (comportement par défaut, aucun changement) : « GitHub est rétabli » (`static/js/socle/panne_github.js`, arrive sans action de l'utilisateur) et le message de l'action CCW de nettoyage des verrous/relance du service (`static/js/ccw.js`), ainsi que toutes les erreurs et tous les avertissements du projet.
+- **Recherche exhaustive demandée par l'issue** : tous les appels `toasts.succes`/`toasts.info` du JavaScript du projet ont été recensés (`grep` sur `static/js/**/*.js`) — ils se limitent exactement aux six messages ci-dessus plus les deux messages déjà listés comme devant rester comptabilisés. Aucun autre appel de succès/information relevant de la même règle n'a été trouvé ; rien d'autre n'a donc été modifié.
+- **Tests** (`static/js/tests/toasts.test.js`, `node --test`) : nouveaux cas pour `estComptabilise` (option suivie pour info/succes, défaut `true`, toujours `true` et option ignorée pour erreur/avertissement) et `majNonLusApresAjout` (comptabilise=false → compteur inchangé ; comptabilise=true ou absent → incrémente comme avant #747 ; panneau ouvert → toujours remis à zéro même si comptabilise=false) et `entreeComptabilisee` (true/false explicites, et entrée ancienne sans le champ lue comme comptabilisée). L'affichage du toast lui-même (DOM, durée, fermeture) n'est pas concerné par ce changement et reste couvert par les vérifications manuelles existantes.
+- **Documentation** : `ARCHITECTURE.md` §6.3, passage sur `toasts`, complété avec le dernier argument `comptabilise` et son usage. `BRIDGE_AGENT_DOC.md` non touché (hors périmètre de l'issue).
+
+**Rappel de déploiement** : après fusion, Ctrl+Maj+R suffit (JavaScript uniquement, aucun changement serveur).
+
 # CHANGELOG-746 — à fusionner dans CHANGELOG.md
 
 ## 10 octobre 2026 — issue #746
