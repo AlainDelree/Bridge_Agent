@@ -27,6 +27,19 @@
 //   onglet ; pas au-delà — un nouvel onglet repart vide), jamais en
 //   localStorage.
 //
+//   RÈGLE DE COMPTABILISATION DE LA PASTILLE (issue #747) : un message qui ne
+//   fait que CONFIRMER une action que l'utilisateur vient lui-même de
+//   déclencher et de voir à l'écran (ex. « Issue lancée », « Rapport copié
+//   dans le presse-papier ») n'a pas sa place dans le COMPTEUR de la pastille
+//   — l'utilisateur sait déjà. Tout le reste (ce qui peut arriver sans geste
+//   de l'utilisateur, ou qui signale un problème) EST comptabilisé. En
+//   pratique : `toasts.succes`/`toasts.info` acceptent un dernier argument
+//   `comptabilise` (true par défaut) ; `toasts.erreur`/`toasts.avertissement`
+//   restent TOUJOURS comptabilisés, quelle que soit la valeur passée. Un
+//   toast non comptabilisé garde la même apparence, la même durée, la même
+//   fermeture, et entre dans le journal comme les autres — seule la pastille
+//   ne l'incrémente pas (voir `estComptabilise`, `majNonLusApresAjout`).
+//
 // CE QU'IL EXPOSE
 //   export const toasts = { info, succes, erreur, avertissement, confirmer }
 //   + initJournalMessages() et quelques fonctions PURES testables sans DOM
@@ -78,9 +91,28 @@ export function ajouterEntreeJournal(journal, entree, tailleMax = JOURNAL_TAILLE
 
 /** Nombre de messages non consultés après l'ajout d'un nouveau message :
  * remis à zéro si le panneau du journal est actuellement ouvert (l'utilisateur
- * le voit tout de suite), sinon incrémenté. */
-export function majNonLusApresAjout(nombreActuel, panneauOuvert) {
-  return panneauOuvert ? 0 : nombreActuel + 1;
+ * le voit tout de suite), sinon incrémenté — sauf si `comptabilise` est faux
+ * (message de confirmation d'une action triviale, issue #747), auquel cas le
+ * compteur n'est pas touché. Par défaut `true` (comportement d'avant #747,
+ * et lecture d'une entrée de journal ancienne sans cette information). */
+export function majNonLusApresAjout(nombreActuel, panneauOuvert, comptabilise = true) {
+  if (panneauOuvert) return 0;
+  return comptabilise ? nombreActuel + 1 : nombreActuel;
+}
+
+/** Un message d'erreur ou d'avertissement est TOUJOURS comptabilisé dans la
+ * pastille, quelle que soit l'option demandée par l'appelant (issue #747) —
+ * elle est ignorée pour ces deux types. Pour info/succes, l'option demandée
+ * s'applique telle quelle. */
+export function estComptabilise(type, comptabiliseDemande = true) {
+  return (type === 'erreur' || type === 'avertissement') ? true : comptabiliseDemande;
+}
+
+/** Lit le statut de comptabilisation d'une entrée du journal — une entrée
+ * ancienne (session antérieure à l'issue #747) n'a pas ce champ : elle est
+ * alors lue comme comptabilisée, par compatibilité. */
+export function entreeComptabilisee(entree) {
+  return entree.comptabilise !== false;
 }
 
 /** Temps restant (ms, jamais négatif) avant fermeture automatique, compte tenu
@@ -119,7 +151,8 @@ function chargerJournalSession() {
     const brut = s.getItem(CLE_SESSION_JOURNAL);
     if (!brut) return;
     const donnees = JSON.parse(brut);
-    journal = Array.isArray(donnees.entrees) ? donnees.entrees : [];
+    const entrees = Array.isArray(donnees.entrees) ? donnees.entrees : [];
+    journal = entrees.map((e) => ({ ...e, comptabilise: entreeComptabilisee(e) }));
     nonLus = Number.isFinite(donnees.nonLus) ? donnees.nonLus : 0;
   } catch { /* session corrompue/vide — on repart d'un journal neuf */ }
 }
@@ -147,11 +180,13 @@ function majBadgeJournal() {
 
 // Consigne `texte`/`type` dans le journal — appelé par `afficher` pour TOUS
 // les messages, sans exception ni action requise des appelants existants.
-function journaliser(texte, type) {
+// `comptabilise` (issue #747) : entre dans le journal dans tous les cas,
+// mais n'incrémente la pastille que si vrai.
+function journaliser(texte, type, comptabilise) {
   compteurIdJournal += 1;
-  const entree = { id: compteurIdJournal, type, texte, horodatage: Date.now() };
+  const entree = { id: compteurIdJournal, type, texte, horodatage: Date.now(), comptabilise };
   journal = ajouterEntreeJournal(journal, entree, JOURNAL_TAILLE_MAX);
-  nonLus = majNonLusApresAjout(nonLus, panneauJournalOuvert);
+  nonLus = majNonLusApresAjout(nonLus, panneauJournalOuvert, comptabilise);
   sauvegarderJournalSession();
   majBadgeJournal();
   if (panneauJournalOuvert) rafraichirListeJournal();
@@ -364,11 +399,11 @@ function definirContenuToast(toast, texte, avecFermeture, onFermer) {
   toast.appendChild(conteneur);
 }
 
-function afficher(texte, type) {
+function afficher(texte, type, comptabiliseDemande = true) {
   const d = doc();
   if (!d) { return; }
   injecterStyles();
-  journaliser(texte, type);
+  journaliser(texte, type, estComptabilise(type, comptabiliseDemande));
 
   const duree = dureeAffichage(type);
   const cle = type + ' ' + texte;
@@ -464,9 +499,13 @@ function confirmer(message, opts = {}) {
 }
 
 export const toasts = {
-  info: (texte) => afficher(texte, 'info'),
-  succes: (texte) => afficher(texte, 'succes'),
-  erreur: (texte) => afficher(texte, 'erreur'),
-  avertissement: (texte) => afficher(texte, 'avertissement'),
+  // `comptabilise` (issue #747, défaut true) : passer `false` pour un message
+  // qui ne fait que confirmer une action déclenchée et vue par l'utilisateur —
+  // il s'affiche et se journalise normalement, mais n'incrémente pas la
+  // pastille. Sans effet sur erreur/avertissement (toujours comptabilisés).
+  info: (texte, comptabilise = true) => afficher(texte, 'info', comptabilise),
+  succes: (texte, comptabilise = true) => afficher(texte, 'succes', comptabilise),
+  erreur: (texte, comptabilise = true) => afficher(texte, 'erreur', comptabilise),
+  avertissement: (texte, comptabilise = true) => afficher(texte, 'avertissement', comptabilise),
   confirmer,
 };

@@ -252,7 +252,7 @@ async function lancer(id, ligneEl) {
   try {
     const rep = await api.post('/issues-attente/lancer', { id }, { silencieux: true });
     toasts.succes('Issue lancée' + (rep && rep.fichier ? ' (' + rep.fichier + ')' : '')
-                 + ' — elle apparaîtra dans Résultats.');
+                 + ' — elle apparaîtra dans Résultats.', false);
     ligneEl.remove();
     if (!zoneListe().children.length) rendreListe([]);
   } catch (e) {
@@ -270,7 +270,7 @@ async function supprimer(id, ligneEl) {
   basculerBoutons(ligneEl, true);
   try {
     await api.post('/issues-attente/supprimer', { id }, { silencieux: true });
-    toasts.succes('Issue en attente supprimée.');
+    toasts.succes('Issue en attente supprimée.', false);
     ligneEl.remove();
     if (!zoneListe().children.length) rendreListe([]);
   } catch (e) {

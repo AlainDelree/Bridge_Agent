@@ -347,10 +347,18 @@ static/js/socle/
   pour écrire dans le store. Connecté par `static/js/resultats.js::initialiser()`
   (issue #627) — pas par `index.js`, pour qu'un import du module reste sûr sous
   Node. `/events` n'est pas repris ici : il reste géré par l'ancien app.js.
-- **toasts** — `toasts.info/succes/erreur/avertissement(msg)` (éphémère, jamais
-  de « OK » à cliquer) et `toasts.confirmer(msg, opts) → Promise<boolean>` (LA
-  seule modale, réservée au destructif). Remplace `alert()` / `confirm()` /
-  `afficherToast()`.
+- **toasts** — `toasts.info/succes/erreur/avertissement(msg, comptabilise=true)`
+  (éphémère, jamais de « OK » à cliquer) et `toasts.confirmer(msg, opts) →
+  Promise<boolean>` (LA seule modale, réservée au destructif). Remplace
+  `alert()` / `confirm()` / `afficherToast()`. Tout message affiché est
+  journalisé (icône + panneau consultable, pastille de non-lus). Le dernier
+  argument `comptabilise` (issue #747) permet de déclarer un message « non
+  comptabilisé » dans la pastille — même affichage, même journal, mais aucune
+  incrémentation du compteur : réservé aux confirmations d'actions triviales
+  que l'utilisateur vient lui-même de déclencher et de voir (« Issue lancée »,
+  « Rapport copié dans le presse-papier », etc., voir `attente.js` et
+  `resultats_coches.js`). Ignoré pour `erreur`/`avertissement`, toujours
+  comptabilisés.
 - **dom** — `echapperHtml` (pure) et le **registre de délégation** :
   `surAction(selecteur, type, handler)` + `installerDelegation()`.
   Un seul écouteur par type d'événement, routé par `closest(selecteur)` — destiné

@@ -12,6 +12,8 @@ import {
   majNonLusApresAjout,
   calculerDelaiRestant,
   formaterHeureJournal,
+  estComptabilise,
+  entreeComptabilisee,
 } from '../socle/toasts.js';
 
 // ─── dureeAffichage : durée de vie selon le type ───────────────────────────
@@ -110,4 +112,51 @@ test('formaterHeureJournal : HH:MM:SS, zéro-rembourré', () => {
 
 test('formaterHeureJournal : heure/minute/seconde à deux chiffres non modifiées', () => {
   assert.equal(formaterHeureJournal(new Date(2026, 9, 8, 23, 59, 42)), '23:59:42');
+});
+
+// ─── estComptabilise / majNonLusApresAjout(comptabilise) : pastille vs actions
+//     triviales (issue #747) ───────────────────────────────────────────────
+
+test('estComptabilise : info/succes → suit l’option demandée par l’appelant', () => {
+  assert.equal(estComptabilise('info', false), false);
+  assert.equal(estComptabilise('succes', false), false);
+  assert.equal(estComptabilise('info', true), true);
+  assert.equal(estComptabilise('succes', true), true);
+});
+
+test('estComptabilise : sans option → comptabilisé par défaut (comportement d’avant #747)', () => {
+  assert.equal(estComptabilise('info'), true);
+  assert.equal(estComptabilise('succes'), true);
+});
+
+test('estComptabilise : erreur/avertissement → toujours comptabilisés, option ignorée', () => {
+  assert.equal(estComptabilise('erreur', false), true);
+  assert.equal(estComptabilise('avertissement', false), true);
+  assert.equal(estComptabilise('erreur', true), true);
+});
+
+test('majNonLusApresAjout : comptabilise=false → compteur inchangé (panneau fermé)', () => {
+  assert.equal(majNonLusApresAjout(3, false, false), 3);
+  assert.equal(majNonLusApresAjout(0, false, false), 0);
+});
+
+test('majNonLusApresAjout : comptabilise=true (ou absent) → incrémente comme avant #747', () => {
+  assert.equal(majNonLusApresAjout(3, false, true), 4);
+  assert.equal(majNonLusApresAjout(3, false), 4);
+});
+
+test('majNonLusApresAjout : panneau ouvert → remis à zéro même si comptabilise=false', () => {
+  assert.equal(majNonLusApresAjout(5, true, false), 0);
+});
+
+test('entreeComptabilisee : comptabilise=false → non comptabilisée', () => {
+  assert.equal(entreeComptabilisee({ comptabilise: false }), false);
+});
+
+test('entreeComptabilisee : comptabilise=true → comptabilisée', () => {
+  assert.equal(entreeComptabilisee({ comptabilise: true }), true);
+});
+
+test('entreeComptabilisee : entrée ancienne sans le champ → lue comme comptabilisée (compatibilité session)', () => {
+  assert.equal(entreeComptabilisee({ id: 1, type: 'succes', texte: 'Ancien message', horodatage: 0 }), true);
 });

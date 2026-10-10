@@ -326,7 +326,7 @@ async function remettreAZero() {
   for (const [projet, numeros] of Object.entries(parProjet)) {
     for (const n of numeros) if (!estCoche(projet, n)) cases.push({ projet, numero: n });
   }
-  if (!cases.length) { toasts.info('Toutes les issues chargées sont déjà cochées.'); return; }
+  if (!cases.length) { toasts.info('Toutes les issues chargées sont déjà cochées.', false); return; }
   await marquerCases(cases);
 }
 
@@ -539,10 +539,10 @@ function precharderVisiblesRepli() {
 // Cochage d'une case : feedback par TOAST (pas de badge sur la case).
 function feedbackToast() {
   return {
-    succes: () => toasts.succes('Rapport copié dans le presse-papier.'),
+    succes: () => toasts.succes('Rapport copié dans le presse-papier.', false),
     echec: () => toasts.erreur('Copie impossible — le presse-papier n\'a pas pu être écrit.'),
     vide: () => toasts.avertissement(TITRE_COPIE_VIDE),
-    nonPret: () => toasts.info('Préparation de la copie en cours — recoche dans un instant.'),
+    nonPret: () => toasts.info('Préparation de la copie en cours — recoche dans un instant.', false),
   };
 }
 
@@ -557,7 +557,7 @@ function feedbackBadge(badge) {
     echec: () => { toasts.erreur('Copie impossible — le presse-papier n\'a pas pu être écrit.'); },
     vide: () => { if (badge) { badge.textContent = '⚠'; badge.title = TITRE_COPIE_VIDE; setTimeout(restaurer, 2000); } },
     aucun: () => flash('∅'),
-    nonPret: () => { toasts.info('Contenu en préparation — reclique dans un instant.'); },
+    nonPret: () => { toasts.info('Contenu en préparation — reclique dans un instant.', false); },
   };
 }
 
