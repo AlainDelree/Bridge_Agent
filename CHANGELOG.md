@@ -9,6 +9,20 @@ milliers de caractères sur une seule ligne logique, coûteux à relire et
 
 Convention d'ajout : voir §10 de `BRIDGE_AGENT_DOC.md`.
 
+# CHANGELOG-751 — à fusionner dans CHANGELOG.md
+
+## 11 octobre 2026 — issue #751
+
+Nettoyage automatique, au démarrage de `new_issue.py`, des verrous périmés sous `logs/verrous/` (issue #751) — vécu le 11/10/2026 : trois verrous (Bridge_Agent #573, Relecture_Bridge #73 et #100) désignant des process disparus et des worktrees supprimés depuis longtemps, retirés jusqu'ici à la main faute de ce nettoyage.
+
+- **`watcher.py` — nouvelle fonction `nettoyer_verrous_perimes()`** (placée avec le reste du code des verrous, juste avant `_empreinte_configs`) : parcourt `DOSSIER_VERROUS` et supprime tout verrou dont le PID propriétaire (champ `pid=`) est certainement mort — absent, ou zombie (même sonde `_pid_vivant` qu'`acquerir_verrou`, y compris sa détection de zombie de l'issue #748). La décision repose UNIQUEMENT sur le processus, jamais sur l'existence du dossier de travail (`rep=`) : un verrou dont le process est VIVANT n'est JAMAIS supprimé, même si son `rep` a disparu — ce cas suspect est seulement journalisé en warning (nom du verrou + PID), sans rien supprimer, pour vérification manuelle. Prudence supplémentaire : un verrou illisible, sans champ `pid=` exploitable, ou posé depuis moins de deux minutes (nouvelle constante `AGE_MIN_NETTOYAGE_VERROUS`, course possible avec un watcher en train de le poser) est laissé tel quel, sans suppression. Best-effort total (toute exception est journalisée, n'empêche jamais le démarrage de `new_issue.py`) et idempotent ; ne touche jamais à un worktree ou un dossier de travail — uniquement aux fichiers `*.lock`. Une ligne de bilan (nombre de verrous supprimés, avec leurs noms, et nombre de cas suspects conservés) est journalisée en warning si (et seulement si) quelque chose a été supprimé ou signalé — rien n'est jamais affiché dans l'interface web.
+- **`new_issue.py`** : appel de `nettoyer_verrous_perimes()` au démarrage, juste après le nettoyage existant des entrées de son par issue (issue #630) — même emplacement, même esprit best-effort.
+- **Fonctionne de la même façon sous Windows** (`new_issue.py` natif) : repose entièrement sur `_pid_vivant`/`DOSSIER_VERROUS`, déjà cross-plateforme, aucun code spécifique Windows à ajouter.
+- **Tests** : nouveau fichier `tests/test_nettoyage_verrous_perimes_751.py` (8 scénarios, avec de vrais process — PID mort via `subprocess`, zombie via `os.fork()`+non-réapé, comme `test_pid_vivant_zombie_748.py`/`test_orphelin_verrou_perime_322.py`) : verrou au PID absent supprimé (rep jamais touché) ; verrou au PID d'un zombie supprimé ; verrou au PID vivant conservé y compris rep absent (avertissement journalisé, nom + PID) ; verrou au PID vivant avec rep existant conservé sans aucune alerte ; verrou illisible ou sans PID conservé ; verrou de moins de deux minutes conservé ; une erreur de lecture du dossier (simulée) ne lève aucune exception et est journalisée ; deux passages successifs donnent le même résultat (idempotent). Les 63 fichiers `tests/test_*.py` (dont ce nouveau) passent sans régression (`tests/lancer_tous_les_tests.py`).
+- **Documentation** : `ARCHITECTURE.md` §11.1 complété d'un paragraphe décrivant `nettoyer_verrous_perimes()` (emplacement naturel, avec les autres éléments du mécanisme de verrous). `BRIDGE_AGENT_DOC.md` non touché, hors périmètre de l'issue.
+
+**Rappel de déploiement** : après fusion, redémarrer `new_issue.py` — c'est lui qui exécute ce nettoyage, une fois à son démarrage.
+
 # CHANGELOG-749 — à fusionner dans CHANGELOG.md
 
 ## 11 octobre 2026 — issue #749
