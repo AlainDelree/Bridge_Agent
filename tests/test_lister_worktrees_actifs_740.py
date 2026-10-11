@@ -15,7 +15,8 @@ Vérifie :
 - Un worktree créé AILLEURS que le répertoire frère du projet (simule le
   nouveau dossier dédié) est quand même trouvé.
 - Un worktree créé en répertoire frère du projet (ancien emplacement,
-  worktree hérité, ou comportement CCW inchangé) est toujours trouvé.
+  worktree hérité, ou repli CCL/CCW si le dossier dédié est inaccessible,
+  issues #740/#749) est toujours trouvé.
 - Un dossier du même nom, mais qui n'est PAS un worktree enregistré par git
   (simple dossier), n'est jamais retourné.
 - Le filtre par suffixe numérique (`<projet>-issueN`) est conservé : un nom
@@ -79,7 +80,8 @@ def scenario_worktree_dossier_dedie_trouve():
 
 def scenario_worktree_ancien_emplacement_toujours_trouve():
     """Un worktree créé en répertoire FRÈRE du projet (ancien emplacement
-    d'avant #740, ou comportement CCW inchangé) est toujours trouvé."""
+    d'avant #740/#749, ou repli si le dossier dédié est inaccessible) est
+    toujours trouvé."""
     with tempfile.TemporaryDirectory() as tmp:
         tmp_path = Path(tmp)
         rep_travail = tmp_path / "projet"
@@ -139,7 +141,7 @@ def main():
     tests = [
         ("issue #740 — worktree créé dans un dossier dédié (ailleurs que le parent) : trouvé",
          scenario_worktree_dossier_dedie_trouve),
-        ("worktree créé en répertoire frère (ancien emplacement / CCW) : toujours trouvé",
+        ("worktree créé en répertoire frère (ancien emplacement, ou repli #740/#749) : toujours trouvé",
          scenario_worktree_ancien_emplacement_toujours_trouve),
         ("simple dossier non enregistré comme worktree : jamais retourné",
          scenario_simple_dossier_non_worktree_ignore),

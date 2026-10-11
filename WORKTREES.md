@@ -48,18 +48,25 @@ périmètre de ce mécanisme (voir §5 « Limites connues »).
   erreur git), repli automatique et silencieux sur le traitement
   séquentiel classique — jamais d'exception propagée, l'issue attend
   simplement qu'un slot se libère au cycle suivant.
-  - **Emplacement (issue #740).** Sous **CCL (Linux)**, `<chemin>` est
-    désormais `~/worktrees/<NOM_PROJET>-issue<N>` — un dossier **dédié**,
-    séparé des dossiers de projets (`DOSSIER_WORKTREES_DEDIE` dans
-    `watcher.py`, variable globale modifiable, PAS un champ de
-    `configs/*.conf` ; créé automatiquement au besoin). Si ce dossier dédié
-    ne peut pas être créé ou n'est pas accessible en écriture, repli
+  - **Emplacement (issues #740 CCL, #749 CCW).** Sous **CCL (Linux)**,
+    `<chemin>` est désormais `~/worktrees/<NOM_PROJET>-issue<N>` — un
+    dossier **dédié**, séparé des dossiers de projets
+    (`DOSSIER_WORKTREES_DEDIE` dans `watcher.py`, variable globale
+    modifiable, PAS un champ de `configs/*.conf` ; créé automatiquement au
+    besoin). Sous **CCW (Windows)**, même principe mais emplacement
+    différent : `<chemin>` est `<parent de REP_TRAVAIL>\worktrees\<NOM_PROJET>-issue<N>`
+    — par exemple `C:\CCW\worktrees\scrabble-issue444` pour un projet dont
+    `REP_TRAVAIL` est `C:\CCW\Scrabble` (`_dossier_worktrees_dedie_windows()`
+    dans `watcher.py`, recalculé à chaque appel à partir de
+    `CFG.rep_travail.parent` — **jamais** à partir du profil utilisateur
+    /`Path.home()` : les services CCW tournent sous NSSM, éventuellement
+    sous un compte distinct de l'utilisateur interactif, dont le profil n'a
+    aucun rapport avec l'installation). Dans les deux cas, si le dossier
+    dédié ne peut pas être créé ou n'est pas accessible en écriture, repli
     automatique sur l'ancien emplacement — répertoire **frère** de
     `REP_TRAVAIL` (`<REP_TRAVAIL>/../<NOM_PROJET>-issue<N>`) — signalé par
     un `log.warning` explicite dans `logs/watcher-<projet>.log`, pour
-    qu'aucune issue ne soit bloquée par ce repli. Sous **CCW (Windows)**,
-    aucun changement : `<chemin>` reste le répertoire frère de
-    `REP_TRAVAIL`, comme avant cette issue.
+    qu'aucune issue ne soit bloquée par ce repli.
   - **Worktrees déjà existants : aucune migration.** Les worktrees créés
     avant l'issue #740 restent à leur ancien emplacement (frère du projet)
     — aucun déplacement automatique. Ils restent trouvés et réutilisables

@@ -299,9 +299,20 @@ Le nettoyage des worktrees `mode_write` (cf. `WORKTREES.md`) n'est **jamais**
 automatique : ni `watcher.py` ni les scripts de réinstallation ne suppriment
 un worktree ou sa branche `worktree-issue-<N>`. Après une réinstallation, des
 worktrees orphelins peuvent donc traîner sur les clones concernés (tâche
-interrompue par la réinstallation, répertoire frère
-`<REP_TRAVAIL>/../<NOM_PROJET>-issue<N>` disparu alors que la métadonnée git
-subsiste, ou l'inverse). Ce nettoyage reste **manuel**.
+interrompue par la réinstallation, dossier disparu alors que la métadonnée
+git subsiste, ou l'inverse). Ce nettoyage reste **manuel**.
+
+> ℹ️ Emplacement des worktrees sous CCW (issue #749) : depuis cette issue,
+> les NOUVEAUX worktrees sont créés dans un dossier **dédié**
+> `<parent de REP_TRAVAIL>\worktrees\<NOM_PROJET>-issue<N>` (ex.
+> `C:\CCW\worktrees\scrabble-issue444` pour un projet dont `REP_TRAVAIL` est
+> `C:\CCW\Scrabble`), et non plus directement en répertoire **frère** de
+> `REP_TRAVAIL` (`<REP_TRAVAIL>\..\<NOM_PROJET>-issue<N>`, ancien
+> comportement). Les worktrees créés AVANT cette issue restent à l'ancien
+> emplacement frère — aucune migration automatique — et sont toujours
+> trouvés par `git worktree list` ci-dessous, quel que soit leur
+> emplacement réel. Voir `WORKTREES.md` (§2, « Emplacement ») pour le
+> détail.
 
 > ⚠️ Cette section concerne surtout les clones qui **survivent** à la
 > réinstallation (ex. le `REP_TRAVAIL` d'un projet dédié, non touché par

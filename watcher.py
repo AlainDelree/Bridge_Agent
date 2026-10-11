@@ -3675,29 +3675,58 @@ def _nb_threads_ecriture_actifs() -> int:
     return len(_threads_ecriture_actifs())
 
 
-# ─── Dossier dédié aux worktrees mode_write sous Linux (issue #740) ────────────
+# ─── Dossier dédié aux worktrees mode_write (issues #740 Linux, #749 Windows) ──
 # Jusqu'ici (issue #337), chaque worktree était placé en répertoire FRÈRE de
 # REP_TRAVAIL : avec plusieurs projets et des worktrees conservés jusqu'à leur
 # fusion manuelle (aucune suppression automatique, voir
-# `verifier_accumulation_worktrees` ci-dessus), le dossier personnel d'Alain
-# se remplissait de dossiers `<projet>-issue<N>` mélangés aux dossiers de
-# projets eux-mêmes, au point de devenir illisible.
+# `verifier_accumulation_worktrees` ci-dessus), le dossier parent (le dossier
+# personnel d'Alain sous CCL, `C:\CCW` sous CCW) se remplissait de dossiers
+# `<projet>-issue<N>` mélangés aux dossiers de projets eux-mêmes, au point de
+# devenir illisible.
 #
-# Nouveau comportement, CCL (Linux) UNIQUEMENT (garde `os.name` dans
-# `_chemin_worktree` ci-dessous — AUCUN changement côté CCW/Windows, qui
-# partage ce même watcher.py, cf. provisioning/windows/REINSTALLATION_CCW.md) :
-# les NOUVEAUX worktrees sont créés dans ce dossier dédié, par défaut
-# ~/worktrees (visible dans le gestionnaire de fichiers, pas caché). Variable
-# GLOBALE mutable (comme DOSSIER_VERROUS/DOSSIER_LOGS) plutôt qu'une constante
-# figée : modifiable par les tests, et réglage facile à changer sans toucher
-# au reste du code — volontairement PAS un champ de configs/*.conf (ces
-# fichiers restent hors de portée des issues, cf. garde-fou configs).
+# Nouveau comportement, sur LES DEUX plateformes désormais (garde `os.name`
+# dans `_chemin_worktree` ci-dessous pour choisir le bon dossier dédié) : les
+# NOUVEAUX worktrees sont créés dans un dossier dédié nommé `worktrees`, créé
+# au besoin, avec repli sur l'ancien emplacement frère (signalé par
+# `log.warning`, pour qu'aucune issue ne soit bloquée) si ce dossier dédié ne
+# peut pas être créé ou n'est pas accessible en écriture — mais l'EMPLACEMENT
+# de ce dossier dédié diffère entre les deux plateformes :
+# - CCL (Linux) : `DOSSIER_WORKTREES_DEDIE`, constante FIXE (par défaut
+#   ~/worktrees, visible dans le gestionnaire de fichiers, pas caché).
+#   Variable GLOBALE mutable (comme DOSSIER_VERROUS/DOSSIER_LOGS) plutôt
+#   qu'une constante figée : modifiable par les tests, et réglage facile à
+#   changer sans toucher au reste du code.
+# - CCW (Windows, issue #749) : `_dossier_worktrees_dedie_windows()`,
+#   recalculé à CHAQUE appel à partir de `CFG.rep_travail.parent` (le même
+#   dossier parent que REP_TRAVAIL, ex. `C:\CCW\worktrees` si REP_TRAVAIL est
+#   `C:\CCW\Scrabble`) — JAMAIS à partir du profil utilisateur
+#   (`Path.home()`, équivalent `%USERPROFILE%`) : les services CCW tournent
+#   sous NSSM, éventuellement sous un compte distinct de l'utilisateur
+#   interactif, dont le profil n'a aucun rapport avec l'installation. Une
+#   fonction plutôt qu'une constante globale : contrairement à CCL, cet
+#   emplacement dépend de CFG (donc du projet courant), qui peut changer
+#   d'un appel à l'autre dans les tests.
+#
+# Dans les deux cas, PAS un champ de configs/*.conf (ces fichiers restent
+# hors de portée des issues, cf. garde-fou configs).
 #
 # Les worktrees déjà existants à l'ancien emplacement (frère du projet) ne
-# sont PAS migrés : `_trouver_worktree_reutilisable` les retrouve toujours,
-# car il interroge `git worktree list` (indépendant de l'emplacement), jamais
-# un chemin calculé. Le nettoyage manuel reste inchangé (WORKTREES.md).
-DOSSIER_WORKTREES_DEDIE = Path.home() / "worktrees"
+# sont PAS migrés, sur aucune des deux plateformes : `_trouver_worktree_reutilisable`
+# les retrouve toujours, car il interroge `git worktree list` (indépendant de
+# l'emplacement), jamais un chemin calculé. Le nettoyage manuel reste
+# inchangé (WORKTREES.md).
+NOM_DOSSIER_WORKTREES_DEDIE = "worktrees"
+DOSSIER_WORKTREES_DEDIE = Path.home() / NOM_DOSSIER_WORKTREES_DEDIE  # CCL uniquement, cf. commentaire ci-dessus
+
+
+def _dossier_worktrees_dedie_windows() -> Path:
+    """Dossier dédié aux worktrees mode_write sous CCW (issue #749) : le
+    dossier `worktrees`, dans le MÊME dossier parent que REP_TRAVAIL (ex.
+    `C:\\CCW\\worktrees` si REP_TRAVAIL est `C:\\CCW\\Scrabble`) — jamais à
+    partir du profil utilisateur, voir le commentaire au-dessus de
+    `DOSSIER_WORKTREES_DEDIE`. Recalculé à chaque appel (dépend de
+    `CFG.rep_travail`, pas une constante figée au chargement du module)."""
+    return CFG.rep_travail.parent / NOM_DOSSIER_WORKTREES_DEDIE
 
 
 def _chemin_worktree(numero: int, suffixe: str = "") -> Path:
@@ -3705,32 +3734,33 @@ def _chemin_worktree(numero: int, suffixe: str = "") -> Path:
     le NOM du projet (CFG.nom, pas le nom du dossier REP_TRAVAIL — ce sont
     deux choses potentiellement différentes) : `<CFG.nom>-issue<numero>`.
 
-    Emplacement (issue #740) : sous CCW (Windows, `os.name == "nt"`),
-    toujours le répertoire FRÈRE de REP_TRAVAIL, comportement historique
-    inchangé. Sous CCL (Linux), le dossier dédié `DOSSIER_WORKTREES_DEDIE`
-    (créé au besoin) — avec repli sur l'ancien emplacement frère si ce
-    dossier dédié ne peut pas être créé ou n'est pas accessible en écriture,
-    signalé par `log.warning`, pour qu'aucune issue ne soit bloquée.
+    Emplacement (issues #740 CCL, #749 CCW) : un dossier dédié `worktrees`,
+    créé au besoin — sous CCL (Linux) `DOSSIER_WORKTREES_DEDIE` (fixe, par
+    défaut ~/worktrees) ; sous CCW (Windows, `os.name == "nt"`)
+    `_dossier_worktrees_dedie_windows()` (dérivé du dossier parent de
+    REP_TRAVAIL). Dans les deux cas, repli sur l'ancien emplacement frère de
+    REP_TRAVAIL si ce dossier dédié ne peut pas être créé ou n'est pas
+    accessible en écriture, signalé par `log.warning`, pour qu'aucune issue
+    ne soit bloquée.
 
     `suffixe` (issue #611) : `-bis`/`-ter`, utilisé par
     `_creer_worktree_avec_retries` pour les tentatives alternatives quand le
     chemin/la branche standard est déjà pris (reliquat non nettoyé)."""
     nom = f"{CFG.nom}-issue{numero}{suffixe}"
     chemin_frere = CFG.rep_travail.parent / nom
-    if os.name == "nt":
-        return chemin_frere
+    dossier_dedie = _dossier_worktrees_dedie_windows() if os.name == "nt" else DOSSIER_WORKTREES_DEDIE
     try:
-        DOSSIER_WORKTREES_DEDIE.mkdir(parents=True, exist_ok=True)
-        if not os.access(DOSSIER_WORKTREES_DEDIE, os.W_OK | os.X_OK):
-            raise OSError(f"{DOSSIER_WORKTREES_DEDIE} non accessible en écriture")
+        dossier_dedie.mkdir(parents=True, exist_ok=True)
+        if not os.access(dossier_dedie, os.W_OK | os.X_OK):
+            raise OSError(f"{dossier_dedie} non accessible en écriture")
     except OSError as e:
         log.warning(
-            f"  Worktree #{numero}{suffixe} : dossier dédié {DOSSIER_WORKTREES_DEDIE} "
+            f"  Worktree #{numero}{suffixe} : dossier dédié {dossier_dedie} "
             f"indisponible ({e}) — repli sur l'ancien emplacement {chemin_frere} "
-            f"(frère de REP_TRAVAIL, issue #740)."
+            f"(frère de REP_TRAVAIL, issues #740/#749)."
         )
         return chemin_frere
-    return DOSSIER_WORKTREES_DEDIE / nom
+    return dossier_dedie / nom
 
 
 def _branche_worktree(numero: int, suffixe: str = "") -> str:

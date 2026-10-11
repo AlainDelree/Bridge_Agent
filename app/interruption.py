@@ -214,12 +214,13 @@ def _lister_worktrees_actifs(cfg) -> list:
     `<CFG.nom>-issue<N>`, où N est un numéro d'issue (entier).
 
     Interroge `git worktree list` (`watcher._lister_worktrees_secondaires`)
-    plutôt que de scanner par nom le répertoire PARENT de REP_TRAVAIL (issue
-    #740) : depuis cette issue, les worktrees CCL (Linux) sont créés dans un
-    dossier dédié (~/worktrees par défaut), pas forcément frère du projet —
+    plutôt que de scanner par nom le répertoire PARENT de REP_TRAVAIL (issues
+    #740 CCL, #749 CCW) : depuis ces issues, les worktrees sont créés dans un
+    dossier dédié (~/worktrees par défaut sous CCL ; dossier `worktrees`
+    frère de REP_TRAVAIL sous CCW), pas forcément frère direct du projet —
     `git worktree list` reste exact quel que soit l'emplacement réel, y
-    compris pour les worktrees hérités restés à l'ancien emplacement et pour
-    CCW (Windows), qui garde cet ancien emplacement sans changement."""
+    compris pour les worktrees hérités restés à l'ancien emplacement, sur les
+    deux plateformes."""
     prefixe = f"{cfg.nom}-issue"
     resultat = []
     for w in _lister_worktrees_secondaires(cfg.rep_travail):
