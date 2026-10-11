@@ -4436,6 +4436,105 @@ def taches_en_cours(nom_projet: str) -> list[dict]:
     return resultat
 
 
+AGE_MIN_NETTOYAGE_VERROUS = 120  # secondes (issue #751) — sous ce seuil, un
+# watcher peut être en train de poser le verrou (fenêtre entre la création du
+# fichier par O_CREAT et l'écriture complète de son contenu, voir
+# acquerir_verrou) : on laisse du mou plutôt que de risquer un faux périmé.
+
+
+def nettoyer_verrous_perimes() -> None:
+    """Nettoyage best-effort, appelé UNE FOIS au démarrage de `new_issue.py`
+    (issue #751) : purge sous DOSSIER_VERROUS (logs/verrous/) les verrous dont
+    le PROCESSUS propriétaire est certainement mort — PID absent, ou zombie
+    (même sonde `_pid_vivant` qu'`acquerir_verrou`, y compris sa détection de
+    zombie issue de #748). Vécu le 11/10/2026 : trois verrous périmés
+    (Bridge_Agent #573, Relecture_Bridge #73 et #100) désignant des process
+    disparus et des worktrees supprimés depuis longtemps, retirés à la main
+    faute de ce nettoyage automatique — ils encombrent logs/verrous/ et
+    faussent tout décompte à la moindre faille de détection de process.
+
+    La décision repose UNIQUEMENT sur le processus, jamais sur l'existence du
+    dossier de travail (`rep=`) : un dossier disparu ne prouve rien sur l'état
+    du process. Un verrou dont le process est VIVANT n'est donc JAMAIS
+    supprimé ici, même si `rep` n'existe plus — ce cas suspect (issue restée
+    bloquée, par exemple) est seulement journalisé en warning (nom du verrou
+    + PID), pour vérification manuelle, sans rien supprimer. La péremption par
+    ancienneté (verrou vivant mais trop vieux) reste seule juge d'acquerir_
+    verrou ci-dessus ; ce nettoyage-ci ne rejoue pas cette logique.
+
+    Prudence supplémentaire, best-effort : un verrou illisible, sans champ
+    `pid=` exploitable, ou posé depuis moins de AGE_MIN_NETTOYAGE_VERROUS
+    (course possible avec un watcher qui vient juste de le créer) est laissé
+    tel quel, sans suppression ni journalisation.
+
+    Idempotent (un second passage immédiat ne trouve plus rien à supprimer) et
+    ne touche jamais à un worktree ou un dossier de travail — uniquement aux
+    fichiers *.lock de DOSSIER_VERROUS. Enveloppé dans un garde-fou total :
+    toute exception est journalisée et n'empêche JAMAIS le démarrage de
+    new_issue.py."""
+    supprimes: list[str] = []
+    nb_suspects = 0
+    try:
+        if DOSSIER_VERROUS.is_dir():
+            for verrou in DOSSIER_VERROUS.glob("*.lock"):
+                try:
+                    age = time.time() - verrou.stat().st_mtime
+                except OSError:
+                    continue   # disparu/illisible entre le glob et le stat : rien à faire
+
+                if age < AGE_MIN_NETTOYAGE_VERROUS:
+                    continue   # trop jeune : possible course avec un watcher en train de le poser
+
+                try:
+                    contenu = verrou.read_text(encoding="utf-8", errors="replace")
+                except OSError:
+                    continue   # illisible : prudence, on ne touche à rien
+
+                champs = dict(re.findall(r"(\w+)=(\S*)", contenu))
+                try:
+                    pid = int(champs["pid"])
+                except (KeyError, ValueError):
+                    continue   # pas de PID exploitable : prudence, on ne touche à rien
+
+                if _pid_vivant(pid):
+                    rep = champs.get("rep")
+                    if rep and not Path(rep).exists():
+                        log.warning(
+                            f"Verrou suspect conservé lors du nettoyage au démarrage "
+                            f"de new_issue.py (issue #751) : {verrou.name} — processus "
+                            f"{pid} vivant mais son dossier de travail ({rep}) n'existe "
+                            f"plus. Rien n'est supprimé — vérification manuelle recommandée."
+                        )
+                        nb_suspects += 1
+                    continue   # process vivant : on ne supprime JAMAIS
+
+                # PID absent ou zombie (même sonde _pid_vivant que acquerir_verrou,
+                # issue #748) : verrou certainement périmé.
+                try:
+                    verrou.unlink()
+                    supprimes.append(verrou.name)
+                except FileNotFoundError:
+                    pass
+                except OSError as e:
+                    log.warning(
+                        f"Suppression du verrou périmé {verrou.name} (nettoyage au "
+                        f"démarrage de new_issue.py, issue #751) impossible : {e}"
+                    )
+    except Exception as e:
+        log.warning(
+            f"Nettoyage des verrous périmés (logs/verrous/) au démarrage de "
+            f"new_issue.py (issue #751) interrompu par une erreur inattendue : {e}"
+        )
+
+    if supprimes or nb_suspects:
+        log.warning(
+            f"Nettoyage des verrous au démarrage de new_issue.py (issue #751) : "
+            f"{len(supprimes)} verrou(x) périmé(s) supprimé(s)"
+            + (f" ({', '.join(supprimes)})" if supprimes else "")
+            + f", {nb_suspects} cas suspect(s) conservé(s)."
+        )
+
+
 def _empreinte_configs() -> dict[str, bytes]:
     """Instantané intégral de configs/*.conf (issue #318), pris juste avant un
     traitement en mode_write. Sert de base à `_restaurer_configs_modifies` pour

@@ -37,6 +37,7 @@ from app.watchers import surveiller_redemarrages_differes
 from app.issues_inbox import (watcher_inbox_actif, demarrer_watcher_inbox,
                               arreter_watcher_inbox)
 from etat_cases_cochees import nettoyer_anciennes as nettoyer_cases_cochees
+from watcher import nettoyer_verrous_perimes
 
 DOSSIER_SCRIPT = Path(__file__).resolve().parent
 
@@ -104,6 +105,14 @@ def main():
     # est ≤ (plus grand numéro connu du projet − 50). Best-effort
     # (etat_son_issue ne lève jamais), ne doit jamais empêcher le démarrage.
     etat_son_issue.nettoyer_entrees_perimees()
+
+    # Nettoyage des verrous de watchers périmés (issue #751) : logs/verrous/
+    # accumulait des verrous désignant des process disparus (ou zombies,
+    # cf. #748) qu'il fallait jusqu'ici retirer à la main avant un
+    # redémarrage. Best-effort strict, rien n'est jamais affiché dans
+    # l'interface (seulement journalisé) ; ne touche jamais aux worktrees ni
+    # aux dossiers de travail — uniquement aux fichiers de verrou eux-mêmes.
+    nettoyer_verrous_perimes()
 
     # Trois modes de fonctionnement :
     #   • local (défaut)      : host 127.0.0.1, HTTP simple, sans SSL. Destiné à

@@ -1152,6 +1152,26 @@ verrou dont le PID propriétaire n'est plus vivant (mort OU zombie, voir
 le fichier lui-même (pas son rôle — seul `acquerir_verrou`, au moment de la
 REPRISE effective, le fait).
 
+`watcher.nettoyer_verrous_perimes()` (issue #751), appelée une fois au
+démarrage de `new_issue.py`, est le SEUL endroit qui supprime un verrou
+proactivement, hors reprise par `acquerir_verrou` : elle parcourt
+`DOSSIER_VERROUS` et retire tout verrou dont le PID propriétaire est
+certainement mort (absent ou zombie, même sonde `_pid_vivant` que §11.2) —
+évite d'avoir à les retirer à la main avant un redémarrage (vécu le
+11/10/2026 : Bridge_Agent #573, Relecture_Bridge #73 et #100, désignant des
+process disparus et des worktrees supprimés depuis longtemps). La décision
+repose UNIQUEMENT sur le process, jamais sur l'existence du `rep=` : un
+verrou dont le process est VIVANT n'est jamais supprimé ici, même si son
+dossier de travail a disparu — ce cas (issue restée bloquée, par exemple)
+est seulement journalisé en warning (nom du verrou + PID), pour vérification
+manuelle. Un verrou illisible, sans champ `pid=` exploitable, ou posé depuis
+moins de 2 minutes (`AGE_MIN_NETTOYAGE_VERROUS`, course possible avec un
+watcher en train de le poser) est également laissé tel quel. Best-effort
+total (toute erreur est journalisée, n'empêche jamais le démarrage) et
+idempotent ; ne touche jamais à un worktree ou un dossier de travail —
+uniquement aux fichiers `*.lock`. Rien n'est affiché dans l'interface, tout
+est journalisé dans `logs/new_issue.log`.
+
 ### 11.2 `_pid_vivant` et la détection des zombies (issue #748)
 
 Sonde best-effort cross-plateforme (`watcher.py::_pid_vivant`, issue #584) :
