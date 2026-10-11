@@ -2192,6 +2192,46 @@ function avertissementWorkingTree(modeEcr, nom) {
   return '';
 }
 
+// Ensemble des couples (projet, numéro) actuellement en cours d'interruption
+// (issue #748) — garde partagée par les deux déclencheurs existants (icône de
+// ligne via interrompreDepuisLigne, bouton « Interrompre et relancer » du
+// panneau latéral via interrompreEtRelancer), puisque tous deux appellent
+// interrompreIssue() ci-dessous. État/décisions en logique pure dans
+// actions_ligne.js (demarrerInterruption/terminerInterruption, testées sous
+// Node) ; seule l'application au DOM (désactivation visuelle) vit ici.
+const _interruptionsEnCours = new Set();
+
+// Désactive/réactive visuellement les déclencheurs connus pour CE couple —
+// icône ✓/✕ de la ligne (pointer-events coupé, pas de disabled possible sur
+// un <span>) et bouton « Interrompre et relancer » du panneau latéral
+// (disabled + libellé « Interruption en cours… », restauré si l'appel
+// échoue — un succès recharge la liste/réaffiche le panneau, qui les
+// reconstruisent déjà dans leur état normal, rien à restaurer alors).
+function _marquerInterruptionEnCours(nom, numero, active) {
+  const numStr = String(numero);
+  const ligne = [...document.querySelectorAll('#liste-issues .ligne-issue')]
+    .find(l => l.dataset.projet === nom && l.dataset.numero === numStr);
+  const icone = ligne ? ligne.querySelector('.badge-interrompre-ligne') : null;
+  if (icone) {
+    icone.classList.toggle('badge-interrompre-attente', active);
+    icone.title = active ? 'Interruption en cours…' : "Interrompre l'issue";
+  }
+  const bouton = document.querySelector(
+    '#pl-zone-actions [data-action="pl-interrompre-relancer"][data-projet="' + CSS.escape(nom)
+    + '"][data-numero="' + numStr + '"]');
+  if (bouton) {
+    bouton.disabled = active;
+    bouton.classList.toggle('en-attente-interruption', active);
+    if (active) {
+      if (bouton.dataset.libelleAvantAttente === undefined) bouton.dataset.libelleAvantAttente = bouton.textContent;
+      bouton.textContent = '⏳ Interruption en cours…';
+    } else if (bouton.dataset.libelleAvantAttente !== undefined) {
+      bouton.textContent = bouton.dataset.libelleAvantAttente;
+      delete bouton.dataset.libelleAvantAttente;
+    }
+  }
+}
+
 // Retourne true si l'interruption a réellement été effectuée (utilisé par
 // interrompreEtRelancer, issue #381, pour savoir s'il doit enchaîner sur la
 // relance — false si annulée par l'utilisateur ou en échec).
@@ -2214,6 +2254,16 @@ async function interrompreIssue(nom, numero) {
              + (avertTree ? '\n\n⚠️ Cette issue écrit dans le projet : ' + avertTree : '')
              + ' Continuer ?')) return false;
 
+  // Garde anti-double-déclenchement (issue #748) : un clic pendant qu'une
+  // interruption est déjà en cours pour CE couple est ignoré avec un message
+  // court, plutôt que de relancer un second appel réseau concurrent.
+  const actionsLigne = window.Bridge && window.Bridge.actionsLigne;
+  if (actionsLigne && !actionsLigne.demarrerInterruption(_interruptionsEnCours, nom, numero)) {
+    alert('Interruption déjà en cours pour cette issue.');
+    return false;
+  }
+  _marquerInterruptionEnCours(nom, numero, true);
+
   let resultat;
   try {
     const rep = await fetch('/interrompre', {
@@ -2224,12 +2274,17 @@ async function interrompreIssue(nom, numero) {
     resultat = await rep.json();
   } catch(e) {
     alert('Erreur réseau : ' + e.message);
+    if (actionsLigne) actionsLigne.terminerInterruption(_interruptionsEnCours, nom, numero);
+    _marquerInterruptionEnCours(nom, numero, false);
     return false;
   }
   if (!resultat.succes) {
     alert('Erreur : ' + (resultat.erreur || "échec de l'interruption."));
+    if (actionsLigne) actionsLigne.terminerInterruption(_interruptionsEnCours, nom, numero);
+    _marquerInterruptionEnCours(nom, numero, false);
     return false;
   }
+  if (actionsLigne) actionsLigne.terminerInterruption(_interruptionsEnCours, nom, numero);
   ouvrirModalInterrompre(resultat, avertTree);
 
   // Recharge la liste (l'issue porte désormais needs-human) puis réaffiche.

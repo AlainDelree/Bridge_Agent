@@ -14,6 +14,9 @@ import {
   etatsOptionsSonIssue,
   fusionnerSonsProjet,
   sonConnuDansCache,
+  cleInterruption,
+  demarrerInterruption,
+  terminerInterruption,
 } from '../actions_ligne.js';
 
 // ─── prefixeInformatifLigneOuverte : quel préfixe afficher selon les labels ─
@@ -151,4 +154,36 @@ test('sonConnuDansCache : lit un choix connu ou retombe sur null (suit le global
   assert.equal(sonConnuDansCache(cache, 'bridge_agent', 631), null);
   assert.equal(sonConnuDansCache(cache, 'autre_projet', 630), null);
   assert.equal(sonConnuDansCache(null, 'bridge_agent', 630), null);
+});
+
+// ─── Garde anti-double-déclenchement d'une interruption (issue #748) ──────
+
+test('cleInterruption : clé stable par couple (projet, numéro)', () => {
+  assert.equal(cleInterruption('bridge_agent', 452), 'bridge_agent#452');
+  assert.equal(cleInterruption('bridge_agent', '452'), 'bridge_agent#452');
+});
+
+test('demarrerInterruption : accepte le premier déclenchement, refuse un second pendant que le premier est en cours', () => {
+  const enCours = new Set();
+  assert.equal(demarrerInterruption(enCours, 'bridge_agent', 452), true);
+  assert.equal(enCours.has('bridge_agent#452'), true);
+  // Second déclenchement pour LE MÊME couple, avant toute fin — refusé.
+  assert.equal(demarrerInterruption(enCours, 'bridge_agent', 452), false);
+  // Couple DIFFÉRENT (autre numéro, ou autre projet) — indépendant, accepté.
+  assert.equal(demarrerInterruption(enCours, 'bridge_agent', 453), true);
+  assert.equal(demarrerInterruption(enCours, 'scrabble', 452), true);
+});
+
+test('terminerInterruption : libère le couple, un nouveau déclenchement redevient possible', () => {
+  const enCours = new Set();
+  demarrerInterruption(enCours, 'bridge_agent', 452);
+  terminerInterruption(enCours, 'bridge_agent', 452);
+  assert.equal(enCours.has('bridge_agent#452'), false);
+  assert.equal(demarrerInterruption(enCours, 'bridge_agent', 452), true);
+});
+
+test('terminerInterruption : un couple absent ne lève pas d\'erreur (no-op)', () => {
+  const enCours = new Set();
+  assert.doesNotThrow(() => terminerInterruption(enCours, 'bridge_agent', 452));
+  assert.equal(enCours.size, 0);
 });

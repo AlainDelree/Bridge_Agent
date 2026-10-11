@@ -113,6 +113,37 @@ export function afficherIconeInterruption(labels, timing) {
   return !!(timing && timing.debut);
 }
 
+// ─── Garde anti-double-déclenchement d'une interruption (issue #748) ──────
+// L'appel réseau de /interrompre peut durer plusieurs secondes (arbre de
+// process + attente de 5s côté serveur) ; sans retour visuel, un second clic
+// pendant ce temps relançait un second appel concurrent — vécu sur Scrabble
+// #452. Logique pure (app.js applique les décisions ci-dessous au DOM — icône
+// de ligne + bouton « Interrompre et relancer » du panneau latéral, les deux
+// SEULS déclencheurs existants, cf. docstring d'en-tête) : un ensemble
+// partagé de couples (projet, numéro) actuellement en cours d'interruption,
+// commun aux deux déclencheurs puisqu'interrompreDepuisLigne() comme
+// interrompreEtRelancer() appellent tous deux interrompreIssue().
+export function cleInterruption(nom, numero) {
+  return nom + '#' + numero;
+}
+
+// true si CE couple vient d'être accepté (et enregistré aussitôt comme « en
+// cours ») ; false s'il l'était déjà — l'appelant doit alors ignorer le clic.
+export function demarrerInterruption(enCours, nom, numero) {
+  const cle = cleInterruption(nom, numero);
+  if (enCours.has(cle)) return false;
+  enCours.add(cle);
+  return true;
+}
+
+// Retire ce couple de l'ensemble « en cours » — appelé après un échec (réseau
+// ou réponse succes=false) pour réactiver les déclencheurs ; un succès
+// recharge la liste/le panneau, qui les reconstruisent déjà non bloqués, mais
+// l'appel reste nécessaire pour vider l'ensemble partagé.
+export function terminerInterruption(enCours, nom, numero) {
+  enCours.delete(cleInterruption(nom, numero));
+}
+
 // Normalise la réponse de GET /son-issue/<projet>/<numero> : 'plat'/'cloche' si
 // un choix propre existe pour cette issue, sinon null (suit alors l'interrupteur
 // global — voir etat_son_issue.py::son_choisi). Déplacée telle quelle depuis
@@ -295,4 +326,6 @@ export async function choisirSonIssueLigne(element, nom, numero, valeurBrute) {
 export const actionsLigne = {
   rendreActionsLigneOuverte,
   choisirSonIssueLigne,
+  demarrerInterruption,
+  terminerInterruption,
 };

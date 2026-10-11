@@ -4110,6 +4110,27 @@ def _lire_pid_verrou(verrou: Path) -> int | None:
         return None
 
 
+def _etat_processus_linux(pid: int) -> str | None:
+    """Lit le 3ᵉ champ (état) de /proc/<pid>/stat — 'Z' pour un zombie (issue
+    #748). None si /proc est absent (autre OS POSIX, ex. macOS) ou si la
+    lecture échoue pour toute autre raison (process disparu entre temps,
+    permissions...) : l'appelant doit alors retomber sur le comportement par
+    défaut de _pid_vivant, inchangé.
+
+    Le 2ᵉ champ (comm, nom de l'exécutable entre parenthèses) peut contenir
+    n'importe quel caractère, y compris parenthèses ou espaces — on repère la
+    DERNIÈRE ')' de la ligne plutôt que de découper naïvement sur l'espace."""
+    try:
+        contenu = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    fin_comm = contenu.rfind(")")
+    if fin_comm == -1:
+        return None
+    champs = contenu[fin_comm + 1:].split()
+    return champs[0] if champs else None
+
+
 def _pid_vivant(pid: int | None) -> bool:
     """Sonde best-effort et cross-plateforme (issue #584) : `pid` désigne-t-il
     encore un process vivant ? Pure lecture, ne tue ni ne modifie rien.
@@ -4124,7 +4145,18 @@ def _pid_vivant(pid: int | None) -> bool:
     temps long ou un redémarrage), donc « vivant » ne prouve jamais qu'il
     s'agit encore du MÊME process — dans le doute, l'appelant doit retomber
     sur le filet de sécurité existant (verrou encore considéré actif), jamais
-    conclure à tort qu'il est orphelin."""
+    conclure à tort qu'il est orphelin.
+
+    Exception à cette prudence, elle aussi un FAIT CERTAIN (issue #748) : sous
+    Linux, os.kill(pid, 0) réussit pour un process ZOMBIE (entrée encore
+    présente dans la table des process tant que le parent ne l'a pas réapé)
+    — or un zombie n'exécute plus rien, exactement comme un PID absent. Vécu
+    sur Scrabble #452 : un watcher tué devenu zombie restait considéré
+    « vivant », bloquant indéfiniment la suppression du verrou côté
+    interrompre_linux (app/interruption.py) et le comptage « en cours » du
+    panneau Infrastructure (taches_en_cours ci-dessous). Repli sur le
+    comportement ci-dessus si /proc est absent ou la lecture échoue — jamais
+    de faux zombie faute de pouvoir le confirmer."""
     if not pid or pid <= 0:
         return False
     try:
@@ -4135,6 +4167,8 @@ def _pid_vivant(pid: int | None) -> bool:
             ctypes.windll.kernel32.CloseHandle(handle)
             return True
         os.kill(pid, 0)
+        if _etat_processus_linux(pid) == "Z":
+            return False
         return True
     except ProcessLookupError:
         return False

@@ -167,6 +167,13 @@
 .ligne-issue .badge-interrompre-ligne:hover{background:#c0392b}
 .ligne-issue .badge-interrompre-ligne:hover .badge-interrompre-ok{display:none}
 .ligne-issue .badge-interrompre-ligne:hover .badge-interrompre-stop{display:inline}
+/* Retour visuel pendant l'appel réseau de /interrompre (issue #748) : l'icône
+   reste visible mais figée (pointer-events coupé côté JS, cf. app.js::
+   _marquerInterruptionEnCours) — curseur d'attente, teinte grisée, plus de
+   bascule au survol. */
+.ligne-issue .badge-interrompre-ligne.badge-interrompre-attente{
+  background:#999;cursor:wait;opacity:.7}
+.ligne-issue .badge-interrompre-ligne.badge-interrompre-attente:hover{background:#999}
 /* Contrôle compact « son de cette issue » (G/P/C/S, issue #630/#637, option
    Silence #699) déplacé de la zone Actions du panneau latéral à la ligne
    elle-même (étape 6, #641) : mini-segmenté à lettres + infobulle, calibré
@@ -358,6 +365,11 @@
 .pl-sep{border:none;border-top:1px solid #e0dfda;margin:14px 0}
 .pl-actions{display:flex;flex-direction:column;gap:8px}
 .pl-actions button{width:100%}
+/* Retour visuel pendant l'appel réseau de /interrompre (issue #748, bouton
+   « Interrompre et relancer ») — libellé déjà remplacé côté JS, curseur
+   d'attente ici tant que le bouton reste `disabled` (cf. app.js::
+   _marquerInterruptionEnCours). */
+.pl-actions button.en-attente-interruption:disabled{cursor:wait;opacity:.7}
 /* Toggles notif_pc/notif_gsm/notif_tous de l'issue sélectionnée (issue #384). */
 .pl-notifs{margin-bottom:10px}
 .pl-notifs-titre{font-size:13px;font-weight:600;color:#1a1a18;margin-bottom:4px}

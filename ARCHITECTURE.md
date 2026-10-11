@@ -1131,4 +1131,128 @@ Alain au premier renouvellement suivant la fusion de #744.
 
 ---
 
+## 11. Interruption d'une issue et verrous de traitement (issue #748, suite #323/#584/#322/#742)
+
+### 11.1 Verrous fichier (`logs/verrous/*.lock`)
+
+Un verrou (`watcher.py::acquerir_verrou`/`liberer_verrou`/`_chemin_verrou`)
+protège chaque `REP_TRAVAIL`/worktree pendant son traitement — fichier
+`<basename>-<empreinte_sha1>.lock` sous `DOSSIER_VERROUS` (gitignoré),
+contenu `pid=<watcher> projet=<nom> mode=<lecture|ecriture> rep=<chemin>`. Un
+verrou est considéré périmé (repris par un autre traitement) soit par
+ancienneté (`max_essais × (timeout + pause) + marge`), soit — filet
+complémentaire #584 — si le PID propriétaire (`pid=`) n'est plus vivant
+(sondé via `_pid_vivant`, voir §11.2) : dans ce cas la reprise est immédiate,
+sans attendre la péremption par ancienneté. `watcher.taches_en_cours(nom)`
+relit ces fichiers pour exposer, hors du process watcher (consommé par
+`app/watchers.py::tache_en_cours`/route `/watchers`, panneau latéral
+Infrastructure), la liste des tâches réellement en cours d'un projet — un
+verrou dont le PID propriétaire n'est plus vivant (mort OU zombie, voir
+§11.2) y est ignoré (pas compté comme « en cours »), SANS jamais supprimer
+le fichier lui-même (pas son rôle — seul `acquerir_verrou`, au moment de la
+REPRISE effective, le fait).
+
+### 11.2 `_pid_vivant` et la détection des zombies (issue #748)
+
+Sonde best-effort cross-plateforme (`watcher.py::_pid_vivant`, issue #584) :
+POSIX via `os.kill(pid, 0)`, Windows via `OpenProcess` en droits minimaux.
+Asymétrie volontaire : PID introuvable ⇒ `False` (fait certain, aucun PID
+recyclé ne peut tromper une absence) ; PID trouvé vivant, sonde en échec ou
+plateforme non gérée ⇒ `True` par prudence (un PID mort peut avoir été
+RECYCLÉ par l'OS — « vivant » ne prouve jamais qu'il s'agit du MÊME
+process).
+
+Un second fait certain s'ajoute depuis #748 : sous Linux, `os.kill(pid, 0)`
+**réussit** pour un process **zombie** (état `Z`, entrée encore présente
+dans la table des process tant que son parent ne l'a pas réapé via
+`waitpid`) — or un zombie n'exécute plus rien, exactement comme un PID
+absent. `_pid_vivant` lit donc en complément le 3ᵉ champ de
+`/proc/<pid>/stat` (`_etat_processus_linux`) ; `'Z'` ⇒ `False`. Repli sur le
+comportement antérieur (prudence, `True`) si `/proc` est absent (autre OS
+POSIX) ou la lecture échoue — jamais de faux zombie faute de pouvoir le
+confirmer. Rien ne change côté Windows.
+
+Incident à l'origine (Scrabble #452, 11/10/2026) : un watcher tué devenu
+zombie restait considéré « vivant » — l'attente de 5s dans
+`interrompre_linux` (§11.3) n'aboutissait jamais, le verrou (principal et de
+worktrees) n'était jamais supprimé, et le panneau Infrastructure affichait à
+tort un point vert + une tâche « en cours ». Un seul point de correction
+(`_pid_vivant`) profite automatiquement à tous ses appelants :
+`acquerir_verrou`, `taches_en_cours`, `app/watchers.py::watcher_actif`
+(point vert/dot du panneau), le watcher spool (`app/issues_inbox.py`), et
+les deux boucles d'attente de 5s d'`app/interruption.py` (Linux et
+Windows). Le texte « N en cours, N en file » du panneau latéral
+(`resumeProjetMonitoring`, `static/js/app.js`) reste lui basé sur les
+labels GitHub (`listeIssuesResultats`), pas sur les verrous — non affecté
+par cette correction, déjà correct une fois la liste d'issues rechargée
+(le label `needs-human` est posé inconditionnellement en tout premier par
+`route_interrompre`, voir §11.3).
+
+`_reaper_best_effort` (`app/interruption.py`) tente un `waitpid` non
+bloquant sur le PID du watcher PENDANT l'attente de 5s : il ne peut réaper
+que si ce PID est un enfant DIRECT du process Flask courant (celui qui l'a
+lancé via `demarrer_watcher`) — un watcher zombie dont le vrai parent est un
+AUTRE process (ex. après un redémarrage de `new_issue.py`) échappe à ce
+mécanisme ; c'est alors `_pid_vivant` seul qui permet de conclure
+correctement.
+
+### 11.3 Flux serveur `/interrompre` (`app/interruption.py`)
+
+`route_interrompre()` : pose le label `needs-human` (toujours, en premier),
+puis `interrompre_linux(cfg)` ou `interrompre_windows(cfg)` selon le label
+`for-windows`, puis poste un commentaire — jamais de fermeture d'issue, ni
+de rallumage automatique du watcher. Ces deux fonctions ciblent l'arbre
+ENTIER du watcher LOCAL d'un **projet** (pas une issue précise) : sous
+Linux, remontée `/proc` par PPID (`_lister_arbre`) depuis le PID publié dans
+`logs/watcher-<nom>.pid`, SIGKILL de tout l'arbre, puis attente de 5s
+(`_pid_vivant` sur chaque survivant, voir §11.2) avant de conclure « arbre
+mort » et de supprimer le verrou principal (`_chemin_verrou(cfg.rep_travail)`)
+et ceux des worktrees `mode_write` actifs (issue #337/#340). Un process
+encore considéré vivant après les 5s laisse le verrou en place
+(`echec_critique`, action manuelle requise) — ne JAMAIS risquer un double
+traitement. Sous Windows (watcher local natif, hors délégation SSH CCW) :
+même contrat, mais via le Job Object persistant du watcher
+(`_arreter_arbre_windows`, issue #701/#695) — `/proc` est absent.
+
+**Protection anti-concurrence par projet (issue #748)** : avant #748,
+`route_interrompre()` n'avait AUCUNE garde — deux appels rapprochés pour le
+même projet (ex. double clic faute de retour visuel, cf. §11.4) exécutaient
+chacun entièrement label + étapes + commentaire, en double (vérifié par
+lecture de code et par
+`tests/test_interruption_double_appel_748.py::scenario_sans_garde_deux_appels_dupliquent_tout`,
+qui appelle le cœur technique directement depuis deux threads). Désormais,
+un verrou en mémoire (`threading.Lock` + `set` de noms de projet,
+`_projets_en_interruption`) protège l'exécution : un second appel pour un
+projet déjà en cours d'interruption répond IMMÉDIATEMENT (HTTP 409,
+`deja_en_cours: true`) sans exécuter la moindre étape. Le cœur technique
+(label + étapes agent + commentaire + statut global) est factorisé dans
+`_executer_interruption()`, appelable directement SANS cette garde par les
+tests qui documentent le comportement antérieur.
+
+### 11.4 Retour visuel et garde JS (issue #748)
+
+L'appel réseau de `/interrompre` peut durer plusieurs secondes (arbre de
+process + attente de 5s côté serveur) ; avant #748, aucun retour visuel
+n'accompagnait cette attente (`interrompreIssue`, `static/js/app.js`), d'où
+le double clic à l'origine de l'incident Scrabble #452. Désormais, dès la
+confirmation acceptée : les deux déclencheurs existants (icône ✓/✕ de la
+ligne — `interrompreDepuisLigne`/`actions_ligne.js` — et bouton « Interrompre
+et relancer » du panneau latéral — `data-action="pl-interrompre-relancer"`,
+`interrompreEtRelancer`, qui réutilise `interrompreIssue` tel quel) sont
+désactivés visuellement (`_marquerInterruptionEnCours`, curseur d'attente,
+libellé « Interruption en cours… » sur le bouton) jusqu'à la réponse ; en
+cas d'erreur, réactivés et l'erreur affichée comme avant ; en cas de succès,
+la fenêtre de résultat existante s'ouvre comme avant (liste/panneau
+reconstruits, rien à restaurer).
+
+Garde JS par couple (projet, numéro) partagée par les deux déclencheurs
+(tous deux appellent `interrompreIssue`) : un clic pendant qu'une
+interruption est déjà en cours pour ce couple est ignoré avec un message
+court. Logique pure testable (`cleInterruption`/`demarrerInterruption`/
+`terminerInterruption`, `static/js/actions_ligne.js`, exposées via
+`window.Bridge.actionsLigne`) — seule l'application au DOM reste dans
+`app.js` (non testable sous Node, cf. `static/js/tests/README.md`).
+
+---
+
 *Document technique interne — voir `BRIDGE_AGENT_DOC.md` pour l'usage du bridge.*

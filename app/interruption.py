@@ -34,6 +34,7 @@ import os
 import signal
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -566,32 +567,34 @@ def interrompre_windows(cfg) -> list:
 
 # ─── Route Flask ─────────────────────────────────────────────────────────────
 
-def route_interrompre():
-    """POST /interrompre — interrompt le traitement en cours d'UNE issue,
-    sans toucher aux autres issues en file pour le même watcher.
+# Garde anti-concurrence par PROJET (issue #748, incident Scrabble #452) :
+# interrompre_linux/interrompre_windows agissent sur l'arbre entier du watcher
+# d'UN projet (pas sur une issue précise — voir leur docstring), donc deux
+# appels rapprochés de /interrompre pour le MÊME projet referaient le même
+# travail en double (deux SIGKILL/TerminateJobObject, deux labels, deux
+# commentaires GitHub) sans aucune protection avant cette issue (vérifié par
+# lecture de code ET par test, voir tests/test_interruption_double_appel_748.py
+# — AUCUN verrou n'existait : deux appels concurrents exécutaient chacun
+# entièrement route_interrompre). Symptôme vécu : l'appel réseau dure déjà
+# plusieurs secondes (arbre de process + attente de 5s) sans aucun retour
+# visuel côté JS (issue #748, point 1) — un second clic pendant ce temps
+# relançait un second appel complet. Non bloquant : un second appel pendant
+# qu'un premier tourne déjà pour ce projet répond IMMÉDIATEMENT sans rien
+# refaire, plutôt que d'attendre la fin du premier (cf. intention #748, point
+# 3 : « ne refait pas les étapes »).
+_verrou_interruptions_en_cours = threading.Lock()
+_projets_en_interruption: set[str] = set()
 
-    Toujours, quel que soit le résultat des étapes techniques : label
-    needs-human posé + commentaire d'interruption posté (sortie du circuit +
-    trace GitHub). Le watcher n'est JAMAIS relancé automatiquement — relance
-    manuelle des deux côtés (bouton « Lancer watcher » côté CCL, onglet CCW
-    côté CCW-Watcher)."""
-    data   = request.json or {}
-    depot  = (data.get("depot") or "").strip()
-    numero = data.get("numero")
-    labels = [str(l).strip().lower() for l in (data.get("labels") or [])]
+MESSAGE_INTERRUPTION_DEJA_EN_COURS = "Interruption déjà en cours pour ce projet."
 
-    if not depot:
-        return jsonify(succes=False, erreur="Dépôt GitHub manquant."), 400
-    if not str(numero).isdigit():
-        return jsonify(succes=False, erreur="Numéro d'issue invalide."), 400
-    numero = int(numero)
 
-    cfg = projet_par_depot(depot)
-    if not cfg:
-        return jsonify(succes=False, erreur=f"Aucun projet configuré pour le dépôt « {depot} »."), 404
-
-    agent = "windows" if "for-windows" in labels else "linux"
-
+def _executer_interruption(depot: str, numero: int, cfg, agent: str) -> dict:
+    """Cœur technique d'une interruption (label + étapes agent + commentaire
+    + statut global) — factorisé hors de route_interrompre (issue #748) pour
+    rester appelable SANS la garde anti-concurrence ci-dessus : reproduit tel
+    quel le comportement de route_interrompre antérieur à cette issue, utilisé
+    par les tests pour vérifier ce que produisaient deux appels rapprochés
+    AVANT cette protection (duplication complète des étapes, gh compris)."""
     # Étape impérative en premier : sortie du circuit + trace, quel que soit
     # le résultat des étapes techniques qui suivent (posée dans TOUS les cas).
     statut_label, msg_label = _ajouter_label_gh(depot, numero, LABEL_NEEDS_HUMAN)
@@ -609,7 +612,50 @@ def route_interrompre():
     else:
         statut_global = "ok"
 
-    reponse = dict(succes=True, agent=agent, statut_global=statut_global, etapes=etapes)
+    return dict(succes=True, agent=agent, statut_global=statut_global, etapes=etapes)
+
+
+def route_interrompre():
+    """POST /interrompre — interrompt le traitement en cours d'UNE issue,
+    sans toucher aux autres issues en file pour le même watcher.
+
+    Toujours, quel que soit le résultat des étapes techniques : label
+    needs-human posé + commentaire d'interruption posté (sortie du circuit +
+    trace GitHub). Le watcher n'est JAMAIS relancé automatiquement — relance
+    manuelle des deux côtés (bouton « Lancer watcher » côté CCL, onglet CCW
+    côté CCW-Watcher).
+
+    Protection anti-concurrence (issue #748) : voir _verrou_interruptions_en_cours
+    ci-dessus — un second appel pour un projet déjà en cours d'interruption
+    répond immédiatement 409 sans exécuter la moindre étape."""
+    data   = request.json or {}
+    depot  = (data.get("depot") or "").strip()
+    numero = data.get("numero")
+    labels = [str(l).strip().lower() for l in (data.get("labels") or [])]
+
+    if not depot:
+        return jsonify(succes=False, erreur="Dépôt GitHub manquant."), 400
+    if not str(numero).isdigit():
+        return jsonify(succes=False, erreur="Numéro d'issue invalide."), 400
+    numero = int(numero)
+
+    cfg = projet_par_depot(depot)
+    if not cfg:
+        return jsonify(succes=False, erreur=f"Aucun projet configuré pour le dépôt « {depot} »."), 404
+
+    agent = "windows" if "for-windows" in labels else "linux"
+
+    with _verrou_interruptions_en_cours:
+        if cfg.nom in _projets_en_interruption:
+            return jsonify(succes=False, deja_en_cours=True,
+                           erreur=MESSAGE_INTERRUPTION_DEJA_EN_COURS), 409
+        _projets_en_interruption.add(cfg.nom)
+    try:
+        reponse = _executer_interruption(depot, numero, cfg, agent)
+    finally:
+        with _verrou_interruptions_en_cours:
+            _projets_en_interruption.discard(cfg.nom)
+
     return jsonify(**reponse)
 
 
