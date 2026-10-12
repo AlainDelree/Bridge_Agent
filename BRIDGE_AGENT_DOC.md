@@ -89,7 +89,7 @@ Champs d'en-tête reconnus, tous optionnels sauf `PROJET` :
 |-------------|----------------------------------------------------------------------|
 | `PROJET`    | **Obligatoire** — doit correspondre à `configs/<PROJET>.conf`        |
 | `REDACTEUR` | Optionnel — nom du projet depuis lequel Claude Chat écrit, validé pour cohérence avec `PROJET` (règle complète au §3.4). |
-| `TIMEOUT`   | Nombre (secondes, suffixe `s` toléré) — sinon défaut du projet (`TIMEOUT_CLAUDE` du `.conf`, 300 s si non précisé) |
+| `TIMEOUT`   | Nombre (secondes, suffixe `s` toléré) — sinon défaut du projet (`TIMEOUT_CLAUDE` du `.conf`), au moins 900 s en écriture (issue #752) ; à toujours fixer explicitement |
 | `MODELE`    | Doit être une valeur reconnue (§6) si fourni                        |
 | `MODE`      | Reconnu de façon tolérante (§5) — absent/non reconnu → `lecture`     |
 | `LABELS`    | Labels GitHub additionnels, séparés par des virgules                 |
@@ -298,7 +298,7 @@ Le watcher lit ces champs dans le tableau markdown de l'en-tête :
 |-------|--------|-------|
 | `MODE` | `lecture`, `lecture active` ou `écriture` | Défaut `lecture` si absent/non reconnu. Voir §5 pour le comportement de chaque mode. |
 | `PRIORITE` | `haute` ou `critique` | Retry infini (au lieu de 3 max) |
-| `TIMEOUT` | ex. `600s` | Surcharge le défaut du projet (`TIMEOUT_CLAUDE` du `.conf`, 300 s si non précisé) |
+| `TIMEOUT` | ex. `600s` | Surcharge le défaut du projet (`TIMEOUT_CLAUDE` du `.conf`), au moins 900 s en écriture si absent (issue #752) ; à toujours fixer explicitement |
 | `MODELE` | une des valeurs reconnues (`app/projets.py`) : `claude-sonnet-5`, `claude-opus-4-8`, `claude-haiku-4-5`, `claude-fable-5` | Force un modèle CCL spécifique pour cette issue |
 | `PROJET` | ex. `bridge_agent` | Détection d'incohérence par `new_issue.py`. Claude Chat doit l'inclure dans toutes les issues qu'il génère, avec le nom exact du projet cible. |
 | `TYPE` | `chef` ou `ouvrier` | Identifie le rôle de l'issue dans le pattern multi-agent (voir §14). `chef` = orchestre les ouvriers. `ouvrier` = sous-tâche créée par le chef. Absent = issue normale. |
@@ -609,7 +609,8 @@ contraire dans une issue.
 ## 19. Calibration automatique du TIMEOUT (issues #220, #221, #222, #223, #434, #475, #590)
 
 Toujours fixer un `TIMEOUT` dans l'en-tête d'une issue (sinon défaut du
-projet, `TIMEOUT_CLAUDE` du `.conf`, 300 s si non précisé — §6). La valeur
+projet, `TIMEOUT_CLAUDE` du `.conf`, au moins 900 s en écriture — §6, issue
+#752). La valeur
 `TIMEOUT_suggéré` affichée à la fin du commentaire de clôture d'une issue
 est calculée depuis l'historique réel
 des durées, bornée entre un plancher et un **plafond de 3600s** (issue

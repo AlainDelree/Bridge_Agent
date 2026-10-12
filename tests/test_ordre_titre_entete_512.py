@@ -68,7 +68,7 @@ def scenario_1_titre_avant_entete_decore():
         "La ligne PROJET aurait dû être retirée du corps restant : "
         f"{champs['corps']!r}"
     )
-    body = w.construire_body(champs, _cfg_projet("scrabble"))
+    body, _info_timeout = w.construire_body(champs, _cfg_projet("scrabble"))
     assert body.count("PROJET") == 1, (
         f"Le champ PROJET est dupliqué dans le body final :\n{body}"
     )
@@ -112,7 +112,7 @@ def scenario_3_entete_decore_avant_titre_convention_documentee():
     champs = w.extraire_champs(contenu)
     assert champs["projet"] == "bridge_agent"
     assert "PROJET" not in champs["corps"]
-    body = w.construire_body(champs, _cfg_projet("bridge_agent"))
+    body, _info_timeout = w.construire_body(champs, _cfg_projet("bridge_agent"))
     assert body.count("PROJET") == 1, (
         f"Le champ PROJET est dupliqué dans le body final :\n{body}"
     )

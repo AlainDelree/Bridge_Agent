@@ -220,12 +220,14 @@ async function mettreAJourInfoProjet(reinitialiserTimeout = true) {
     } else {
       perEl.textContent = '';
     }
-    // Le timeout par défaut suit la valeur TIMEOUT_CLAUDE du projet sélectionné.
-    // On ne réinitialise le champ QUE lors d'un changement de projet manuel :
-    // lors d'une détection d'en-tête (reinitialiserTimeout=false), le TIMEOUT
+    // Le timeout par défaut suit la valeur TIMEOUT_CLAUDE du projet sélectionné,
+    // relevée à au moins PLANCHER_TIMEOUT_ECRITURE si le mode écriture est
+    // choisi (issue #752, voir creation.js::appliquerTimeoutDefaut). On ne
+    // réinitialise le champ QUE lors d'un changement de projet manuel : lors
+    // d'une détection d'en-tête (reinitialiserTimeout=false), le TIMEOUT
     // collé, déjà posé par detecterTimeoutDansCorps, doit être préservé (#143).
     if (reinitialiserTimeout) {
-      document.getElementById('timeout').value = cfg.timeout_claude || 300;
+      appliquerTimeoutDefaut(cfg.timeout_claude || 300);
     }
     // Le libellé du bouton d'envoi affiche le projet cible pour éviter les
     // envois sur le mauvais projet.

@@ -23,17 +23,19 @@
 //
 // LOGIQUE PURE (testée sous Node — voir static/js/tests/creation.test.js) :
 //   zoneEntete, lireChampEntete, retirerLigneEntete, reconnaitreModeTexte,
-//   detecterIncoherenceProjet, decouperCorpsEnBlocs, projetEffectifBloc,
-//   modeEffectifBloc — aucune dépendance au DOM ni au réseau. Elles sont
-//   exportées à cette seule fin ; le reste reste interne au module.
+//   timeoutDefautSelonMode, detecterIncoherenceProjet, decouperCorpsEnBlocs,
+//   projetEffectifBloc, modeEffectifBloc — aucune dépendance au DOM ni au
+//   réseau. Elles sont exportées à cette seule fin ; le reste reste interne
+//   au module.
 //
 // PONT VERS L'ANCIEN app.js (à retirer avec le pont à la fin de la refonte) :
 //   - creation → ancien : le sélecteur de projet global reste dans app.js ;
 //     detecterProjetDansCorps y appelle onProjetChange(), viderFormulaire()
 //     mettreAJourInfoProjet(), via appelerAncien (voir socle/pont.js).
 //   - ancien → creation : app.js appelle encore par leur nom chargerTemplates()
-//     (onProjetChange, au changement de projet) et afficherMessage()
-//     (lancerWatcher) — publiés en globales window.* ci-dessous, comme le fait
+//     (onProjetChange, au changement de projet), afficherMessage()
+//     (lancerWatcher) et appliquerTimeoutDefaut() (mettreAJourInfoProjet,
+//     issue #752) — publiées en globales window.* ci-dessous, comme le fait
 //     panneau_lateral.js dans le sens inverse.
 
 import * as dom from './socle/dom.js';
@@ -838,6 +840,54 @@ export function reconnaitreModeTexte(brut) {
   return trouve ? trouve.valeur : 'lecture';
 }
 
+// ─── Timeout par défaut selon le mode (issue #752) ─────────────────────────
+// Le champ Timeout est pré-rempli avec TIMEOUT_CLAUDE du projet (cf.
+// appliquerTimeoutDefaut, appelée par mettreAJourInfoProjet d'app.js) ; une
+// issue en écriture dure le plus souvent de 300 à 1100s, bien au-delà du
+// défaut historique (300s) de la plupart des projets — en écriture, le
+// défaut est donc relevé à PLANCHER_TIMEOUT_ECRITURE si besoin. Même
+// constante que watcher.PLANCHER_TIMEOUT_ECRITURE / scripts/
+// watcher_issues_inbox.py, mêmes règles.
+const PLANCHER_TIMEOUT_ECRITURE = 900;
+
+export function timeoutDefautSelonMode(timeoutClaude, mode) {
+  const base = Number(timeoutClaude) || 300;
+  return mode === 'ecriture' ? Math.max(base, PLANCHER_TIMEOUT_ECRITURE) : base;
+}
+
+// Mémorise le TIMEOUT_CLAUDE du projet actuel et le dernier défaut posé au
+// champ, pour recalculer au changement de MODE sans refaire l'appel réseau
+// /config/<projet> — et sans jamais écraser une valeur tapée à la main ou
+// collée (detecterTimeoutDansCorps) : resynchroniserTimeoutSiDefaut ne
+// touche au champ que s'il reflète encore exactement ce dernier défaut.
+let timeoutClaudeProjetActuel = 300;
+let dernierTimeoutDefautApplique = null;
+
+// Appelée par mettreAJourInfoProjet (app.js) à chaque changement de projet ou
+// vidage du formulaire (reinitialiserTimeout=true) : écrase toujours le
+// champ, comme avant l'issue #752 — seule la VALEUR posée change selon le
+// mode actuellement choisi.
+export function appliquerTimeoutDefaut(timeoutClaude) {
+  timeoutClaudeProjetActuel = Number(timeoutClaude) || 300;
+  const champ = document.getElementById('timeout');
+  const modeActuel = document.querySelector('input[name=mode]:checked');
+  const defaut = timeoutDefautSelonMode(timeoutClaudeProjetActuel, modeActuel ? modeActuel.value : 'lecture');
+  if (champ) champ.value = defaut;
+  dernierTimeoutDefautApplique = defaut;
+}
+
+// Changement du radio MODE : resynchronise le défaut Timeout SEULEMENT si
+// rien n'a été tapé/collé depuis le dernier défaut posé (issue #752).
+function resynchroniserTimeoutSiDefaut() {
+  const champ = document.getElementById('timeout');
+  if (!champ || dernierTimeoutDefautApplique === null) return;
+  if (champ.value !== String(dernierTimeoutDefautApplique)) return;
+  const modeActuel = document.querySelector('input[name=mode]:checked');
+  const defaut = timeoutDefautSelonMode(timeoutClaudeProjetActuel, modeActuel ? modeActuel.value : 'lecture');
+  champ.value = defaut;
+  dernierTimeoutDefautApplique = defaut;
+}
+
 // Même garde-fou « valeur détectée changée » que detecterProjetDansCorps/
 // detecterTimeoutDansCorps : en régime stable (rien de neuf dans le corps), un
 // choix manuel du radio n'est jamais réécrasé — seul un changement effectif du
@@ -1265,7 +1315,10 @@ function installerDelegationCreation() {
   dom.surAction('[data-action="creation-template-supprimer"]', 'click',  () => supprimerTemplateSelectionne());
 
   // Mode (radios) : recolore le bouton d'envoi selon le mode choisi.
-  dom.surAction('[data-action="creation-mode"]', 'change', () => mettreAJourBoutonEnvoi());
+  dom.surAction('[data-action="creation-mode"]', 'change', () => {
+    resynchroniserTimeoutSiDefaut();  // issue #752 : plancher écriture
+    mettreAJourBoutonEnvoi();
+  });
 
   // Barre d'envoi.
   dom.surAction('[data-action="creation-vider"]',          'click', () => viderFormulaire());
@@ -1324,4 +1377,5 @@ export function initCreation() {
 if (typeof window !== 'undefined') {
   window.chargerTemplates = chargerTemplates;
   window.afficherMessage  = afficherMessage;
+  window.appliquerTimeoutDefaut = appliquerTimeoutDefaut;  // issue #752
 }

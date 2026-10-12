@@ -972,7 +972,7 @@ COULEUR          = {couleur}
 LABEL             = for-linux
 INTERVALLE        = 10
 MAX_ESSAIS        = 3
-TIMEOUT_CLAUDE    = 300
+TIMEOUT_CLAUDE    = 900
 
 # Nombre de tâches mode_write concurrentes via git worktrees (issue #337),
 # 1-4, plafonné à 4 (issue #568). 2 = défaut ; réglable aussi depuis l'onglet

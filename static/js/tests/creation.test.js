@@ -19,6 +19,7 @@ import {
   retirerLigneEntete,
   normaliserTexteMode,
   reconnaitreModeTexte,
+  timeoutDefautSelonMode,
   detecterIncoherenceProjet,
   decouperCorpsEnBlocs,
   projetEffectifBloc,
@@ -114,6 +115,20 @@ test('reconnaitreModeTexte : absent ou non reconnu → lecture (défaut sûr)', 
   assert.equal(reconnaitreModeTexte(''), 'lecture');
   assert.equal(reconnaitreModeTexte(null), 'lecture');
   assert.equal(reconnaitreModeTexte('n\'importe quoi'), 'lecture');
+});
+
+// ─── timeoutDefautSelonMode : plancher écriture (issue #752) ──────────────
+test('timeoutDefautSelonMode : écriture avec un projet à 300s → 900s', () => {
+  assert.equal(timeoutDefautSelonMode(300, 'ecriture'), 900);
+});
+
+test('timeoutDefautSelonMode : écriture avec un projet à 1200s → 1200s (inchangé)', () => {
+  assert.equal(timeoutDefautSelonMode(1200, 'ecriture'), 1200);
+});
+
+test('timeoutDefautSelonMode : lecture/lecture active → valeur du projet inchangée', () => {
+  assert.equal(timeoutDefautSelonMode(300, 'lecture'), 300);
+  assert.equal(timeoutDefautSelonMode(300, 'lecture_active'), 300);
 });
 
 // ─── detecterIncoherenceProjet : cohérence projet ⇄ en-tête (issue #44) ────

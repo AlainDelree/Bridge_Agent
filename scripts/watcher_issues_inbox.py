@@ -85,6 +85,7 @@ sys.path.insert(0, str(DOSSIER_SCRIPT))
 from watcher import (charger_config, lire_conf, est_titre_chef,  # noqa: E402
                      LABEL_NOTIF_PC, LABEL_NOTIF_GSM, LABEL_NOTIF_TOUS,
                      LABEL_SANS_REDACTEUR,  # (issue #647)
+                     PLANCHER_TIMEOUT_ECRITURE,  # (issue #752)
                      valider_sous_dossier, valider_repo_cible)  # noqa: E402 (issue #567)
 from app.watchers import redemarrer_si_eteint  # noqa: E402 (issue #486, #600)
 from app.ccw import demarrer_service_ccw_arriere_plan  # noqa: E402 (issue #711, étape D — déjà
@@ -909,22 +910,36 @@ def construire_labels(champs: dict) -> str:
     return ",".join(labels)
 
 
-def construire_body(champs: dict, cfg_projet) -> str:
+def construire_body(champs: dict, cfg_projet) -> tuple[str, str | None]:
+    """Construit le body markdown de l'issue à créer. Retourne (body, info_timeout) :
+    `info_timeout` est None si le fichier déposé précisait un TIMEOUT (toujours
+    respecté tel quel, jamais relevé — seule exception préexistante : le plancher
+    Chef ci-dessous, issue #111), ou une phrase à journaliser (issue #752, §4) si
+    une valeur par défaut a dû être calculée faute de ligne TIMEOUT.
+
+    Défauts sans TIMEOUT dans le fichier (issue #752, §1) : une issue en écriture
+    reçoit au moins PLANCHER_TIMEOUT_ECRITURE, même règle pour une tâche Chef en
+    écriture (plancher appliqué EN PLUS de cfg_projet.timeout_chef) ; en lecture
+    ou lecture active, TIMEOUT_CLAUDE du projet, inchangé."""
     mode_valeur = reconnaitre_mode(champs["mode_brut"])
     mode_label, _ = MODES[mode_valeur]
 
     chef = est_titre_chef(champs["titre"])
+    info_timeout = None
     if champs["timeout_brut"]:
         timeout = int(champs["timeout_brut"].strip().lower().rstrip("s"))
         if chef:
             timeout = max(timeout, cfg_projet.timeout_chef)
     else:
         timeout = cfg_projet.timeout_chef if chef else cfg_projet.timeout_claude
+        if mode_valeur == "ecriture":
+            timeout = max(timeout, PLANCHER_TIMEOUT_ECRITURE)
+        info_timeout = f"TIMEOUT absent : défaut de {timeout}s appliqué"
 
     entete = formater_entete(mode_label, "normale", timeout, cfg_projet.nom,
                               modele=champs["modele"])
     parties = [p for p in (entete, champs["corps"]) if p]
-    return "\n\n".join(parties)
+    return "\n\n".join(parties), info_timeout
 
 
 # ─── Journalisation (rotation par NOMBRE DE LIGNES — max_log_lines, distincte
@@ -1153,8 +1168,9 @@ def _traiter_bloc(cfg: ConfigInbox, contenu_bloc: str):
     - échec (ou RELANCE, qui n'en crée aucune) → `texte` est le détail
       d'erreur (nom du fichier rejeté + ligne de log) ; `labels`/`donnees_temps`
       toujours None (rien n'a été créé, aucun événement creation_issue) ;
-    - succès (création réelle) → `texte` est le suffixe optionnel (« — watcher
-      CCL démarré (pid N) »), à ajouter au titre dans la ligne de log ;
+    - succès (création réelle) → `texte` est le(s) suffixe(s) optionnel(s)
+      (« — TIMEOUT absent : défaut de 900s appliqué » et/ou « — watcher CCL
+      démarré (pid N) », issue #752), à ajouter au titre dans la ligne de log ;
       `resultat_gh` est la sortie de `gh issue create` (URL), pour le seul log
       console ; `labels` (liste) et `donnees_temps` (dict, voir
       app.issues.donnees_temps_creation — issue #634 — enrichi de `modele`/
@@ -1186,7 +1202,7 @@ def _traiter_bloc(cfg: ConfigInbox, contenu_bloc: str):
                 None, None)
 
     labels = construire_labels(champs)
-    body = construire_body(champs, cfg_projet)
+    body, info_timeout = construire_body(champs, cfg_projet)
     succes, resultat = _creer_issue(cfg, cfg_projet, champs["titre"], labels, body)
     if not succes:
         return (False, champs["titre"], champs["projet"],
@@ -1216,11 +1232,14 @@ def _traiter_bloc(cfg: ConfigInbox, contenu_bloc: str):
     # Non bloquant (thread démon) et n'échoue jamais : un hôte SSH non
     # configuré ou un projet sans service CCW sont ignorés silencieusement
     # (journal de app.ccw seul) — jamais de rejet du fichier déposé.
-    suffixe = ""
+    # Signalement du défaut TIMEOUT appliqué faute de ligne dans le fichier
+    # déposé (issue #752, §4) — préfixe la ligne de log (OK) avant tout autre
+    # suffixe (démarrage watcher/CCW), concaténés par l'appelant (titre + texte).
+    suffixe = f" — {info_timeout}" if info_timeout else ""
     if "for-linux" in labels.split(","):
         demarre, pid, _trace = redemarrer_si_eteint(cfg_projet)
         if demarre:
-            suffixe = f" — watcher CCL démarré (pid {pid})"
+            suffixe += f" — watcher CCL démarré (pid {pid})"
             log.info(f"Watcher CCL démarré pour le projet « {champs['projet']} » (pid {pid}).")
     elif "for-windows" in labels.split(","):
         log.info(f"Démarrage CCW à la demande tenté pour « {champs['projet']} » "

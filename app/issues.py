@@ -27,7 +27,8 @@ from app.auth import login_requis  # noqa: F401 (exporté pour l'enregistrement 
 from watcher import (est_titre_chef, deduire_type_issue, PAUSE_ENTRE_TENTATIVES,
                      _est_depot_git, LABEL_ECRITURE, LABEL_SCRATCH,
                      LABEL_NOTIF_PC, LABEL_NOTIF_GSM, LABEL_NOTIF_TOUS,
-                     LABEL_ECHEC, extraire_complexite)
+                     LABEL_ECHEC, extraire_complexite,
+                     PLANCHER_TIMEOUT_ECRITURE)  # (issue #752)
 # État partagé du quota GraphQL (issue #615) : rafraîchi après chaque appel gh
 # SIGNIFICATIF de ce module (création/fermeture d'issue).
 from etat_rate_limit import maj_rate_limit
@@ -1009,14 +1010,19 @@ def diff_commit(nom_projet, hash_commit):
 # EST l'heure de début — source de vérité qui survit à un redémarrage du watcher.
 # On la relit ici pour calculer, côté navigateur, un temps restant estimé.
 
-def _parser_timeout(body: str, titre: str = "", cfg=None) -> int:
+def _parser_timeout(body: str, titre: str = "", cfg=None, mode: str | None = None) -> int:
     """TIMEOUT (secondes) lu dans l'en-tête bridge du body. Miroir de
     watcher.extraire_timeout : si absent/mal formé, retombe sur le défaut projet
     (cfg.timeout_claude), ou sur le défaut Chef plus généreux (cfg.timeout_chef)
     pour les issues « Chef : » (issue #106). Filet de sécurité #111 : pour une
     tâche « Chef : », plancher à max(valeur_trouvée, cfg.timeout_chef) pour que le
     badge reflète le même budget que le watcher (voir watcher.extraire_timeout).
-    Sans cfg, défaut historique 300 s."""
+    Sans cfg, défaut historique 300 s.
+
+    `mode` (issue #752) : "write"/"scratch"/"read" (voir donnees_temps_creation,
+    seul appelant) — si "write" et aucun TIMEOUT trouvé dans le body, plancher
+    PLANCHER_TIMEOUT_ECRITURE, même règle que watcher.extraire_timeout (mode
+    ignoré si une ligne TIMEOUT a été trouvée : jamais relevée)."""
     chef = cfg is not None and est_titre_chef(titre)
     for ligne in body.splitlines():
         if "TIMEOUT" in ligne.upper():
@@ -1028,9 +1034,10 @@ def _parser_timeout(body: str, titre: str = "", cfg=None) -> int:
                     return max(trouve, cfg.timeout_chef) if chef else trouve
     if cfg is None:
         return 300
-    if est_titre_chef(titre):
-        return cfg.timeout_chef
-    return cfg.timeout_claude
+    defaut = cfg.timeout_chef if chef else cfg.timeout_claude
+    if mode == "write":
+        defaut = max(defaut, PLANCHER_TIMEOUT_ECRITURE)
+    return defaut
 
 
 def _parser_priorite(body: str) -> str:
@@ -1325,7 +1332,7 @@ def donnees_temps_creation(cfg, titre: str, body: str, labels: list,
     if historique is None:
         historique = _charger_historique()
     return {
-        "timeout":     _parser_timeout(body, titre, cfg),
+        "timeout":     _parser_timeout(body, titre, cfg, mode),
         "max_essais":  cfg.max_essais,
         "backoff":     PAUSE_ENTRE_TENTATIVES,
         "priorite":    priorite,

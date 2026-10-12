@@ -1275,4 +1275,48 @@ court. Logique pure testable (`cleInterruption`/`demarrerInterruption`/
 
 ---
 
+## 12. Plancher TIMEOUT pour les issues en écriture (issue #752)
+
+Avant #752, une issue en écriture dont le fichier déposé omettait `TIMEOUT`
+recevait le défaut `TIMEOUT_CLAUDE` du projet (300s pour la plupart) — bien
+trop court pour une tâche d'écriture typique (300-1100s), cause de plusieurs
+dépassements. Le défaut est désormais décidé **au dépôt**, puisque c'est le
+seul point où l'absence de `TIMEOUT` est encore distinguable d'une valeur
+voulue (une fois écrit dans l'en-tête de l'issue, les deux cas sont
+indiscernables).
+
+Constante unique `watcher.PLANCHER_TIMEOUT_ECRITURE` (900s), importée par
+`scripts/watcher_issues_inbox.py` et `app/issues.py` — jamais redéfinie.
+
+- **Dépôt par fichier** (`scripts/watcher_issues_inbox.py::construire_body`) :
+  sans `TIMEOUT` dans le fichier, une issue en écriture reçoit
+  `max(TIMEOUT_CLAUDE, PLANCHER_TIMEOUT_ECRITURE)` ; une tâche Chef en
+  écriture reçoit en plus `max(TIMEOUT_CHEF, PLANCHER_TIMEOUT_ECRITURE)` ;
+  lecture/lecture active restent inchangées (`TIMEOUT_CLAUDE` tel quel). Un
+  `TIMEOUT` présent dans le fichier n'est jamais relevé par ce plancher
+  (seule exception préexistante : le plancher Chef de l'issue #111). La
+  fonction retourne aussi `info_timeout` (texte ou `None`), journalisé dans
+  `logs/issues_inbox.log` (« TIMEOUT absent : défaut de 900s appliqué »)
+  quand le défaut a dû être calculé.
+- **Formulaire web** (`static/js/creation.js::timeoutDefautSelonMode` /
+  `appliquerTimeoutDefaut`) : même règle pour la valeur PRÉ-REMPLIE du champ
+  Timeout, recalculée au changement de projet et de mode — jamais si le
+  champ a déjà été modifié à la main ou synchronisé depuis un `TIMEOUT`
+  collé (`detecterTimeoutDansCorps`). Publiée en globale `window.*` (pont,
+  §6.4) pour `app.js::mettreAJourInfoProjet`, qui reste seul à appeler
+  `/config/<projet>`.
+- **Filet de sécurité** (`watcher.py::extraire_timeout`) : une issue en
+  écriture créée à la main sur GitHub, donc sans passer par les deux chemins
+  ci-dessus, reçoit le même plancher si elle n'a AUCUNE ligne `TIMEOUT` —
+  `mode` (déduit des labels GitHub par l'appelant, jamais du corps) est
+  désormais un paramètre de la fonction.
+- `app/issues.py::_parser_timeout` (badge d'estimation, miroir documenté de
+  `watcher.extraire_timeout`) applique la même règle, pour que le badge
+  affiché à l'écran corresponde au budget réellement utilisé par le watcher.
+- `nouveau_projet.py::GABARIT_CONF` : `TIMEOUT_CLAUDE` par défaut passé de
+  300 à 900 pour les **nouveaux** projets uniquement — aucun `configs/*.conf`
+  existant n'est modifié.
+
+---
+
 *Document technique interne — voir `BRIDGE_AGENT_DOC.md` pour l'usage du bridge.*

@@ -1610,7 +1610,18 @@ def formater_bloc_calibration(duree_s: float, timeout_courant: int, suggere: flo
     return bloc
 
 
-def extraire_timeout(body: str, titre: str = "") -> int:
+# Plancher TIMEOUT pour une issue en écriture SANS aucune ligne TIMEOUT dans son
+# body (issue #752) : filet de sécurité pour une issue créée à la main sur
+# GitHub (donc jamais passée par construire_body de scripts/watcher_issues_inbox.py
+# ni d'app/issues.py, qui appliquent déjà ce même plancher AU DÉPÔT). Une issue
+# en écriture dure le plus souvent de 300 à 1100s — largement au-delà du défaut
+# TIMEOUT_CLAUDE historique (300s) de la plupart des projets (11/14 configs).
+# Constante nommée unique, importée par scripts/watcher_issues_inbox.py et
+# app/issues.py pour ne jamais diverger.
+PLANCHER_TIMEOUT_ECRITURE = 900
+
+
+def extraire_timeout(body: str, titre: str = "", mode: str | None = None) -> int:
     """Extrait le TIMEOUT (en secondes) depuis le body de l'issue (en-tête bridge).
     Si absent ou mal formé, retombe sur le défaut du projet — mais un défaut plus
     généreux (CFG.timeout_chef) pour les issues « Chef : » (tâches monolithiques
@@ -1623,7 +1634,15 @@ def extraire_timeout(body: str, titre: str = "") -> int:
     ce défaut pouvait écraser un « | TIMEOUT | 1200s | » collé plus bas et faire
     échouer une tâche Chef sur un dépassement (cause de #108). Le plancher garantit
     qu'une tâche Chef ne tourne jamais sous son budget dédié, même si une valeur
-    plus basse est trouvée en premier."""
+    plus basse est trouvée en premier.
+
+    Filet de sécurité #752 : `mode` (MODE_ECRITURE/MODE_LECTURE_ACTIVE/MODE_LECTURE,
+    déduit des labels GitHub par l'appelant — jamais du texte du body) ne joue un
+    rôle QUE quand AUCUNE ligne TIMEOUT n'est trouvée ci-dessous : une issue en
+    écriture reçoit alors au moins PLANCHER_TIMEOUT_ECRITURE. Une valeur TROUVÉE
+    dans le body n'est jamais relevée par ce plancher (seul le défaut chef l'est,
+    règle #111 ci-dessus, inchangée) — couvre le cas d'une issue mode_write créée
+    à la main sur GitHub sans ligne TIMEOUT du tout."""
     chef = est_titre_chef(titre)
     for ligne in body.splitlines():
         if "TIMEOUT" in ligne.upper():
@@ -1633,9 +1652,10 @@ def extraire_timeout(body: str, titre: str = "") -> int:
                 if valeur.isdigit():
                     trouve = int(valeur)
                     return max(trouve, CFG.timeout_chef) if chef else trouve
-    if chef:
-        return CFG.timeout_chef
-    return CFG.timeout_claude
+    defaut = CFG.timeout_chef if chef else CFG.timeout_claude
+    if mode == MODE_ECRITURE:
+        defaut = max(defaut, PLANCHER_TIMEOUT_ECRITURE)
+    return defaut
 
 def extraire_modele(body: str) -> str:
     """Extrait le MODELE depuis le body de l'issue (en-tête bridge).
@@ -4833,10 +4853,13 @@ def _deduire_mode_et_logguer(numero: int, titre: str, body: str, labels: list[st
     (mode, mode_txt, priorite, critique, timeout, modele)."""
     priorite = extraire_priorite(body)
     critique = priorite in PRIORITES_CRITIQUES
-    timeout  = extraire_timeout(body, titre)
+    mode     = _deduire_mode(labels)
+    # mode calculé AVANT timeout (issue #752) : extraire_timeout applique son
+    # plancher écriture seulement si mode == MODE_ECRITURE (déduit du label
+    # GitHub mode_write, jamais du texte du body — cohérent avec le principe
+    # que le mode réel est armé par le label, cf. commentaires de _deduire_mode).
+    timeout  = extraire_timeout(body, titre, mode)
     modele   = extraire_modele(body)
-
-    mode = _deduire_mode(labels)
 
     mode_txt = {
         MODE_ECRITURE:       "ÉCRITURE ⚠️",
