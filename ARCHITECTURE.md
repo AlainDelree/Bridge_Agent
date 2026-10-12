@@ -1317,6 +1317,44 @@ Constante unique `watcher.PLANCHER_TIMEOUT_ECRITURE` (900s), importée par
   300 à 900 pour les **nouveaux** projets uniquement — aucun `configs/*.conf`
   existant n'est modifié.
 
+## 13. Panneau Infrastructure — « ↺ Relancer les allumés » (issue #753)
+
+Avant #753, pour déployer un changement de `watcher.py`, seul « ↺ Relancer
+tous les CCL » permettait de relancer les watchers déjà actifs — mais il
+allume aussi tous les éteints (14 projets), qui scrutent alors GitHub toutes
+les 11s pendant leurs 20 min d'auto-extinction sans aucune utilité (~1500
+appels, près d'un tiers du quota horaire). « ▶ Lancer les éteints » ne
+couvrait pas non plus ce besoin (sens inverse).
+
+Nouveau bouton **« ↺ Relancer les allumés »** (`static/js/panneau_lateral.js`,
+zone `#pl-zone-monitoring`, entre les deux boutons existants) : relance
+uniquement les watchers CCL **actuellement actifs** (même source `/watchers`
+que « ▶ Lancer les éteints »), un à la fois — la relance en échec d'un projet
+ne bloque pas les suivants (`relancerSequentiellement`). Il **n'affiche
+même pas** le bouton s'il n'y a aucun watcher actif (comme « ▶ Lancer les
+éteints » ne s'affiche pas s'il n'y a aucun éteint).
+
+Il **saute** (sans le relancer) tout watcher actif dont le décompte « en
+cours » n'est pas nul (`resumeProjetMonitoring`, déjà en mémoire côté
+`app.js` pour l'affichage du monitoring — aucun fetch réseau supplémentaire) :
+un redémarrage interromprait la tâche en cours. Logique pure, testée sans DOM
+(`static/js/tests/panneau_lateral.test.js`) :
+- `selectionnerWatchersActifsARelancer(noms, watchersMap, resumeParProjet)` →
+  `{relances, ignores}` (un éteint n'apparaît dans AUCUNE des deux listes —
+  hors périmètre de ce bouton, pas un « ignoré » à signaler) ;
+- `resumerRelanceActifs(relances, ignores)` → texte « N relancé(s), M
+  ignoré(s) » (+ noms des projets occupés si M>0) et type de toast : `succes`
+  (non comptabilisé, option de l'issue #747 — l'utilisateur vient de cliquer)
+  tant qu'aucun projet n'est occupé, `avertissement` (toujours comptabilisé)
+  dès qu'un seul l'est ;
+- `relancerSequentiellement(projets, lancerUnProjet)` — même patron que les
+  boucles déjà en place dans `sidebarRelancerTousEteints`/
+  `sidebarRelancerTousCCL`, extrait ici pour rester testable sous Node.
+
+Les deux boutons existants sont inchangés dans leur fonctionnement — seule
+une info-bulle a été ajoutée sur « ↺ Relancer tous les CCL » rappelant qu'il
+allume aussi les watchers éteints.
+
 ---
 
 *Document technique interne — voir `BRIDGE_AGENT_DOC.md` pour l'usage du bridge.*

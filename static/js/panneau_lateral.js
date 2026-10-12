@@ -73,6 +73,55 @@ let intervalPanneauLateral = null;
 // « ▶ Lancer »/« ↺ Relancer » restent un bouton unique déjà en place).
 export function afficherBoutonArreterWatcherCcl(actif) { return !!actif; }
 
+// Sélection des watchers CCL à traiter par « ↺ Relancer les allumés » (issue
+// #753) : seulement les watchers ACTUELLEMENT ACTIFS (jamais un éteint, à la
+// différence de « ↺ Relancer tous les CCL » qui allume aussi les éteints) et
+// SANS issue en cours (un redémarrage l'interromprait) — même patron que
+// planifierPoseTokenTous (static/js/ccw.js, issue #743) : décide par projet,
+// jamais d'arrêt de force. Un éteint n'apparaît dans aucune des deux listes
+// (hors périmètre de ce bouton, pas un « ignoré » à signaler).
+//   - resumeParProjet : { <projet>: {enCours, enFile} | null | undefined } —
+//     même forme que appelerAncien('resumeProjetMonitoring', projet), DÉJÀ
+//     calculée en mémoire par le monitoring (aucun fetch réseau
+//     supplémentaire ici).
+export function selectionnerWatchersActifsARelancer(noms, watchersMap, resumeParProjet) {
+  const relances = [];
+  const ignores = [];
+  (noms || []).forEach(function(nom) {
+    const actif = !!(watchersMap && watchersMap[nom] && watchersMap[nom].actif);
+    if (!actif) return;
+    const resume = (resumeParProjet && resumeParProjet[nom]) || { enCours: 0 };
+    if (resume.enCours > 0) ignores.push(nom); else relances.push(nom);
+  });
+  return { relances, ignores };
+}
+
+// Résumé court affiché après « ↺ Relancer les allumés » — texte + type de
+// toast à utiliser (issue #753) : simple succès (toast non comptabilisé,
+// option de l'issue #747 — l'utilisateur vient de cliquer, il le voit déjà)
+// tant qu'aucun projet n'a été ignoré ; dès qu'un projet occupé l'a été,
+// avertissement (toujours comptabilisé, voir estComptabilise dans toasts.js)
+// avec les noms des projets occupés.
+export function resumerRelanceActifs(relances, ignores) {
+  const n = (relances || []).length;
+  const m = (ignores || []).length;
+  let texte = n + ' relancé(s), ' + m + ' ignoré(s)';
+  if (m > 0) texte += ' (' + ignores.join(', ') + ')';
+  return { texte: texte, type: m > 0 ? 'avertissement' : 'succes' };
+}
+
+// Relance chaque projet de `projets` l'un après l'autre via `lancerUnProjet`
+// (même patron que la boucle déjà en place dans sidebarRelancerTousEteints/
+// sidebarRelancerTousCCL, extrait ici pour rester testable sous Node) : la
+// relance en échec d'un projet n'empêche jamais les suivants d'être tentés.
+export async function relancerSequentiellement(projets, lancerUnProjet) {
+  for (const nom of (projets || [])) {
+    try {
+      await lancerUnProjet(nom);
+    } catch (e) { /* une relance en échec ne doit pas bloquer les suivantes */ }
+  }
+}
+
 // État des 3 cases « 🔔 Notifications » du panneau, dérivé des labels réels de
 // l'issue sélectionnée (correctif anomalie #4, issue #633) : une case cochée
 // reflète directement — et SEULEMENT — la présence du label GitHub
@@ -162,9 +211,10 @@ async function rendrePanneauLateralMonitoring() {
 
   html += '<div class="pl-resume-titre">Watchers CCL</div>';
   const cclEteints = [];
+  const cclActifs = [];
   noms.forEach(function(nom) {
     const actif = !!(watchersMap[nom] && watchersMap[nom].actif);
-    if (!actif) cclEteints.push(nom);
+    if (!actif) cclEteints.push(nom); else cclActifs.push(nom);
     const resume = appelerAncien('resumeProjetMonitoring', nom) || { enCours: 0, enFile: 0 };
     html += '<div class="pl-ligne">'
           + '<span class="pl-ligne-libelle">' + (actif ? '🟢' : '⚫') + ' ' + dom.echapperHtml(nom) + '</span>'
@@ -183,7 +233,12 @@ async function rendrePanneauLateralMonitoring() {
     if (cclEteints.length) {
       html += '<button class="pl-btn-vm" data-action="pl-relancer-eteints">▶ Lancer les éteints</button>';
     }
-    html += '<button class="pl-btn-vm" data-action="pl-relancer-tous-ccl">↺ Relancer tous les CCL</button>';
+    if (cclActifs.length) {
+      html += '<button class="pl-btn-vm" data-action="pl-relancer-actifs">↺ Relancer les allumés</button>';
+    }
+    html += '<button class="pl-btn-vm" data-action="pl-relancer-tous-ccl" '
+          + 'title="Relance aussi les watchers éteints, les allume donc inutilement">'
+          + '↺ Relancer tous les CCL</button>';
     html += '</div>';
   }
 
@@ -512,6 +567,37 @@ async function sidebarRelancerTousEteints(btn) {
   await rafraichirPanneauLateralResultats();
 }
 
+// « ↺ Relancer les allumés » (issue #753) : à la différence de « ▶ Lancer les
+// éteints » (qui allume) et « ↺ Relancer tous les CCL » (qui relance TOUT, y
+// compris les éteints — d'où leur mise en veille GitHub pendant 20 min pour
+// rien), ce bouton ne touche QUE les watchers déjà actifs, et saute ceux qui
+// ont une issue en cours (resumeProjetMonitoring, déjà en mémoire côté
+// app.js — aucun fetch réseau supplémentaire ici, voir
+// selectionnerWatchersActifsARelancer).
+async function sidebarRelancerActifs(btn) {
+  const label = btn ? btn.textContent : null;
+  if (btn) { btn.disabled = true; btn.textContent = 'Relance…'; }
+  let relances = [], ignores = [];
+  try {
+    const liste = await api.get('/watchers', { silencieux: true });
+    const watchersMap = {};
+    (liste || []).forEach(w => { watchersMap[w.nom] = w; });
+    const noms = appelerAncien('nomsProjetsDisponibles') || [];
+    const resumeParProjet = {};
+    noms.forEach(function(nom) { resumeParProjet[nom] = appelerAncien('resumeProjetMonitoring', nom); });
+    ({ relances, ignores } = selectionnerWatchersActifsARelancer(noms, watchersMap, resumeParProjet));
+    await relancerSequentiellement(relances,
+      nom => api.post('/lancer-watcher', { projet: nom, relancer: true }, { silencieux: true }));
+    const resume = resumerRelanceActifs(relances, ignores);
+    if (resume.type === 'avertissement') toasts.avertissement(resume.texte);
+    else toasts.succes(resume.texte, false);
+  } catch (e) {
+    toasts.erreur('Erreur réseau : ' + e.message);
+  }
+  if (btn) { btn.disabled = false; if (label !== null) btn.textContent = label; }
+  await rafraichirPanneauLateralResultats();
+}
+
 async function sidebarRelancerTousCCL(btn) {
   if (btn) { btn.disabled = true; btn.textContent = 'Relance…'; }
   try {
@@ -541,6 +627,8 @@ function installerDelegationPanneau() {
     (e, el) => sidebarArreterWatcherCCL(el.dataset.projet, el));
   dom.surAction('[data-action="pl-relancer-eteints"]', 'click',
     (e, el) => sidebarRelancerTousEteints(el));
+  dom.surAction('[data-action="pl-relancer-actifs"]', 'click',
+    (e, el) => sidebarRelancerActifs(el));
   dom.surAction('[data-action="pl-relancer-tous-ccl"]', 'click',
     (e, el) => sidebarRelancerTousCCL(el));
   dom.surAction('[data-action="pl-charger-ccw"]', 'click',
