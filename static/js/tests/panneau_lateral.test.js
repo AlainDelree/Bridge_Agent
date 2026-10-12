@@ -5,11 +5,14 @@
 // static/js/tests/README.md pour lancer ces tests (node --test).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 
 import {
   etatsCasesNotif, afficherBoutonArreterWatcherCcl,
   selectionnerWatchersActifsARelancer, resumerRelanceActifs, relancerSequentiellement,
+  sidebarDemarrerWatcherInbox,
 } from '../panneau_lateral.js';
+import { api } from '../socle/api.js';
 
 test('etatsCasesNotif : aucun label → les 3 cases décochées', () => {
   assert.deepEqual(etatsCasesNotif([]), {
@@ -131,4 +134,59 @@ test('relancerSequentiellement : liste vide → aucun appel', async () => {
   let appels = 0;
   await relancerSequentiellement([], () => { appels += 1; return Promise.resolve(); });
   assert.equal(appels, 0);
+});
+
+// ─── sidebarDemarrerWatcherInbox (issue #754) ──────────────────────────────
+// Démarrage/relance DIRECT du watcher spool, sans boîte de dialogue de durée
+// (supprimée — répondait à un besoin disparu, #485). `btn` est un objet
+// minimal (pas besoin d'un vrai DOM) ; `global.document` est mocké, DANS le
+// test (les callbacks test() ne s'exécutent qu'après la fin du corps
+// synchrone du module — un mock posé/retiré au niveau module serait déjà
+// retiré avant de servir), pour que dom.$ (utilisé par
+// rafraichirPanneauLateralResultats, appelé en fin de fonction) ne trouve
+// rien et s'arrête tôt — même patron que ccw.test.js.
+
+test('sidebarDemarrerWatcherInbox : POST duree_min=0, bouton désactivé puis rétabli', async () => {
+  const appels = [];
+  const postOriginal = api.post;
+  const documentOriginal = global.document;
+  api.post = async (url, corps) => { appels.push({ url, corps }); return { succes: true }; };
+  global.document = { querySelector: () => null };
+  const btn = { disabled: false, textContent: '▶ Démarrer' };
+  try {
+    const promesse = sidebarDemarrerWatcherInbox(btn);
+    // Pendant l'appel (avant le premier await) : bouton désactivé, libellé changé.
+    assert.equal(btn.disabled, true);
+    assert.equal(btn.textContent, 'Démarrage…');
+    await promesse;
+  } finally {
+    api.post = postOriginal;
+    global.document = documentOriginal;
+  }
+  assert.deepEqual(appels, [{ url: '/issues-inbox/demarrer-watcher', corps: { duree_min: 0 } }]);
+  // Après l'appel : bouton rétabli à son état/libellé d'origine.
+  assert.equal(btn.disabled, false);
+  assert.equal(btn.textContent, '▶ Démarrer');
+});
+
+test('sidebarDemarrerWatcherInbox : erreur réseau → bouton rétabli quand même', async () => {
+  const postOriginal = api.post;
+  const documentOriginal = global.document;
+  api.post = async () => { throw new Error('échec réseau simulé'); };
+  global.document = { querySelector: () => null };
+  const btn = { disabled: false, textContent: '↺ Relancer' };
+  try {
+    await sidebarDemarrerWatcherInbox(btn);
+  } finally {
+    api.post = postOriginal;
+    global.document = documentOriginal;
+  }
+  assert.equal(btn.disabled, false);
+  assert.equal(btn.textContent, '↺ Relancer');
+});
+
+// ─── Suppression de la boîte de durée : plus aucune trace dans le module ──
+test('aucun élément de l\'ancienne boîte « durée du watcher spool » n\'est référencé (issue #754)', () => {
+  const texte = readFileSync(new URL('../panneau_lateral.js', import.meta.url), 'utf8');
+  assert.doesNotMatch(texte, /dwi-|modal-duree-watcher-inbox|pl-duree-watcher-|DureeWatcherInbox/);
 });

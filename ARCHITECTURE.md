@@ -426,7 +426,7 @@ variable/DOM ancien), retiré avec le reste.
 | Onglet Configuration | `onglet_config.html` |
 | Onglet Journal | `onglet_journal.html` |
 | Onglet CCW | `onglet_ccw.html` |
-| Modales | `modale_confirmation.html`, `modale_nouveau_projet.html`, `modale_supprimer_projet.html`, `modale_recherche_titre.html`, `modale_interrompre.html`, `modale_duree_watcher_inbox.html`, `overlay_arret.html` |
+| Modales | `modale_confirmation.html`, `modale_nouveau_projet.html`, `modale_supprimer_projet.html`, `modale_recherche_titre.html`, `modale_interrompre.html`, `overlay_arret.html` |
 | Scripts (importmap + Jinja + app.js + module) | `scripts.html` |
 
 **Feuilles CSS** — chargées dans cet ORDRE dans `<head>` (ordre = cascade ;
@@ -474,6 +474,22 @@ reconstruites au rechargement depuis `/issues-inbox/etat`, `resultats.js`) ; le
 badge d'alerte 🚨 est passé sur l'onglet Résultats ; l'historique du watcher
 spool a rejoint le panneau latéral. Ordre actuel de la barre d'onglets :
 Résultats, Journal watcher, Configuration, CCW, Nouvelle issue.
+
+**Démarrage direct du watcher spool, sans boîte de durée (issue #754)** : le
+bouton « ▶ Démarrer »/« ↺ Relancer » du watcher spool (zone extras du
+panneau latéral) démarre/relance directement
+(`sidebarDemarrerWatcherInbox`, `panneau_lateral.js`), sans durée limite —
+la boîte « Démarrer le watcher spool » (choix Indéfiniment/30 min/minutes
+personnalisées, gabarit `modale_duree_watcher_inbox.html`, issue #485)
+répondait à un besoin disparu (le spool ne surveille qu'un dossier local,
+sans coût GitHub) et a été retirée, gabarit, fonctions
+(`sidebarOuvrirDureeWatcherInbox`/`sidebarFermerDureeWatcherInbox`/
+`sidebarConfirmerDureeWatcherInbox`) et branchements compris. Le support
+serveur de la durée (paramètre `duree_min` de `POST
+/issues-inbox/demarrer-watcher`, option `--duree-min` de
+`scripts/watcher_issues_inbox.py`, affichage de l'extinction restante dans
+le panneau) reste en place — simplement plus utilisé par l'interface,
+`duree_min=0`/absent valant toujours « indéfiniment ».
 
 > **Étape 3 réalisée — `static/js/resultats.js` (issue #627)** : premier module
 > par fonctionnalité. Il sort d'`app.js` le **moteur** de l'onglet Résultats —

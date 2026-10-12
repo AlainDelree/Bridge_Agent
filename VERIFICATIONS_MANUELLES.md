@@ -289,8 +289,16 @@
 - [ ] Interrupteur son (Plat / Cloche) : bascule ; « Tester le son » actif
       seulement quand une ligne est sélectionnée ; joue le timbre choisi à
       tonalité neutre (plus de tonalité par projet, issue #643).
-- [ ] Zone extras : contrôle du watcher spool (issues_inbox) — démarrer/arrêter
-      avec la modale de durée.
+- [ ] **Zone extras : démarrage direct du watcher spool, sans boîte de durée
+      (issue #754)** : cliquer « ▶ Démarrer » (ou « ↺ Relancer » s'il est déjà
+      actif) démarre/relance **immédiatement** le watcher spool (issues_inbox),
+      **sans aucune boîte de dialogue** — plus de choix Indéfiniment/30
+      min/minutes personnalisées. Pendant l'appel, le bouton se désactive et
+      affiche « Démarrage… », puis se rétablit (libellé + état d'origine) et
+      le panneau se rafraîchit ; le point vert 🟢 confirme le démarrage (aucun
+      nouveau toast de succès). Couper le réseau et retenter : le toast
+      d'erreur existant (de l'appel API) s'affiche, et le bouton se rétablit
+      quand même (pas bloqué désactivé).
 - [ ] **Historique du watcher spool (issue #639)** : sous le contrôle du watcher
       spool, un repli discret **« Historique récent »** (`<details>` fermé par
       défaut) ; l'ouvrir affiche les dernières lignes de `logs/issues_inbox.log`

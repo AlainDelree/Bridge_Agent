@@ -323,7 +323,7 @@ async function rendrePanneauLateralExtras() {
   let html = '<div class="pl-resume-titre">Watcher spool</div>';
   html += '<div class="pl-ligne"><span class="pl-ligne-libelle">'
         + (actif ? '🟢' : '⚫') + ' Watcher spool (issues_inbox)</span>'
-        + '<button class="pl-btn-mini" data-action="pl-duree-watcher-ouvrir">'
+        + '<button class="pl-btn-mini" data-action="pl-demarrer-watcher-inbox">'
         + (actif ? '↺ Relancer' : '▶ Démarrer') + '</button>'
         + '</div>';
   if (actif) {
@@ -356,41 +356,21 @@ function formaterDureeRestante(secondes) {
   return h > 0 ? (h + 'h' + String(m).padStart(2, '0')) : (m + ' min');
 }
 
-function sidebarOuvrirDureeWatcherInbox() {
-  const overlay = dom.$('#modal-duree-watcher-inbox');
-  if (!overlay) return;
-  const radioIndef = dom.$('#dwi-indefini');
-  if (radioIndef) radioIndef.checked = true;
-  const champMin = dom.$('#dwi-minutes');
-  if (champMin) champMin.value = '';
-  overlay.classList.add('actif');
-}
-
-function sidebarFermerDureeWatcherInbox() {
-  const overlay = dom.$('#modal-duree-watcher-inbox');
-  if (overlay) overlay.classList.remove('actif');
-}
-
-async function sidebarConfirmerDureeWatcherInbox(btn) {
-  const choix = dom.$('input[name="dwi-choix"]:checked');
-  let dureeMin = 0;
-  if (choix && choix.value === '30') {
-    dureeMin = 30;
-  } else if (choix && choix.value === 'perso') {
-    const champ = dom.$('#dwi-minutes');
-    dureeMin = parseInt(champ ? champ.value : '', 10);
-    if (!Number.isFinite(dureeMin) || dureeMin <= 0) {
-      toasts.avertissement('Indiquez un nombre de minutes valide (> 0).');
-      return;
-    }
-  }
+// Démarre/relance le watcher spool directement, sans boîte de dialogue
+// (issue #754 — la question de durée posée ici jusque-là répondait à un
+// besoin disparu, #485 : le spool ne surveille qu'un dossier local, sans
+// coût GitHub). Toujours sans durée limite (duree_min=0, comportement par
+// défaut déjà en place) — même patron disable/libellé/rétablissement que
+// les autres boutons du panneau (sidebarRelancerWatcherCCL,
+// sidebarArreterWatcherInbox…) ; aucun toast de succès, le point vert du
+// panneau confirme l'action après rafraîchissement.
+export async function sidebarDemarrerWatcherInbox(btn) {
   const label = btn ? btn.textContent : null;
   if (btn) { btn.disabled = true; btn.textContent = 'Démarrage…'; }
   try {
-    await api.post('/issues-inbox/demarrer-watcher', { duree_min: dureeMin });
+    await api.post('/issues-inbox/demarrer-watcher', { duree_min: 0 });
   } catch (e) { /* déjà signalé par api.post (toast) */ }
   if (btn) { btn.disabled = false; if (label !== null) btn.textContent = label; }
-  sidebarFermerDureeWatcherInbox();
   await rafraichirPanneauLateralResultats();
 }
 
@@ -634,14 +614,10 @@ function installerDelegationPanneau() {
   dom.surAction('[data-action="pl-charger-ccw"]', 'click',
     () => sidebarChargerCcw());
 
-  dom.surAction('[data-action="pl-duree-watcher-ouvrir"]', 'click',
-    () => sidebarOuvrirDureeWatcherInbox());
+  dom.surAction('[data-action="pl-demarrer-watcher-inbox"]', 'click',
+    (e, el) => sidebarDemarrerWatcherInbox(el));
   dom.surAction('[data-action="pl-arreter-watcher-inbox"]', 'click',
     (e, el) => sidebarArreterWatcherInbox(el));
-  dom.surAction('[data-action="pl-duree-watcher-annuler"]', 'click',
-    () => sidebarFermerDureeWatcherInbox());
-  dom.surAction('[data-action="pl-duree-watcher-confirmer"]', 'click',
-    (e, el) => sidebarConfirmerDureeWatcherInbox(el));
 
   dom.surAction('[data-action="pl-interrompre-relancer"]', 'click',
     (e, el) => appelerAncien('interrompreEtRelancer', el.dataset.projet, Number(el.dataset.numero)));
