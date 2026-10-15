@@ -1,0 +1,35 @@
+# Profil d'agent Mistral Vibe pour les projets Bridge_Agent en mode écriture
+# (MODE_ECRITURE) et lecture active (MODE_LECTURE_ACTIVE) — issue #760.
+#
+# Vibe n'offre pas d'option globale équivalente à `--dangerously-skip-permissions`
+# de Claude Code : l'écriture se débloque outil par outil, via un profil TOML
+# désigné par son nom sur la ligne de commande (`--agent bridge_ecriture`, voir
+# AGENTS_CONNUS["vibe"]["construire_cmd"] dans watcher.py). Ce fichier est la
+# copie versionnée de référence — voir provisioning/vibe/README.md pour son
+# déploiement vers l'emplacement réel attendu par l'outil
+# (~/.vibe/agents/bridge_ecriture.toml).
+#
+# Permissions "always" sur les outils nécessaires à une session non
+# interactive en écriture : bash (commandes/scripts), write_file/edit
+# (modification de fichiers), read/grep (lecture — inclus explicitement pour
+# éviter toute invite malgré leur caractère déjà inoffensif). Le confinement
+# au périmètre du projet et au dossier scratch (lecture active) reste porté
+# par le prompt (garde-fou niveau 1) et par le garde-fou technique niveau 2
+# agnostique de l'agent (empreinte avant/après, voir
+# _verifier_violation_scratch dans watcher.py) — ce profil ne restreint pas
+# lui-même l'écriture à un sous-dossier particulier.
+
+[tools.bash]
+permission = "always"
+
+[tools.write_file]
+permission = "always"
+
+[tools.edit]
+permission = "always"
+
+[tools.read]
+permission = "always"
+
+[tools.grep]
+permission = "always"

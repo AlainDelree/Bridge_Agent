@@ -387,6 +387,13 @@ curl -sL "https://raw.githubusercontent.com/AlainDelree/Bridge_Agent/master/BRID
 
 Arborescence et détail de l'architecture technique interne : voir `ARCHITECTURE.md`.
 
+**Agent d'exécution par projet** (clé `AGENT` du `.conf`, issue #759) :
+`claude` par défaut. Un second agent, `vibe` (Mistral Vibe), est disponible
+depuis l'issue #760 — son profil d'écriture versionné et la procédure de
+déploiement (profil TOML + dossiers de confiance) vivent dans
+`provisioning/vibe/` (voir `provisioning/vibe/README.md`). Basculer un
+projet dessus reste une action manuelle, projet par projet.
+
 **Historique du projet** : vit dans `CHANGELOG.md` à la racine, une entrée
 par issue (`## <date> — issue #N`), la plus récente en premier — pas dans ce
 document. Une issue en écriture n'édite jamais `CHANGELOG.md` directement :
@@ -630,7 +637,7 @@ calibration (constantes actuelles du code : `K_VARIABILITE` = 3, issue
 
 ---
 
-*Dernière mise à jour : 9 octobre 2026 — nettoyage de la documentation pour
-Claude Chat (issue #737, finitions).*
+*Dernière mise à jour : 15 octobre 2026 — Mistral Vibe comme second agent
+d'exécution disponible, non basculé par défaut (issue #760).*
 
 Historique complet : voir [`CHANGELOG.md`](CHANGELOG.md).
