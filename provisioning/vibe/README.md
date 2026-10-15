@@ -17,9 +17,24 @@ Vibe n'a pas d'option en ligne de commande équivalente à
 `--dangerously-skip-permissions` de Claude Code (constaté par essai manuel) :
 l'écriture se débloque outil par outil via un profil décrit en TOML, désigné
 ensuite par son nom (`--agent bridge_ecriture`). `watcher.py` construit déjà
-cette commande pour les modes écriture et lecture active (voir
+cette commande pour le mode écriture (voir
 `AGENTS_CONNUS["vibe"]["construire_cmd"]`) — encore faut-il que le fichier
 existe réellement à l'emplacement que Vibe va chercher.
+
+Le périmètre (`REP_TRAVAIL` du projet, ou le worktree en cours) est transmis
+explicitement via `--workdir` (issue #761) — Vibe refuse d'écrire hors de ce
+répertoire, constaté par essai manuel.
+
+**Mode lecture active (`mode_scratch`) indisponible pour cet agent** (issue
+#761) : ce mode a besoin d'écrire dans un dossier scratch situé HORS de
+`--workdir`, mais la seule option qui étendrait ce périmètre (`--add-dir`) ne
+distingue pas lecture et écriture — elle ouvrirait le projet à l'écriture
+tout autant que le scratch (confirmé en lisant `vibe.core.workspace.Workspace`,
+dont `authorized_roots` est décrit comme « the whole of the write boundary »).
+Une issue en lecture active confiée à un projet basculé sur Vibe échoue donc
+proprement (`ModeAgentIndisponible`, voir `_construire_cmd_vibe`) plutôt que
+de donner une fausse impression de confinement — à revoir si une future
+version de Vibe expose une telle distinction.
 
 **Déploiement** (une fois, sur chaque machine qui exécutera Vibe) :
 

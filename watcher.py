@@ -3016,34 +3016,50 @@ SIGNATURES_TOKEN_EXPIRE = (
     "oauth token",
 )
 
-# Signatures d'erreur BLOQUANTE reconnues dans la sortie d'une tentative déjà
-# ÉCHOUÉE (issue #760, distinct de SIGNATURES_TOKEN_EXPIRE ci-dessus qui ne
-# sert qu'au pré-vol best-effort AVANT la première tentative et ne fait que
-# journaliser un avertissement). Une clé révoquée ou un quota/crédit épuisé
-# ne se résorbent pas en retentant : voir _detecter_erreur_bloquante et
-# _gerer_erreur_bloquante, qui arrêtent le traitement dès qu'une de ces
-# signatures apparaît, au lieu de consommer les tentatives restantes.
-# Reprend les signatures d'auth déjà connues de SIGNATURES_TOKEN_EXPIRE (un
-# "/login" ou "unauthorized" mid-exécution est tout aussi définitif qu'au
-# pré-vol) et y ajoute le message de facturation Anthropic observé quand le
-# crédit du compte est épuisé.
-SIGNATURES_ERREUR_BLOQUANTE_CLAUDE = SIGNATURES_TOKEN_EXPIRE + (
+# Signatures d'erreur BLOQUANTE reconnues dans le flux d'erreur RÉEL du
+# process (stderr du subprocess, jamais le rapport rédigé par l'agent — voir
+# _detecter_erreur_bloquante et le commentaire de _executer_une_tentative sur
+# `stderr_brut`, issue #761 : la version #760 cherchait ces signatures dans
+# la sortie capturée en général, qui pouvait contenir le rapport de l'agent
+# après reclassification #581/#757 — un rapport parlant d'authentification,
+# de quotas ou de codes HTTP déclenchait alors une détection à tort).
+# Distinct de SIGNATURES_TOKEN_EXPIRE ci-dessus (pré-vol best-effort AVANT la
+# première tentative, simple avertissement journalisé, jamais un arrêt).
+# Une clé révoquée ou un quota/crédit épuisé ne se résorbent pas en
+# retentant : voir _gerer_erreur_bloquante, qui arrête le traitement dès
+# qu'une de ces signatures apparaît, au lieu de consommer les tentatives
+# restantes — d'où une liste volontairement RESTREINTE à des formulations
+# qu'un message d'erreur réel du CLI contient et qu'un texte ordinaire ne
+# contient normalement pas (issue #761 : mieux vaut rater une erreur
+# bloquante, traitée alors comme un échec ordinaire avec ses tentatives, que
+# d'arrêter à tort une issue valide). Exclus par rapport à SIGNATURES_TOKEN_EXPIRE :
+# "not logged in" et "please run" (formulations génériques, plausibles dans un
+# message sans rapport avec l'authentification) et "unauthorized" seul (trop
+# ordinaire isolément, voir la variante qualifiée ci-dessous).
+SIGNATURES_ERREUR_BLOQUANTE_CLAUDE = (
+    "invalid api key",
+    "authentication_error",
+    "please authenticate",
+    "oauth token",
     "credit balance is too low",
 )
 
-# Signatures d'erreur bloquante pour Mistral Vibe (issue #760) : liste
-# BEST-EFFORT, jamais vérifiée en conditions réelles (consigne explicite de
-# l'issue #760 : ne pas lancer de session vibe réelle, qui consommerait un
-# quota facturé). Vocabulaire générique d'API REST (401/429) plutôt qu'un
-# code d'erreur Mistral précis, faute de pouvoir le confirmer sans appel
-# réseau — à affiner lors de la première bascule réelle d'un projet sur cet
-# agent. "rate limit" volontairement exclu : trop souvent transitoire
-# (throttling par minute) pour justifier un arrêt définitif, à la différence
-# d'un quota/crédit de compte épuisé.
+# Signatures d'erreur bloquante pour Mistral Vibe (issue #760, resserré #761) :
+# liste BEST-EFFORT, jamais vérifiée en conditions réelles (consigne
+# explicite des issues #760/#761 : ne pas lancer de session vibe réelle, qui
+# consommerait un quota facturé) — à affiner lors de la première bascule
+# réelle d'un projet sur cet agent. "unauthorized" seul et "quota" seul
+# retirés (issue #761 : trop ordinaires pour être propres à une vraie
+# erreur — un "quota" isolé matcherait un message anodin sur un quota disque)
+# au profit de formulations qualifiées, plus proches d'un message d'erreur
+# réel d'API REST. "rate limit" volontairement exclu : trop souvent
+# transitoire (throttling par minute) pour justifier un arrêt définitif, à la
+# différence d'un quota/crédit de compte épuisé.
 SIGNATURES_ERREUR_BLOQUANTE_VIBE = (
-    "unauthorized",
     "invalid api key",
-    "quota",
+    "401 unauthorized",
+    "quota exceeded",
+    "insufficient quota",
 )
 
 # Clause « sous-agents » du gabarit de prompt standard (issue #581/#757) :
@@ -3083,7 +3099,17 @@ _CLAUSE_SOUS_AGENTS_VIBE = """4. Si tu délègues une partie du travail à un so
 """
 
 
-def _construire_cmd_claude(mode: str, modele: str, prompt: str) -> list[str]:
+class ModeAgentIndisponible(Exception):
+    """Levée par un callable `construire_cmd` (issue #761) quand le MODE
+    demandé n'a pas d'équivalent sûr pour cet agent — voir
+    `_construire_cmd_vibe`/MODE_LECTURE_ACTIVE pour le cas d'usage actuel.
+    Capturée dans `lancer_claude`, juste après l'appel à `construire_cmd`,
+    et convertie en échec ordinaire de la tentative (comme
+    FileNotFoundError ci-dessous) plutôt que de laisser l'exception remonter
+    et interrompre le traitement de l'issue."""
+
+
+def _construire_cmd_claude(mode: str, modele: str, prompt: str, cwd: Path) -> list[str]:
     """Construit l'argv de `claude --print ...` — comportement historique,
     inchangé par l'introduction de AGENTS_CONNUS (issue #759).
 
@@ -3093,7 +3119,17 @@ def _construire_cmd_claude(mode: str, modele: str, prompt: str) -> list[str]:
     Code en lecture seule. Un seul argument joint par virgules (et non un
     token par entrée, voir OUTILS_LECTURE_AUTORISES) : évite une
     reségmentation variadique sujette à un ré-échappement Windows (remarque
-    #546, non totalement élucidée)."""
+    #546, non totalement élucidée).
+
+    `cwd` (issue #761) : ajouté à la signature commune de `construire_cmd`
+    (partagée avec `_construire_cmd_vibe`, qui en a besoin pour `--workdir`),
+    mais délibérément IGNORÉ ici — Claude Code n'a pas d'option de ligne de
+    commande équivalente, et n'en a jamais eu besoin : son répertoire de
+    travail réel est déjà fixé par `cwd=cwd_effectif` du Popen (voir plus
+    bas dans `lancer_claude`), qui suffit à lui seul à le confiner. Ajouter
+    un flag ici n'apporterait rien d'observable et changerait la commande
+    produite pour l'agent en production — exclu par l'issue #761
+    (« produire exactement la même commande qu'avant »)."""
     cmd = ["claude", "--print"]
     if modele:
         cmd += ["--model", modele]
@@ -3105,8 +3141,8 @@ def _construire_cmd_claude(mode: str, modele: str, prompt: str) -> list[str]:
     return cmd
 
 
-def _construire_cmd_vibe(mode: str, modele: str, prompt: str) -> list[str]:
-    """Construit l'argv de `vibe` en mode non interactif (issue #760).
+def _construire_cmd_vibe(mode: str, modele: str, prompt: str, cwd: Path) -> list[str]:
+    """Construit l'argv de `vibe` en mode non interactif (issue #760, corrigé #761).
 
     Traduction des trois MODE_* (mêmes garde-fous de prompt que pour Claude
     Code — bloc `garde_fou` de `lancer_claude`, agnostique de l'agent) :
@@ -3114,17 +3150,42 @@ def _construire_cmd_vibe(mode: str, modele: str, prompt: str) -> list[str]:
       écriture de fichier et toute exécution de commande, explique le refus
       et se termine proprement (constaté par essai manuel) — équivalent de
       l'absence de `--dangerously-skip-permissions` côté Claude Code.
-    - MODE_ECRITURE / MODE_LECTURE_ACTIVE : profil `bridge_ecriture`, fichier
-      TOML versionné dans ce dépôt (voir provisioning/vibe/) et déployé vers
+    - MODE_ECRITURE : profil `bridge_ecriture`, fichier TOML versionné dans
+      ce dépôt (voir provisioning/vibe/) et déployé vers
       `~/.vibe/agents/bridge_ecriture.toml`, seule façon constatée de
       débloquer l'écriture outil par outil en l'absence d'un flag global
-      équivalent à `--dangerously-skip-permissions`. Le confinement au
-      dossier scratch de MODE_LECTURE_ACTIVE reste porté par le prompt
-      (garde-fou niveau 1) et par le garde-fou technique niveau 2 (empreinte
-      avant/après, agnostique de l'agent, voir _verifier_violation_scratch) :
-      le profil `bridge_ecriture` ne restreint pas l'écriture à un
-      sous-dossier particulier, donc ce niveau 2 reste le seul filet
-      déterministe pour ce mode avec cet agent.
+      équivalent à `--dangerously-skip-permissions`.
+    - MODE_LECTURE_ACTIVE : INDISPONIBLE pour cet agent, voir plus bas.
+
+    `--workdir {cwd}` (issue #761, point 1) : périmètre explicitement transmis
+    sur la ligne de commande — essais manuels : sans cette option, vibe se
+    rabattait sur le répertoire courant du process (confinement obtenu par
+    simple effet de bord, jamais demandé explicitement). `cwd` est le
+    répertoire de travail déjà calculé par l'appelant (`cwd_effectif` dans
+    `lancer_claude` — projet ou worktree selon le cas, issue #337), identique
+    à celui passé à `cwd=` du Popen : les deux désignent donc le même
+    répertoire, l'un pour le process, l'autre pour que l'outil lui-même le
+    sache et refuse d'écrire ailleurs.
+
+    MODE_LECTURE_ACTIVE indisponible (issue #761, point 2) : ce mode a
+    besoin d'écrire dans le dossier scratch, situé HORS de `cwd` — mais vibe
+    refuse d'écrire hors de son périmètre déclaré (`--workdir` ci-dessus),
+    constaté par essai manuel. La seule option qui étend ce périmètre,
+    `--add-dir`, ne distingue PAS lecture et écriture : lue dans le code
+    source de l'outil (`vibe.core.workspace.Workspace` — `authorized_roots`
+    est décrit littéralement comme « the whole of the write boundary »,
+    `cwd` et chaque `--add-dir` y sont ajoutés à égalité, aucun n'est
+    lecture seule), elle ouvrirait le projet à l'écriture tout autant que le
+    scratch. Contrairement à Claude Code (`--dangerously-skip-permissions`,
+    confinement par convention de prompt + garde-fou technique de rattrapage
+    après coup, `_verifier_violation_scratch`), le confinement serait ici
+    une façade : aucun garde-fou ne rattraperait une écriture hors scratch
+    qui ne touche pas le dépôt git (le garde-fou existant ne détecte que les
+    écritures visibles par `git status` dans `cwd`). Plutôt que de
+    contourner avec `--add-dir` et laisser croire à un confinement réel,
+    MODE_LECTURE_ACTIVE lève `ModeAgentIndisponible` pour cet agent — à
+    revoir si une future version de vibe expose une distinction
+    lecture/écriture par répertoire.
 
     Sortie en texte brut : `--output` n'est volontairement PAS positionné
     (défaut `text` du CLI, constaté dans son aide), pour conserver le même
@@ -3137,8 +3198,18 @@ def _construire_cmd_vibe(mode: str, modele: str, prompt: str) -> list[str]:
 
     `modele` ignoré : vibe n'expose pas, sur cette ligne de commande, de
     sélection de modèle équivalente à `--model` côté Claude Code."""
+    if mode == MODE_LECTURE_ACTIVE:
+        raise ModeAgentIndisponible(
+            "Mistral Vibe : MODE_LECTURE_ACTIVE (lecture active/scratch) "
+            "indisponible — vibe n'offre aucune option de ligne de commande "
+            "distinguant un répertoire accessible en lecture seule d'un "
+            "répertoire accessible en écriture (--add-dir ouvre les deux à "
+            "l'écriture, voir vibe.core.workspace.Workspace). Confier cette "
+            "tâche à un agent qui supporte ce mode (ex. claude), ou traiter "
+            "cette issue en MODE_ECRITURE si le projet l'autorise."
+        )
     agent_vibe = "plan" if mode == MODE_LECTURE else "bridge_ecriture"
-    return ["vibe", "--agent", agent_vibe, "--prompt", prompt]
+    return ["vibe", "--agent", agent_vibe, "--workdir", str(cwd), "--prompt", prompt]
 
 
 # Pré-vol sans appel réseau pour vibe (issue #760) : authentification par clé
@@ -3652,8 +3723,15 @@ Si la tâche échoue, remplace ✅ par ❌ et explique la cause en une ligne.
     # Construction de la commande et de ses options par MODE : déléguée à
     # AGENTS_CONNUS[CFG.agent] (issue #759) — voir _construire_cmd_claude pour
     # le détail des options (--model, --dangerously-skip-permissions,
-    # --allowedTools) et l'historique #542/#546.
-    cmd = AGENTS_CONNUS[CFG.agent]["construire_cmd"](mode, modele, prompt)
+    # --allowedTools) et l'historique #542/#546. `cwd_effectif` transmis
+    # explicitement (issue #761, point 1) : périmètre déjà calculé par
+    # l'appelant (projet ou worktree, issue #337), identique à celui passé à
+    # `cwd=` du Popen plus bas — voir _construire_cmd_vibe pour l'usage qu'en
+    # fait vibe (--workdir) ; _construire_cmd_claude l'ignore délibérément.
+    try:
+        cmd = AGENTS_CONNUS[CFG.agent]["construire_cmd"](mode, modele, prompt, cwd_effectif)
+    except ModeAgentIndisponible as e:
+        return False, str(e)
 
     # Popen (plutôt que subprocess.run) pour garder la main sur le PID : le
     # nettoyage de l'arbre de process (issue #247, révisé #249) doit
@@ -5421,12 +5499,26 @@ def _verdict_final(sortie: str) -> str | None:
     return occurrences[-1] if occurrences else None
 
 
-def _detecter_erreur_bloquante(sortie: str) -> str | None:
+def _detecter_erreur_bloquante(stderr_brut: str | None) -> str | None:
     """Reconnaît une erreur BLOQUANTE (clé révoquée, quota/crédit épuisé...)
-    dans la sortie d'une tentative déjà ÉCHOUÉE (issue #760). Logique commune
-    aux deux agents : seules les signatures varient, via
+    dans le flux d'erreur RÉEL du process (issue #760, restreint #761).
+    Logique commune aux deux agents : seules les signatures varient, via
     AGENTS_CONNUS[CFG.agent]['signatures_erreur_bloquante'] (absente ou vide
     pour un agent qui n'en définit aucune — retourne alors toujours None).
+
+    `stderr_brut` : stderr effectivement émis par le process `claude`/`vibe`
+    lui-même (voir `_executer_une_tentative`, qui ne le fournit QUE pour une
+    tentative ayant échoué au niveau du process — code de retour non nul,
+    timeout, binaire introuvable — jamais pour une tentative reclassée en
+    échec après coup par les garde-fous #581/#757, où la « sortie » n'est
+    alors que le rapport rédigé par l'agent, pas une erreur émise par l'outil.
+    Issue #761 : une erreur d'authentification ou de quota est émise par
+    l'outil lui-même, jamais rédigée par l'agent — chercher ces signatures
+    dans son rapport (cas #581/#757 ci-dessus) déclenchait un arrêt définitif
+    à tort dès qu'un rapport mentionnait un terme technique ordinaire
+    (authentification, quota disque, code retour HTTP...). `None` ici
+    signifie qu'aucun stderr réel n'est disponible pour cette tentative —
+    retourne alors toujours None, sans chercher ailleurs.
 
     Distinct de verifier_preflight_token (sonde best-effort AVANT la
     première tentative, qui ne fait que journaliser un avertissement sans
@@ -5438,10 +5530,12 @@ def _detecter_erreur_bloquante(sortie: str) -> str | None:
 
     Retourne la signature reconnue (incluse telle quelle dans le commentaire
     de clôture), ou None si aucune ne correspond."""
+    if not stderr_brut:
+        return None
     signatures = AGENTS_CONNUS[CFG.agent].get("signatures_erreur_bloquante") or ()
-    sortie_minuscule = sortie.lower()
+    stderr_minuscule = stderr_brut.lower()
     for signature in signatures:
-        if signature in sortie_minuscule:
+        if signature in stderr_minuscule:
             return signature
     return None
 
@@ -5453,7 +5547,7 @@ def _executer_une_tentative(numero: int, titre: str, body: str, dry_run: bool, m
                              tentative: int, max_tentatives: int | None = None,
                              tete_avant_traitement: str | None = None,
                              worktree_repris: bool = False,
-                             commits_ecart_worktree: int = 0) -> tuple[bool, str]:
+                             commits_ecart_worktree: int = 0) -> tuple[bool, str, str | None]:
     """Une tentative `lancer_claude`, garde-fou de format de clôture (#581) et
     restauration best-effort des configs/*.conf modifiés (#318/#327).
 
@@ -5466,7 +5560,7 @@ def _executer_une_tentative(numero: int, titre: str, body: str, dry_run: bool, m
     transmis à `lancer_claude` — voir sa docstring (clause « worktree repris
     d'une relance » injectée dans le prompt).
 
-    Retourne (succes, sortie)."""
+    Retourne (succes, sortie, stderr_brut)."""
     succes, sortie = lancer_claude(numero, titre, body, dry_run, mode,
                                    timeout, modele,
                                    perimetre=perimetre_effectif, cwd=cwd_effectif,
@@ -5476,6 +5570,18 @@ def _executer_une_tentative(numero: int, titre: str, body: str, dry_run: bool, m
                                    tete_avant_traitement=tete_avant_traitement,
                                    worktree_repris=worktree_repris,
                                    commits_ecart_worktree=commits_ecart_worktree)
+
+    # `stderr_brut` (issue #761) : capturé ICI, AVANT les deux reclassifications
+    # #581/#757 ci-dessous qui peuvent écraser `sortie` par un message
+    # embarquant un extrait du RAPPORT de l'agent (pas une erreur du process).
+    # None si `succes` est encore True à ce stade (process terminé
+    # proprement, `sortie` = stdout de l'agent) — seul un `succes` déjà False
+    # ICI garantit que `sortie` est le texte réellement émis par le process
+    # (stderr, timeout, binaire introuvable, mode agent indisponible... voir
+    # `lancer_claude`), jamais rédigé par l'agent. Transmis tel quel à
+    # `_detecter_erreur_bloquante` par l'appelant, qui ne doit JAMAIS chercher
+    # ses signatures dans le rapport de l'agent (issue #761, point 3).
+    stderr_brut = sortie if not succes else None
 
     # Garde-fou de format (issue #581) : le prompt standard impose un
     # rapport de clôture marqué par ✅ ou ❌ (« Réponds avec ce format
@@ -5543,7 +5649,7 @@ def _executer_une_tentative(numero: int, titre: str, body: str, dry_run: bool, m
     if empreinte_configs_avant is not None:
         _restaurer_configs_modifies(numero, empreinte_configs_avant)
 
-    return succes, sortie
+    return succes, sortie, stderr_brut
 
 
 def _verifier_violation_scratch(numero: int, titre: str, labels: list[str],
@@ -5964,7 +6070,7 @@ def _traiter_issue_synchrone(issue: dict, dry_run: bool, chemin_worktree: Path |
             tentative += 1
             log.info(f"  Tentative {tentative}/{CFG.max_essais if not critique else '∞'}...")
 
-            succes, sortie = _executer_une_tentative(
+            succes, sortie, stderr_brut = _executer_une_tentative(
                 numero, titre, body, dry_run, mode, timeout, modele,
                 perimetre_effectif, cwd_effectif, verrou, chemin_scratch,
                 chemin_worktree, empreinte_configs_avant, tentative,
@@ -5989,7 +6095,10 @@ def _traiter_issue_synchrone(issue: dict, dry_run: bool, chemin_worktree: Path |
             # sur l'abandon normal ci-dessous (et sur le retry infini des
             # issues critiques) — ce type d'erreur ne se résorbe pas en
             # retentant. Vérifié avant tout le reste du traitement de l'échec.
-            cause_bloquante = _detecter_erreur_bloquante(sortie)
+            # Recherche dans `stderr_brut` UNIQUEMENT (issue #761) — jamais
+            # dans `sortie`, qui peut contenir le rapport rédigé par l'agent
+            # après reclassification #581/#757 (voir _executer_une_tentative).
+            cause_bloquante = _detecter_erreur_bloquante(stderr_brut)
             if cause_bloquante:
                 _gerer_erreur_bloquante(numero, titre, body, labels, mode, sortie,
                                          cause_bloquante, avertissement_worktree_deja_pris,
