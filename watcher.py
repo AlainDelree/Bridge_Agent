@@ -414,6 +414,7 @@ class Config:
     log_archives: int      = 5     # nombre d'archives datées conservées
     cmd_backup: str        = ""    # commande de sauvegarde avant modif (mode écriture)
     perimetre: str         = ""    # dossier(s) autorisés pour CCL (vide = pas de restriction)
+    agent: str             = "claude"  # agent d'exécution CLI du projet (clé AGENT, issue #759) — "claude" par défaut ; une clé absente donne exactement le comportement historique. Voir AGENTS_CONNUS plus bas pour ce que cette valeur pilote (commande, pré-vol d'auth, reconnaissance de process, gabarit de prompt).
     modele_ccl: str        = ""    # modèle CCL à utiliser (vide = défaut Claude Code)
     mot_de_passe: str      = ""    # hash sha256 du mot de passe d'accès web (vide = pas d'authentification)
     fichier_contexte: str  = ""    # fichier de contexte projet injecté dans le prompt (chemin relatif au rep_travail ou absolu ; vide = aucun)
@@ -484,6 +485,17 @@ def charger_config(chemin: Path) -> Config:
     if manquants:
         sys.exit(f"[config] Champs requis manquants dans {chemin.name} : {', '.join(manquants)}")
 
+    # AGENT (issue #759) : clé absente ou vide → AGENT_PAR_DEFAUT ("claude"),
+    # comportement historique inchangé. Valeur présente mais non supportée →
+    # échec propre au démarrage, même esprit que les autres validations de ce
+    # fichier (mieux vaut refuser de démarrer qu'avec une config bancale).
+    agent = (brut.get("AGENT") or AGENT_PAR_DEFAUT).strip().lower()
+    if agent not in AGENTS_CONNUS:
+        sys.exit(
+            f"[config] AGENT inconnu dans {chemin.name} : '{agent}' "
+            f"(valeurs supportées : {', '.join(sorted(AGENTS_CONNUS))})"
+        )
+
     def entier(cle: str, defaut: int) -> int:
         val = brut.get(cle)
         if val is None or val == "":
@@ -516,6 +528,7 @@ def charger_config(chemin: Path) -> Config:
         log_archives      = entier("LOG_ARCHIVES", 5),
         cmd_backup        = brut.get("CMD_BACKUP", ""),
         perimetre         = brut.get("PERIMETRE", ""),
+        agent             = agent,
         modele_ccl        = brut.get("MODELE_CCL", ""),
         mot_de_passe      = brut.get("MOT_DE_PASSE", ""),
         fichier_contexte  = brut.get("FICHIER_CONTEXTE", ""),
@@ -3003,6 +3016,77 @@ SIGNATURES_TOKEN_EXPIRE = (
     "oauth token",
 )
 
+# Clause « sous-agents » du gabarit de prompt standard (issue #581/#757) :
+# propre à Claude Code (outil Task/Agent, sous-agents lancés en arrière-plan
+# susceptibles de répondre après le rapport final — voir le garde-fou de
+# format dans traiter_une_tentative). Extraite ici pour être pilotée par
+# AGENTS_CONNUS plutôt qu'en dur dans le gabarit (voir lancer_claude).
+_CLAUSE_SOUS_AGENTS_CLAUDE = """4. Si tu délègues une partie du travail à des sous-agents (outil Task/Agent),
+   ATTENDS la fin de TOUS les sous-agents lancés et intègre leurs résultats
+   AVANT de produire ta réponse finale ci-dessous — ne la considère jamais
+   émise tant qu'un sous-agent reste en cours. Cette invocation est unique et
+   non interactive : seule ta toute DERNIÈRE prise de parole est capturée et
+   postée telle quelle sur l'issue. Si un sous-agent te notifie qu'il a
+   terminé APRÈS que tu aies déjà produit cette réponse finale, n'émets
+   AUCUNE nouvelle prise de parole (elle écraserait le rapport déjà produit
+   et serait postée à sa place) — ignore silencieusement cette notification
+   tardive, ton rapport final reste celui déjà émis.
+"""
+
+
+def _construire_cmd_claude(mode: str, modele: str, prompt: str) -> list[str]:
+    """Construit l'argv de `claude --print ...` — comportement historique,
+    inchangé par l'introduction de AGENTS_CONNUS (issue #759).
+
+    Issue #542, révisé #546 : en MODE_LECTURE, allowlist fine
+    (`--allowedTools`) plutôt que `--dangerously-skip-permissions` — débloque
+    git fetch/pull --ff-only sans désarmer le reste des protections de Claude
+    Code en lecture seule. Un seul argument joint par virgules (et non un
+    token par entrée, voir OUTILS_LECTURE_AUTORISES) : évite une
+    reségmentation variadique sujette à un ré-échappement Windows (remarque
+    #546, non totalement élucidée)."""
+    cmd = ["claude", "--print"]
+    if modele:
+        cmd += ["--model", modele]
+    if mode != MODE_LECTURE:
+        cmd.append("--dangerously-skip-permissions")
+    cmd.append(prompt)
+    if mode == MODE_LECTURE:
+        cmd += ["--allowedTools", ",".join(OUTILS_LECTURE_AUTORISES)]
+    return cmd
+
+
+# ─── Agent d'exécution par projet (issue #759) ─────────────────────────────────
+# Recensement #756 : une dizaine d'endroits de ce fichier supposaient Claude
+# Code (construction de la commande et de ses options par MODE, pré-vol
+# d'authentification, reconnaissance des process par leur nom, message
+# d'erreur si le binaire est introuvable, mention d'un outil propre à Claude
+# Code dans le gabarit de prompt). Ce dictionnaire centralise, PAR AGENT (clé
+# AGENT du .conf, lue par charger_config), tout ce qui varie en un point
+# unique : ajouter un agent se limite à y ajouter une entrée, sans retraverser
+# le fichier. Introduit sans ajouter de second agent (#759, qui prépare
+# seulement le terrain) : AGENT_PAR_DEFAUT reste la seule clé peuplée, donc le
+# comportement observable est strictement identique à avant cette issue.
+AGENT_PAR_DEFAUT = "claude"
+
+AGENTS_CONNUS = {
+    "claude": {
+        "binaire": "claude",
+        "construire_cmd": _construire_cmd_claude,
+        # Sonde de pré-vol (issue #309) : `claude --print` + stdin vide (voir
+        # verifier_preflight_token pour pourquoi pas un argument positionnel
+        # vide). None désactiverait la sonde pour un agent qui n'en a pas besoin.
+        "cmd_preflight": ["claude", "--print"],
+        "signatures_auth_expiree": SIGNATURES_TOKEN_EXPIRE,
+        "msg_preflight_token_expire": (
+            "  ⚠️  Pre-flight : token CCL expiré ou absent — relancer `claude` "
+            "interactivement et taper `/login`."
+        ),
+        "msg_binaire_introuvable": "Claude Code introuvable (claude non trouvé dans PATH)",
+        "clause_sous_agents": _CLAUSE_SOUS_AGENTS_CLAUDE,
+    },
+}
+
 
 def _extrait_stderr(stderr: str | None, limite: int = LIMITE_STDERR_LOG) -> str:
     """Tronque le stderr capturé du process claude à `limite` caractères, pour
@@ -3032,22 +3116,27 @@ def verifier_preflight_token(cwd: Path = None) -> None:
     claude introuvable, etc.) est avalée silencieusement — le pre-flight
     n'enrichit le log que s'il détecte positivement un problème, il ne fait
     jamais échouer ni retarder le traitement normal.
+
+    Commande de sonde, signatures et message : pilotés par AGENTS_CONNUS
+    selon CFG.agent (issue #759) — `cmd_preflight` absent/None désactive la
+    sonde pour un agent qui n'en a pas besoin.
     """
+    agent = AGENTS_CONNUS[CFG.agent]
+    cmd_preflight = agent.get("cmd_preflight")
+    if not cmd_preflight:
+        return
     try:
         cwd_effectif = CFG.rep_travail if cwd is None else cwd
         resultat = subprocess.run(
-            ["claude", "--print"],
+            cmd_preflight,
             input="",
             cwd=cwd_effectif,
             capture_output=True, text=True, encoding="utf-8", errors="replace",
             timeout=5,
         )
         sortie = f"{resultat.stdout or ''}\n{resultat.stderr or ''}".lower()
-        if any(signature in sortie for signature in SIGNATURES_TOKEN_EXPIRE):
-            log.warning(
-                "  ⚠️  Pre-flight : token CCL expiré ou absent — relancer `claude` "
-                "interactivement et taper `/login`."
-            )
+        if any(signature in sortie for signature in agent["signatures_auth_expiree"]):
+            log.warning(agent["msg_preflight_token_expire"])
     except Exception:
         pass
 
@@ -3339,6 +3428,10 @@ le travail déjà fait par cette tentative précédente. Dans ce cas :
     if prompt_perso is not None:
         prompt = prompt_perso
     else:
+        # Clause « sous-agents » (point 4 des instructions) : propre à Claude
+        # Code (outil Task/Agent) — pilotée par AGENTS_CONNUS[CFG.agent] plutôt
+        # qu'en dur (issue #759). Vide pour un agent sans cette notion.
+        clause_sous_agents = AGENTS_CONNUS[CFG.agent].get("clause_sous_agents", "")
         prompt = f"""Tu es l'agent Linux (CCL) du bridge inter-agents, projet « {CFG.nom} ».
 Traite la tâche suivante issue du GitHub Issue #{numero} :
 
@@ -3351,17 +3444,7 @@ Instructions :
 1. Lis attentivement la tâche demandée
 2. Effectue le travail demandé (dans les limites du mode ci-dessus)
 3. Si tu dois créer une issue for-windows, utilise : gh issue create --repo {CFG.depot} --label "bridge,for-windows" ...
-4. Si tu délègues une partie du travail à des sous-agents (outil Task/Agent),
-   ATTENDS la fin de TOUS les sous-agents lancés et intègre leurs résultats
-   AVANT de produire ta réponse finale ci-dessous — ne la considère jamais
-   émise tant qu'un sous-agent reste en cours. Cette invocation est unique et
-   non interactive : seule ta toute DERNIÈRE prise de parole est capturée et
-   postée telle quelle sur l'issue. Si un sous-agent te notifie qu'il a
-   terminé APRÈS que tu aies déjà produit cette réponse finale, n'émets
-   AUCUNE nouvelle prise de parole (elle écraserait le rapport déjà produit
-   et serait postée à sa place) — ignore silencieusement cette notification
-   tardive, ton rapport final reste celui déjà émis.
-
+{clause_sous_agents}
 Réponds avec ce format exact, sans rien ajouter avant ni après :
 
 ✅ Tâche terminée — [résumé en une ligne de ce qui a été fait]
@@ -3391,21 +3474,11 @@ Si la tâche échoue, remplace ✅ par ❌ et explique la cause en une ligne.
         log.info(f"[DRY-RUN] Claude Code serait lancé pour issue #{numero} (mode {mode_txt}, cwd {cwd_effectif})")
         return True, f"[DRY-RUN] Tâche simulée avec succès (mode {mode_txt})."
 
-    cmd = ["claude", "--print"]
-    if modele:
-        cmd += ["--model", modele]
-    if mode != MODE_LECTURE:
-        cmd.append("--dangerously-skip-permissions")
-    cmd.append(prompt)
-    if mode == MODE_LECTURE:
-        # Issue #542, révisé #546 : allowlist fine plutôt que
-        # --dangerously-skip-permissions (voir commentaire sur
-        # OUTILS_LECTURE_AUTORISES) — débloque git fetch/pull --ff-only sans
-        # désarmer le reste des protections de Claude Code en lecture seule.
-        # Un seul argument joint par virgules (et non un token par entrée) :
-        # voir la remarque #546 dans le commentaire ci-dessus sur
-        # OUTILS_LECTURE_AUTORISES.
-        cmd += ["--allowedTools", ",".join(OUTILS_LECTURE_AUTORISES)]
+    # Construction de la commande et de ses options par MODE : déléguée à
+    # AGENTS_CONNUS[CFG.agent] (issue #759) — voir _construire_cmd_claude pour
+    # le détail des options (--model, --dangerously-skip-permissions,
+    # --allowedTools) et l'historique #542/#546.
+    cmd = AGENTS_CONNUS[CFG.agent]["construire_cmd"](mode, modele, prompt)
 
     # Popen (plutôt que subprocess.run) pour garder la main sur le PID : le
     # nettoyage de l'arbre de process (issue #247, révisé #249) doit
@@ -3466,7 +3539,7 @@ Si la tâche échoue, remplace ✅ par ❌ et explique la cause en une ligne.
         except subprocess.TimeoutExpired:
             return False, f"Timeout après {timeout}s"
     except FileNotFoundError:
-        return False, "Claude Code introuvable (claude non trouvé dans PATH)"
+        return False, AGENTS_CONNUS[CFG.agent]["msg_binaire_introuvable"]
     except Exception as e:
         return False, str(e)
     finally:
@@ -4245,11 +4318,13 @@ def _nettoyer_orphelin_verrou_perime(verrou: Path) -> None:
     sont réattribués — le pgid stocké pourrait désigner un process totalement
     différent. On ne tue JAMAIS sur la seule foi du pgid stocké : il faut en
     plus qu'un process de ce pgid existe ENCORE (_lister_processus_pgid) et
-    que sa ligne de commande contienne "claude" — identifier par ce que le
-    process EST, jamais tuer aveuglément, même esprit que _nettoyer_arbre_claude
-    (#247 point 4). Si l'une des conditions manque (pas de pgid stocké,
-    process disparu, ou pas un claude), rien n'est tué et le verrou est repris
-    normalement, comme avant cette issue.
+    que sa ligne de commande contienne le nom de l'agent configuré (CFG.agent,
+    "claude" par défaut, issue #759 — jamais déduit du nom du projet ni d'une
+    autre clé) — identifier par ce que le process EST, jamais tuer aveuglément,
+    même esprit que _nettoyer_arbre_claude (#247 point 4). Si l'une des
+    conditions manque (pas de pgid stocké, process disparu, ou pas le bon
+    agent), rien n'est tué et le verrou est repris normalement, comme avant
+    cette issue.
 
     POSIX uniquement : os.killpg n'existe pas sous Windows (objet Job, pas de
     pgid — la question ne se pose pas dans les mêmes termes). L'appelant ne
@@ -4263,10 +4338,11 @@ def _nettoyer_orphelin_verrou_perime(verrou: Path) -> None:
         if pgid is None:
             return
         processus = _lister_processus_pgid(pgid)
-        processus_claude = [(pid, cmdline) for pid, cmdline in processus if "claude" in cmdline.lower()]
-        if not processus_claude:
-            return   # pgid mort ou recyclé (reboot), ou vivant mais pas un claude : on ne touche à rien
-        for pid_orphelin, cmdline in processus_claude:
+        nom_agent = AGENTS_CONNUS[CFG.agent]["binaire"].lower()
+        processus_agent = [(pid, cmdline) for pid, cmdline in processus if nom_agent in cmdline.lower()]
+        if not processus_agent:
+            return   # pgid mort ou recyclé (reboot), ou vivant mais pas le bon agent : on ne touche à rien
+        for pid_orphelin, cmdline in processus_agent:
             log.warning(
                 f"Orphelin d'un watcher mort brutalement, nettoyé à la reprise "
                 f"du verrou périmé {verrou} : PID {pid_orphelin} (pgid {pgid}) — {cmdline}"

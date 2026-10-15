@@ -104,7 +104,7 @@ def scenario_2_traiter_issue_ne_ferme_pas_si_verification_echoue():
     with mock.patch.object(watcher, "CFG", mock.Mock(
                 depot="exemple/depot-test", nom="test_237",
                 max_essais=1, perimetre="/tmp", rep_travail=Path("/tmp"),
-                perimetre_dynamique=False)), \
+                perimetre_dynamique=False, agent="claude")), \
          mock.patch.object(watcher.subprocess, "run", fake_run), \
          mock.patch.object(watcher.time, "sleep", lambda _: None), \
          mock.patch.object(watcher, "lancer_claude",
