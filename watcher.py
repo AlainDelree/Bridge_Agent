@@ -3016,6 +3016,52 @@ SIGNATURES_TOKEN_EXPIRE = (
     "oauth token",
 )
 
+# Signatures d'erreur BLOQUANTE reconnues dans le flux d'erreur RÉEL du
+# process (stderr du subprocess, jamais le rapport rédigé par l'agent — voir
+# _detecter_erreur_bloquante et le commentaire de _executer_une_tentative sur
+# `stderr_brut`, issue #761 : la version #760 cherchait ces signatures dans
+# la sortie capturée en général, qui pouvait contenir le rapport de l'agent
+# après reclassification #581/#757 — un rapport parlant d'authentification,
+# de quotas ou de codes HTTP déclenchait alors une détection à tort).
+# Distinct de SIGNATURES_TOKEN_EXPIRE ci-dessus (pré-vol best-effort AVANT la
+# première tentative, simple avertissement journalisé, jamais un arrêt).
+# Une clé révoquée ou un quota/crédit épuisé ne se résorbent pas en
+# retentant : voir _gerer_erreur_bloquante, qui arrête le traitement dès
+# qu'une de ces signatures apparaît, au lieu de consommer les tentatives
+# restantes — d'où une liste volontairement RESTREINTE à des formulations
+# qu'un message d'erreur réel du CLI contient et qu'un texte ordinaire ne
+# contient normalement pas (issue #761 : mieux vaut rater une erreur
+# bloquante, traitée alors comme un échec ordinaire avec ses tentatives, que
+# d'arrêter à tort une issue valide). Exclus par rapport à SIGNATURES_TOKEN_EXPIRE :
+# "not logged in" et "please run" (formulations génériques, plausibles dans un
+# message sans rapport avec l'authentification) et "unauthorized" seul (trop
+# ordinaire isolément, voir la variante qualifiée ci-dessous).
+SIGNATURES_ERREUR_BLOQUANTE_CLAUDE = (
+    "invalid api key",
+    "authentication_error",
+    "please authenticate",
+    "oauth token",
+    "credit balance is too low",
+)
+
+# Signatures d'erreur bloquante pour Mistral Vibe (issue #760, resserré #761) :
+# liste BEST-EFFORT, jamais vérifiée en conditions réelles (consigne
+# explicite des issues #760/#761 : ne pas lancer de session vibe réelle, qui
+# consommerait un quota facturé) — à affiner lors de la première bascule
+# réelle d'un projet sur cet agent. "unauthorized" seul et "quota" seul
+# retirés (issue #761 : trop ordinaires pour être propres à une vraie
+# erreur — un "quota" isolé matcherait un message anodin sur un quota disque)
+# au profit de formulations qualifiées, plus proches d'un message d'erreur
+# réel d'API REST. "rate limit" volontairement exclu : trop souvent
+# transitoire (throttling par minute) pour justifier un arrêt définitif, à la
+# différence d'un quota/crédit de compte épuisé.
+SIGNATURES_ERREUR_BLOQUANTE_VIBE = (
+    "invalid api key",
+    "401 unauthorized",
+    "quota exceeded",
+    "insufficient quota",
+)
+
 # Clause « sous-agents » du gabarit de prompt standard (issue #581/#757) :
 # propre à Claude Code (outil Task/Agent, sous-agents lancés en arrière-plan
 # susceptibles de répondre après le rapport final — voir le garde-fou de
@@ -3033,8 +3079,37 @@ _CLAUSE_SOUS_AGENTS_CLAUDE = """4. Si tu délègues une partie du travail à des
    tardive, ton rapport final reste celui déjà émis.
 """
 
+# Même esprit que _CLAUSE_SOUS_AGENTS_CLAUDE ci-dessus, mais pour Mistral
+# Vibe (issue #760) : cet agent dispose bien d'un mécanisme de délégation à
+# des sous-agents, mais pas sous le nom « Task/Agent tool » propre à Claude
+# Code — nom exact non confirmé ici (consigne de l'issue #760 : pas de
+# session vibe réelle pendant cette tâche), d'où une formulation
+# volontairement générique plutôt qu'un nom d'outil inventé.
+_CLAUSE_SOUS_AGENTS_VIBE = """4. Si tu délègues une partie du travail à un sous-agent (mécanisme de
+   délégation propre à Vibe, distinct du Task/Agent tool de Claude Code),
+   ATTENDS la fin de TOUS les sous-agents lancés et intègre leurs résultats
+   AVANT de produire ta réponse finale ci-dessous — ne la considère jamais
+   émise tant qu'un sous-agent reste en cours. Cette invocation est unique et
+   non interactive : seule ta toute DERNIÈRE prise de parole est capturée et
+   postée telle quelle sur l'issue. Si un sous-agent te notifie qu'il a
+   terminé APRÈS que tu aies déjà produit cette réponse finale, n'émets
+   AUCUNE nouvelle prise de parole (elle écraserait le rapport déjà produit
+   et serait postée à sa place) — ignore silencieusement cette notification
+   tardive, ton rapport final reste celui déjà émis.
+"""
 
-def _construire_cmd_claude(mode: str, modele: str, prompt: str) -> list[str]:
+
+class ModeAgentIndisponible(Exception):
+    """Levée par un callable `construire_cmd` (issue #761) quand le MODE
+    demandé n'a pas d'équivalent sûr pour cet agent — voir
+    `_construire_cmd_vibe`/MODE_LECTURE_ACTIVE pour le cas d'usage actuel.
+    Capturée dans `lancer_claude`, juste après l'appel à `construire_cmd`,
+    et convertie en échec ordinaire de la tentative (comme
+    FileNotFoundError ci-dessous) plutôt que de laisser l'exception remonter
+    et interrompre le traitement de l'issue."""
+
+
+def _construire_cmd_claude(mode: str, modele: str, prompt: str, cwd: Path) -> list[str]:
     """Construit l'argv de `claude --print ...` — comportement historique,
     inchangé par l'introduction de AGENTS_CONNUS (issue #759).
 
@@ -3044,7 +3119,17 @@ def _construire_cmd_claude(mode: str, modele: str, prompt: str) -> list[str]:
     Code en lecture seule. Un seul argument joint par virgules (et non un
     token par entrée, voir OUTILS_LECTURE_AUTORISES) : évite une
     reségmentation variadique sujette à un ré-échappement Windows (remarque
-    #546, non totalement élucidée)."""
+    #546, non totalement élucidée).
+
+    `cwd` (issue #761) : ajouté à la signature commune de `construire_cmd`
+    (partagée avec `_construire_cmd_vibe`, qui en a besoin pour `--workdir`),
+    mais délibérément IGNORÉ ici — Claude Code n'a pas d'option de ligne de
+    commande équivalente, et n'en a jamais eu besoin : son répertoire de
+    travail réel est déjà fixé par `cwd=cwd_effectif` du Popen (voir plus
+    bas dans `lancer_claude`), qui suffit à lui seul à le confiner. Ajouter
+    un flag ici n'apporterait rien d'observable et changerait la commande
+    produite pour l'agent en production — exclu par l'issue #761
+    (« produire exactement la même commande qu'avant »)."""
     cmd = ["claude", "--print"]
     if modele:
         cmd += ["--model", modele]
@@ -3056,6 +3141,134 @@ def _construire_cmd_claude(mode: str, modele: str, prompt: str) -> list[str]:
     return cmd
 
 
+def _construire_cmd_vibe(mode: str, modele: str, prompt: str, cwd: Path) -> list[str]:
+    """Construit l'argv de `vibe` en mode non interactif (issue #760, corrigé #761).
+
+    Traduction des trois MODE_* (mêmes garde-fous de prompt que pour Claude
+    Code — bloc `garde_fou` de `lancer_claude`, agnostique de l'agent) :
+    - MODE_LECTURE : profil intégré `plan`, qui refuse par construction toute
+      écriture de fichier et toute exécution de commande, explique le refus
+      et se termine proprement (constaté par essai manuel) — équivalent de
+      l'absence de `--dangerously-skip-permissions` côté Claude Code.
+    - MODE_ECRITURE : profil `bridge_ecriture`, fichier TOML versionné dans
+      ce dépôt (voir provisioning/vibe/) et déployé vers
+      `~/.vibe/agents/bridge_ecriture.toml`, seule façon constatée de
+      débloquer l'écriture outil par outil en l'absence d'un flag global
+      équivalent à `--dangerously-skip-permissions`.
+    - MODE_LECTURE_ACTIVE : INDISPONIBLE pour cet agent, voir plus bas.
+
+    `--workdir {cwd}` (issue #761, point 1) : périmètre explicitement transmis
+    sur la ligne de commande — essais manuels : sans cette option, vibe se
+    rabattait sur le répertoire courant du process (confinement obtenu par
+    simple effet de bord, jamais demandé explicitement). `cwd` est le
+    répertoire de travail déjà calculé par l'appelant (`cwd_effectif` dans
+    `lancer_claude` — projet ou worktree selon le cas, issue #337), identique
+    à celui passé à `cwd=` du Popen : les deux désignent donc le même
+    répertoire, l'un pour le process, l'autre pour que l'outil lui-même le
+    sache et refuse d'écrire ailleurs.
+
+    MODE_LECTURE_ACTIVE indisponible (issue #761, point 2) : ce mode a
+    besoin d'écrire dans le dossier scratch, situé HORS de `cwd` — mais vibe
+    refuse d'écrire hors de son périmètre déclaré (`--workdir` ci-dessus),
+    constaté par essai manuel. La seule option qui étend ce périmètre,
+    `--add-dir`, ne distingue PAS lecture et écriture : lue dans le code
+    source de l'outil (`vibe.core.workspace.Workspace` — `authorized_roots`
+    est décrit littéralement comme « the whole of the write boundary »,
+    `cwd` et chaque `--add-dir` y sont ajoutés à égalité, aucun n'est
+    lecture seule), elle ouvrirait le projet à l'écriture tout autant que le
+    scratch. Contrairement à Claude Code (`--dangerously-skip-permissions`,
+    confinement par convention de prompt + garde-fou technique de rattrapage
+    après coup, `_verifier_violation_scratch`), le confinement serait ici
+    une façade : aucun garde-fou ne rattraperait une écriture hors scratch
+    qui ne touche pas le dépôt git (le garde-fou existant ne détecte que les
+    écritures visibles par `git status` dans `cwd`). Plutôt que de
+    contourner avec `--add-dir` et laisser croire à un confinement réel,
+    MODE_LECTURE_ACTIVE lève `ModeAgentIndisponible` pour cet agent — à
+    revoir si une future version de vibe expose une distinction
+    lecture/écriture par répertoire.
+
+    Sortie en texte brut : `--output` n'est volontairement PAS positionné
+    (défaut `text` du CLI, constaté dans son aide), pour conserver le même
+    format que `claude --print` — seul format que le reste de watcher.py sait
+    analyser (marqueurs ✅/❌ de clôture, voir _verdict_final). Le format
+    `json` existe côté vibe mais n'est pas utilisé ici : son schéma n'a pas
+    été exploré pour cette issue (aucune session réelle lancée, consigne
+    explicite de l'issue #760) et le texte brut suffit à préserver le
+    comportement agent-agnostique existant.
+
+    `modele` ignoré : vibe n'expose pas, sur cette ligne de commande, de
+    sélection de modèle équivalente à `--model` côté Claude Code."""
+    if mode == MODE_LECTURE_ACTIVE:
+        raise ModeAgentIndisponible(
+            "Mistral Vibe : MODE_LECTURE_ACTIVE (lecture active/scratch) "
+            "indisponible — vibe n'offre aucune option de ligne de commande "
+            "distinguant un répertoire accessible en lecture seule d'un "
+            "répertoire accessible en écriture (--add-dir ouvre les deux à "
+            "l'écriture, voir vibe.core.workspace.Workspace). Confier cette "
+            "tâche à un agent qui supporte ce mode (ex. claude), ou traiter "
+            "cette issue en MODE_ECRITURE si le projet l'autorise."
+        )
+    agent_vibe = "plan" if mode == MODE_LECTURE else "bridge_ecriture"
+    return ["vibe", "--agent", agent_vibe, "--workdir", str(cwd), "--prompt", prompt]
+
+
+# Pré-vol sans appel réseau pour vibe (issue #760) : authentification par clé
+# API statique, sans session qui expire d'elle-même (à la différence du token
+# OAuth de Claude Code, qui peut expirer entre deux traitements) — une sonde
+# réseau avant chaque traitement n'a donc pas d'utilité équivalente ici, la
+# clé ne se "dégradant" pas toute seule entre deux traitements. On se
+# contente de vérifier, localement, la présence et la forme générale de la
+# clé : variable d'environnement MISTRAL_API_KEY en priorité, sinon la ligne
+# correspondante de ~/.vibe/.env (fichier lu par vibe lui-même au démarrage).
+# Best-effort, comme verifier_preflight_token : ne bloque jamais le
+# traitement, journalise seulement un avertissement.
+LONGUEUR_MIN_CLE_API_VIBE = 20  # longueur plancher générique — aucun préfixe
+# de clé Mistral confirmé sans appel réseau (contrairement à "sk-ant-" pour
+# Anthropic), donc vérif de forme volontairement large plutôt qu'un motif
+# précis potentiellement faux.
+
+
+def _lire_cle_api_vibe() -> str | None:
+    """Retourne la clé API Mistral trouvée (variable d'environnement
+    MISTRAL_API_KEY en priorité, sinon ~/.vibe/.env), ou None si introuvable.
+    Best-effort : n'ouvre jamais rien en dehors de ~/.vibe/.env, et avale
+    toute erreur de lecture."""
+    cle = os.environ.get("MISTRAL_API_KEY")
+    if cle:
+        return cle.strip()
+    chemin_env = Path.home() / ".vibe" / ".env"
+    try:
+        for ligne in chemin_env.read_text(encoding="utf-8", errors="replace").splitlines():
+            ligne = ligne.strip()
+            if ligne.startswith("MISTRAL_API_KEY="):
+                return ligne.split("=", 1)[1].strip().strip('"').strip("'")
+    except OSError:
+        pass
+    return None
+
+
+def verifier_preflight_cle_api_vibe() -> None:
+    """Vérification locale, sans appel réseau (issue #760) : la clé API
+    Mistral est-elle présente et d'une forme plausible ? Voir le commentaire
+    au-dessus de LONGUEUR_MIN_CLE_API_VIBE pour les limites de cette vérif de
+    forme. Appelée depuis verifier_preflight_token via
+    AGENTS_CONNUS['vibe']['verifier_preflight']."""
+    cle = _lire_cle_api_vibe()
+    if not cle:
+        log.warning(
+            "  ⚠️  Pre-flight : aucune clé API Mistral trouvée (ni "
+            "MISTRAL_API_KEY, ni ~/.vibe/.env) — vibe échouera à "
+            "l'authentification."
+        )
+        return
+    if " " in cle or len(cle) < LONGUEUR_MIN_CLE_API_VIBE:
+        log.warning(
+            "  ⚠️  Pre-flight : clé API Mistral présente mais de forme "
+            "suspecte (longueur ou espaces) — vérifier MISTRAL_API_KEY / "
+            "~/.vibe/.env."
+        )
+
+
 # ─── Agent d'exécution par projet (issue #759) ─────────────────────────────────
 # Recensement #756 : une dizaine d'endroits de ce fichier supposaient Claude
 # Code (construction de la commande et de ses options par MODE, pré-vol
@@ -3064,9 +3277,12 @@ def _construire_cmd_claude(mode: str, modele: str, prompt: str) -> list[str]:
 # Code dans le gabarit de prompt). Ce dictionnaire centralise, PAR AGENT (clé
 # AGENT du .conf, lue par charger_config), tout ce qui varie en un point
 # unique : ajouter un agent se limite à y ajouter une entrée, sans retraverser
-# le fichier. Introduit sans ajouter de second agent (#759, qui prépare
-# seulement le terrain) : AGENT_PAR_DEFAUT reste la seule clé peuplée, donc le
-# comportement observable est strictement identique à avant cette issue.
+# le fichier. Introduit sans ajouter de second agent (#759, qui préparait
+# seulement le terrain). Issue #760 : deuxième entrée "vibe" (Mistral Vibe),
+# AUCUN projet ne bascule dessus par cette issue — l'agent devient seulement
+# disponible, le basculement reste manuel, projet par projet (clé AGENT du
+# .conf). "claude" reste AGENT_PAR_DEFAUT : une clé AGENT absente ou valant
+# "claude" produit donc exactement le même comportement qu'avant #759/#760.
 AGENT_PAR_DEFAUT = "claude"
 
 AGENTS_CONNUS = {
@@ -3084,6 +3300,22 @@ AGENTS_CONNUS = {
         ),
         "msg_binaire_introuvable": "Claude Code introuvable (claude non trouvé dans PATH)",
         "clause_sous_agents": _CLAUSE_SOUS_AGENTS_CLAUDE,
+        # Erreurs bloquantes en cours d'exécution (issue #760) : voir
+        # _detecter_erreur_bloquante / _gerer_erreur_bloquante.
+        "signatures_erreur_bloquante": SIGNATURES_ERREUR_BLOQUANTE_CLAUDE,
+    },
+    "vibe": {
+        "binaire": "vibe",
+        "construire_cmd": _construire_cmd_vibe,
+        # Pas de sonde réseau équivalente à celle de claude (issue #760,
+        # voir verifier_preflight_cle_api_vibe) : "cmd_preflight" reste donc
+        # absent/None ici, et c'est "verifier_preflight" ci-dessous qui porte
+        # la vérification locale, sans appel réseau, propre à cet agent.
+        "cmd_preflight": None,
+        "verifier_preflight": verifier_preflight_cle_api_vibe,
+        "msg_binaire_introuvable": "Mistral Vibe introuvable (vibe non trouvé dans PATH)",
+        "clause_sous_agents": _CLAUSE_SOUS_AGENTS_VIBE,
+        "signatures_erreur_bloquante": SIGNATURES_ERREUR_BLOQUANTE_VIBE,
     },
 }
 
@@ -3120,8 +3352,22 @@ def verifier_preflight_token(cwd: Path = None) -> None:
     Commande de sonde, signatures et message : pilotés par AGENTS_CONNUS
     selon CFG.agent (issue #759) — `cmd_preflight` absent/None désactive la
     sonde pour un agent qui n'en a pas besoin.
+
+    Issue #760 : certains agents n'ont pas de sonde réseau utile (clé API
+    statique plutôt que session expirable — voir verifier_preflight_cle_api_vibe)
+    et fournissent à la place un callable `verifier_preflight` (sans argument),
+    appelé ICI en premier et qui court-circuite la sonde réseau ci-dessous.
+    Claude Code ne définit pas cette clé : cette branche n'a donc strictement
+    aucun effet sur son comportement, inchangé par cette issue.
     """
     agent = AGENTS_CONNUS[CFG.agent]
+    preflight_local = agent.get("verifier_preflight")
+    if preflight_local is not None:
+        try:
+            preflight_local()
+        except Exception:
+            pass
+        return
     cmd_preflight = agent.get("cmd_preflight")
     if not cmd_preflight:
         return
@@ -3477,8 +3723,15 @@ Si la tâche échoue, remplace ✅ par ❌ et explique la cause en une ligne.
     # Construction de la commande et de ses options par MODE : déléguée à
     # AGENTS_CONNUS[CFG.agent] (issue #759) — voir _construire_cmd_claude pour
     # le détail des options (--model, --dangerously-skip-permissions,
-    # --allowedTools) et l'historique #542/#546.
-    cmd = AGENTS_CONNUS[CFG.agent]["construire_cmd"](mode, modele, prompt)
+    # --allowedTools) et l'historique #542/#546. `cwd_effectif` transmis
+    # explicitement (issue #761, point 1) : périmètre déjà calculé par
+    # l'appelant (projet ou worktree, issue #337), identique à celui passé à
+    # `cwd=` du Popen plus bas — voir _construire_cmd_vibe pour l'usage qu'en
+    # fait vibe (--workdir) ; _construire_cmd_claude l'ignore délibérément.
+    try:
+        cmd = AGENTS_CONNUS[CFG.agent]["construire_cmd"](mode, modele, prompt, cwd_effectif)
+    except ModeAgentIndisponible as e:
+        return False, str(e)
 
     # Popen (plutôt que subprocess.run) pour garder la main sur le PID : le
     # nettoyage de l'arbre de process (issue #247, révisé #249) doit
@@ -5246,6 +5499,47 @@ def _verdict_final(sortie: str) -> str | None:
     return occurrences[-1] if occurrences else None
 
 
+def _detecter_erreur_bloquante(stderr_brut: str | None) -> str | None:
+    """Reconnaît une erreur BLOQUANTE (clé révoquée, quota/crédit épuisé...)
+    dans le flux d'erreur RÉEL du process (issue #760, restreint #761).
+    Logique commune aux deux agents : seules les signatures varient, via
+    AGENTS_CONNUS[CFG.agent]['signatures_erreur_bloquante'] (absente ou vide
+    pour un agent qui n'en définit aucune — retourne alors toujours None).
+
+    `stderr_brut` : stderr effectivement émis par le process `claude`/`vibe`
+    lui-même (voir `_executer_une_tentative`, qui ne le fournit QUE pour une
+    tentative ayant échoué au niveau du process — code de retour non nul,
+    timeout, binaire introuvable — jamais pour une tentative reclassée en
+    échec après coup par les garde-fous #581/#757, où la « sortie » n'est
+    alors que le rapport rédigé par l'agent, pas une erreur émise par l'outil.
+    Issue #761 : une erreur d'authentification ou de quota est émise par
+    l'outil lui-même, jamais rédigée par l'agent — chercher ces signatures
+    dans son rapport (cas #581/#757 ci-dessus) déclenchait un arrêt définitif
+    à tort dès qu'un rapport mentionnait un terme technique ordinaire
+    (authentification, quota disque, code retour HTTP...). `None` ici
+    signifie qu'aucun stderr réel n'est disponible pour cette tentative —
+    retourne alors toujours None, sans chercher ailleurs.
+
+    Distinct de verifier_preflight_token (sonde best-effort AVANT la
+    première tentative, qui ne fait que journaliser un avertissement sans
+    rien arrêter) : ce détecteur-ci tourne APRÈS chaque tentative échouée et,
+    s'il reconnaît une signature, déclenche un arrêt DÉFINITIF immédiat du
+    traitement (voir _gerer_erreur_bloquante) — ce type d'erreur ne se
+    résorbe pas en retentant, contrairement à un timeout ou un refus
+    ponctuel.
+
+    Retourne la signature reconnue (incluse telle quelle dans le commentaire
+    de clôture), ou None si aucune ne correspond."""
+    if not stderr_brut:
+        return None
+    signatures = AGENTS_CONNUS[CFG.agent].get("signatures_erreur_bloquante") or ()
+    stderr_minuscule = stderr_brut.lower()
+    for signature in signatures:
+        if signature in stderr_minuscule:
+            return signature
+    return None
+
+
 def _executer_une_tentative(numero: int, titre: str, body: str, dry_run: bool, mode: str,
                              timeout: int, modele: str, perimetre_effectif: str,
                              cwd_effectif: Path, verrou, chemin_scratch: Path | None,
@@ -5253,7 +5547,7 @@ def _executer_une_tentative(numero: int, titre: str, body: str, dry_run: bool, m
                              tentative: int, max_tentatives: int | None = None,
                              tete_avant_traitement: str | None = None,
                              worktree_repris: bool = False,
-                             commits_ecart_worktree: int = 0) -> tuple[bool, str]:
+                             commits_ecart_worktree: int = 0) -> tuple[bool, str, str | None]:
     """Une tentative `lancer_claude`, garde-fou de format de clôture (#581) et
     restauration best-effort des configs/*.conf modifiés (#318/#327).
 
@@ -5266,7 +5560,7 @@ def _executer_une_tentative(numero: int, titre: str, body: str, dry_run: bool, m
     transmis à `lancer_claude` — voir sa docstring (clause « worktree repris
     d'une relance » injectée dans le prompt).
 
-    Retourne (succes, sortie)."""
+    Retourne (succes, sortie, stderr_brut)."""
     succes, sortie = lancer_claude(numero, titre, body, dry_run, mode,
                                    timeout, modele,
                                    perimetre=perimetre_effectif, cwd=cwd_effectif,
@@ -5276,6 +5570,18 @@ def _executer_une_tentative(numero: int, titre: str, body: str, dry_run: bool, m
                                    tete_avant_traitement=tete_avant_traitement,
                                    worktree_repris=worktree_repris,
                                    commits_ecart_worktree=commits_ecart_worktree)
+
+    # `stderr_brut` (issue #761) : capturé ICI, AVANT les deux reclassifications
+    # #581/#757 ci-dessous qui peuvent écraser `sortie` par un message
+    # embarquant un extrait du RAPPORT de l'agent (pas une erreur du process).
+    # None si `succes` est encore True à ce stade (process terminé
+    # proprement, `sortie` = stdout de l'agent) — seul un `succes` déjà False
+    # ICI garantit que `sortie` est le texte réellement émis par le process
+    # (stderr, timeout, binaire introuvable, mode agent indisponible... voir
+    # `lancer_claude`), jamais rédigé par l'agent. Transmis tel quel à
+    # `_detecter_erreur_bloquante` par l'appelant, qui ne doit JAMAIS chercher
+    # ses signatures dans le rapport de l'agent (issue #761, point 3).
+    stderr_brut = sortie if not succes else None
 
     # Garde-fou de format (issue #581) : le prompt standard impose un
     # rapport de clôture marqué par ✅ ou ❌ (« Réponds avec ce format
@@ -5343,7 +5649,7 @@ def _executer_une_tentative(numero: int, titre: str, body: str, dry_run: bool, m
     if empreinte_configs_avant is not None:
         _restaurer_configs_modifies(numero, empreinte_configs_avant)
 
-    return succes, sortie
+    return succes, sortie, stderr_brut
 
 
 def _verifier_violation_scratch(numero: int, titre: str, labels: list[str],
@@ -5535,6 +5841,57 @@ def _tracer_tentative_expiree(numero: int, titre: str, body: str, mode: str,
     )
 
 
+def _gerer_erreur_bloquante(numero: int, titre: str, body: str, labels: list[str],
+                             mode: str, sortie: str, cause: str,
+                             avertissement_worktree_deja_pris: str,
+                             avertissement_worktree_repris: str) -> None:
+    """Erreur bloquante reconnue en cours d'exécution (issue #760) : clé
+    révoquée, quota/crédit épuisé... Contrairement à `_gerer_abandon_max_essais`,
+    cette fonction s'applique dès la PREMIÈRE tentative qui déclenche
+    `_detecter_erreur_bloquante` — sans attendre `CFG.max_essais` tentatives,
+    SANS repasse diagnostique (la cause est déjà connue explicitement), et
+    MÊME pour une issue critique (pas de retry infini ici : une clé toujours
+    révoquée ou un quota dont la date de régénération n'est pas fiable ne se
+    résorbent pas en retentant — voir le corps de l'issue #760). Termine
+    toujours le traitement de l'issue — l'appelant doit retourner
+    immédiatement après l'appel."""
+    log.error(
+        f"  ✗ Issue #{numero} : erreur bloquante détectée (signature "
+        f"'{cause}') — arrêt immédiat, sans retenter (issue #760)."
+    )
+    message_echec = (
+        f"❌ Erreur bloquante détectée pendant l'exécution — traitement arrêté "
+        f"immédiatement, sans consommer les tentatives restantes.\n\n"
+        f"{avertissement_worktree_deja_pris}"
+        f"{avertissement_worktree_repris}"
+        f"Cause détectée (signature reconnue) : `{cause}`\n\n"
+        f"Sortie : `{sortie.strip()[:LIMITE_STDERR_LOG]}`\n\n"
+        f"Ce type d'erreur (clé API révoquée, quota ou crédit épuisé...) ne se "
+        f"résorbe pas en retentant : aucune nouvelle tentative n'a été lancée. "
+        f"Intervention humaine requise (vérifier/renouveler la clé API, ou "
+        f"attendre la régénération du quota). Label `{LABEL_ECHEC}` posé : "
+        f"cette issue ne sera plus retraitée automatiquement tant que le "
+        f"label n'est pas retiré (ou l'issue fermée) manuellement."
+    )
+    commenter_issue(numero, message_echec)
+    ajouter_label(numero, LABEL_ECHEC)
+    notifier(
+        labels,
+        titre=f"❌ {CFG.nom} #{numero} — erreur bloquante ({cause})",
+        message=f"'{titre}' arrêtée : erreur bloquante détectée ({cause}).",
+        urgence_bureau="critical",
+        priorite_ntfy="high",
+        numero=numero,
+    )
+    notifier_fin_sse(numero)
+    # PAS de retrait de issues_en_cours (issue #576) : `needs-human` posé,
+    # l'issue reste suivie tant que le label n'est pas retiré (ou l'issue
+    # fermée) manuellement — même traitement que _gerer_abandon_max_essais
+    # côté non-critique.
+    if mode == MODE_ECRITURE:
+        _issue_write_bloquee_ajouter(numero)
+
+
 def _gerer_abandon_max_essais(numero: int, titre: str, body: str, labels: list[str],
                                mode: str, critique: bool, tentative: int, sortie: str,
                                timeout: int, avertissement_worktree_deja_pris: str,
@@ -5713,7 +6070,7 @@ def _traiter_issue_synchrone(issue: dict, dry_run: bool, chemin_worktree: Path |
             tentative += 1
             log.info(f"  Tentative {tentative}/{CFG.max_essais if not critique else '∞'}...")
 
-            succes, sortie = _executer_une_tentative(
+            succes, sortie, stderr_brut = _executer_une_tentative(
                 numero, titre, body, dry_run, mode, timeout, modele,
                 perimetre_effectif, cwd_effectif, verrou, chemin_scratch,
                 chemin_worktree, empreinte_configs_avant, tentative,
@@ -5732,6 +6089,21 @@ def _traiter_issue_synchrone(issue: dict, dry_run: bool, chemin_worktree: Path |
 
             # Échec
             log.warning(f"  ✗ Tentative {tentative} échouée : {sortie}")
+
+            # Erreur bloquante (clé révoquée, quota/crédit épuisé — issue
+            # #760) : arrêt immédiat, prioritaire sur la trace de timeout et
+            # sur l'abandon normal ci-dessous (et sur le retry infini des
+            # issues critiques) — ce type d'erreur ne se résorbe pas en
+            # retentant. Vérifié avant tout le reste du traitement de l'échec.
+            # Recherche dans `stderr_brut` UNIQUEMENT (issue #761) — jamais
+            # dans `sortie`, qui peut contenir le rapport rédigé par l'agent
+            # après reclassification #581/#757 (voir _executer_une_tentative).
+            cause_bloquante = _detecter_erreur_bloquante(stderr_brut)
+            if cause_bloquante:
+                _gerer_erreur_bloquante(numero, titre, body, labels, mode, sortie,
+                                         cause_bloquante, avertissement_worktree_deja_pris,
+                                         avertissement_worktree_repris)
+                return
 
             if sortie.startswith("Timeout après"):
                 _tracer_tentative_expiree(numero, titre, body, mode, debut_traitement, nb_projets_actifs_debut)
