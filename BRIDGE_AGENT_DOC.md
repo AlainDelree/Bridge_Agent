@@ -47,6 +47,7 @@ Claude Chat → crée une issue → GitHub → watcher.py détecte → CCL/CCW e
 | `ecole` | AlainDelree/Ecole | ~/Ecole | (conf local) | `#767676` |
 | `ff_galerie` | AlainDelree/FF_Galerie | ~/FF_Galerie | (conf local) | `#767676` |
 | `gestionmail` | AlainDelree/GestionMail | ~/GestionMail | (conf local) | `#3B45A0` |
+| `gestionprojet` | AlainDelree/GestionProjet | ~/GestionProjet | (conf local) | `#2970FF` |
 | `relecture_bridge` | AlainDelree/Relecture_Bridge | ~/Relecture_Bridge | (conf local) | `#CCFF00` |
 | `rummikub` | AlainDelree/Rummikub | ~/Rummikub | (conf local) | `#ADFF8F` |
 | `scrabble` | AlainDelree/Scrabble | ~/Scrabble | (conf local) | `#7AFFFF` |
@@ -348,6 +349,7 @@ hors périmètre même si l'issue le demande explicitement :
 | `ecole` | /home/alain/Ecole |
 | `ff_galerie` | /home/alain/FF_Galerie |
 | `gestionmail` | /home/alain/GestionMail |
+| `gestionprojet` | /home/alain/GestionProjet |
 | `relecture_bridge` | /home/alain/Relecture_Bridge |
 | `rummikub` | /home/alain/Rummikub |
 | `scrabble` | /home/alain/Scrabble |
@@ -630,7 +632,7 @@ calibration (constantes actuelles du code : `K_VARIABILITE` = 3, issue
 
 ---
 
-*Dernière mise à jour : 9 octobre 2026 — nettoyage de la documentation pour
+*Dernière mise à jour : 15 octobre 2026 — nettoyage de la documentation pour
 Claude Chat (issue #737, finitions).*
 
 Historique complet : voir [`CHANGELOG.md`](CHANGELOG.md).
