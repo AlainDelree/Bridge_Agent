@@ -9,6 +9,31 @@ milliers de caractères sur une seule ligne logique, coûteux à relire et
 
 Convention d'ajout : voir §10 de `BRIDGE_AGENT_DOC.md`.
 
+# CHANGELOG-757 — à fusionner dans CHANGELOG.md
+
+## 15 octobre 2026 — issue #757
+
+Garde-fou sur la **valeur** du verdict final, pas seulement sa présence — le garde-fou #581 reclassait en échec une sortie sans aucun marqueur ✅/❌, mais ne vérifiait jamais LEQUEL des deux marqueurs figurait dans la sortie. Une tentative qui échoue, le rapporte fidèlement avec ❌ en tête de son rapport de clôture (gabarit de prompt), et se termine avec un code de retour 0 (sortie propre après un refus de permission ou de périmètre, par exemple) passait donc le garde-fou #581 et restait classée en succès : l'issue était fermée avec le label `done` malgré un échec explicitement rapporté.
+
+- **`watcher.py`** : nouvelle regex `_RE_LIGNE_VERDICT` (`^[ \t]*(✅|❌)`, multiligne) et fonction `_verdict_final(sortie)` qui retourne le dernier marqueur trouvé **en tête de ligne**, ou `None` si aucun. Juste après le garde-fou #581 existant dans `_executer_une_tentative`, un nouveau bloc : si `succes` est encore `True` (code de retour 0, marqueur présent) mais que `_verdict_final(sortie) == "❌"`, la tentative est reclassée en échec et journalisée distinctement (`log.warning`, mention explicite « code de retour 0 mais verdict final ❌ ») — c'est précisément le cas qui était invisible jusqu'ici.
+- **Règle d'identification du verdict retenue : la DERNIÈRE ligne dont le premier caractère non blanc est ✅ ou ❌.** Justification : le gabarit de prompt impose que la réponse finale commence par l'un de ces deux marqueurs (« Réponds avec ce format exact ») — un ❌ cité dans un extrait, une explication ou une liste de cas apparaît normalement en milieu de ligne ou en position citée, jamais en tête de ligne, ce qui l'écarte mécaniquement de la détection sans avoir à reconnaître tout le gabarit littéral (variable d'une tâche à l'autre). La dernière occurrence (et non la première) est retenue par cohérence avec le raisonnement déjà appliqué par #581 : seule la toute fin de la sortie capturée fait foi, au cas où plusieurs lignes de ce type se succèdent.
+- **Ne pas affaiblir #581** : ce nouveau bloc ne s'exécute que si `succes` est encore `True` à ce stade — une sortie sans aucun marqueur (`_verdict_final` retourne `None`) continue d'être interceptée par le garde-fou #581 existant, inchangé. Un code de retour non nul reste un échec de toute façon (`succes` est déjà `False` avant même d'atteindre ce bloc).
+- Portée volontairement limitée à ce seul point, comme demandé — aucune vérification de commit ni de périmètre technique n'a été ajoutée (hors sujet de #756/#757).
+
+# CHANGELOG-754 — à fusionner dans CHANGELOG.md
+
+## 13 octobre 2026 — issue #754
+
+Suppression de la boîte de choix de durée au démarrage/redémarrage du watcher spool (issues_inbox) depuis le panneau latéral Infrastructure — elle répondait à un besoin disparu (issue #485, limiter la durée de fonctionnement du spool) : le spool ne surveille qu'un dossier local, sans coût GitHub, et son lancement est géré automatiquement. La boîte ne faisait plus que rajouter un clic et une décision inutile à chaque redémarrage.
+
+- **`static/js/panneau_lateral.js`** : le bouton « ▶ Démarrer »/« ↺ Relancer » du watcher spool (`data-action="pl-demarrer-watcher-inbox"`, renommé depuis `pl-duree-watcher-ouvrir`) appelle désormais directement `sidebarDemarrerWatcherInbox` — démarrage immédiat, sans boîte, toujours sans durée limite (`duree_min: 0`, comportement par défaut déjà en place). Même patron que les autres boutons du panneau : désactivé + libellé « Démarrage… » pendant l'appel, rétabli ensuite (y compris en cas d'erreur, où le toast d'erreur existant de l'appel s'affiche) ; aucun nouveau toast de succès, le point vert confirme l'action après rafraîchissement du panneau. Les trois fonctions devenues inutiles (`sidebarOuvrirDureeWatcherInbox`, `sidebarFermerDureeWatcherInbox`, `sidebarConfirmerDureeWatcherInbox`) et leurs branchements d'événements (`pl-duree-watcher-ouvrir/-annuler/-confirmer`) sont retirés.
+- **Gabarit supprimé** : `templates/fragments/modale_duree_watcher_inbox.html` et son inclusion dans `templates/index.html`. Aucun CSS dédié à retirer : la boîte réutilisait les classes génériques partagées `modal-overlay`/`modal-carte`/`modal-titre`/`modal-boutons` de `static/css/modales.css`, toujours utilisées par d'autres modales.
+- **Non retiré, comme demandé** : le support serveur de la durée (paramètre `duree_min` de `POST /issues-inbox/demarrer-watcher`, option `--duree-min` de `scripts/watcher_issues_inbox.py`, affichage de l'extinction restante dans le panneau) reste en place — simplement plus utilisé par l'interface, `duree_min=0`/absent valant toujours « indéfiniment ». Aucun changement serveur ni du script du spool.
+- **Tests** : `static/js/tests/panneau_lateral.test.js` — `sidebarDemarrerWatcherInbox` appelle `POST /issues-inbox/demarrer-watcher` avec `{duree_min: 0}`, désactive puis rétablit le bouton (y compris en cas d'erreur réseau), et un test confirme qu'aucun identifiant de l'ancienne boîte (`dwi-`, `modal-duree-watcher-inbox`, `pl-duree-watcher-`, `DureeWatcherInbox`) ne subsiste dans le module. Les 294 tests JS (`node --test static/js/socle/tests/ static/js/tests/`) passent sans régression.
+- **Documentation** : `ARCHITECTURE.md` (tableau des fragments + nouvelle note dans la section panneau latéral/watcher spool) et `VERIFICATIONS_MANUELLES.md` (checklist du démarrage direct, sans boîte). `BRIDGE_AGENT_DOC.md` non modifié (hors périmètre de la tâche).
+
+**Rappel de déploiement** : après fusion, redémarrer `new_issue.py` (le gabarit `index.html` est mis en cache par Flask), puis Ctrl+Maj+R.
+
 # CHANGELOG-753 — à fusionner dans CHANGELOG.md
 
 ## 13 octobre 2026 — issue #753
