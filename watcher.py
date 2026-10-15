@@ -5151,6 +5151,25 @@ def _demarrer_traitement(numero: int, mode: str, mode_txt: str, dry_run: bool,
             empreinte_configs_avant, tete_avant_traitement)
 
 
+# Ligne de verdict du gabarit de prompt (issue #757) : le format imposé
+# ("Réponds avec ce format exact") fait toujours COMMENCER la réponse finale
+# par ✅ ou ❌, jamais en milieu de ligne. On ne retient donc que les lignes
+# dont le premier caractère non blanc est l'un de ces deux marqueurs — un ❌
+# cité dans un extrait, une explication ou une liste de cas n'est normalement
+# jamais en tête de ligne, ce qui l'écarte de la détection.
+_RE_LIGNE_VERDICT = re.compile(r'^[ \t]*(✅|❌)', re.MULTILINE)
+
+
+def _verdict_final(sortie: str) -> str | None:
+    """Retourne le dernier marqueur ✅/❌ trouvé en tête de ligne dans `sortie`
+    (voir `_RE_LIGNE_VERDICT`), ou None si aucune ligne de ce type n'est
+    présente. On garde la DERNIÈRE occurrence : c'est le verdict le plus
+    récent exprimé par l'agent, cohérent avec le garde-fou #581 (déjà fondé
+    sur l'idée que seule la toute fin de la sortie capturée fait foi)."""
+    occurrences = _RE_LIGNE_VERDICT.findall(sortie)
+    return occurrences[-1] if occurrences else None
+
+
 def _executer_une_tentative(numero: int, titre: str, body: str, dry_run: bool, mode: str,
                              timeout: int, modele: str, perimetre_effectif: str,
                              cwd_effectif: Path, verrou, chemin_scratch: Path | None,
@@ -5217,6 +5236,32 @@ def _executer_une_tentative(numero: int, titre: str, body: str, dry_run: bool, m
             "en arrière-plan terminé après le rapport final), qui a "
             "écrasé la vraie réponse dans la sortie capturée (issue "
             f"#581). Sortie obtenue : {sortie.strip()[:500]}"
+        )
+
+    # Garde-fou de VALEUR du verdict (issue #757) : #581 ci-dessus ne
+    # vérifie que la PRÉSENCE d'un marqueur, jamais lequel. Une tentative
+    # qui échoue, le rapporte fidèlement avec ❌ en tête de son rapport de
+    # clôture, et se termine avec un code de retour 0 (sortie propre après
+    # un refus de permission ou de périmètre, par exemple) passait jusqu'ici
+    # le garde-fou #581 et restait classée en succès. On ne retient que la
+    # ligne de verdict (voir `_RE_LIGNE_VERDICT`) : un ❌ cité ailleurs dans
+    # le texte (extrait, explication, liste de cas) ne doit pas valoir
+    # verdict. Un code de retour non nul reste un échec quel que soit le
+    # marqueur — ce bloc ne peut donc qu'aggraver `succes` (jamais le
+    # repasser à True) et n'intervient que si le garde-fou #581 ci-dessus
+    # n'a pas déjà tranché.
+    if succes and not dry_run and _verdict_final(sortie) == "❌":
+        log.warning(
+            f"  ✗ Tentative {tentative} : code de retour 0 mais verdict "
+            f"final ❌ en tête de la ligne de clôture — l'agent rapporte "
+            f"lui-même un échec (issue #757). Traitée comme un échec de "
+            f"cette tentative."
+        )
+        succes = False
+        sortie = (
+            "Code de retour 0 mais verdict final ❌ : l'agent a rapporté un "
+            "échec explicite dans la ligne de clôture de son rapport "
+            f"(issue #757). Sortie obtenue : {sortie.strip()[:500]}"
         )
 
     if empreinte_configs_avant is not None:
