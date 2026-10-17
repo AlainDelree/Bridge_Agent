@@ -16,11 +16,26 @@ Un test qui s'ignore proprement sous Windows (code de sortie 0 + message
 « (ignoré : ... non applicable sous Windows) ») compte comme réussi — c'est
 la convention du dépôt pour les scénarios strictement POSIX.
 
+Avant toute exécution, le lanceur vérifie que les dépendances du projet
+(`requirements.txt` + `requirements-dev.txt`) sont bien importables dans
+l'interpréteur courant — issue #765 : lancé hors de l'environnement virtuel
+du projet, `flask` (et donc toute l'interface web) est introuvable, et une
+quarantaine de fichiers échouent d'un coup sans que la cause ne soit
+indiquée nulle part (pris pour une régression à deux reprises le même
+jour). Vérification fondée sur la disponibilité réelle des paquets plutôt
+que sur un chemin `venv/` en dur, pour ne pas déclencher de faux positif
+dans un environnement équivalent installé ailleurs (ex. provisioning
+Windows, qui installe directement dans l'interpréteur système sans venv).
+
 Exécution :  python3 tests/lancer_tous_les_tests.py
 Sortie      :  code 0 si tous les fichiers réussissent (code de sortie 0
-                chacun), 1 si au moins un échoue ou dépasse son délai.
+                chacun), 1 si au moins un échoue ou dépasse son délai,
+                2 si l'environnement (dépendances manquantes) empêche même
+                de commencer — code distinct pour ne pas confondre ce refus
+                avec un échec de test.
 """
 
+import importlib.util
 import os
 import subprocess
 import sys
@@ -30,6 +45,34 @@ from pathlib import Path
 DOSSIER_TESTS = Path(__file__).resolve().parent
 RACINE = DOSSIER_TESTS.parent
 DELAI_MAX_PAR_FICHIER = 120  # secondes
+
+# Paquets déclarés dans requirements.txt (interface web, dont dépendent la
+# quarantaine de fichiers de tests touchés par #765) et requirements-dev.txt
+# (pytest, importé par plusieurs fichiers).
+DEPENDANCES_REQUISES = ("flask", "werkzeug", "pytest")
+
+CODE_ENVIRONNEMENT_INVALIDE = 2
+
+
+def dependances_manquantes(noms=None) -> list[str]:
+    if noms is None:
+        noms = DEPENDANCES_REQUISES
+    return [nom for nom in noms if importlib.util.find_spec(nom) is None]
+
+
+def _message_environnement_invalide(manquantes: list[str]) -> str:
+    liste = ", ".join(manquantes)
+    return (
+        f"❌ Dépendance(s) manquante(s) dans l'interpréteur courant "
+        f"({sys.executable}) : {liste}\n"
+        "   Cause probable : l'environnement virtuel du projet n'est pas "
+        "activé.\n"
+        "   Activation (Linux/macOS) :  source venv/bin/activate\n"
+        "   Activation (Windows)     :  venv\\Scripts\\activate\n"
+        "   Si les dépendances sont installées ailleurs (sans venv), "
+        "installez-les ici :\n"
+        "   pip install -r requirements.txt -r requirements-dev.txt"
+    )
 
 
 def _derniere_ligne_utile(texte: str) -> str:
@@ -81,6 +124,15 @@ def main() -> int:
             flux.reconfigure(encoding="utf-8", errors="backslashreplace")
         except AttributeError:
             pass
+
+    # Garde-fou #765 : avant quoi que ce soit, s'assurer que l'interpréteur
+    # courant a bien accès aux dépendances du projet — sinon la quarantaine
+    # de fichiers dépendant de l'interface web échoue d'un coup pour une
+    # raison qui n'apparaît dans aucun des résumés individuels.
+    manquantes = dependances_manquantes()
+    if manquantes:
+        print(_message_environnement_invalide(manquantes), file=sys.stderr)
+        return CODE_ENVIRONNEMENT_INVALIDE
 
     fichiers = sorted(DOSSIER_TESTS.glob("test_*.py"))
     if not fichiers:
