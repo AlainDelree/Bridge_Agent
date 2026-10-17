@@ -84,6 +84,7 @@ exit 0
 # voir verifier_preflight_token) — la sonde ne doit produire aucun effet de bord.
 FAUX_CLAUDE_REFUS_PRECOCE = """#!/bin/bash
 if [ "$#" -ge 2 ]; then
+    echo "<!-- bridge:verdict:echec -->"
     echo "❌ Tâche non réalisable — hors périmètre (fichiers hors C:\\\\CCW_Share). Aucune action effectuée."
     exit 0
 fi

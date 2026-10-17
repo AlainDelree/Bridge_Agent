@@ -296,6 +296,7 @@ if [ "$#" -ge 2 ]; then
     if echo "$prompt" | grep -q '3 commit(s)'; then
         touch "$TEST_725_DIR/ecart_commits_present"
     fi
+    echo "<!-- bridge:verdict:succes -->"
     echo "✅ Tâche terminée — test #725"
 fi
 exit 0

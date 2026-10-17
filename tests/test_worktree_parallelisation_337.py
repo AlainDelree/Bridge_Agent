@@ -143,6 +143,7 @@ if [ "$#" -ge 2 ]; then
         echo "entrée changelog #$numero" > "CHANGELOG-$numero.md"
     fi
     sleep 0.3
+    echo "<!-- bridge:verdict:succes -->"
     echo "✅ Tâche terminée — worktree test #$numero"
 fi
 exit 0
@@ -173,6 +174,7 @@ if [ "$#" -ge 2 ]; then
         fi
     fi
     sleep 0.05
+    echo "<!-- bridge:verdict:succes -->"
     echo "✅ Tâche terminée — test #$numero"
 fi
 exit 0
