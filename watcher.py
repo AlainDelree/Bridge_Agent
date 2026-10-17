@@ -3004,7 +3004,17 @@ LIMITE_STDERR_LOG = 2000
 # Signatures (recherche insensible à la casse dans stdout+stderr) évoquant un
 # token d'authentification CCL manquant ou expiré (issue #309). Liste
 # best-effort et non exhaustive : le message exact dépend de la version du
-# CLI claude, d'où plusieurs variantes plutôt qu'une correspondance unique.
+# CLI claude, d'où plusieurs variantes plutôt qu'une correspondance unique —
+# ces formulations VIEILLISSENT avec les versions de l'outil (constaté sur
+# #762 : aucune ne correspondait plus à la version alors installée, le
+# pré-vol n'a donc rien détecté). "no messages returned" ajoutée ici (#763) :
+# message RÉELLEMENT constaté (`claude --print` + stdin vide, sans aucune
+# authentification sur la machine) avec le CLI en production au moment de
+# l'issue — "Error: No messages returned from query", qui ne mentionne
+# l'authentification à aucun mot-clé évident, d'où son absence des variantes
+# précédentes. Cette liste reste un simple best-effort qui se périme avec le
+# CLI : c'est l'arrêt sur durée anormale (SEUIL_DUREE_TENTATIVE_ANORMALE_S,
+# #763) qui sert de filet, lui, indépendant de tout vocabulaire.
 SIGNATURES_TOKEN_EXPIRE = (
     "not logged in",
     "please run",
@@ -3014,6 +3024,7 @@ SIGNATURES_TOKEN_EXPIRE = (
     "unauthorized",
     "please authenticate",
     "oauth token",
+    "no messages returned",
 )
 
 # Signatures d'erreur BLOQUANTE reconnues dans le flux d'erreur RÉEL du
@@ -5480,23 +5491,35 @@ def _demarrer_traitement(numero: int, mode: str, mode_txt: str, dry_run: bool,
             empreinte_configs_avant, tete_avant_traitement)
 
 
-# Ligne de verdict du gabarit de prompt (issue #757) : le format imposé
-# ("Réponds avec ce format exact") fait toujours COMMENCER la réponse finale
-# par ✅ ou ❌, jamais en milieu de ligne. On ne retient donc que les lignes
-# dont le premier caractère non blanc est l'un de ces deux marqueurs — un ❌
-# cité dans un extrait, une explication ou une liste de cas n'est normalement
-# jamais en tête de ligne, ce qui l'écarte de la détection.
+# Ligne de verdict du gabarit de prompt (issue #757, sens de lecture corrigé
+# #763) : le format imposé ("Réponds avec ce format exact") fait toujours
+# COMMENCER la réponse finale par ✅ ou ❌, jamais en milieu de ligne. On ne
+# retient donc que les lignes dont le premier caractère non blanc est l'un de
+# ces deux marqueurs — un ❌ cité dans un extrait, une explication ou une
+# liste de cas n'est normalement jamais en tête de ligne, ce qui l'écarte de
+# la détection.
 _RE_LIGNE_VERDICT = re.compile(r'^[ \t]*(✅|❌)', re.MULTILINE)
 
 
 def _verdict_final(sortie: str) -> str | None:
-    """Retourne le dernier marqueur ✅/❌ trouvé en tête de ligne dans `sortie`
+    """Retourne le PREMIER marqueur ✅/❌ trouvé en tête de ligne dans `sortie`
     (voir `_RE_LIGNE_VERDICT`), ou None si aucune ligne de ce type n'est
-    présente. On garde la DERNIÈRE occurrence : c'est le verdict le plus
-    récent exprimé par l'agent, cohérent avec le garde-fou #581 (déjà fondé
-    sur l'idée que seule la toute fin de la sortie capturée fait foi)."""
+    présente. On garde la PREMIÈRE occurrence (issue #763, corrige #757) :
+    le gabarit de prompt impose que le verdict OUVRE la réponse finale — une
+    ligne à marqueur plus loin dans le texte n'est jamais le verdict, le plus
+    souvent une puce d'une section ultérieure (ex. lacunes de tests, cas
+    limites). Constaté sur l'issue #56 d'apiselect : un rapport annonçant
+    ✅ en première ligne contenait, plus loin, une puce ❌ dans sa section
+    « lacunes de tests » — la version précédente de cette fonction (DERNIÈRE
+    occurrence, par analogie avec le garde-fou #581) retenait cette puce et
+    reclassait à tort la tentative en échec. L'étude #762 a invalidé cette
+    analogie : #581 porte sur la présence d'un marqueur de clôture n'importe
+    où dans le texte (réponse tardive d'un sous-agent), pas sur SA VALEUR —
+    rien n'y justifiait de préférer la dernière occurrence pour déterminer le
+    verdict. Correctif d'attente : la convention de verdict encadrée (étudiée
+    par #762) rendra cette fonction inutile à terme."""
     occurrences = _RE_LIGNE_VERDICT.findall(sortie)
-    return occurrences[-1] if occurrences else None
+    return occurrences[0] if occurrences else None
 
 
 def _detecter_erreur_bloquante(stderr_brut: str | None) -> str | None:
@@ -5540,6 +5563,51 @@ def _detecter_erreur_bloquante(stderr_brut: str | None) -> str | None:
     return None
 
 
+# Seuil (secondes) en-dessous duquel une tentative ÉCHOUÉE est jugée
+# anormalement rapide (issue #763, incident #762 : trois tentatives
+# consécutives échouées en MOINS DE DIX SECONDES chacune, parce que l'agent
+# n'était pas authentifié sur la machine — un problème d'environnement,
+# jamais résolu en retentant, que le pré-vol de vocabulaire n'avait pas su
+# reconnaître). 10s retenu directement d'après ce constat ("moins de dix
+# secondes") et confirmé en conditions réelles : une sonde d'authentification
+# manquante échoue en ~0,8s (voir SIGNATURES_TOKEN_EXPIRE/"no messages
+# returned"), un binaire introuvable échoue quasi instantanément
+# (FileNotFoundError, avant même le lancement du process) — contre largement
+# plus de dix secondes pour la moindre tentative ayant réellement sollicité
+# l'agent (au moins un aller-retour LLM complet, nécessaire pour produire
+# jusqu'au rapport de clôture imposé par le gabarit de prompt). Aucun échec
+# légitime connu ne descend sous ce seuil : les dépassements de délai
+# (`Timeout après <N>s`) sont par construction aussi longs que `timeout`
+# (toujours ≥ plusieurs minutes en pratique — voir PLANCHER_TIMEOUT_ECRITURE),
+# et les deux autres causes rapides connues (binaire introuvable,
+# authentification absente) relèvent elles aussi d'un problème
+# d'environnement, donc du même traitement par ce garde-fou.
+SEUIL_DUREE_TENTATIVE_ANORMALE_S = 10
+
+
+def _duree_tentative_anormale(stderr_brut: str | None, sortie: str, duree_tentative: float) -> bool:
+    """True si la tentative ÉCHOUÉE qui vient de se terminer l'a fait en
+    moins de `SEUIL_DUREE_TENTATIVE_ANORMALE_S` (issue #763) — signe qu'aucun
+    travail réel n'a pu avoir lieu (problème d'environnement : authentification
+    absente, binaire introuvable ou cassé...), pas d'une tâche difficile.
+
+    Restreint à `stderr_brut` non None, exactement comme
+    `_detecter_erreur_bloquante` ci-dessus : un rapport rédigé par l'agent et
+    reclassé en échec après coup par les garde-fous #581/#757 implique, lui,
+    un aller-retour LLM réel (jamais anormalement rapide) — seul un échec
+    constaté au niveau du PROCESS (code de retour non nul, timeout, binaire
+    introuvable) peut légitimement l'être. `sortie.startswith("Timeout
+    après")` est en plus exclu explicitement : un dépassement de délai est
+    par nature aussi long que `timeout`, jamais anormalement rapide, mais ce
+    garde-fou ne doit pas en dépendre pour rester vrai même avec un `timeout`
+    configuré de façon pathologique."""
+    if stderr_brut is None:
+        return False
+    if sortie.startswith("Timeout après"):
+        return False
+    return duree_tentative < SEUIL_DUREE_TENTATIVE_ANORMALE_S
+
+
 def _executer_une_tentative(numero: int, titre: str, body: str, dry_run: bool, mode: str,
                              timeout: int, modele: str, perimetre_effectif: str,
                              cwd_effectif: Path, verrou, chemin_scratch: Path | None,
@@ -5547,7 +5615,7 @@ def _executer_une_tentative(numero: int, titre: str, body: str, dry_run: bool, m
                              tentative: int, max_tentatives: int | None = None,
                              tete_avant_traitement: str | None = None,
                              worktree_repris: bool = False,
-                             commits_ecart_worktree: int = 0) -> tuple[bool, str, str | None]:
+                             commits_ecart_worktree: int = 0) -> tuple[bool, str, str | None, float]:
     """Une tentative `lancer_claude`, garde-fou de format de clôture (#581) et
     restauration best-effort des configs/*.conf modifiés (#318/#327).
 
@@ -5560,7 +5628,15 @@ def _executer_une_tentative(numero: int, titre: str, body: str, dry_run: bool, m
     transmis à `lancer_claude` — voir sa docstring (clause « worktree repris
     d'une relance » injectée dans le prompt).
 
-    Retourne (succes, sortie, stderr_brut)."""
+    `duree_tentative` (issue #763) : durée en secondes du seul appel à
+    `lancer_claude` ci-dessous (hors reclassifications #581/#757 et
+    restauration des configs, négligeables) — sert à `_duree_tentative_anormale`
+    côté appelant. Mesurée même en dry-run (où elle vaut ~0, sans
+    conséquence : `lancer_claude` y retourne toujours `succes=True`, qui ne
+    passe jamais par ce garde-fou — voir la boucle de tentatives).
+
+    Retourne (succes, sortie, stderr_brut, duree_tentative)."""
+    debut_tentative = time.monotonic()
     succes, sortie = lancer_claude(numero, titre, body, dry_run, mode,
                                    timeout, modele,
                                    perimetre=perimetre_effectif, cwd=cwd_effectif,
@@ -5570,6 +5646,7 @@ def _executer_une_tentative(numero: int, titre: str, body: str, dry_run: bool, m
                                    tete_avant_traitement=tete_avant_traitement,
                                    worktree_repris=worktree_repris,
                                    commits_ecart_worktree=commits_ecart_worktree)
+    duree_tentative = time.monotonic() - debut_tentative
 
     # `stderr_brut` (issue #761) : capturé ICI, AVANT les deux reclassifications
     # #581/#757 ci-dessous qui peuvent écraser `sortie` par un message
@@ -5649,7 +5726,7 @@ def _executer_une_tentative(numero: int, titre: str, body: str, dry_run: bool, m
     if empreinte_configs_avant is not None:
         _restaurer_configs_modifies(numero, empreinte_configs_avant)
 
-    return succes, sortie, stderr_brut
+    return succes, sortie, stderr_brut, duree_tentative
 
 
 def _verifier_violation_scratch(numero: int, titre: str, labels: list[str],
@@ -5892,6 +5969,58 @@ def _gerer_erreur_bloquante(numero: int, titre: str, body: str, labels: list[str
         _issue_write_bloquee_ajouter(numero)
 
 
+def _gerer_tentative_anormalement_rapide(numero: int, titre: str, body: str, labels: list[str],
+                                          mode: str, sortie: str, duree_tentative: float,
+                                          avertissement_worktree_deja_pris: str,
+                                          avertissement_worktree_repris: str) -> None:
+    """Tentative échouée en moins de `SEUIL_DUREE_TENTATIVE_ANORMALE_S`
+    (issue #763, voir `_duree_tentative_anormale`) : incident #762, trois
+    tentatives échouées en moins de dix secondes chacune parce que l'agent
+    n'était pas authentifié sur la machine, sans qu'aucun garde-fou de
+    vocabulaire (pré-vol, `_detecter_erreur_bloquante`) ne le détecte. Même
+    mécanisme d'arrêt immédiat que `_gerer_erreur_bloquante` (issue #760,
+    réutilisé tel quel ici) : s'applique dès la PREMIÈRE tentative concernée
+    — un échec aussi rapide ne peut pas correspondre à un travail réel
+    effectué par l'agent, donc ne se résorbe pas en retentant, MÊME pour une
+    issue critique (pas de retry infini). Termine toujours le traitement de
+    l'issue — l'appelant doit retourner immédiatement après l'appel."""
+    log.error(
+        f"  ✗ Issue #{numero} : tentative échouée en {duree_tentative:.1f}s "
+        f"(< {SEUIL_DUREE_TENTATIVE_ANORMALE_S}s) — arrêt immédiat, sans "
+        f"retenter (issue #763)."
+    )
+    message_echec = (
+        f"❌ Tentative échouée en {duree_tentative:.1f}s — bien trop vite pour "
+        f"qu'un travail réel ait pu avoir lieu. Traitement arrêté "
+        f"immédiatement, sans consommer les tentatives restantes.\n\n"
+        f"{avertissement_worktree_deja_pris}"
+        f"{avertissement_worktree_repris}"
+        f"Sortie : `{sortie.strip()[:LIMITE_STDERR_LOG]}`\n\n"
+        f"Un échec aussi rapide trahit presque toujours un problème "
+        f"d'ENVIRONNEMENT plutôt qu'une tâche difficile. **Vérifier que "
+        f"l'agent est bien authentifié sur cette machine et que son binaire "
+        f"fonctionne** (le relancer interactivement une fois, par exemple) "
+        f"avant de retirer le label `{LABEL_ECHEC}`. Intervention humaine "
+        f"requise : cette issue ne sera plus retraitée automatiquement tant "
+        f"que le label n'est pas retiré (ou l'issue fermée) manuellement."
+    )
+    commenter_issue(numero, message_echec)
+    ajouter_label(numero, LABEL_ECHEC)
+    notifier(
+        labels,
+        titre=f"❌ {CFG.nom} #{numero} — tentative anormalement rapide",
+        message=f"'{titre}' arrêtée : tentative échouée en {duree_tentative:.1f}s (problème d'environnement probable).",
+        urgence_bureau="critical",
+        priorite_ntfy="high",
+        numero=numero,
+    )
+    notifier_fin_sse(numero)
+    # PAS de retrait de issues_en_cours (issue #576) : même traitement que
+    # _gerer_erreur_bloquante ci-dessus.
+    if mode == MODE_ECRITURE:
+        _issue_write_bloquee_ajouter(numero)
+
+
 def _gerer_abandon_max_essais(numero: int, titre: str, body: str, labels: list[str],
                                mode: str, critique: bool, tentative: int, sortie: str,
                                timeout: int, avertissement_worktree_deja_pris: str,
@@ -6070,7 +6199,7 @@ def _traiter_issue_synchrone(issue: dict, dry_run: bool, chemin_worktree: Path |
             tentative += 1
             log.info(f"  Tentative {tentative}/{CFG.max_essais if not critique else '∞'}...")
 
-            succes, sortie, stderr_brut = _executer_une_tentative(
+            succes, sortie, stderr_brut, duree_tentative = _executer_une_tentative(
                 numero, titre, body, dry_run, mode, timeout, modele,
                 perimetre_effectif, cwd_effectif, verrou, chemin_scratch,
                 chemin_worktree, empreinte_configs_avant, tentative,
@@ -6103,6 +6232,19 @@ def _traiter_issue_synchrone(issue: dict, dry_run: bool, chemin_worktree: Path |
                 _gerer_erreur_bloquante(numero, titre, body, labels, mode, sortie,
                                          cause_bloquante, avertissement_worktree_deja_pris,
                                          avertissement_worktree_repris)
+                return
+
+            # Tentative anormalement rapide (issue #763) : même priorité que
+            # l'erreur bloquante ci-dessus (arrêt immédiat dès la première
+            # occurrence, avant la trace de timeout et l'abandon normal) —
+            # un échec de ce type n'a pas pu correspondre à un travail réel,
+            # retenter ne sert à rien. Voir _duree_tentative_anormale pour la
+            # restriction à `stderr_brut` non None (jamais sur un rapport
+            # d'agent reclassé après coup par #581/#757).
+            if _duree_tentative_anormale(stderr_brut, sortie, duree_tentative):
+                _gerer_tentative_anormalement_rapide(numero, titre, body, labels, mode, sortie,
+                                                      duree_tentative, avertissement_worktree_deja_pris,
+                                                      avertissement_worktree_repris)
                 return
 
             if sortie.startswith("Timeout après"):
