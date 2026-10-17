@@ -1,19 +1,16 @@
 #!/usr/bin/env python3
-"""Test de non-régression — issue #763 : deux correctifs indépendants.
+"""Test de non-régression — issue #763 : arrêt immédiat d'une tentative
+anormalement rapide. Le scénario portant sur le marqueur de verdict a été
+retiré, la convention qu'il vérifiait ayant été remplacée par l'issue #764.
 
 Vérifie :
-1. `_verdict_final` retient le PREMIER marqueur ✅/❌ en tête de ligne, plus la
-   dernière occurrence (corrige #757) — scénario exact de l'incident #56
-   d'apiselect : un rapport qui annonce ✅ en première ligne, puis contient
-   plus loin, dans une section « lacunes de tests », une puce portant le
-   marqueur ❌. Le verdict retenu doit être ✅, pas ❌.
-2. Une tentative dont le PROCESS échoue anormalement vite (moins de
+1. Une tentative dont le PROCESS échoue anormalement vite (moins de
    `SEUIL_DUREE_TENTATIVE_ANORMALE_S`, issue #763, incident #762) déclenche
    un arrêt immédiat (même mécanisme que `_gerer_erreur_bloquante`, issue
    #760) : label `needs-human`, commentaire explicite invitant à vérifier
    l'authentification/le binaire, et les tentatives restantes NE sont PAS
    consommées.
-3. Non-régression : un rapport d'agent reclassé en échec après coup par le
+2. Non-régression : un rapport d'agent reclassé en échec après coup par le
    garde-fou #581 (sans marqueur ✅/❌) et produit quasi instantanément par le
    faux exécutable de test ne doit JAMAIS être traité comme une tentative
    anormalement rapide — seul un échec constaté au niveau du PROCESS (stderr
@@ -50,34 +47,6 @@ def _issue_minimale(numero: int, titre: str, labels: list[str]) -> dict:
         "body": "| PRIORITE | normale |\n| TIMEOUT | 30s |\n",
         "labels": [{"name": lab} for lab in labels],
     }
-
-
-def scenario_premier_marqueur_retenu_malgre_puce_echec_plus_loin():
-    """Point 1 : rapport apiselect #56 reconstitué — ✅ en tête, ❌ dans une
-    puce de la section « lacunes de tests » plus loin dans le texte. Le
-    verdict retenu doit être le PREMIER marqueur (✅), pas le dernier (❌)."""
-    rapport = (
-        "✅ Tâche terminée — ajout des tests manquants pour /api/select\n\n"
-        "<details>\n<summary>Détails complets</summary>\n\n"
-        "## Lacunes de tests restantes\n\n"
-        "- ❌ cas limite : filtre vide non couvert\n"
-        "- ❌ cas limite : pagination négative non couverte\n\n"
-        "</details>\n"
-    )
-    verdict = watcher._verdict_final(rapport)
-    assert verdict == "✅", f"verdict attendu ✅ (première ligne), obtenu {verdict!r}"
-
-    # Contrôle inverse : un vrai échec annoncé en tête reste bien détecté
-    # comme tel même si une puce ultérieure porte le marqueur ✅ (ex. liste de
-    # critères déjà remplis avant l'échec final).
-    rapport_echec = (
-        "❌ Tâche échouée — permission refusée sur le dépôt cible\n\n"
-        "- ✅ lecture du code effectuée\n- ✅ diagnostic posé\n"
-    )
-    verdict_echec = watcher._verdict_final(rapport_echec)
-    assert verdict_echec == "❌", f"verdict attendu ❌ (première ligne), obtenu {verdict_echec!r}"
-
-    return {"verdict_succes": verdict, "verdict_echec": verdict_echec}
 
 
 def _preparer_faux_claude(tmp_path: Path, script: str) -> Path:
@@ -256,8 +225,6 @@ def main():
         return 0
 
     tests = [
-        ("premier marqueur ✅/❌ retenu (corrige #757, scénario apiselect #56)",
-         scenario_premier_marqueur_retenu_malgre_puce_echec_plus_loin),
         ("tentative anormalement rapide → arrêt immédiat, needs-human, message authentification/binaire",
          scenario_tentative_anormalement_rapide_arrete_immediatement),
         ("rapport #581 instantané sans marqueur → PAS d'arrêt rapide, tentatives consommées",
