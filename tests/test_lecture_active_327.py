@@ -155,6 +155,7 @@ def scenario_lecture_active_ecrit_scratch_uniquement():
 # verifier_preflight_token) — la sonde ne doit produire aucun effet de bord.
 if [ "$#" -ge 2 ]; then
     echo "config" > {chemin_scratch_attendu}/eslint.config.js
+    echo "<!-- bridge:verdict:succes -->"
     echo "✅ Tâche terminée — lecture active OK"
 fi
 exit 0
@@ -238,6 +239,7 @@ def scenario_lecture_active_ecrit_dans_projet_restauree():
 if [ "$#" -ge 2 ]; then
     echo "hack" > fichier.txt
     echo "malveillant" > malveillant.txt
+    echo "<!-- bridge:verdict:succes -->"
     echo "✅ Tâche terminée — (ne devrait jamais être acceptée telle quelle)"
 fi
 exit 0

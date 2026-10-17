@@ -378,6 +378,17 @@ DELAIS_RETRY_RESULTAT = (5, 10, 20)
 # texte apparaissait un jour dans un commentaire.
 MARQUEUR_RESULTAT = "<!-- bridge:resultat -->"
 
+# Lignes de verdict du gabarit de prompt (issue #764, remplace le marqueur
+# ✅/❌ en tête de ligne introduit par #757 — étude #762). Même convention que
+# MARQUEUR_RESULTAT ci-dessus : commentaire HTML invisible à l'affichage
+# GitHub mais présent tel quel dans la sortie capturée, sur une ligne
+# AUTONOME qu'un rapport rédigé librement ne peut pas produire par accident
+# (contrairement à un simple caractère ✅/❌ en tête de ligne, qui a déjà
+# produit un faux positif). Voir `_RE_LIGNE_VERDICT`/`_verdict_final` plus
+# bas pour la détection.
+MARQUEUR_VERDICT_SUCCES = "<!-- bridge:verdict:succes -->"
+MARQUEUR_VERDICT_ECHEC  = "<!-- bridge:verdict:echec -->"
+
 # Préfixe du message d'échec définitif posté par watcher.py juste avant de
 # poser needs-human (voir plus bas, "❌ Échec après {N} tentatives."). Sert à
 # détecter une RELANCE (champ RELANCE, issue #516) : sa présence dans
@@ -3190,7 +3201,7 @@ def _construire_cmd_vibe(mode: str, modele: str, prompt: str, cwd: Path) -> list
     Sortie en texte brut : `--output` n'est volontairement PAS positionné
     (défaut `text` du CLI, constaté dans son aide), pour conserver le même
     format que `claude --print` — seul format que le reste de watcher.py sait
-    analyser (marqueurs ✅/❌ de clôture, voir _verdict_final). Le format
+    analyser (ligne de verdict de clôture, voir _verdict_final). Le format
     `json` existe côté vibe mais n'est pas utilisé ici : son schéma n'a pas
     été exploré pour cette issue (aucune session réelle lancée, consigne
     explicite de l'issue #760) et le texte brut suffit à préserver le
@@ -3693,6 +3704,7 @@ Instructions :
 {clause_sous_agents}
 Réponds avec ce format exact, sans rien ajouter avant ni après :
 
+{MARQUEUR_VERDICT_SUCCES}
 ✅ Tâche terminée — [résumé en une ligne de ce qui a été fait]
 Commits (dans {cwd_effectif}) : [hash backup] (backup) + [hash fix] (fix) — ou "aucun" si lecture seule
 py_compile : OK / N/A — push : aucun
@@ -3708,7 +3720,7 @@ py_compile : OK / N/A — push : aucun
 Le bloc <details> est rendu par GitHub comme un accordéon dépliable —
 les informations sont là mais n'encombrent pas la lecture rapide.
 
-Si la tâche échoue, remplace ✅ par ❌ et explique la cause en une ligne.
+Si la tâche échoue, remplace la toute première ligne par {MARQUEUR_VERDICT_ECHEC} (et ✅ par ❌ sur la ligne suivante), et explique la cause en une ligne.
 """
 
     if dry_run:
@@ -5480,23 +5492,37 @@ def _demarrer_traitement(numero: int, mode: str, mode_txt: str, dry_run: bool,
             empreinte_configs_avant, tete_avant_traitement)
 
 
-# Ligne de verdict du gabarit de prompt (issue #757) : le format imposé
-# ("Réponds avec ce format exact") fait toujours COMMENCER la réponse finale
-# par ✅ ou ❌, jamais en milieu de ligne. On ne retient donc que les lignes
-# dont le premier caractère non blanc est l'un de ces deux marqueurs — un ❌
-# cité dans un extrait, une explication ou une liste de cas n'est normalement
-# jamais en tête de ligne, ce qui l'écarte de la détection.
-_RE_LIGNE_VERDICT = re.compile(r'^[ \t]*(✅|❌)', re.MULTILINE)
+# Ligne de verdict du gabarit de prompt (issue #764, remplace la détection
+# par caractère ✅/❌ en tête de ligne de #757). Constat de l'étude #762 :
+# chercher un caractère en tête de ligne dans un rapport rédigé LIBREMENT
+# reste ambigu — un ❌ cité dans un extrait ou une liste de cas peut, par
+# accident de mise en forme, se retrouver en tête de ligne (faux positif déjà
+# constaté). Le gabarit impose désormais une ligne de verdict AUTONOME, sur
+# le motif MARQUEUR_VERDICT_SUCCES/ECHEC — match exigé sur la LIGNE ENTIÈRE
+# (espaces de bordure tolérés), jamais un simple préfixe : une consigne de
+# prompt qui CITE le motif au milieu d'une phrase (voir le gabarit) n'est
+# ainsi jamais prise pour un verdict.
+_RE_LIGNE_VERDICT = re.compile(
+    r'^[ \t]*(' + re.escape(MARQUEUR_VERDICT_SUCCES) + '|' + re.escape(MARQUEUR_VERDICT_ECHEC) + r')[ \t]*$',
+    re.MULTILINE,
+)
 
 
 def _verdict_final(sortie: str) -> str | None:
-    """Retourne le dernier marqueur ✅/❌ trouvé en tête de ligne dans `sortie`
-    (voir `_RE_LIGNE_VERDICT`), ou None si aucune ligne de ce type n'est
-    présente. On garde la DERNIÈRE occurrence : c'est le verdict le plus
-    récent exprimé par l'agent, cohérent avec le garde-fou #581 (déjà fondé
-    sur l'idée que seule la toute fin de la sortie capturée fait foi)."""
+    """Retourne MARQUEUR_VERDICT_SUCCES ou MARQUEUR_VERDICT_ECHEC — la
+    PREMIÈRE ligne de verdict trouvée dans `sortie` (voir `_RE_LIGNE_VERDICT`)
+    — ou None si aucune n'est présente.
+
+    On garde la PREMIÈRE occurrence (issue #764, correction de l'étude #762 —
+    #757 gardait jusqu'ici la DERNIÈRE). Le rapport de clôture réel de
+    l'agent place cette ligne au tout début de sa réponse formatée (voir le
+    gabarit de prompt) : une occurrence supplémentaire plus loin dans la
+    sortie capturée ne peut provenir que d'un texte qui la cite ou d'un tour
+    supplémentaire émis APRÈS le vrai rapport (ex. notification tardive d'un
+    sous-agent en arrière-plan, cas #580 à l'origine du garde-fou #581) — elle
+    ne doit jamais l'emporter sur le verdict réellement rendu en premier."""
     occurrences = _RE_LIGNE_VERDICT.findall(sortie)
-    return occurrences[-1] if occurrences else None
+    return occurrences[0] if occurrences else None
 
 
 def _detecter_erreur_bloquante(stderr_brut: str | None) -> str | None:
@@ -5583,67 +5609,66 @@ def _executer_une_tentative(numero: int, titre: str, body: str, dry_run: bool, m
     # ses signatures dans le rapport de l'agent (issue #761, point 3).
     stderr_brut = sortie if not succes else None
 
-    # Garde-fou de format (issue #581) : le prompt standard impose un
-    # rapport de clôture marqué par ✅ ou ❌ (« Réponds avec ce format
-    # exact »). Cause racine #581 : un sous-agent d'exploration lancé
-    # en arrière-plan par claude (Task/Agent tool) peut terminer APRÈS
-    # que claude ait déjà produit ce rapport final conforme —
-    # `claude --print` reste alors vivant le temps de traiter cette
-    # notification tardive et émet un tour supplémentaire (simple note
-    # de suivi, hors format), qui ÉCRASE le rapport conforme dans le
-    # stdout capturé ci-dessus : exit code 0, donc `succes=True`, mais
-    # contenu hors-sujet/hors-format — cas vécu sur #580, rapport réel
-    # jamais posté nulle part. Détection volontairement large (marqueur
-    # présent N'IMPORTE OÙ dans le texte, pas seulement en tête) : en
-    # pratique claude fait fréquemment précéder le rapport d'une courte
-    # phrase d'intro ("Commit créé avec succès. Le rapport final :"),
-    # anodin et déjà toléré historiquement — seule l'ABSENCE totale du
-    # marqueur (cas #580) doit déclencher ce garde-fou, pas sa position.
-    # dry_run exclu : sa sortie fixe ("[DRY-RUN] ...") ne respecte
-    # jamais ce format et ne passe de toute façon jamais par
-    # `commenter_resultat_avec_retry`.
-    if succes and not dry_run and not ("✅" in sortie or "❌" in sortie):
+    # Garde-fou de format (issue #581, mis à jour par #764) : le prompt
+    # standard impose une ligne de verdict dédiée (voir `_RE_LIGNE_VERDICT`
+    # — ligne HTML invisible, distincte selon succès/échec). Cause racine
+    # #581 : un sous-agent d'exploration lancé en arrière-plan par claude
+    # (Task/Agent tool) peut terminer APRÈS que claude ait déjà produit ce
+    # rapport final conforme — `claude --print` reste alors vivant le temps
+    # de traiter cette notification tardive et émet un tour supplémentaire
+    # (simple note de suivi, hors format), qui ÉCRASE le rapport conforme
+    # dans le stdout capturé ci-dessus : exit code 0, donc `succes=True`,
+    # mais contenu hors-sujet/hors-format — cas vécu sur #580, rapport réel
+    # jamais posté nulle part. Avant #764, la détection tolérait un marqueur
+    # présent n'importe où dans le texte (pour laisser passer une courte
+    # phrase d'intro avant le rapport) ; `_verdict_final` ne retenant
+    # désormais que la PREMIÈRE ligne de verdict, cette tolérance n'a plus
+    # besoin d'être gérée ici — seule l'ABSENCE totale de ligne de verdict
+    # (cas #580) déclenche ce garde-fou. dry_run exclu : sa sortie fixe
+    # ("[DRY-RUN] ...") ne respecte jamais ce format et ne passe de toute
+    # façon jamais par `commenter_resultat_avec_retry`.
+    if succes and not dry_run and _verdict_final(sortie) is None:
         log.warning(
-            f"  ✗ Tentative {tentative} : sortie de claude sans aucun "
-            f"marqueur ✅/❌ de clôture — probablement une réponse "
+            f"  ✗ Tentative {tentative} : sortie de claude sans aucune "
+            f"ligne de verdict de clôture — probablement une réponse "
             f"tardive (sous-agent en arrière-plan terminé après le "
             f"rapport final, issue #581) ayant écrasé le vrai rapport. "
             f"Traitée comme un échec de cette tentative."
         )
         succes = False
         sortie = (
-            "Sortie de claude sans aucun marqueur ✅/❌ de clôture "
-            "attendu — probablement une réponse tardive émise après la "
-            "fin réelle du traitement (ex. notification d'un sous-agent "
-            "en arrière-plan terminé après le rapport final), qui a "
-            "écrasé la vraie réponse dans la sortie capturée (issue "
-            f"#581). Sortie obtenue : {sortie.strip()[:500]}"
+            "Sortie de claude sans aucune ligne de verdict de clôture "
+            "attendue (ni succès ni échec) — probablement une réponse "
+            "tardive émise après la fin réelle du traitement (ex. "
+            "notification d'un sous-agent en arrière-plan terminé après le "
+            "rapport final), qui a écrasé la vraie réponse dans la sortie "
+            f"capturée (issue #581). Sortie obtenue : {sortie.strip()[:500]}"
         )
 
-    # Garde-fou de VALEUR du verdict (issue #757) : #581 ci-dessus ne
-    # vérifie que la PRÉSENCE d'un marqueur, jamais lequel. Une tentative
-    # qui échoue, le rapporte fidèlement avec ❌ en tête de son rapport de
-    # clôture, et se termine avec un code de retour 0 (sortie propre après
-    # un refus de permission ou de périmètre, par exemple) passait jusqu'ici
-    # le garde-fou #581 et restait classée en succès. On ne retient que la
-    # ligne de verdict (voir `_RE_LIGNE_VERDICT`) : un ❌ cité ailleurs dans
-    # le texte (extrait, explication, liste de cas) ne doit pas valoir
-    # verdict. Un code de retour non nul reste un échec quel que soit le
-    # marqueur — ce bloc ne peut donc qu'aggraver `succes` (jamais le
-    # repasser à True) et n'intervient que si le garde-fou #581 ci-dessus
-    # n'a pas déjà tranché.
-    if succes and not dry_run and _verdict_final(sortie) == "❌":
+    # Garde-fou de VALEUR du verdict (issue #757, mis à jour par #764) :
+    # #581 ci-dessus ne vérifie que la PRÉSENCE d'une ligne de verdict,
+    # jamais sa valeur. Une tentative qui échoue, le rapporte fidèlement
+    # (ligne d'échec en tête de son rapport de clôture), et se termine avec
+    # un code de retour 0 (sortie propre après un refus de permission ou de
+    # périmètre, par exemple) passait jusqu'ici le garde-fou #581 et restait
+    # classée en succès. On ne retient que la ligne de verdict (voir
+    # `_RE_LIGNE_VERDICT`) : un motif d'échec cité ailleurs dans le texte
+    # (extrait, explication, liste de cas) ne doit pas valoir verdict. Un
+    # code de retour non nul reste un échec quel que soit le verdict — ce
+    # bloc ne peut donc qu'aggraver `succes` (jamais le repasser à True) et
+    # n'intervient que si le garde-fou #581 ci-dessus n'a pas déjà tranché.
+    if succes and not dry_run and _verdict_final(sortie) == MARQUEUR_VERDICT_ECHEC:
         log.warning(
             f"  ✗ Tentative {tentative} : code de retour 0 mais verdict "
-            f"final ❌ en tête de la ligne de clôture — l'agent rapporte "
-            f"lui-même un échec (issue #757). Traitée comme un échec de "
-            f"cette tentative."
+            f"final d'échec en tête de la ligne de clôture — l'agent "
+            f"rapporte lui-même un échec (issue #757). Traitée comme un "
+            f"échec de cette tentative."
         )
         succes = False
         sortie = (
-            "Code de retour 0 mais verdict final ❌ : l'agent a rapporté un "
-            "échec explicite dans la ligne de clôture de son rapport "
-            f"(issue #757). Sortie obtenue : {sortie.strip()[:500]}"
+            "Code de retour 0 mais verdict final d'échec : l'agent a "
+            "rapporté un échec explicite dans la ligne de clôture de son "
+            f"rapport (issue #757). Sortie obtenue : {sortie.strip()[:500]}"
         )
 
     if empreinte_configs_avant is not None:
@@ -5704,12 +5729,76 @@ def _verifier_violation_scratch(numero: int, titre: str, labels: list[str],
     return True
 
 
+def _avertissement_succes_sans_commit(numero: int, mode: str, dry_run: bool,
+                                       cwd_effectif: Path,
+                                       tete_avant_traitement: str | None) -> str:
+    """Signalement best-effort (issue #764, étude #762) d'un verdict de
+    succès en mode écriture qui ne laisse aucun commit au-delà de celui de
+    sauvegarde. Jamais une décision : ce cas peut être parfaitement légitime
+    (tâche n'impliquant pas d'écriture, bug non reproductible, correctif
+    déjà présent) ou révéler un agent qui se déclare satisfait sans rien
+    avoir produit — on ne peut pas trancher automatiquement, donc on se
+    contente de le relever pour que la relecture humaine s'y arrête. Aucune
+    tentative supplémentaire, aucun label, aucune incidence sur le succès.
+
+    Portée stricte : MODE_ECRITURE hors dry-run uniquement — `None` sinon,
+    y compris `tete_avant_traitement` absent (seul mode où `_demarrer_
+    traitement` le renseigne). Les modes lecture seule et lecture active
+    n'attendent aucun commit.
+
+    Le commit de sauvegarde est repéré par POSITION (le premier commit après
+    `tete_avant_traitement`, relevé par l'appelant AVANT tout traitement en
+    mode écriture), pas par son message : la convention de nommage
+    ("avant-<description>") n'est qu'une consigne de prompt, jamais imposée
+    techniquement.
+
+    Capture best-effort (`git rev-list`) : toute erreur (dépôt inaccessible,
+    commande indisponible...) ne prive que de ce signalement, jamais de la
+    clôture par ailleurs réussie — retourne "" dans ce cas.
+
+    Retourne un avertissement à insérer dans le commentaire de clôture, ou
+    "" si rien à signaler."""
+    if mode != MODE_ECRITURE or dry_run or tete_avant_traitement is None:
+        return ""
+    try:
+        resultat = subprocess.run(
+            ["git", "rev-list", "--reverse", f"{tete_avant_traitement}..HEAD"],
+            cwd=cwd_effectif, capture_output=True, text=True,
+            encoding="utf-8", errors="replace", timeout=30,
+        )
+        if resultat.returncode != 0:
+            return ""
+        commits = [ligne for ligne in resultat.stdout.splitlines() if ligne.strip()]
+    except (OSError, subprocess.SubprocessError):
+        return ""
+
+    if len(commits) > 1:
+        return ""
+
+    log.warning(
+        f"  ⚠ Issue #{numero} : verdict de succès en mode écriture sans "
+        f"aucun commit au-delà de celui de sauvegarde ({len(commits)} "
+        f"commit(s) depuis {tete_avant_traitement[:12]}) — peut être "
+        f"légitime ou révéler un agent qui se déclare satisfait sans rien "
+        f"avoir produit. Signalé pour relecture humaine (issue #764), sans "
+        f"incidence sur le succès."
+    )
+    return (
+        "\n\n⚠️ **Succès sans commit au-delà de la sauvegarde** — ce "
+        "traitement en mode écriture s'est conclu par un succès sans "
+        "laisser aucun commit après celui de sauvegarde. Peut être légitime "
+        "(tâche n'impliquant pas d'écriture, bug non reproductible, "
+        "correctif déjà présent) — à vérifier en relecture humaine.\n"
+    )
+
+
 def _finaliser_succes(numero: int, titre: str, body: str, labels: list[str], mode: str,
                        timeout: int, avertissement_conflit: str,
                        avertissement_worktree_deja_pris: str,
                        avertissement_worktree_repris: str, sortie: str,
                        debut_traitement: float, nb_projets_actifs_debut: int,
-                       est_relance: bool) -> None:
+                       est_relance: bool, dry_run: bool, cwd_effectif: Path,
+                       tete_avant_traitement: str | None) -> None:
     """Traitement d'une tentative réussie : commentaire de résultat (avec
     retry), fermeture de l'issue, historique des durées, calibration
     automatique du TIMEOUT et notification. Termine toujours le traitement de
@@ -5718,9 +5807,18 @@ def _finaliser_succes(numero: int, titre: str, body: str, labels: list[str], mod
     avertissement_worktree_repris (issue #725) : même esprit
     qu'avertissement_worktree_deja_pris — rend visible dans le compte-rendu
     de clôture qu'un worktree déjà existant a été repris pour cette issue
-    (relance) plutôt que créé, et l'écart de commits avec master s'il y en a."""
+    (relance) plutôt que créé, et l'écart de commits avec master s'il y en a.
+
+    dry_run / cwd_effectif / tete_avant_traitement (issue #764) : simplement
+    transmis à `_avertissement_succes_sans_commit` ci-dessus."""
     log.info(f"  ✓ Issue #{numero} traitée avec succès.")
-    message_resultat = f"{MARQUEUR_RESULTAT}\n## Résultat\n\n{avertissement_conflit}{avertissement_worktree_deja_pris}{avertissement_worktree_repris}{sortie}"
+    avertissement_sans_commit = _avertissement_succes_sans_commit(
+        numero, mode, dry_run, cwd_effectif, tete_avant_traitement)
+    message_resultat = (
+        f"{MARQUEUR_RESULTAT}\n## Résultat\n\n{avertissement_conflit}"
+        f"{avertissement_worktree_deja_pris}{avertissement_worktree_repris}"
+        f"{sortie}{avertissement_sans_commit}"
+    )
     # Le commentaire de résultat est critique (issue #195) : on le
     # poste avec retry/backoff et on ne ferme l'issue QUE s'il a réussi.
     if not commenter_resultat_avec_retry(numero, message_resultat):
@@ -6084,7 +6182,8 @@ def _traiter_issue_synchrone(issue: dict, dry_run: bool, chemin_worktree: Path |
                 _finaliser_succes(numero, titre, body, labels, mode, timeout,
                                    avertissement_conflit, avertissement_worktree_deja_pris,
                                    avertissement_worktree_repris,
-                                   sortie, debut_traitement, nb_projets_actifs_debut, est_relance)
+                                   sortie, debut_traitement, nb_projets_actifs_debut, est_relance,
+                                   dry_run, cwd_effectif, tete_avant_traitement)
                 return
 
             # Échec
