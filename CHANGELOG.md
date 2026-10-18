@@ -9,6 +9,35 @@ milliers de caractères sur une seule ligne logique, coûteux à relire et
 
 Convention d'ajout : voir §10 de `BRIDGE_AGENT_DOC.md`.
 
+
+## 18 octobre 2026 — issue #774
+
+Onglet Configuration : le champ « Modèle Claude Code » (`#conf-MODELE_CCL`) ne
+concerne que l'agent historique (`claude`) — il est désormais **masqué**
+quand l'agent sélectionné dans la liste « Agent d'exécution » n'est pas celui-
+ci, remplacé par une mention courte nommant l'agent en cours et son propre
+onglet (ex. « Le modèle de l'agent Vibe se règle dans son propre onglet «
+Agent Vibe ». »). Le lien agent ↔ champ se déduit de `cfg.agent_defaut_global`
+(reflet de `watcher.AGENT_PAR_DEFAUT`, déjà transmis par le serveur) plutôt
+que d'un nom écrit en dur côté JS : un agent ajouté plus tard à
+`AGENTS_CONNUS`, par définition non historique, ne fait jamais réapparaître ce
+champ (`champModeleCCLConcerne()`, `static/js/config.js`). Le masquage suit la
+**sélection en cours** dans la liste déroulante (écouteur `change` sur
+`#conf-AGENT`), pas seulement la valeur enregistrée : changer d'agent
+affiche/masque le champ immédiatement, sans attendre l'enregistrement. Pur
+affichage (`style.display`), la valeur du `<select>` MODELE_CCL n'est jamais
+effacée et part toujours dans `sauvegarderConfig()` — le réglage se retrouve
+intact si le projet repasse sur l'agent historique.
+
+Avertissement sur le redémarrage du watcher (sous le sélecteur d'agent,
+ajouté par #771) raccourci à l'information utile : « Ne prend effet qu'au
+redémarrage du watcher de ce projet. » — l'explication sur la différence avec
+le modèle et le rappel du bouton (déjà visible juste en dessous) retirés.
+
+`watcher.py` et l'onglet Résultats non touchés. Tests : 5 nouveaux cas dans
+`static/js/tests/config.test.js` pour `champModeleCCLConcerne()`/
+`texteModeleAutreAgent()` (301 tests JS passent au total, `node --test
+static/js/tests/*.test.js`).
 ## 18 octobre 2026 — issue #773
 
 Onglet Résultats : correctif de la bordure épaisse posée par l'issue #772 sur les pastilles de filtre « agent secondaire », totalement invisible en pratique dans les deux états (couleur du projet sur fond de même couleur une fois sélectionnée, gris à peine perceptible sur fond blanc sinon). `majClassesBoutonsFiltre()` (`static/js/app.js`) assume désormais le conflit que #772 évitait, mais **seulement pour les pastilles marquées `.agent-secondaire`** (décision inchangée, toujours posée par `estAgentSecondaire()` dans `static/js/resultats.js`) : leur bordure est fixée au noir (`#000`) quel que soit l'état sélectionné/désélectionné, au lieu de suivre la couleur du projet ou de s'effacer avec `.inactif`. Les pastilles sur l'agent historique ne changent ni d'épaisseur ni de couleur, dans aucun état — leur bordure reste pilotée par la sélection comme avant #772. `static/css/resultats.css` porte un repli `border-color:#000` sur `.filtre-projet.agent-secondaire` (secours si le style inline ne s'applique pas ; en usage normal c'est le JS qui tranche). Comportement des filtres eux-mêmes inchangé ; `watcher.py` non touché.

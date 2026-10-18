@@ -111,6 +111,28 @@ export function construireOptionsAgent(agentsValides, valeurActuelle, defautGlob
   }));
 }
 
+/** Le champ « Modèle Claude Code » (#conf-MODELE_CCL) ne concerne que l'agent
+ *  historique (issue #774) : c'est le .conf du projet qui porte son réglage,
+ *  contrairement aux autres agents qui règlent le leur dans leur propre
+ *  onglet (ex. « Agent Vibe »). `agentHistorique` vient de
+ *  `cfg.agent_defaut_global` (déjà transmis par le serveur, reflet de
+ *  watcher.AGENT_PAR_DEFAUT) plutôt qu'un nom écrit en dur ici : un agent
+ *  ajouté plus tard à AGENTS_CONNUS, par définition non historique, ne fait
+ *  jamais réapparaître ce champ. */
+export function champModeleCCLConcerne(agentSelectionne, agentHistorique) {
+  return String(agentSelectionne || '').trim().toLowerCase()
+      === String(agentHistorique || '').trim().toLowerCase();
+}
+
+/** Mention affichée à la place du champ « Modèle Claude Code » quand l'agent
+ *  sélectionné n'est pas l'agent historique (issue #774) — nomme l'agent en
+ *  cours plutôt qu'un texte générique. */
+export function texteModeleAutreAgent(agentSelectionne) {
+  const nom = String(agentSelectionne || '').trim();
+  const nomAffiche = nom ? nom.charAt(0).toUpperCase() + nom.slice(1) : '';
+  return `Le modèle de l'agent ${nomAffiche} se règle dans son propre onglet « Agent ${nomAffiche} ».`;
+}
+
 /** Message final affiché après une suppression réussie, selon le statut du
  *  commit/push automatique de BRIDGE_AGENT_DOC.md (issue #645). */
 export function messageStatutCommitDoc(statut, commandeManuelle) {
@@ -171,6 +193,26 @@ function remplirSelectAgent(cfg) {
   select.value = String(cfg.agent || '').trim().toLowerCase();
 }
 
+// Agent historique concerné par #conf-MODELE_CCL (voir champModeleCCLConcerne
+// ci-dessus), mémorisé au dernier chargement pour que le listener de
+// changement sur #conf-AGENT (installerDelegationConfig) n'ait pas besoin de
+// recharger la config pour suivre la sélection en cours.
+let agentHistoriqueCourant = 'claude';
+
+// Affiche/masque #conf-MODELE_CCL-champ selon l'agent SÉLECTIONNÉ (et non la
+// valeur enregistrée) — issue #774. Ne touche qu'à l'affichage : la valeur du
+// select reste intacte et part toujours dans sauvegarderConfig(), masquée ou
+// non.
+function majVisibiliteModeleCCL(agentSelectionne) {
+  const champ = document.getElementById('conf-MODELE_CCL-champ');
+  const autreAgent = document.getElementById('conf-MODELE_CCL-autre-agent');
+  if (!champ || !autreAgent) return;
+  const concerne = champModeleCCLConcerne(agentSelectionne, agentHistoriqueCourant);
+  champ.style.display = concerne ? '' : 'none';
+  autreAgent.style.display = concerne ? 'none' : 'block';
+  if (!concerne) autreAgent.textContent = texteModeleAutreAgent(agentSelectionne);
+}
+
 /** Charge la config du projet actuellement sélectionné (sélecteur global
  *  #projet) dans les champs de l'onglet. */
 export async function chargerConfig() {
@@ -187,7 +229,9 @@ export async function chargerConfig() {
     majChampConfig('conf-TIMEOUT_CLAUDE', cfg.timeout_claude || 300);
     majChampConfig('conf-FICHIER_CONTEXTE', cfg.fichier_contexte || '');
     remplirSelectModeleCCL(cfg);
+    agentHistoriqueCourant = cfg.agent_defaut_global || 'claude';
     remplirSelectAgent(cfg);
+    majVisibiliteModeleCCL(document.getElementById('conf-AGENT').value);
     majChampConfig('conf-LOG_TAILLE_MAX_MO', cfg.log_taille_max_mo || 1);
     majChampConfig('conf-LOG_ARCHIVES', cfg.log_archives || 5);
     // ?? et non || : 0 est une valeur valide (auto-extinction désactivée).
@@ -393,6 +437,10 @@ function installerDelegationConfig() {
     if (span) span.textContent = el.value;
   });
   dom.surAction('[data-action="config-ouvrir-suppression"]', 'click', () => ouvrirSupprimerProjet());
+  // Suit la sélection EN COURS dans la liste, pas la valeur enregistrée — le
+  // champ Modèle Claude Code apparaît/disparaît immédiatement au changement
+  // d'agent, sans attendre l'enregistrement (issue #774).
+  dom.surAction('#conf-AGENT', 'change', (e, el) => majVisibiliteModeleCCL(el.value));
 
   dom.surAction('[data-action="sp-case"]', 'change', () => spMajBoutonEtat());
   dom.surAction('[data-action="sp-nom-confirmation"]', 'input', () => spMajBoutonEtat());

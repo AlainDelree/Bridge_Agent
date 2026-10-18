@@ -12,6 +12,8 @@ import {
   messageStatutCommitDoc,
   construireOptionsModeleCCL,
   construireOptionsAgent,
+  champModeleCCLConcerne,
+  texteModeleAutreAgent,
 } from '../config.js';
 
 const MODELES = ['claude-sonnet-5', 'claude-opus-4-8', 'claude-haiku-4-5', 'claude-fable-5'];
@@ -120,4 +122,27 @@ test('construireOptionsAgent : l\'agent par défaut est annoté, les autres non'
 test('construireOptionsAgent : un agent ajouté à AGENTS_CONNUS apparaît sans modif ici', () => {
   const options = construireOptionsAgent(['claude', 'vibe', 'nouvel-agent'], 'claude', 'claude');
   assert.deepEqual(options.map(o => o.value), ['claude', 'nouvel-agent', 'vibe']);
+});
+
+// ─── champModeleCCLConcerne / texteModeleAutreAgent (issue #774) ───────────
+
+test('champModeleCCLConcerne : agent sélectionné = agent historique → concerné', () => {
+  assert.equal(champModeleCCLConcerne('claude', 'claude'), true);
+});
+
+test('champModeleCCLConcerne : agent sélectionné différent → pas concerné', () => {
+  assert.equal(champModeleCCLConcerne('vibe', 'claude'), false);
+});
+
+test('champModeleCCLConcerne : un troisième agent (non historique) ne réaffiche pas le champ', () => {
+  assert.equal(champModeleCCLConcerne('nouvel-agent', 'claude'), false);
+});
+
+test('champModeleCCLConcerne : casse/espaces normalisés avant comparaison', () => {
+  assert.equal(champModeleCCLConcerne('  Claude  ', 'claude'), true);
+});
+
+test('texteModeleAutreAgent : nomme l\'agent sélectionné, capitalisé', () => {
+  assert.equal(texteModeleAutreAgent('vibe'),
+    'Le modèle de l\'agent Vibe se règle dans son propre onglet « Agent Vibe ».');
 });
