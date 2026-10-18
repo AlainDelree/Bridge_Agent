@@ -9,6 +9,41 @@ milliers de caractères sur une seule ligne logique, coûteux à relire et
 
 Convention d'ajout : voir §10 de `BRIDGE_AGENT_DOC.md`.
 
+# CHANGELOG-775 — à fusionner dans CHANGELOG.md
+
+## 18 octobre 2026 — issue #775
+
+Élagage de `BRIDGE_AGENT_DOC.md` : retrait des éléments d'interface/affichage
+que les ajouts récents liés au second agent (Vibe) y avaient fait entrer,
+sans rapport avec la rédaction d'une issue ou la compréhension du
+fonctionnement du système.
+
+- **Retiré** : le paragraphe sur l'onglet web « Agent Vibe » (choix du
+  modèle actif, déclaration/retrait, écriture chirurgicale de `config.toml`)
+  et le journal `logs/journal_modele_vibe.jsonl` qu'il alimente (§10, issues
+  #766/#769) — pure description d'interface, aucune issue ne s'écrit
+  différemment selon que ce journal existe.
+- **Retiré** : le paragraphe sur la ligne `🤖 Plateforme :` du commentaire
+  de clôture et son renommage depuis « Agent » (§19, issue #768), ainsi que
+  les deux renvois croisés vers elle (§4, §10) — intitulé d'affichage,
+  distinct du mécanisme réellement utile (labels `agent-claude`/`agent-vibe`,
+  conservés).
+- **Conservé** sans y toucher : la présence des deux agents d'exécution, le
+  réglage par projet (clé `AGENT` du `.conf`) et les labels posés à la
+  clôture (§4, §10) — ont leur place dans ce document.
+- **Ajouté** (§5) : l'indisponibilité du mode lecture active (`mode_scratch`)
+  pour l'agent `vibe` (issue #761) — vibe n'a aucun moyen d'ouvrir le
+  dossier scratch en écriture sans ouvrir aussi le projet ; une issue en
+  lecture active sur un projet réglé sur cet agent échoue. Cette contrainte
+  n'était documentée que dans `watcher.py`, jamais dans le document de
+  référence pour Claude Chat.
+- Ligne de pied de page (« Dernière mise à jour ») mise à jour en
+  conséquence, sans toucher à l'exemple de ce même format au §10.
+
+Aucune réécriture globale entreprise : seules les parties dont l'inutilité
+était nette ont été retirées, le reste du document (dont le reste du §10,
+§16, §18, §19) n'a pas été remis en cause.
+
 ## 18 octobre 2026 — issue #772
 
 Onglet Résultats : les pastilles de filtre par projet marquent désormais d'une **bordure épaisse** (3px) les projets qui tournent sur un agent d'exécution autre que l'historique (`claude`) — clé `AGENT` du `.conf` (issues #759/#771). Information portée par un nouvel attribut `data-agent` sur chaque `<option>` du sélecteur global `#projet` (reflet de `Config.agent`, exposé par `app/vues.py`) et `data-agent-defaut` sur le `<select>` lui-même (reflet de `AGENT_PAR_DEFAUT`) ; `construireBoutonsFiltre()` (`static/js/app.js`) les compare via la nouvelle fonction pure `estAgentSecondaire(agent, agentDefaut)` (`static/js/resultats.js`, testée sous Node, exposée au pont `window.Bridge.resultats`). Aucune liste de projets écrite en dur : la règle se déduit uniquement de la clé `AGENT`, un projet rebasculé change d'apparence sans toucher à l'interface. La bordure épaisse reste visible pastille **sélectionnée** : la nouvelle classe CSS `.filtre-projet.agent-secondaire` ne pose que l'épaisseur (`border-width:3px`), jamais la couleur — déjà pilotée en inline par `majClassesBoutonsFiltre()` (couleur du projet si actif, grisé sinon) — donc les deux styles coexistent sans conflit. Comportement des filtres eux-mêmes inchangé ; `watcher.py` non touché. Tests : 4 nouveaux cas dans `static/js/tests/resultats.test.js` (296 tests JS passent au total) ; les 72 suites `tests/test_*.py` passent également (dont `test_choix_agent_config_771.py` et `test_retrait_bandeaux_historiques_746.py`, qui rendent une page complète).
