@@ -394,6 +394,13 @@ déploiement (profil TOML + dossiers de confiance) vivent dans
 `provisioning/vibe/` (voir `provisioning/vibe/README.md`). Basculer un
 projet dessus reste une action manuelle, projet par projet.
 
+Le **modèle actif de Vibe** (`~/.vibe/config.toml`, réglage de COMPTE —
+s'applique à tous les projets sur cette machine, pas à un seul) se gère
+depuis l'onglet **Agent Vibe** de l'interface web (`app/vibe_modele.py`,
+issue #766) : choix du modèle actif, déclaration/retrait d'un modèle. Détail
+de l'écriture chirurgicale (préservation du contenu non géré) et de la
+collision d'alias avec un modèle intégré : `provisioning/vibe/README.md` §4.
+
 **Historique du projet** : vit dans `CHANGELOG.md` à la racine, une entrée
 par issue (`## <date> — issue #N`), la plus récente en premier — pas dans ce
 document. Une issue en écriture n'édite jamais `CHANGELOG.md` directement :
@@ -637,7 +644,7 @@ calibration (constantes actuelles du code : `K_VARIABILITE` = 3, issue
 
 ---
 
-*Dernière mise à jour : 15 octobre 2026 — Mistral Vibe comme second agent
-d'exécution disponible, non basculé par défaut (issue #760).*
+*Dernière mise à jour : 18 octobre 2026 — gestion du modèle de l'agent Vibe
+depuis l'interface web, onglet Agent Vibe (issue #766).*
 
 Historique complet : voir [`CHANGELOG.md`](CHANGELOG.md).

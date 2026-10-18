@@ -53,6 +53,11 @@ import { initJournal } from '../journal.js';
 // direct, plus par le pont) ; initialiserConfig() ci-dessous ne branche que la
 // délégation des boutons/inputs de l'onglet et de sa modale de suppression.
 import { initialiserConfig } from '../config.js';
+// Module par fonctionnalité — onglet « Agent Vibe » (issue #766) : modèle
+// actif de l'agent Vibe (~/.vibe/config.toml), réglage de compte, pas de
+// projet. chargerVibeModele() est appelé directement par onglets.js à
+// l'activation de l'onglet ; initierVibeModele() ne branche que les boutons.
+import { initierVibeModele } from '../vibe_modele.js';
 // Module par fonctionnalité — onglet « En attente » (issue #714, suite
 // #713) : liste/Lancer/Supprimer des issues mises de côté par le champ
 // ATTENTE. Pas d'entrée dans onglets.js::initialisationsPour — ce module
@@ -114,6 +119,11 @@ initJournal();
 // chargerConfig() est appelé directement par onglets.js à l'activation de
 // l'onglet, sans passer par ici.
 initialiserConfig();
+
+// Onglet « Agent Vibe » (issue #766) : installe la délégation des boutons
+// (Activer/Ajouter/Retirer) — chargerVibeModele() est appelé directement par
+// onglets.js à l'activation de l'onglet.
+initierVibeModele();
 
 // Onglet « En attente » (issue #714) : installe la délégation Lancer/
 // Supprimer et les abonnements (activation d'onglet + compteur du badge,

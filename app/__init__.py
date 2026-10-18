@@ -123,6 +123,8 @@ def _enregistrer_routes(app: Flask) -> None:
     from app.cases_cochees import (lire_cases, cocher_case, decocher_case,
                                    importer_cases_route, notifier_case_decochee)
     from app.github_status import route_statut_github
+    from app.vibe_modele import (etat_vibe_modele, activer_vibe_modele,
+                                 ajouter_vibe_modele, retirer_vibe_modele)
     from app.vues import index
 
     app.add_url_rule("/login", "login", login, methods=["GET"])
@@ -231,3 +233,10 @@ def _enregistrer_routes(app: Flask) -> None:
     # (incident/ok/injoignable, cache serveur ~60s) + épisode de panne en
     # cours, interrogé par le JS après un échec gh classé « panne probable ».
     app.add_url_rule("/github-statut", "route_statut_github", login_requis(route_statut_github), methods=["GET"])
+    # ─── Modèle de l'agent Vibe (issue #766) : réglage de compte, PAS un
+    # `.conf` de projet — s'applique à tous les projets utilisant cet agent,
+    # d'où l'absence de <nom_projet> (même famille que /son-actif).
+    app.add_url_rule("/vibe-modele/etat", "etat_vibe_modele", login_requis(etat_vibe_modele), methods=["GET"])
+    app.add_url_rule("/vibe-modele/activer", "activer_vibe_modele", login_requis(activer_vibe_modele), methods=["POST"])
+    app.add_url_rule("/vibe-modele/ajouter", "ajouter_vibe_modele", login_requis(ajouter_vibe_modele), methods=["POST"])
+    app.add_url_rule("/vibe-modele/retirer", "retirer_vibe_modele", login_requis(retirer_vibe_modele), methods=["POST"])
