@@ -9,6 +9,10 @@ milliers de caractères sur une seule ligne logique, coûteux à relire et
 
 Convention d'ajout : voir §10 de `BRIDGE_AGENT_DOC.md`.
 
+## 18 octobre 2026 — issue #771
+
+Onglet Configuration : ajout du choix de l'**agent d'exécution** du projet (clé `AGENT` du `.conf`, introduite par les issues #759/#760) — nouvelle liste déroulante « Agent d'exécution », dérivée de `watcher.AGENTS_CONNUS` (source unique, jamais dupliquée côté interface : un agent ajouté plus tard y apparaît sans rien changer ici) ; `GET /config/<projet>` expose `agent`/`agents_valides`/`agent_defaut_global`. Une valeur absente du `.conf` reste possible et équivaut à `AGENT_PAR_DEFAUT` ("claude") ; l'option correspondante est annotée « (défaut) » dans la liste plutôt que représentée par une entrée vide. `sauvegarder_conf()` **refuse** désormais toute valeur `AGENT` inconnue (rien n'est écrit sur disque) — un agent non reconnu empêcherait le watcher de démarrer. Mention explicite dans l'onglet : contrairement au modèle Claude Code (relu à chaque session), le `.conf` n'étant chargé qu'une fois au démarrage, le changement d'agent ne prend effet qu'au redémarrage du watcher du projet (bouton « Enregistrer et relancer »). Vérifié : le garde-fou #318/#724 (protection de `configs/*.conf` pendant une issue mode_write dans un autre projet) couvre déjà ce changement, via le même mécanisme générique `etat_configs_legitimes.enregistrer()` déjà appelé par `sauvegarder_conf()` pour toute clé éditable — aucune modification nécessaire de ce garde-fou. `watcher.py` non modifié (listes déjà publiques). Tests : `tests/test_choix_agent_config_771.py` (4 scénarios) + `static/js/tests/config.test.js` (3 nouveaux cas pour `construireOptionsAgent`).
+
 # CHANGELOG-770 — à fusionner dans CHANGELOG.md
 
 ## 18 octobre 2026 — issue #770
