@@ -414,8 +414,9 @@ par issue (`## <date> — issue #N`), la plus récente en premier — pas dans c
 document. Une issue en écriture n'édite jamais `CHANGELOG.md` directement :
 elle écrit sa propre entrée dans un fichier `CHANGELOG-<N>.md` à la racine de
 son worktree, fusionné ensuite dans `CHANGELOG.md` par
-`scripts/fusionner_changelog.py` au moment de la fusion du worktree (détail :
-`WORKTREES.md`).
+`scripts/fusionner_changelog.py` — **après** avoir fusionné la branche
+worktree dans `master`, jamais avant, et toujours depuis `REP_TRAVAIL`,
+jamais depuis le worktree lui-même (détail et raison : `WORKTREES.md` §3).
 
 **Toute issue qui modifie ce document** (`BRIDGE_AGENT_DOC.md`) doit, dans la
 même opération, mettre à jour la toute dernière ligne du fichier — format
@@ -652,8 +653,8 @@ calibration (constantes actuelles du code : `K_VARIABILITE` = 3, issue
 
 ---
 
-*Dernière mise à jour : 18 octobre 2026 — élagage des éléments d'interface
-et d'affichage sans effet sur la rédaction d'une issue, et documentation de
-l'indisponibilité de la lecture active pour l'agent `vibe` (issue #775).*
+*Dernière mise à jour : 18 octobre 2026 — correction de l'ordre
+fusion/consolidation du changelog dans `WORKTREES.md` : fusionner d'abord,
+consolider ensuite depuis `REP_TRAVAIL`, jamais l'inverse (issue #776).*
 
 Historique complet : voir [`CHANGELOG.md`](CHANGELOG.md).
