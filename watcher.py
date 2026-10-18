@@ -1627,8 +1627,14 @@ def formater_bloc_calibration(duree_s: float, timeout_courant: int, suggere: flo
     Seul canal fiable pour transmettre cette information calculée localement
     à Claude Chat, qui n'a pas accès direct aux fichiers d'état du ThinkPad
     (etat_timeout.json, etat_ambiance.json, historique_durees.json — tous
-    gitignorés)."""
-    bloc = f"\n\n---\n⏱️ Durée réelle : {duree_s:.0f}s (TIMEOUT courant : {timeout_courant}s)"
+    gitignorés).
+
+    Inclut aussi l'agent qui a traité l'issue (CFG.libelle_agent_effectif,
+    issue #767) : connu du watcher par la configuration du projet (clé
+    AGENT/LIBELLE_AGENT, ou déduction de plateforme), jamais déclaré par
+    l'agent lui-même — qui pourrait se tromper sur sa propre identité."""
+    bloc = f"\n\n---\n🤖 Agent : {CFG.libelle_agent_effectif}"
+    bloc += f"\n⏱️ Durée réelle : {duree_s:.0f}s (TIMEOUT courant : {timeout_courant}s)"
     if suggere is not None:
         bloc += f"\n📊 TIMEOUT_suggéré (calibration automatique, issue #221) : {suggere:.0f}s"
     return bloc
@@ -3700,6 +3706,17 @@ le travail déjà fait par cette tentative précédente. Dans ce cas :
         # Code (outil Task/Agent) — pilotée par AGENTS_CONNUS[CFG.agent] plutôt
         # qu'en dur (issue #759). Vide pour un agent sans cette notion.
         clause_sous_agents = AGENTS_CONNUS[CFG.agent].get("clause_sous_agents", "")
+        # Ligne des commits du gabarit de rapport (issue #767) : la décision
+        # entre "vrais hash" et "aucun" dépend uniquement du MODE, déjà connu
+        # ICI par le watcher — donc résolue une fois pour toutes à la
+        # construction du prompt plutôt que laissée au choix de l'agent.
+        # Avant #767, la consigne de choix ("ou \"aucun\" si lecture seule")
+        # restait accolée au modèle à remplir ; copiée telle quelle au lieu
+        # d'être appliquée sur quatre issues consécutives d'un même projet.
+        if mode == MODE_ECRITURE:
+            ligne_commits = f"Commits (dans {cwd_effectif}) : [hash backup] (backup) + [hash fix] (fix)"
+        else:
+            ligne_commits = f"Commits (dans {cwd_effectif}) : aucun (lecture seule)"
         prompt = f"""Tu es l'agent Linux (CCL) du bridge inter-agents, projet « {CFG.nom} ».
 Traite la tâche suivante issue du GitHub Issue #{numero} :
 
@@ -3713,12 +3730,14 @@ Instructions :
 2. Effectue le travail demandé (dans les limites du mode ci-dessus)
 3. Si tu dois créer une issue for-windows, utilise : gh issue create --repo {CFG.depot} --label "bridge,for-windows" ...
 {clause_sous_agents}
-Réponds avec ce format exact, sans rien ajouter avant ni après :
+Réponds avec ce format exact, sans rien ajouter avant ni après — remplis
+"py_compile" avec le résultat réel (OK, ou le message d'échec) si tu as
+modifié au moins un fichier Python, "N/A" sinon :
 
 {MARQUEUR_VERDICT_SUCCES}
 ✅ Tâche terminée — [résumé en une ligne de ce qui a été fait]
-Commits (dans {cwd_effectif}) : [hash backup] (backup) + [hash fix] (fix) — ou "aucun" si lecture seule
-py_compile : OK / N/A — push : aucun
+{ligne_commits}
+py_compile : [résultat] — push : aucun
 
 <details>
 <summary>Détails complets</summary>
