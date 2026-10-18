@@ -76,6 +76,27 @@ export function construireChampsAjout(valeurs, schema) {
   return champs;
 }
 
+/** Libellé lisible d'une entrée de journal (issue #769) — une par changement
+ *  de modèle actif, déclaration ou retrait fait depuis cet onglet. Pur, pas
+ *  de dépendance au DOM. */
+export function libelleEntreeJournal(entree) {
+  if (!entree) return '';
+  const { evenement, ancien, nouveau } = entree;
+  if (evenement === 'changement_actif') return `Modèle actif : ${ancien || '(aucun)'} → ${nouveau}`;
+  if (evenement === 'declaration') return `Modèle déclaré : ${nouveau}`;
+  if (evenement === 'retrait') return `Modèle retiré : ${ancien}`;
+  return `${evenement} : ${ancien || ''} → ${nouveau || ''}`;
+}
+
+/** Date d'une entrée de journal, formatée pour l'affichage local (repli sur
+ *  la valeur brute si elle n'est pas un ISO 8601 interprétable). */
+export function dateEntreeJournal(entree) {
+  const brute = entree && entree.date;
+  if (!brute) return '';
+  const d = new Date(brute);
+  return Number.isNaN(d.getTime()) ? brute : d.toLocaleString();
+}
+
 /** Interprète l'échec d'un appel /vibe-modele/* : statut non-2xx → ErreurApi
  *  dont `.corps` est le texte brut (JSON) de la réponse serveur, portant le
  *  champ `erreur` (et `necessite_confirmation` pour la collision d'alias
@@ -107,6 +128,15 @@ function rendreLigneModele(modele, nbModeles) {
       ? `<button data-action="vibe-retirer" data-alias="${dom.echapperHtml(modele.alias)}">Retirer</button>`
       : '<span style="color:#999;font-size:12px">—</span>')
     + '</td></tr>'
+  );
+}
+
+function rendreLigneJournal(entree) {
+  return (
+    '<li style="padding:6px 0;border-bottom:1px solid #f3f3f0">'
+    + `<span style="color:#999;margin-right:8px">${dom.echapperHtml(dateEntreeJournal(entree))}</span>`
+    + dom.echapperHtml(libelleEntreeJournal(entree))
+    + '</li>'
   );
 }
 
@@ -162,6 +192,14 @@ export async function chargerVibeModele() {
 
   const champsAjout = dom.$('#vibe-champs-ajout');
   if (champsAjout) champsAjout.innerHTML = rendreChampsAjout(etat.schema);
+
+  const listeJournal = dom.$('#vibe-liste-journal');
+  const msgJournal = dom.$('#vibe-msg-journal');
+  if (listeJournal) {
+    const journal = etat.journal || [];
+    listeJournal.innerHTML = journal.map(rendreLigneJournal).join('');
+    if (msgJournal) msgJournal.textContent = journal.length ? '' : 'Aucun changement journalisé pour l\'instant.';
+  }
 }
 
 async function activerModeleChoisi() {

@@ -48,12 +48,29 @@ des issues #760/#761) ::
   ``ALIAS_RESERVES_CONNUS`` reste donc un filet BEST-EFFORT (avertissement,
   pas un blocage) : la seule collision certaine, et donc bloquée sans
   confirmation possible, est un doublon d'alias AU SEIN du fichier lui-même.
+
+- **Journal des changements (issue #769).** Chaque changement de modèle
+  actif, déclaration ou retrait effectué DEPUIS CET ONGLET est consigné,
+  best-effort, dans ``FICHIER_JOURNAL_MODELE`` (JSONL, même convention que
+  ``logs/journal_ecritures_historique.jsonl`` de ``watcher.py`` — issue
+  #521). Ce journal ne couvre QUE les actions passées par
+  ``_definir_actif``/``_ajouter_modele``/``_retirer_modele`` : ni une édition
+  manuelle de ``config.toml``, ni la réécriture faite par Vibe lui-même à
+  chaque démarrage (réconciliation avec le compte) n'y apparaissent — le
+  dire clairement à l'écran évite de le prendre pour un historique exhaustif
+  du fichier. Retenue bornée aux ``NB_ENTREES_JOURNAL_CONSERVEES`` entrées
+  les plus récentes plutôt qu'un archivage par catégorie (pattern de
+  ``scripts/archiver_historique.py``) : le volume d'une action manuelle
+  depuis l'interface reste de toute façon faible, même logique que
+  ``NB_SAUVEGARDES_CONSERVEES`` ci-dessous.
 """
 
+import json
 import re
 import shutil
 import time
 import tomllib
+from datetime import datetime, timezone
 from pathlib import Path
 
 from flask import jsonify, request
@@ -61,6 +78,11 @@ from flask import jsonify, request
 CHEMIN_VIBE_CONFIG = Path.home() / ".vibe" / "config.toml"
 DOSSIER_SAUVEGARDES = Path.home() / ".vibe" / "bridge_sauvegardes"
 NB_SAUVEGARDES_CONSERVEES = 10
+
+DOSSIER_LOGS = Path(__file__).resolve().parent.parent / "logs"
+FICHIER_JOURNAL_MODELE = DOSSIER_LOGS / "journal_modele_vibe.jsonl"
+NB_ENTREES_JOURNAL_CONSERVEES = 300
+NB_ENTREES_JOURNAL_AFFICHEES = 20
 
 ALIAS_RESERVES_CONNUS = {"mistral-medium-3.5"}
 
@@ -152,6 +174,7 @@ def _etat() -> dict:
         "modeles": [],
         "schema": _schema([]),
         "alias_reserves_connus": sorted(ALIAS_RESERVES_CONNUS),
+        "journal": _journal_recent(),
     }
     if not base["fichier_existe"]:
         return base
@@ -229,6 +252,50 @@ def _toml_valeur(valeur) -> str:
     return f'"{texte}"'
 
 
+def _journaliser_modele(evenement: str, *, ancien: str | None, nouveau: str | None) -> None:
+    """Ajoute une ligne JSONL décrivant un changement effectué DEPUIS CET
+    ONGLET (``evenement`` : ``"changement_actif"``, ``"declaration"`` ou
+    ``"retrait"``). Best-effort strict (point de vigilance de l'issue #769) :
+    ne doit JAMAIS faire échouer l'opération qu'elle journalise — toute
+    exception est avalée. Purge les entrées les plus anciennes au-delà de
+    ``NB_ENTREES_JOURNAL_CONSERVEES`` pour ne pas grossir indéfiniment."""
+    try:
+        DOSSIER_LOGS.mkdir(parents=True, exist_ok=True)
+        lignes = []
+        if FICHIER_JOURNAL_MODELE.exists():
+            lignes = FICHIER_JOURNAL_MODELE.read_text(encoding="utf-8").splitlines()
+        lignes.append(json.dumps({
+            "date": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "evenement": evenement,
+            "ancien": ancien,
+            "nouveau": nouveau,
+        }, ensure_ascii=False))
+        lignes = lignes[-NB_ENTREES_JOURNAL_CONSERVEES:]
+        FICHIER_JOURNAL_MODELE.write_text("\n".join(lignes) + "\n", encoding="utf-8")
+    except Exception:
+        pass
+
+
+def _journal_recent(n: int = NB_ENTREES_JOURNAL_AFFICHEES) -> list[dict]:
+    """Les ``n`` entrées les plus récentes du journal, la plus récente en
+    premier. Ne lève jamais : fichier absent/corrompu → liste vide, une
+    ligne corrompue individuelle est simplement ignorée."""
+    if not FICHIER_JOURNAL_MODELE.exists():
+        return []
+    try:
+        lignes = FICHIER_JOURNAL_MODELE.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return []
+    entrees = []
+    for ligne in lignes[-n:]:
+        try:
+            entrees.append(json.loads(ligne))
+        except json.JSONDecodeError:
+            continue
+    entrees.reverse()
+    return entrees
+
+
 def _definir_actif(alias: str) -> tuple[bool, str]:
     texte = _lire_texte()
     if texte is None:
@@ -241,7 +308,8 @@ def _definir_actif(alias: str) -> tuple[bool, str]:
     alias_connus = {m.get("alias") for m in donnees.get("models") or [] if isinstance(m, dict)}
     if alias not in alias_connus:
         return False, f"alias inconnu dans le fichier : {alias!r}"
-    if donnees.get("active_model") == alias:
+    ancien_actif = donnees.get("active_model")
+    if ancien_actif == alias:
         return True, ""
 
     lignes = texte.splitlines(keepends=True)
@@ -262,7 +330,10 @@ def _definir_actif(alias: str) -> tuple[bool, str]:
         lignes.insert(0, f'active_model = "{alias}"\n')
 
     _sauvegarder()
-    return _ecrire_si_valide("".join(lignes))
+    ok, err = _ecrire_si_valide("".join(lignes))
+    if ok:
+        _journaliser_modele("changement_actif", ancien=ancien_actif, nouveau=alias)
+    return ok, err
 
 
 def _ajouter_modele(champs: dict, forcer: bool) -> tuple[bool, str, dict]:
@@ -318,6 +389,8 @@ def _ajouter_modele(champs: dict, forcer: bool) -> tuple[bool, str, dict]:
 
     _sauvegarder()
     ok, err = _ecrire_si_valide(nouveau_texte)
+    if ok:
+        _journaliser_modele("declaration", ancien=None, nouveau=alias)
     return ok, err, {}
 
 
@@ -351,7 +424,10 @@ def _retirer_modele(alias: str) -> tuple[bool, str]:
     nouvelles_lignes = lignes[:debut] + lignes[fin:]
 
     _sauvegarder()
-    return _ecrire_si_valide("".join(nouvelles_lignes))
+    ok, err = _ecrire_si_valide("".join(nouvelles_lignes))
+    if ok:
+        _journaliser_modele("retrait", ancien=alias, nouveau=None)
+    return ok, err
 
 
 # ─────────────────────────────────────────────────────────────────────────

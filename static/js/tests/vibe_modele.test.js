@@ -12,6 +12,8 @@ import {
   champsFormulaireAjout,
   construireChampsAjout,
   corpsErreurApi,
+  libelleEntreeJournal,
+  dateEntreeJournal,
 } from '../vibe_modele.js';
 
 test('libelleModele : alias seul si le nom technique lui est identique', () => {
@@ -90,4 +92,28 @@ test('corpsErreurApi : corps non-JSON ou absent → objet vide, pas d\'exception
   assert.deepEqual(corpsErreurApi({ corps: 'pas du json' }), {});
   assert.deepEqual(corpsErreurApi({}), {});
   assert.deepEqual(corpsErreurApi(null), {});
+});
+
+test('libelleEntreeJournal : changement_actif affiche ancien → nouveau', () => {
+  const texte = libelleEntreeJournal({ evenement: 'changement_actif', ancien: 'rapide', nouveau: 'devstral2' });
+  assert.equal(texte, 'Modèle actif : rapide → devstral2');
+});
+
+test('libelleEntreeJournal : changement_actif sans ancien connu (premier réglage)', () => {
+  const texte = libelleEntreeJournal({ evenement: 'changement_actif', ancien: null, nouveau: 'devstral2' });
+  assert.equal(texte, 'Modèle actif : (aucun) → devstral2');
+});
+
+test('libelleEntreeJournal : declaration et retrait', () => {
+  assert.equal(libelleEntreeJournal({ evenement: 'declaration', ancien: null, nouveau: 'rapide' }), 'Modèle déclaré : rapide');
+  assert.equal(libelleEntreeJournal({ evenement: 'retrait', ancien: 'rapide', nouveau: null }), 'Modèle retiré : rapide');
+});
+
+test('libelleEntreeJournal : entrée absente → chaîne vide, pas d\'exception', () => {
+  assert.equal(libelleEntreeJournal(null), '');
+});
+
+test('dateEntreeJournal : repli sur la valeur brute si non interprétable', () => {
+  assert.equal(dateEntreeJournal({ date: 'pas-une-date' }), 'pas-une-date');
+  assert.equal(dateEntreeJournal({}), '');
 });

@@ -50,5 +50,18 @@
         <button class="primaire" data-action="vibe-ajouter">Ajouter</button>
       </div>
       <div id="vibe-msg-ajout" class="message"></div>
+
+      <!-- Journal des changements (issue #769) : couvre UNIQUEMENT les
+           actions faites depuis cet onglet — ni une édition manuelle de
+           config.toml, ni la réécriture faite par Vibe lui-même à chaque
+           démarrage. Voir app/vibe_modele.py::_journaliser_modele. -->
+      <div class="titre-section" style="margin-top:22px">Historique des changements</div>
+      <div style="font-size:12px;color:#888;margin-bottom:8px">
+        Ne couvre que les changements faits depuis cette page — pas une
+        édition manuelle de <code>config.toml</code>, ni la réécriture faite
+        par Vibe lui-même à chaque démarrage.
+      </div>
+      <ul id="vibe-liste-journal" style="list-style:none;padding:0;margin:0;font-size:13px"></ul>
+      <div id="vibe-msg-journal" class="message" style="margin-top:6px;font-size:12px;color:#999"></div>
     </div>
   </div>

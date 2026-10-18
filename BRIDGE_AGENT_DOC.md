@@ -237,6 +237,18 @@ circuit normal.
 | `notif_gsm` | Ajoute une notification push (ntfy) |
 | `notif_tous` | notify-send + ntfy |
 | `sans-redacteur` | Posé automatiquement quand `REDACTEUR` est absent de l'en-tête — purement informatif, voir §3.4 |
+| `agent-claude` | Posé automatiquement à la clôture — **agent d'exécution** Claude Code (clé `AGENT` du `.conf`, issue #768) |
+| `agent-vibe` | Posé automatiquement à la clôture — **agent d'exécution** Mistral Vibe (clé `AGENT` du `.conf`, issue #768) |
+
+> `agent-claude`/`agent-vibe` identifient l'agent qui a RÉELLEMENT traité
+> l'issue (`CFG.label_agent`), distinct de `for-linux`/`for-windows` (qui ne
+> désignent que la plateforme visée) et de la ligne `🤖 Plateforme :` du
+> commentaire de clôture (qui reflète Linux/Windows, pas le programme
+> exécuté dessus — voir §19). Comme `sans-redacteur`, ils sont provisionnés
+> d'office sur tout nouveau projet (`nouveau_projet.LABELS`) mais doivent
+> être créés à la main (`gh label create`) sur un dépôt déjà existant —
+> posés best-effort, un échec de pose (label absent du dépôt) ne bloque
+> jamais la clôture elle-même.
 
 > Sans label `notif_pc` / `notif_gsm` / `notif_tous`, aucune notification
 > sonore ou push n'est déclenchée. Le bip est strictement opt-in.
@@ -392,7 +404,11 @@ Arborescence et détail de l'architecture technique interne : voir `ARCHITECTURE
 depuis l'issue #760 — son profil d'écriture versionné et la procédure de
 déploiement (profil TOML + dossiers de confiance) vivent dans
 `provisioning/vibe/` (voir `provisioning/vibe/README.md`). Basculer un
-projet dessus reste une action manuelle, projet par projet.
+projet dessus reste une action manuelle, projet par projet. L'agent qui a
+réellement traité une issue est tracé à sa clôture par un label GitHub
+dédié (`agent-claude`/`agent-vibe`, issue #768, voir §4) — distinct de la
+ligne `🤖 Plateforme :` du commentaire de clôture (§19), qui ne reflète que
+Linux/Windows.
 
 Le **modèle actif de Vibe** (`~/.vibe/config.toml`, réglage de COMPTE —
 s'applique à tous les projets sur cette machine, pas à un seul) se gère
@@ -400,6 +416,15 @@ depuis l'onglet **Agent Vibe** de l'interface web (`app/vibe_modele.py`,
 issue #766) : choix du modèle actif, déclaration/retrait d'un modèle. Détail
 de l'écriture chirurgicale (préservation du contenu non géré) et de la
 collision d'alias avec un modèle intégré : `provisioning/vibe/README.md` §4.
+Chaque changement de modèle actif, déclaration ou retrait fait DEPUIS CET
+ONGLET est journalisé best-effort dans `logs/journal_modele_vibe.jsonl`
+(gitignoré, JSONL — même convention que `journal_ecritures_historique.jsonl`
+de `watcher.py`, issue #521), avec sa date, le modèle quitté et le modèle
+choisi ; les entrées les plus récentes sont affichées directement dans
+l'onglet (issue #769). **Ce journal ne couvre QUE les changements faits par
+l'interface** — ni une édition manuelle de `config.toml`, ni la réécriture
+faite par Vibe lui-même à chaque démarrage (réconciliation avec le compte)
+n'y apparaissent.
 
 **Historique du projet** : vit dans `CHANGELOG.md` à la racine, une entrée
 par issue (`## <date> — issue #N`), la plus récente en premier — pas dans ce
@@ -633,6 +658,13 @@ des durées, bornée entre un plancher et un **plafond de 3600s** (issue
 à la durée réelle et à la complexité de l'issue avant de l'appliquer
 telle quelle.
 
+Le commentaire de clôture commence par une ligne `🤖 Plateforme : <...>`
+(renommée depuis « Agent », issue #768) : elle reflète la PLATEFORME
+(Linux/Windows, ou `LIBELLE_AGENT` du `.conf` si renseignée) qui a traité
+l'issue — jamais l'agent d'exécution (`claude`/`vibe`), ce rôle étant
+couvert depuis l'issue #768 par les labels `agent-claude`/`agent-vibe` posés
+à la clôture (§4).
+
 `RELANCE` (§3.14) corrige la valeur d'une ligne d'en-tête déjà présente
 (`TIMEOUT`, `MODELE`, `SOUS_DOSSIER`, `REPO_CIBLE`) mais n'en ajoute
 jamais : si l'issue d'origine n'avait pas de ligne `TIMEOUT`, la relance ne
@@ -644,7 +676,8 @@ calibration (constantes actuelles du code : `K_VARIABILITE` = 3, issue
 
 ---
 
-*Dernière mise à jour : 18 octobre 2026 — gestion du modèle de l'agent Vibe
-depuis l'interface web, onglet Agent Vibe (issue #766).*
+*Dernière mise à jour : 18 octobre 2026 — journal des changements de modèle
+de l'agent Vibe, labels `agent-claude`/`agent-vibe` à la clôture et ligne
+`🤖 Plateforme :` du commentaire de clôture (issues #766, #768, #769).*
 
 Historique complet : voir [`CHANGELOG.md`](CHANGELOG.md).

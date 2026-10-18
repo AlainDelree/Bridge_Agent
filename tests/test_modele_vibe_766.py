@@ -59,6 +59,10 @@ def _preparer(tmp: Path, contenu: str = CONFIG_EXEMPLE) -> Path:
     cfg.write_text(contenu, encoding="utf-8")
     vm.CHEMIN_VIBE_CONFIG = cfg
     vm.DOSSIER_SAUVEGARDES = tmp / "bridge_sauvegardes"
+    # Isole aussi le journal des changements (issue #769) : sans ça, chaque
+    # écriture réussie de ce fichier de test polluerait le vrai logs/ du dépôt.
+    vm.DOSSIER_LOGS = tmp / "logs"
+    vm.FICHIER_JOURNAL_MODELE = vm.DOSSIER_LOGS / "journal_modele_vibe.jsonl"
     return cfg
 
 
