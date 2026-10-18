@@ -89,6 +89,13 @@ ALIAS_RESERVES_CONNUS = {"mistral-medium-3.5"}
 # Repli tant qu'aucune entrée [[models]] n'existe encore à introspecter.
 CHAMPS_REQUIS_PAR_DEFAUT = ("name", "provider", "alias")
 
+# Champs de prix : servent uniquement à l'affichage d'un coût estimé côté
+# Vibe, jamais à son fonctionnement (seuls name/provider/alias le sont, voir
+# _REQUIRED_MODEL_FIELDS cité plus haut) — jamais promus en requis même
+# lorsqu'ils sont, par coïncidence, présents sur toutes les entrées
+# existantes (issue #770).
+CHAMPS_JAMAIS_REQUIS = {"input_price", "output_price"}
+
 _RE_ENTETE_MODELES = re.compile(r"^\s*\[\[\s*models\s*\]\]\s*(#.*)?\s*$")
 _RE_ENTETE_TABLE = re.compile(r"^\s*\[")
 _RE_ACTIVE_MODEL = re.compile(r"^\s*active_model\s*=")
@@ -144,11 +151,15 @@ def _alias_du_segment(lignes: list[str], debut: int, fin: int) -> str | None:
 def _schema(modeles: list[dict]) -> dict:
     """Détermine les champs requis/connus à PARTIR des entrées réellement
     présentes dans le fichier (jamais d'une liste figée dans le code, voir
-    docstring du module)."""
+    docstring du module). Les champs de prix (``CHAMPS_JAMAIS_REQUIS``) ne
+    sont jamais promus en requis par cette intersection, même lorsqu'ils
+    sont présents sur toutes les entrées existantes : ils ne conditionnent
+    pas le fonctionnement de Vibe, seulement l'affichage d'un coût estimé
+    (issue #770)."""
     if not modeles:
         return {"champs_requis": list(CHAMPS_REQUIS_PAR_DEFAUT), "champs_connus": {}}
     cles_par_modele = [set(m.keys()) for m in modeles]
-    requis = set.intersection(*cles_par_modele)
+    requis = set.intersection(*cles_par_modele) - CHAMPS_JAMAIS_REQUIS
     toutes = set.union(*cles_par_modele)
     optionnels = toutes - requis
     connus = {}

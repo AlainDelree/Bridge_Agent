@@ -49,7 +49,11 @@ export function peutRetirerModele(modele, nbModeles) {
 
 /** Liste ordonnée des champs du formulaire d'ajout, à partir du schéma
  *  introspecté par le serveur (jamais une liste figée ici) : les champs
- *  requis d'abord, puis les champs optionnels déjà observés dans le fichier. */
+ *  requis d'abord, puis les champs optionnels déjà observés dans le fichier.
+ *  Le serveur trie déjà champs_requis par ordre alphabétique (alias, name,
+ *  provider), ce qui place opportunément ce qui identifie le modèle avant
+ *  les champs accessoires (prix…) renvoyés en champs_connus — voir
+ *  app.vibe_modele._schema (issue #770). */
 export function champsFormulaireAjout(schema) {
   const requis = (schema && schema.champs_requis) || [];
   const connus = (schema && schema.champs_connus) || {};
@@ -58,6 +62,24 @@ export function champsFormulaireAjout(schema) {
     champs.push({ cle, type: connus[cle], requis: false });
   }
   return champs;
+}
+
+/** Libellés affichés dans le formulaire d'ajout, dans le même vocabulaire
+ *  que les en-têtes du tableau « Modèles déclarés » juste au-dessus (issue
+ *  #770) — les noms techniques ci-dessous (clés du fichier config.toml)
+ *  restent inchangés, seul l'affichage change. Clé absente (champ inconnu
+ *  introspecté depuis une future version de Vibe) → repli sur le nom
+ *  technique tel quel. */
+const LIBELLES_CHAMPS_AJOUT = {
+  alias: 'Alias',
+  name: 'Modèle',
+  provider: 'Fournisseur',
+  input_price: "Prix d'entrée",
+  output_price: 'Prix de sortie',
+};
+
+export function libelleChampAjout(cle) {
+  return LIBELLES_CHAMPS_AJOUT[cle] || cle;
 }
 
 /** Construit le corps JSON de POST /vibe-modele/ajouter à partir des valeurs
@@ -143,10 +165,16 @@ function rendreLigneJournal(entree) {
 function rendreChampsAjout(schema) {
   return champsFormulaireAjout(schema).map(({ cle, type, requis }) => (
     '<div class="champ" style="margin-bottom:8px">'
-    + `<label>${dom.echapperHtml(cle)}${requis ? ' *' : ''}</label>`
+    + `<label>${dom.echapperHtml(libelleChampAjout(cle))}${requis ? ' *' : ''}</label>`
     + `<input type="${type === 'nombre' ? 'number' : 'text'}" `
     + `${type === 'nombre' ? 'step="any"' : ''} id="vibe-champ-${dom.echapperHtml(cle)}" `
     + `data-champ-ajout="${dom.echapperHtml(cle)}">`
+    + (cle === 'alias'
+      ? '<div style="font-size:11px;color:#999;margin-top:2px">'
+        + 'Un alias identique à un modèle intégré de Vibe sera écrasé par '
+        + "l'outil à son prochain démarrage."
+        + '</div>'
+      : '')
     + '</div>'
   )).join('');
 }

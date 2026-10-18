@@ -10,6 +10,7 @@ import {
   construireOptionsActif,
   peutRetirerModele,
   champsFormulaireAjout,
+  libelleChampAjout,
   construireChampsAjout,
   corpsErreurApi,
   libelleEntreeJournal,
@@ -63,6 +64,16 @@ test('champsFormulaireAjout : requis d\'abord, puis connus triés par clé, rien
 
 test('champsFormulaireAjout : schéma vide (aucun modèle encore déclaré) → liste vide', () => {
   assert.deepEqual(champsFormulaireAjout({ champs_requis: [], champs_connus: {} }), []);
+});
+
+test('libelleChampAjout : même vocabulaire que les en-têtes du tableau des modèles déclarés', () => {
+  assert.equal(libelleChampAjout('alias'), 'Alias');
+  assert.equal(libelleChampAjout('name'), 'Modèle');
+  assert.equal(libelleChampAjout('provider'), 'Fournisseur');
+});
+
+test('libelleChampAjout : champ inconnu (future version de Vibe) → repli sur le nom technique', () => {
+  assert.equal(libelleChampAjout('temperature'), 'temperature');
 });
 
 test('construireChampsAjout : convertit les champs "nombre", ignore les optionnels vides', () => {

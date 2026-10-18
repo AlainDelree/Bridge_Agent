@@ -105,8 +105,11 @@ def test_etat_liste_modeles_et_schema_sans_liste_figee():
         assert corps["modele_actif"] == "devstral2"
         aliases = {m["alias"]: m["actif"] for m in corps["modeles"]}
         assert aliases == {"devstral2": True, "rapide": False}
-        assert set(corps["schema"]["champs_requis"]) == {
-            "name", "provider", "alias", "input_price", "output_price"}
+        # input_price/output_price ne servent qu'à l'affichage d'un coût
+        # estimé côté Vibe, jamais à son fonctionnement : jamais promus en
+        # requis même présents sur toutes les entrées existantes (#770).
+        assert set(corps["schema"]["champs_requis"]) == {"name", "provider", "alias"}
+        assert corps["schema"]["champs_connus"] == {"input_price": "nombre", "output_price": "nombre"}
     return {"aliases": aliases}
 
 
