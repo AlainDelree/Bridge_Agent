@@ -89,7 +89,24 @@ d'un appel réel qu'une clé révoquée ou un quota/crédit épuisé se révèle
 (voir §5 de l'issue #760 : détection en cours d'exécution, qui arrête alors
 le traitement immédiatement).
 
-## 4. Basculer un projet existant sur Vibe
+## 4. Modèle actif (`~/.vibe/config.toml`, issue #766)
+
+Le modèle que Vibe utilise (`active_model` + bloc `[[models]]` déclarant
+chaque alias) est géré depuis l'onglet **Agent Vibe** de l'interface web
+(`app/vibe_modele.py`) — réglage de COMPTE, pas de projet : le choix
+s'applique à tous les projets basculés sur cet agent sur cette machine,
+jamais dans un `configs/<projet>.conf`.
+
+Vibe réécrit ce fichier à chaque démarrage, réconcilié avec le compte : toute
+écriture depuis l'interface préserve ce qu'elle ne gère pas (écriture
+chirurgicale au niveau ligne, pas de régénération du fichier), et une
+sauvegarde datée est écrite avant chaque modification
+(`~/.vibe/bridge_sauvegardes/`). Un alias identique à un modèle intégré
+connu de Vibe (`mistral-medium-3.5` au minimum — la liste complète dépend du
+compte et n'est pas énumérable sans appel réseau) est signalé avant tout
+ajout : Vibe l'écraserait silencieusement à son prochain démarrage.
+
+## 5. Basculer un projet existant sur Vibe
 
 1. Déployer le profil d'écriture (§1) et pré-approuver le `REP_TRAVAIL` du
    projet, et de chaque worktree déjà existant le cas échéant (§2), sur la

@@ -34,6 +34,10 @@ import { appelerAncien } from './socle/pont.js';
 import { surAction } from './socle/dom.js';
 import { demarrerJournal } from './journal.js';
 import { chargerConfig } from './config.js';
+// Onglet « Agent Vibe » (issue #766) : chargerVibeModele() est appelée par
+// IMPORT DIRECT à l'activation de l'onglet, même patron que Configuration
+// ci-dessus (plus via le pont).
+import { chargerVibeModele } from './vibe_modele.js';
 // Onglet « Nouvelle issue » (issue #652) : initialisation par IMPORT DIRECT du
 // module dédié, plus par le pont (voir activerOnglet). initCreation est
 // idempotente : elle installe la délégation d'événements et les détecteurs
@@ -70,6 +74,7 @@ export function activerOnglet(nom) {
   store.set('ongletActif', nom);
   if (nom === 'journal') demarrerJournal();
   if (nom === 'config') chargerConfig();
+  if (nom === 'vibe') chargerVibeModele();
   for (const fonction of initialisationsPour(nom)) appelerAncien(fonction);
   // Onglet « Nouvelle issue » (issue #652) : branché par IMPORT DIRECT, pas par
   // le pont — d'où son absence de initialisationsPour (qui reste []). initCreation
