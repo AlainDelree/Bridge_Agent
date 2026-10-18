@@ -463,6 +463,25 @@ class Config:
             return self.libelle_agent
         return "agent Windows" if platform.system() == "Windows" else "agent Linux"
 
+    @property
+    def label_agent(self) -> str:
+        """Label GitHub identifiant l'AGENT D'EXÉCUTION (CFG.agent — "claude"
+        ou "vibe", clé AGENT du .conf) qui a traité l'issue (issue #768).
+
+        Distinct de libelle_agent_effectif ci-dessus (qui reflète la
+        PLATEFORME — Linux/Windows — et pas le programme exécuté dessus) et
+        des labels for-linux/for-windows (qui désignent la destination visée
+        par l'issue, pas l'agent qui l'a réellement traitée) : un deuxième
+        agent sur une même plateforme était jusqu'ici indiscernable du
+        premier. Posé par fermer_issue() en même temps que LABEL_FAIT, et
+        filtrable nativement sur GitHub — contrairement à une ligne de
+        commentaire, qu'il faut ouvrir une à une pour la relire.
+
+        Le label doit exister sur le dépôt avant d'être posé (voir
+        nouveau_projet.LABELS) ; ajouter_label() reste best-effort (jamais
+        bloquant) si ce n'est pas encore le cas sur un dépôt donné."""
+        return f"agent-{self.agent}"
+
 
 CHAMPS_REQUIS = ("NOM", "DEPOT", "REP_TRAVAIL")
 
@@ -1629,11 +1648,17 @@ def formater_bloc_calibration(duree_s: float, timeout_courant: int, suggere: flo
     (etat_timeout.json, etat_ambiance.json, historique_durees.json — tous
     gitignorés).
 
-    Inclut aussi l'agent qui a traité l'issue (CFG.libelle_agent_effectif,
+    Inclut aussi la PLATEFORME qui a traité l'issue (CFG.libelle_agent_effectif,
     issue #767) : connu du watcher par la configuration du projet (clé
-    AGENT/LIBELLE_AGENT, ou déduction de plateforme), jamais déclaré par
-    l'agent lui-même — qui pourrait se tromper sur sa propre identité."""
-    bloc = f"\n\n---\n🤖 Agent : {CFG.libelle_agent_effectif}"
+    LIBELLE_AGENT si renseignée, sinon déduction de la plateforme locale —
+    platform.system() —, jamais déclaré par l'agent lui-même, qui pourrait se
+    tromper sur sa propre identité). Nommé « Plateforme » et non « Agent »
+    (issue #768, correction du commentaire erroné introduit par #767 qui
+    prétendait lire une clé AGENT inexistante ici) : cette valeur ne distingue
+    PAS quel agent d'exécution (CFG.agent, ex. claude/vibe) a traité l'issue —
+    ce rôle est couvert par CFG.label_agent (voir fermer_issue), un label
+    GitHub filtrable plutôt qu'une ligne de commentaire."""
+    bloc = f"\n\n---\n🤖 Plateforme : {CFG.libelle_agent_effectif}"
     bloc += f"\n⏱️ Durée réelle : {duree_s:.0f}s (TIMEOUT courant : {timeout_courant}s)"
     if suggere is not None:
         bloc += f"\n📊 TIMEOUT_suggéré (calibration automatique, issue #221) : {suggere:.0f}s"
@@ -2343,15 +2368,25 @@ def detecter_conflit_watcher(repo_cible_resolu: Path, projet_courant: str) -> st
     return None
 
 def ajouter_label(numero: int, label: str):
-    """Ajoute un label à une issue sans la fermer."""
+    """Ajoute un label à une issue sans la fermer.
+
+    Best-effort strict : un code de retour non nul de `gh` (notamment un
+    label absent du dépôt — ce qui fait échouer `--add-label` sans lever
+    d'exception côté subprocess) est journalisé pour diagnostic mais
+    n'est jamais remonté à l'appelant (issue #768) — ajouter_label() ne
+    retourne rien et ne lève jamais, par conception : un label manquant ou
+    un échec gh ne doit jamais faire échouer le traitement ou la clôture
+    de l'issue en cours."""
     try:
-        subprocess.run(
+        res = subprocess.run(
             ["gh", "issue", "edit", str(numero),
              "--repo", CFG.depot,
              "--add-label", label],
             capture_output=True, text=True,
             encoding="utf-8", errors="replace", timeout=30
         )
+        if res.returncode != 0:
+            log.error(f"Erreur ajout label '{label}' sur issue #{numero} (code {res.returncode}) : {res.stderr.strip()}")
     except Exception as e:
         log.error(f"Erreur ajout label '{label}' sur issue #{numero} : {e}")
 
@@ -2554,7 +2589,8 @@ def resultat_deja_poste(numero: int) -> bool:
     return _commentaire_marque_present(numero)
 
 def fermer_issue(numero: int) -> bool:
-    """Ferme une issue et ajoute le label 'done'.
+    """Ferme une issue, ajoute le label 'done' puis le label d'agent
+    d'exécution (CFG.label_agent, issue #768, best-effort — voir plus bas).
 
     Retourne True seulement si les DEUX sous-commandes (`close` puis
     `add-label`) ont réussi (issue #238, sur le modèle de `commenter_issue`
@@ -2594,6 +2630,16 @@ def fermer_issue(numero: int) -> bool:
             log.error(f"  État incohérent issue #{numero} : FERMÉE mais SANS le label '{LABEL_FAIT}' (pas de compensation automatique).")
         elif label_ok and not close_ok:
             log.error(f"  État incohérent issue #{numero} : label '{LABEL_FAIT}' posé mais issue NON fermée (pas de compensation automatique).")
+
+        # Label identifiant l'AGENT D'EXÉCUTION qui a traité l'issue
+        # (CFG.label_agent, issue #768) — posé en même temps que LABEL_FAIT,
+        # mais via ajouter_label() plutôt qu'en inspectant le résultat comme
+        # ci-dessus : purement best-effort, il ne doit JAMAIS influer sur
+        # close_ok/label_ok ni sur la valeur retournée par fermer_issue(). Un
+        # label absent du dépôt (pas encore provisionné, voir
+        # nouveau_projet.LABELS) échoue silencieusement côté `gh` — journalisé
+        # par ajouter_label(), sans conséquence ici.
+        ajouter_label(numero, CFG.label_agent)
 
         # Checkpoint de fin de traitement (issue #615) : rafraîchit le quota
         # GraphQL partagé pour que le widget /rate-limit reflète l'activité de
