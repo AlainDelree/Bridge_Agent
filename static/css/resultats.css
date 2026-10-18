@@ -30,10 +30,14 @@
 /* Bordure épaisse (issue #772) : projet dont l'agent d'exécution courant
    (clé AGENT du .conf) diffère de l'historique — marque l'exception, pas la
    règle (les projets sur l'agent historique gardent .filtre-projet tel
-   quel). SEULE l'épaisseur est posée ici : la couleur de la bordure reste
-   pilotée par majClassesBoutonsFiltre() (static/js/app.js, inline
-   style.borderColor, sélectionné ou non), donc visible dans tous les états. */
-.filtre-projet.agent-secondaire{border-width:3px}
+   quel). L'épaisseur est posée ici ; la couleur noire ci-dessous est un
+   repli si le style inline ne s'applique pas — en usage normal, c'est
+   majClassesBoutonsFiltre() (static/js/app.js) qui la fixe au noir dans les
+   DEUX états sélectionné/désélectionné (issue #773 : suivre la couleur de
+   sélection rendait la bordure invisible dans les deux cas — voir #772).
+   Cette règle ne concerne QUE les projets marqués .agent-secondaire ; les
+   autres gardent leur bordure pilotée par la sélection, sans changement. */
+.filtre-projet.agent-secondaire{border-width:3px;border-color:#000}
 /* Champ « limite par projet » (issue #271), juste avant le bouton rafraîchir. */
 .limite-issues-label{display:inline-flex;align-items:center;gap:5px;
   font-size:12px;color:#555;user-select:none}

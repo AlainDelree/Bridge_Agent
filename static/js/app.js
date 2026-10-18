@@ -473,9 +473,9 @@ function construireBoutonsFiltre(noms) {
     btn.className = 'filtre-projet';
     // Bordure épaisse (issue #772) pour les projets qui tournent sur un agent
     // d'exécution autre que l'historique — marque l'exception, pas la règle.
-    // Reste visible pastille sélectionnée : seule la COULEUR de la bordure
-    // devient celle du projet dans ce cas (majClassesBoutonsFiltre), jamais
-    // son ÉPAISSEUR, posée par cette seule classe CSS.
+    // Couleur fixée au noir dans les deux états par majClassesBoutonsFiltre
+    // (issue #773, corrige #772 : suivre la sélection la rendait invisible) ;
+    // l'épaisseur, elle, reste posée par cette seule classe CSS.
     if (window.Bridge && window.Bridge.resultats
         && window.Bridge.resultats.estAgentSecondaire(agentProjetResultats(nom), agentDefaut)) {
       btn.classList.add('agent-secondaire');
@@ -717,6 +717,19 @@ function majClassesBoutonsFiltre() {
     .forEach(btn => {
       const actif = projetsFiltresActifs.has(btn.dataset.projet);
       btn.classList.toggle('inactif', !actif);
+      // Agent secondaire (issue #773, corrige #772) : sur ces pastilles, la
+      // bordure épaisse doit rester visible dans les DEUX états — or suivre
+      // la sélection la rendait invisible (couleur du projet sur fond déjà
+      // de cette couleur quand actif, gris à peine perceptible sinon). On
+      // assume donc ici le conflit que #772 évitait : pour ces seules
+      // pastilles, la couleur de bordure ne suit plus l'état de sélection,
+      // elle est fixée au noir quel que soit cet état.
+      if (btn.classList.contains('agent-secondaire')) {
+        if (actif) appliquerStyleAccentProjet(btn, btn.dataset.couleur);
+        else { btn.style.background = ''; btn.style.color = ''; }
+        btn.style.borderColor = '#000';
+        return;
+      }
       // Actif : fond coloré + texte noir (issue #535 — auparavant texte +
       // bordure colorés sur fond clair). Inactif : on efface le style inline
       // pour laisser la classe .inactif (grisé) reprendre la main.
