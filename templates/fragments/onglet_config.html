@@ -56,6 +56,17 @@
       <div id="conf-MODELE_CCL-avertissement" class="message avertissement"></div>
     </div>
 
+    <div class="champ" style="margin-bottom:14px">
+      <label title="Programme CLI qui exécute les issues de ce projet (clé AGENT du .conf).">Agent d'exécution</label>
+      <select id="conf-AGENT"></select>
+      <div class="message avertissement" style="display:block">
+        ⚠ Ne prend effet qu'au redémarrage du watcher de ce projet — contrairement
+        au modèle ci-dessus, relu à chaque session, le fichier de configuration
+        n'est chargé qu'une fois, au démarrage. Utiliser « Enregistrer et relancer »
+        pour l'appliquer tout de suite.
+      </div>
+    </div>
+
     <div class="rangee">
       <div class="champ" style="max-width:180px">
         <label>Taille max journal (Mo)</label>

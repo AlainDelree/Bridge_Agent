@@ -18,7 +18,7 @@ DOSSIER_SCRIPT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(DOSSIER_SCRIPT))
 
 import etat_configs_legitimes  # noqa: E402
-from watcher import Config, charger_config  # noqa: E402
+from watcher import AGENT_PAR_DEFAUT, AGENTS_CONNUS, Config, charger_config  # noqa: E402
 
 
 # Source UNIQUE des modèles CCL reconnus (issue #656 — auparavant dupliquée à
@@ -40,7 +40,7 @@ CLES_EDITABLES = {
     "TOPIC_NTFY", "LABEL", "INTERVALLE", "MAX_ESSAIS",
     "TIMEOUT_CLAUDE", "LOG_TAILLE_MAX_MO", "LOG_ARCHIVES",
     "MODELE_CCL", "MOT_DE_PASSE", "FICHIER_CONTEXTE", "COULEUR",
-    "DELAI_INACTIVITE_MIN", "MAX_WRITE_PARALLELE",
+    "DELAI_INACTIVITE_MIN", "MAX_WRITE_PARALLELE", "AGENT",
 }
 
 
@@ -52,13 +52,29 @@ def sauvegarder_conf(nom_projet: str, nouvelles_valeurs: dict) -> tuple[bool, st
     Enregistre aussi cet enregistrement dans `etat_configs_legitimes` (issue
     #724) : si une issue mode_write tourne en ce moment dans un AUTRE projet,
     le garde-fou #318 de watcher.py ne doit pas annuler cette modification
-    volontaire en fin de traitement."""
+    volontaire en fin de traitement.
+
+    AGENT (issue #771) : contrairement aux autres clés éditables, une valeur
+    inconnue n'est PAS écrite — rejetée avant toute écriture disque, avec le
+    même message d'erreur que charger_config() au démarrage. watcher.py
+    refuse de démarrer sur un AGENT qu'il ne connaît pas (AGENTS_CONNUS) ; le
+    laisser passer ici rendrait le projet inutilisable jusqu'à correction
+    manuelle du .conf."""
     chemin = DOSSIER_SCRIPT / "configs" / f"{nom_projet}.conf"
     if not chemin.exists():
         return False, f"Fichier introuvable : {chemin.name}"
 
     a_ecrire = {k.upper(): v for k, v in nouvelles_valeurs.items()
                 if k.upper() in CLES_EDITABLES}
+
+    if "AGENT" in a_ecrire:
+        agent = str(a_ecrire["AGENT"]).strip().lower()
+        if agent and agent not in AGENTS_CONNUS:
+            return False, (
+                f"Agent inconnu : « {a_ecrire['AGENT']} » "
+                f"(valeurs supportées : {', '.join(sorted(AGENTS_CONNUS))})."
+            )
+        a_ecrire["AGENT"] = agent
 
     lignes          = chemin.read_text(encoding="utf-8").splitlines()
     nouvelles_lignes = []
@@ -134,7 +150,14 @@ def get_config(nom_projet):
     """Retourne les valeurs actuelles du .conf, relues depuis le disque à
     chaque appel (via charger_config) plutôt que depuis l'objet Config en
     mémoire. Ainsi l'onglet Configuration reflète toujours l'état réel du
-    fichier, même s'il a été modifié à la main après le démarrage."""
+    fichier, même s'il a été modifié à la main après le démarrage.
+
+    agents_valides (issue #771) vient de watcher.AGENTS_CONNUS — SOURCE
+    UNIQUE des agents d'exécution réellement reconnus par le watcher, jamais
+    dupliquée en dur ici ni côté frontend : un agent ajouté plus tard à
+    AGENTS_CONNUS apparaît dans la liste déroulante sans y retoucher.
+    cfg.agent est toujours l'une de ces valeurs (charger_config rejette tout
+    AGENT inconnu au chargement), donc toujours sélectionnable."""
     chemin = DOSSIER_SCRIPT / "configs" / f"{nom_projet}.conf"
     if not chemin.exists():
         return jsonify(erreur="Projet introuvable."), 404
@@ -162,6 +185,9 @@ def get_config(nom_projet):
         modele_ccl     = cfg.modele_ccl,
         modeles_valides = sorted(MODELES_VALIDES),
         modele_defaut_global = MODELE_DEFAUT_GLOBAL,
+        agent          = cfg.agent,
+        agents_valides = sorted(AGENTS_CONNUS),
+        agent_defaut_global = AGENT_PAR_DEFAUT,
         couleur        = cfg.couleur,
         delai_inactivite_min = cfg.delai_inactivite_min,
         max_write_parallele = cfg.max_write_parallele,

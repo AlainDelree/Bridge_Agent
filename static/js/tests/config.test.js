@@ -11,9 +11,11 @@ import {
   suppressionActivable,
   messageStatutCommitDoc,
   construireOptionsModeleCCL,
+  construireOptionsAgent,
 } from '../config.js';
 
 const MODELES = ['claude-sonnet-5', 'claude-opus-4-8', 'claude-haiku-4-5', 'claude-fable-5'];
+const AGENTS = ['claude', 'vibe'];
 
 test('construireResumeIdentite : champs obligatoires seuls', () => {
   const html = construireResumeIdentite({ nom: 'demo', depot: 'org/demo', rep_travail: '/home/x/demo' });
@@ -100,4 +102,22 @@ test('construireOptionsModeleCCL : valeur .conf inconnue (ancienne/faute de frap
   const derniere = options[options.length - 1];
   assert.equal(derniere.value, 'claude-opus-4-5');
   assert.match(derniere.label, /non reconnue/);
+});
+
+// ─── construireOptionsAgent (issue #771) ───────────────────────────────────
+
+test('construireOptionsAgent : liste triée, aucune option vide (toujours une valeur résolue)', () => {
+  const options = construireOptionsAgent(AGENTS, 'claude', 'claude');
+  assert.deepEqual(options.map(o => o.value), ['claude', 'vibe']);
+});
+
+test('construireOptionsAgent : l\'agent par défaut est annoté, les autres non', () => {
+  const options = construireOptionsAgent(AGENTS, 'vibe', 'claude');
+  assert.equal(options.find(o => o.value === 'claude').label, 'claude (défaut)');
+  assert.equal(options.find(o => o.value === 'vibe').label, 'vibe');
+});
+
+test('construireOptionsAgent : un agent ajouté à AGENTS_CONNUS apparaît sans modif ici', () => {
+  const options = construireOptionsAgent(['claude', 'vibe', 'nouvel-agent'], 'claude', 'claude');
+  assert.deepEqual(options.map(o => o.value), ['claude', 'nouvel-agent', 'vibe']);
 });

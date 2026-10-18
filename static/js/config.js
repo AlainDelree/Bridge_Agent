@@ -89,6 +89,28 @@ export function construireOptionsModeleCCL(modelesValides, valeurActuelle, defau
   return { options, inconnue };
 }
 
+/** Construit les options de la liste déroulante « Agent d'exécution »
+ *  (issue #771). `agentsValides` vient du serveur (GET /config/<projet>,
+ *  `agents_valides` — lui-même reflet de watcher.AGENTS_CONNUS, SOURCE
+ *  UNIQUE des agents reconnus par le watcher) : jamais dupliquée en dur ici,
+ *  un agent ajouté plus tard à AGENTS_CONNUS apparaît sans toucher ce
+ *  fichier. Contrairement à construireOptionsModeleCCL ci-dessus, pas
+ *  d'option vide ni de repli « valeur inconnue » : charger_config() rejette
+ *  déjà tout AGENT inconnu au chargement (le watcher refuse de démarrer
+ *  dessus), donc `valeurActuelle` est toujours l'une de `agentsValides`.
+ *  L'agent qui correspond à `defautGlobal` (AGENT_PAR_DEFAUT, "claude") est
+ *  simplement annoté « (défaut) » : une valeur absente du .conf produit
+ *  exactement ce même agent, donc l'écrire explicitement ou la laisser
+ *  absente sont équivalents côté comportement. */
+export function construireOptionsAgent(agentsValides, valeurActuelle, defautGlobal) {
+  const valeur = String(valeurActuelle || '').trim().toLowerCase();
+  const valides = [...(agentsValides || [])].sort();
+  return valides.map(a => ({
+    value: a,
+    label: a === defautGlobal ? `${a} (défaut)` : a,
+  }));
+}
+
 /** Message final affiché après une suppression réussie, selon le statut du
  *  commit/push automatique de BRIDGE_AGENT_DOC.md (issue #645). */
 export function messageStatutCommitDoc(statut, commandeManuelle) {
@@ -137,6 +159,18 @@ function remplirSelectModeleCCL(cfg) {
   }
 }
 
+// Peuple la liste déroulante #conf-AGENT à partir de cfg.agents_valides
+// (issue #771).
+function remplirSelectAgent(cfg) {
+  const select = document.getElementById('conf-AGENT');
+  if (!select) return;
+  const options = construireOptionsAgent(
+    cfg.agents_valides || [], cfg.agent || '', cfg.agent_defaut_global || 'claude');
+  select.innerHTML = options.map(o =>
+    `<option value="${dom.echapperHtml(o.value)}">${dom.echapperHtml(o.label)}</option>`).join('');
+  select.value = String(cfg.agent || '').trim().toLowerCase();
+}
+
 /** Charge la config du projet actuellement sélectionné (sélecteur global
  *  #projet) dans les champs de l'onglet. */
 export async function chargerConfig() {
@@ -153,6 +187,7 @@ export async function chargerConfig() {
     majChampConfig('conf-TIMEOUT_CLAUDE', cfg.timeout_claude || 300);
     majChampConfig('conf-FICHIER_CONTEXTE', cfg.fichier_contexte || '');
     remplirSelectModeleCCL(cfg);
+    remplirSelectAgent(cfg);
     majChampConfig('conf-LOG_TAILLE_MAX_MO', cfg.log_taille_max_mo || 1);
     majChampConfig('conf-LOG_ARCHIVES', cfg.log_archives || 5);
     // ?? et non || : 0 est une valeur valide (auto-extinction désactivée).
@@ -180,6 +215,7 @@ async function sauvegarderConfig(relancer) {
     TIMEOUT_CLAUDE:    document.getElementById('conf-TIMEOUT_CLAUDE').value,
     FICHIER_CONTEXTE:  document.getElementById('conf-FICHIER_CONTEXTE').value,
     MODELE_CCL:        document.getElementById('conf-MODELE_CCL').value,
+    AGENT:             document.getElementById('conf-AGENT').value,
     LOG_TAILLE_MAX_MO: document.getElementById('conf-LOG_TAILLE_MAX_MO').value,
     LOG_ARCHIVES:      document.getElementById('conf-LOG_ARCHIVES').value,
     DELAI_INACTIVITE_MIN: document.getElementById('conf-DELAI_INACTIVITE_MIN').value,
