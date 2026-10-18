@@ -11,6 +11,7 @@ import {
   calculerBadgeModele,
   libelleModele,
   calculerBadgeSansRedacteur,
+  estAgentSecondaire,
   planifierEvenementSse,
   fusionnerChargement,
   fusionnerTimingProjet,
@@ -171,6 +172,31 @@ test('badge sans REDACTEUR : reconnaît le format objet {name} de gh issue list'
 
 test('badge sans REDACTEUR : insensible à la casse du label', () => {
   assert.equal(calculerBadgeSansRedacteur(['Sans-Redacteur']).afficher, true);
+});
+
+// ─── estAgentSecondaire (issue #772) ─────────────────────────────────────────
+test('agent secondaire : faux quand l\'agent du projet EST l\'historique', () => {
+  assert.equal(estAgentSecondaire('claude', 'claude'), false);
+  // Insensible à la casse/espaces (mêmes garanties que la clé AGENT côté watcher.py).
+  assert.equal(estAgentSecondaire('CLAUDE', 'claude'), false);
+  assert.equal(estAgentSecondaire(' claude ', 'claude'), false);
+});
+
+test('agent secondaire : vrai quand l\'agent du projet diffère de l\'historique', () => {
+  assert.equal(estAgentSecondaire('vibe', 'claude'), true);
+});
+
+test('agent secondaire : faux pour une clé AGENT absente/vide (comportement historique par défaut)', () => {
+  assert.equal(estAgentSecondaire('', 'claude'), false);
+  assert.equal(estAgentSecondaire(null, 'claude'), false);
+  assert.equal(estAgentSecondaire(undefined, 'claude'), false);
+});
+
+test('agent secondaire : un projet rebasculé change de résultat sans liste écrite en dur', () => {
+  // Même projet, deux lectures successives de son AGENT (ex. après bascule
+  // depuis l'onglet Configuration, issue #771) → résultat recalculé, pas mémorisé.
+  assert.equal(estAgentSecondaire('claude', 'claude'), false);
+  assert.equal(estAgentSecondaire('vibe', 'claude'), true);
 });
 
 // ─── construireIssueCreation (contenu enrichi de creation_issue, issue #640) ──

@@ -23,9 +23,9 @@
     <!-- Ligne 1 : combobox Projet + bouton (relancer) à sa droite, statut à droite -->
     <div class="bandeau-ligne">
       <label for="projet">Projet :</label>
-      <select id="projet" onchange="onProjetChange()">
+      <select id="projet" onchange="onProjetChange()" data-agent-defaut="{{ agent_par_defaut }}">
         {% for p in projets %}
-        <option value="{{ p.nom }}">{{ p.nom }} — {{ p.depot }}</option>
+        <option value="{{ p.nom }}" data-agent="{{ p.agent }}">{{ p.nom }} — {{ p.depot }}</option>
         {% endfor %}
       </select>
       <button id="btn-nouveau-projet" onclick="ouvrirNouveauProjet()"

@@ -10,10 +10,12 @@ from app.projets import lister_projets
 from app.issues import formats_image_acceptes
 from app.jetons_annuaire import etat_jetons_annuaire
 from app import etat
+from watcher import AGENT_PAR_DEFAUT
 
 
 def index():
     return render_template("index.html", projets=lister_projets(),
                            auth_active=bool(etat.get("MOT_DE_PASSE")),
                            formats_image=formats_image_acceptes(),
-                           jetons_annuaire=etat_jetons_annuaire())
+                           jetons_annuaire=etat_jetons_annuaire(),
+                           agent_par_defaut=AGENT_PAR_DEFAUT)

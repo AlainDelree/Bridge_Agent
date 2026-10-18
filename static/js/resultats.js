@@ -178,6 +178,19 @@ export function calculerBadgeModele(modele, modeleDefaut) {
   };
 }
 
+// Décide si un projet tourne sur un agent d'exécution autre que l'historique
+// (issue #772) : UNIQUEMENT à partir de la clé AGENT de son .conf (`agent`,
+// data-agent de l'option #projet, lui-même reflet de Config.agent — voir
+// watcher.py), comparée à l'agent par défaut de l'application (`agentDefaut`,
+// AGENT_PAR_DEFAUT côté watcher.py, data-agent-defaut du select #projet). Pas
+// de liste de noms de projets ici : un projet rebasculé d'agent change
+// d'apparence sans toucher à l'interface. Logique pure, testée sous Node.
+export function estAgentSecondaire(agent, agentDefaut) {
+  const a = String(agent || '').trim().toLowerCase();
+  const def = String(agentDefaut || '').trim().toLowerCase();
+  return a !== '' && a !== def;
+}
+
 // Label GitHub posé à la création (scripts/watcher_issues_inbox.py ::
 // construire_labels) quand le champ optionnel REDACTEUR (issue #599) est
 // ABSENT de l'en-tête — jamais quand il est présent, cohérent ou non (une
@@ -1079,6 +1092,10 @@ export const resultats = {
   calculerBadgeModele,
   // Idem pour le badge « sans REDACTEUR » (issue #647).
   calculerBadgeSansRedacteur,
+  // Exposée pour que l'ancien app.js (construireBoutonsFiltre) décide de la
+  // bordure « agent secondaire » d'une pastille via l'unique fonction testée
+  // (issue #772).
+  estAgentSecondaire,
   // Exposée pour que l'ancien app.js (visibilitychange) décide d'un ↻ au
   // retour au premier plan via l'unique fonction testée (issue #705).
   fautResynchroniserApresMasquage,

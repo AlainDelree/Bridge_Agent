@@ -451,13 +451,35 @@ function sauvegarderFiltresProjets(noms) {
   }
 }
 
+// Agent d'exécution d'un projet (clé AGENT du .conf, issue #772) : lu depuis
+// l'attribut data-agent de l'option correspondante du sélecteur global
+// #projet, peuplé côté serveur (Config.agent, voir app/vues.py). Pas de
+// fetch dédié : l'information est déjà là, posée une fois par page. Même
+// source DOM que nomsProjetsDisponibles() ci-dessus.
+function agentProjetResultats(nom) {
+  const option = [...document.getElementById('projet').options]
+    .find(o => o.value === nom);
+  return option ? option.dataset.agent : '';
+}
+
 // (Re)construit la ligne de boutons toggle — un par projet + « Tous ».
 function construireBoutonsFiltre(noms) {
   const zone = document.getElementById('filtres-projets');
   zone.innerHTML = '';
+  const selectProjet = document.getElementById('projet');
+  const agentDefaut = (selectProjet && selectProjet.dataset.agentDefaut) || '';
   for (const nom of noms) {
     const btn = document.createElement('span');
     btn.className = 'filtre-projet';
+    // Bordure épaisse (issue #772) pour les projets qui tournent sur un agent
+    // d'exécution autre que l'historique — marque l'exception, pas la règle.
+    // Reste visible pastille sélectionnée : seule la COULEUR de la bordure
+    // devient celle du projet dans ce cas (majClassesBoutonsFiltre), jamais
+    // son ÉPAISSEUR, posée par cette seule classe CSS.
+    if (window.Bridge && window.Bridge.resultats
+        && window.Bridge.resultats.estAgentSecondaire(agentProjetResultats(nom), agentDefaut)) {
+      btn.classList.add('agent-secondaire');
+    }
     btn.dataset.projet = nom;
     // La couleur du projet est stockée en attribut data ; appliqueCouleurBouton
     // la reporte en texte + bordure quand le bouton est actif (indicateur

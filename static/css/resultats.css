@@ -27,6 +27,13 @@
    au-dessus du seuil WCAG AA (4.5:1). */
 .filtre-projet.inactif{background:#f2f2f0;color:#5a5a5a}
 .filtre-projet.tous{border-style:dashed;color:#555}
+/* Bordure épaisse (issue #772) : projet dont l'agent d'exécution courant
+   (clé AGENT du .conf) diffère de l'historique — marque l'exception, pas la
+   règle (les projets sur l'agent historique gardent .filtre-projet tel
+   quel). SEULE l'épaisseur est posée ici : la couleur de la bordure reste
+   pilotée par majClassesBoutonsFiltre() (static/js/app.js, inline
+   style.borderColor, sélectionné ou non), donc visible dans tous les états. */
+.filtre-projet.agent-secondaire{border-width:3px}
 /* Champ « limite par projet » (issue #271), juste avant le bouton rafraîchir. */
 .limite-issues-label{display:inline-flex;align-items:center;gap:5px;
   font-size:12px;color:#555;user-select:none}
