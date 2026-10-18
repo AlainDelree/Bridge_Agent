@@ -123,7 +123,6 @@ Onglet Résultats : les pastilles de filtre par projet marquent désormais d'une
 
 Onglet Configuration : ajout du choix de l'**agent d'exécution** du projet (clé `AGENT` du `.conf`, introduite par les issues #759/#760) — nouvelle liste déroulante « Agent d'exécution », dérivée de `watcher.AGENTS_CONNUS` (source unique, jamais dupliquée côté interface : un agent ajouté plus tard y apparaît sans rien changer ici) ; `GET /config/<projet>` expose `agent`/`agents_valides`/`agent_defaut_global`. Une valeur absente du `.conf` reste possible et équivaut à `AGENT_PAR_DEFAUT` ("claude") ; l'option correspondante est annotée « (défaut) » dans la liste plutôt que représentée par une entrée vide. `sauvegarder_conf()` **refuse** désormais toute valeur `AGENT` inconnue (rien n'est écrit sur disque) — un agent non reconnu empêcherait le watcher de démarrer. Mention explicite dans l'onglet : contrairement au modèle Claude Code (relu à chaque session), le `.conf` n'étant chargé qu'une fois au démarrage, le changement d'agent ne prend effet qu'au redémarrage du watcher du projet (bouton « Enregistrer et relancer »). Vérifié : le garde-fou #318/#724 (protection de `configs/*.conf` pendant une issue mode_write dans un autre projet) couvre déjà ce changement, via le même mécanisme générique `etat_configs_legitimes.enregistrer()` déjà appelé par `sauvegarder_conf()` pour toute clé éditable — aucune modification nécessaire de ce garde-fou. `watcher.py` non modifié (listes déjà publiques). Tests : `tests/test_choix_agent_config_771.py` (4 scénarios) + `static/js/tests/config.test.js` (3 nouveaux cas pour `construireOptionsAgent`).
 
-# CHANGELOG-770 — à fusionner dans CHANGELOG.md
 
 ## 18 octobre 2026 — issue #770
 
@@ -178,7 +177,6 @@ fichier en anglais).
   (vocabulaire du tableau, repli sur le nom technique pour un champ
   inconnu).
 
-# CHANGELOG-769 — à fusionner dans CHANGELOG.md
 
 ## 18 octobre 2026 — issue #769
 
@@ -224,7 +222,6 @@ encore documentées (#768).
   journal dans un répertoire temporaire (évite de polluer le vrai
   `logs/journal_modele_vibe.jsonl` à chaque exécution des tests).
 
-# CHANGELOG-768 — à fusionner dans CHANGELOG.md
 
 ## 18 octobre 2026 — issue #768
 
@@ -257,7 +254,6 @@ distinguer un second agent tournant sur la même machine du premier.
 - Test ajouté : `tests/test_label_agent_768.py` (3 scénarios — dérivation de
   `label_agent`, pose conjointe à la clôture, best-effort sur échec).
 
-# CHANGELOG-766 — à fusionner dans CHANGELOG.md
 
 ## 18 octobre 2026 — issue #766
 
@@ -328,7 +324,6 @@ déclarer un nouveau, en retirer un.
   `static/js/tests/vibe_modele.test.js` (nouveau), `provisioning/vibe/README.md`,
   `BRIDGE_AGENT_DOC.md` (§10 + pied de page).
 
-# CHANGELOG-767 — à fusionner dans CHANGELOG.md
 
 ## 18 octobre 2026 — issue #767
 
@@ -379,7 +374,6 @@ ajout de l'agent traitant dans le commentaire de clôture, dans `watcher.py`.
   `test_reprise_worktree_725.py`, `test_orphelin_verrou_perime_322.py`,
   `test_nettoyage_arbre_247.py`).
 
-# CHANGELOG-765 — à fusionner dans CHANGELOG.md
 
 ## 17 octobre 2026 — issue #765
 
@@ -428,7 +422,6 @@ hors de l'environnement virtuel du projet, avec un message explicite.
   réussis ; rejouée avec l'interpréteur système (hors `venv`) : refus
   immédiat, code `2`, message attendu, aucun fichier exécuté.
 
-# CHANGELOG-764 — à fusionner dans CHANGELOG.md
 
 ## 17 octobre 2026 — issue #764
 
@@ -494,7 +487,6 @@ commit en mode écriture (étude #762).
   (#764) : mode écriture hors simulation uniquement — lecture seule et
   lecture active n'attendent aucun commit, donc jamais concernées.
 
-# CHANGELOG-763 — à fusionner dans CHANGELOG.md
 
 ## 17 octobre 2026 — issue #763
 
@@ -585,7 +577,6 @@ jour (tous deux touchant `watcher.py`, d'où leur traitement conjoint).
   consommer normalement ses tentatives (pas de faux positif du nouveau
   garde-fou de durée).
 
-# CHANGELOG-761 — à fusionner dans CHANGELOG.md
 
 ## 15 octobre 2026 — issue #761
 
@@ -687,7 +678,6 @@ pourtant laisser strictement inchangé.
   installé (`vibe.core.workspace.Workspace`, confirmant l'absence de
   distinction lecture/écriture par répertoire) — jamais à lancer de session.
 
-# CHANGELOG-760 — à fusionner dans CHANGELOG.md
 
 ## 15 octobre 2026 — issue #760
 
@@ -781,7 +771,6 @@ aux deux agents.
   `~/.vibe/.env`, bornes de longueur) — aucune session réelle de `claude` ni
   de `vibe` lancée pendant cette tâche.
 
-# CHANGELOG-759 — à fusionner dans CHANGELOG.md
 
 ## 15 octobre 2026 — issue #759
 
@@ -795,7 +784,6 @@ Agent d'exécution choisissable par projet, sans changer le comportement actuel 
 - **`tests/test_verification_commentaire_237.py`** : ajout de `agent="claude"` au `Mock` tenant lieu de `CFG` dans le scénario 2 (bout-en-bout `traiter_issue`) — sans quoi `verifier_preflight_token` levait un `KeyError` sur l'attribut auto-généré par `Mock()`. Seul fixture de test affecté par l'ajout de ce champ (les autres passent par `watcher.Config(...)` ou `SimpleNamespace` sans jamais atteindre ce point, ou héritent du défaut `"claude"` de la dataclass).
 - **Vérification de non-régression** : `python3 -m py_compile watcher.py` propre, puis les 64 fichiers `tests/test_*.py` du dépôt passés un par un — tous verts après le correctif ci-dessus (dont les tests touchant directement aux chemins modifiés : `test_orphelin_verrou_perime_322.py`, `test_lecture_active_327.py`, `test_nettoyage_arbre_247.py`, `test_verrou_refus_precoce_584.py`, `test_worktree_parallelisation_337.py`, `test_reprise_worktree_725.py`, `test_creation_bootstrap_ccw_556.py`).
 
-# CHANGELOG-757 — à fusionner dans CHANGELOG.md
 
 ## 15 octobre 2026 — issue #757
 
@@ -806,7 +794,6 @@ Garde-fou sur la **valeur** du verdict final, pas seulement sa présence — le 
 - **Ne pas affaiblir #581** : ce nouveau bloc ne s'exécute que si `succes` est encore `True` à ce stade — une sortie sans aucun marqueur (`_verdict_final` retourne `None`) continue d'être interceptée par le garde-fou #581 existant, inchangé. Un code de retour non nul reste un échec de toute façon (`succes` est déjà `False` avant même d'atteindre ce bloc).
 - Portée volontairement limitée à ce seul point, comme demandé — aucune vérification de commit ni de périmètre technique n'a été ajoutée (hors sujet de #756/#757).
 
-# CHANGELOG-754 — à fusionner dans CHANGELOG.md
 
 ## 13 octobre 2026 — issue #754
 
@@ -820,7 +807,6 @@ Suppression de la boîte de choix de durée au démarrage/redémarrage du watche
 
 **Rappel de déploiement** : après fusion, redémarrer `new_issue.py` (le gabarit `index.html` est mis en cache par Flask), puis Ctrl+Maj+R.
 
-# CHANGELOG-753 — à fusionner dans CHANGELOG.md
 
 ## 13 octobre 2026 — issue #753
 
@@ -831,7 +817,6 @@ Nouveau bouton « ↺ Relancer les allumés » dans le panneau latéral Infrastr
 - Les deux boutons existants restent inchangés dans leur fonctionnement ; une info-bulle a été ajoutée sur « ↺ Relancer tous les CCL » rappelant qu'il allume aussi les watchers éteints.
 - `ARCHITECTURE.md` : nouvelle section §13 décrivant ce bouton. `BRIDGE_AGENT_DOC.md` non modifié (hors périmètre de la tâche).
 
-# CHANGELOG-752 — à fusionner dans CHANGELOG.md
 
 ## 12 octobre 2026 — issue #752
 
@@ -848,7 +833,6 @@ Plancher de 900s pour le TIMEOUT par défaut des issues en écriture dont le fic
 
 **Rappel de déploiement** : après fusion, relancer le Watcher spool (`scripts/watcher_issues_inbox.py`), redémarrer `new_issue.py` (`app/issues.py` et `nouveau_projet.py` modifiés), relancer les watchers (`watcher.py` modifié) quand aucune issue n'écrit, puis Ctrl+Maj+R (JS modifié).
 
-# CHANGELOG-751 — à fusionner dans CHANGELOG.md
 
 ## 11 octobre 2026 — issue #751
 
@@ -862,7 +846,6 @@ Nettoyage automatique, au démarrage de `new_issue.py`, des verrous périmés so
 
 **Rappel de déploiement** : après fusion, redémarrer `new_issue.py` — c'est lui qui exécute ce nettoyage, une fois à son démarrage.
 
-# CHANGELOG-749 — à fusionner dans CHANGELOG.md
 
 ## 11 octobre 2026 — issue #749
 
@@ -881,7 +864,6 @@ Worktrees `mode_write` sous CCW (Windows) : création désormais dans un dossier
 
 **Rappel de déploiement** : après fusion, le `watcher.py` utilisé par CCW est celui du clone `C:\CCW\Bridge_Agent` du poste Windows ; pris en compte au prochain redémarrage des services CCW (extinction automatique après 20 min d'inactivité, rallumage à la demande) — aucun redémarrage de `new_issue.py` nécessaire.
 
-# CHANGELOG-748 — à fusionner dans CHANGELOG.md
 
 ## 11 octobre 2026 — issue #748
 
@@ -896,7 +878,6 @@ Interruption d'une issue : retour visuel immédiat, protection contre le double 
 
 **Rappel de déploiement** : après fusion, relancer les watchers (`watcher.py` modifié) quand aucune issue n'est en écriture, redémarrer `new_issue.py` (`app/interruption.py` modifié), puis Ctrl+Maj+R (JS/CSS).
 
-# CHANGELOG-747 — à fusionner dans CHANGELOG.md
 
 ## 10 octobre 2026 — issue #747
 
@@ -911,7 +892,6 @@ Journal des toasts : les confirmations d'actions triviales (déjà vues par l'ut
 
 **Rappel de déploiement** : après fusion, Ctrl+Maj+R suffit (JavaScript uniquement, aucun changement serveur).
 
-# CHANGELOG-746 — à fusionner dans CHANGELOG.md
 
 ## 10 octobre 2026 — issue #746
 
@@ -926,7 +906,6 @@ Retrait des bandeaux historiques « Éval Windows CCW » (#454) et « OAuth Toke
 
 **Rappel de déploiement** : après fusion, redémarrer `new_issue.py` (code serveur `app/vues.py`/`app/jetons_annuaire.py` et gabarit `templates/fragments/bandeaux.html` modifiés).
 
-# CHANGELOG-744 — à fusionner dans CHANGELOG.md
 
 ## 10 octobre 2026 — issue #744
 
@@ -943,7 +922,6 @@ Un essai réel sur le service CCW-Watcher-Scrabble a montré que cette sortie n'
 
 **Rappel de déploiement** : après fusion, redémarrer `new_issue.py` (`app/ccw.py` modifié) — les scripts Windows (`.ps1`) sont recopiés à chaque usage, aucune action supplémentaire nécessaire pour eux.
 
-# CHANGELOG-743 — à fusionner dans CHANGELOG.md
 
 ## 9 octobre 2026 — issue #743
 
@@ -966,7 +944,6 @@ Le bandeau des jetons de l'annuaire (issue #741, `app/jetons_annuaire.py`) trie 
 
 Nouveau bandeau d'expiration des jetons de l'annuaire (issue #741) : `app/jetons_annuaire.py` lit en lecture seule, jamais n'écrit, le fichier `jetons.json` tenu par le projet séparé annuairetoken (métadonnées de jetons d'accès, jamais de valeur) — chemin par défaut `~/.config/annuairetoken/jetons.json`, surchargeable globalement à Bridge_Agent via la variable d'environnement `BRIDGE_JETONS_CHEMIN` (aucun autre mécanisme de réglage global n'existe, `configs/*.conf` étant par projet et interdit en écriture à CCL/CCW). Réutilise les seuils/niveaux du bandeau « OAuth Token CCW » existant (`app/eval_windows.py`, orange ≤14j, rouge ≤5j) pour les jetons de statut actif proches de l'échéance ; jamais d'alerte pour un statut abandonné/expiré ni pour un jeton sans expiration ; un jeton actif dont la date est dépassée s'affiche au niveau rouge (« expiré depuis N j »). Robustesse : fichier absent → silencieux ; fichier illisible (JSON invalide, clés `version`/`jetons` absentes) → message neutre « jetons.json illisible, bandeau désactivé » (nouveau niveau CSS `gris`), détail en logs ; entrée individuelle invalide (statut inconnu, date mal formée) → ignorée mais comptée (« N entrée(s) ignorée(s) »), jamais silencieuse. Affiché dans `templates/fragments/bandeaux.html`, sous le bandeau éval Windows. Tests : `tests/test_bandeau_jetons_annuaire_741.py` (fichiers `JETON_FACTICE_*` dans des dossiers `/tmp` jetables, sans réseau). Doc : `ARCHITECTURE.md` §9 (nouvelle section) — `BRIDGE_AGENT_DOC.md` non touché (réservé à la rédaction d'issues côté Claude Chat, hors périmètre d'un bandeau d'interface).
 
-# CHANGELOG-740 — à fusionner dans CHANGELOG.md
 
 ## 9 octobre 2026 — issue #740
 
@@ -980,7 +957,6 @@ Sous CCL (Linux), les nouveaux worktrees `mode_write` (issue #337) sont désorma
 - **Non modifiés, volontairement** — `provisioning/windows/REINSTALLATION_CCW.md` (décrit CCW, qui garde l'ancien emplacement) et `BRIDGE_AGENT_DOC.md` (ne cite jamais l'emplacement des worktrees).
 - **Point non vérifiable depuis ce périmètre** — le hook de relecture installé par `Relecture_Bridge` (diffs de commits par projet, dépôt séparé `~/Relecture_Bridge`, hors du périmètre de ce worktree CCL) n'a pas pu être inspecté. Le nom du dossier de chaque worktree (`<projet>-issue<N>`) reste identique à avant cette issue — seul son emplacement change sous CCL — donc tout mécanisme identifiant le projet par ce nom de dossier plutôt que par un chemin parent supposé fixe devrait rester correct ; à confirmer par Alain directement sur ce dépôt.
 
-# CHANGELOG-739 — à fusionner dans CHANGELOG.md
 
 ## 9 octobre 2026 — issue #739
 
@@ -1001,7 +977,6 @@ Problème corrigé : deux fois de suite (issues #736 et #737), `regenerer()` a �
 
 **À faire après fusion** : aucun redémarrage obligatoire (le changement de `watcher.py` ne touche qu'un commentaire). Redémarrer `new_issue.py` seulement pour bénéficier de la nouvelle version de `nouveau_projet.py`/`regenerer_tableaux_projets.py`.
 
-# CHANGELOG-738 — à fusionner dans CHANGELOG.md
 
 ## 9 octobre 2026 — issue #738
 
@@ -1021,7 +996,6 @@ Problème corrigé : saisir un nom avec des majuscules internes (`AnnuaireToken`
 
 **À faire après fusion** (rappel de l'issue) : redémarrer `new_issue.py` (`app/nouveau_projet.py` et `nouveau_projet.py` modifiés), puis Ctrl+Maj+R côté navigateur (`static/js/app.js` et `templates/fragments/modale_nouveau_projet.html` modifiés).
 
-# CHANGELOG-737 — à fusionner dans CHANGELOG.md
 
 ## 9 octobre 2026 — issue #737 (finitions)
 
@@ -1040,7 +1014,6 @@ Contrôles effectués : aucun renvoi `§N` cassé (vérifié par grep, toutes le
 
 Point d'attention signalé mais non traité (hors périmètre « aucune modification de code ») : deux commentaires de code pointent vers `BRIDGE_AGENT_DOC.md §13` (`watcher.py::_compter_watchers_actifs`, `scripts/mesurer_api.py`), section désormais supprimée — ces renvois étaient déjà incohérents avec le contenu de l'ancien §13 avant ce nettoyage (ni PID ni mesure API n'y figuraient), donc pas une régression introduite ici, mais à corriger dans une issue dédiée si jugé utile.
 
-# CHANGELOG-736 — à fusionner dans CHANGELOG.md
 
 ## 8 octobre 2026 — issue #736 (3/3)
 
@@ -1060,7 +1033,6 @@ Nettoyage de `BRIDGE_AGENT_DOC.md`, §14 à §20 et bloc final : réécriture po
 
 **Tableaux §2/§7 et pied de page** : intégralement préservés (vérifiés caractère pour caractère identiques à la version précédente) — `regenerer_tableaux_projets.py` relu et rejoué (dry-run sur une copie, puis `_bump_date` testé directement sur le fichier réel) sans erreur de marqueur.
 
-# CHANGELOG-735 — à fusionner dans CHANGELOG.md
 
 ## 8 octobre 2026 — issue #735 (2/3)
 
@@ -1087,7 +1059,6 @@ Tout le reste du contenu retiré décrit de l'interface, du fonctionnement inter
 
 Après fusion : rien à relancer (doc seule).
 
-# CHANGELOG-733 — à fusionner dans CHANGELOG.md
 
 ## 8 octobre 2026 — issue #733 (1/3)
 
@@ -1113,7 +1084,6 @@ Nettoyage de `BRIDGE_AGENT_DOC.md`, §1 à §9 : réécriture pour ne garder que
 
 Après fusion : rien à relancer (doc seule).
 
-# CHANGELOG-734 — à fusionner dans CHANGELOG.md
 
 ## 8 octobre 2026 — issue #734
 
@@ -1127,7 +1097,6 @@ Retrait du code mort des trois valeurs de TYPE `spec_vue`/`spec_metier`/`spec_pe
 
 Après fusion : relancer les watchers de projet (`watcher.py` modifié), de préférence quand aucune issue en écriture ne tourne, ET redémarrer `new_issue.py` (il importe `watcher.py`).
 
-# CHANGELOG-732 — à fusionner dans CHANGELOG.md
 
 ## 8 octobre 2026 — issue #732
 
@@ -1143,7 +1112,6 @@ Alerte explicite quand GitHub est en panne : lors d'un échec de `gh` classé «
 
 Après fusion : redémarrer `new_issue.py` (`app/*.py` modifié) puis `Ctrl+Maj+R`.
 
-# CHANGELOG-730 — à fusionner dans CHANGELOG.md
 
 ## 8 octobre 2026 — issue #730
 
@@ -1163,7 +1131,6 @@ Après fusion : `Ctrl+Maj+R` suffit (JS/CSS seuls) — aucun redémarrage de `ne
 
 Onglet Résultats : rattrapage des événements manqués (issue #729, suite #705) — à chaque activation de l'onglet, si la dernière synchro réseau de la liste date de plus de 30 s (ou n'a jamais eu lieu), affiche immédiatement le contenu courant puis recharge liste + décomptes + cases cochées **en arrière-plan**, sans vider ni bloquer l'affichage (`fautRechargerAOuverture`, `rechargerEnArrierePlan`, `static/js/resultats.js`). Le ↻ et la resynchronisation automatique #705 relisent désormais aussi l'état des cases « traité/lu » (`resultats.rafraichir()` appelle `resultatsCoches.rechargerCases()`), dans le MÊME périmètre de projets qu'eux (filtre #428) — corrige le cas où une décoche serveur après `RELANCE` (#720) restait affichée cochée malgré un ↻. Heure de dernière synchro affichée discrètement près du ↻ (`formaterHeureSync`, `#resultats-derniere-sync`). Tests de logique pure (`static/js/tests/resultats.test.js`) et comportementaux DOM/réseau mockés (`static/js/tests/resultats_resync_729.test.js`). JS/CSS uniquement, aucun changement de protocole d'événements ni du serveur — `Ctrl+Maj+R` suffit après fusion. Doc : `BRIDGE_AGENT_DOC.md` §17.3/§17.4 (nouvelle) et section case « traité/lu ».
 
-# CHANGELOG-728 — à fusionner dans CHANGELOG.md
 
 ## 8 octobre 2026 — issue #728
 
@@ -1177,7 +1144,6 @@ Onglet « En attente » (interface seule, issue #714 2/2) : **pastille nominativ
 
 Après fusion : Ctrl+Maj+R (JS/CSS seuls) suffit — aucun redémarrage de `new_issue.py` (aucun changement serveur).
 
-# CHANGELOG-727 — à fusionner dans CHANGELOG.md
 
 ## 8 octobre 2026 — issue #727
 
@@ -1188,7 +1154,6 @@ Documentation uniquement, aucune modification de code : deux informations d'expl
 
 Aucun renvoi ajouté en §12 de `BRIDGE_AGENT_DOC.md` vers `WORKTREES.md` : un renvoi existait déjà pour la routine de fusion. Suite de tests complète relancée (206 passed) : aucun test de structure de la doc cassé.
 
-# CHANGELOG-726 — à fusionner dans CHANGELOG.md
 
 ## 7 octobre 2026 — issue #726
 
@@ -1203,7 +1168,6 @@ Champ `RELANCE` (§3.14) : **le texte libre d'un fichier de relance est désorma
 
 Après fusion : relancer le Watcher spool (`scripts/watcher_issues_inbox.py` modifié). Aucun redémarrage de watcher de projet ni de `new_issue.py` nécessaire.
 
-# CHANGELOG-725 — à fusionner dans CHANGELOG.md
 
 ## 7 octobre 2026 — issue #725
 
@@ -1220,7 +1184,6 @@ Hors périmètre (rappel de l'issue) : mode lecture inchangé ; `MAX_WRITE_PARAL
 
 Après fusion : relancer les watchers (`watcher.py` modifié), de préférence quand aucune issue en écriture ne tourne. Aucun redémarrage de `new_issue.py` nécessaire.
 
-# CHANGELOG-724 — à fusionner dans CHANGELOG.md
 
 ## 6 octobre 2026 — issue #724
 
@@ -1236,7 +1199,6 @@ Hors périmètre (rappel de l'issue) : aucun changement pour une issue qui touch
 
 Après fusion : relancer les watchers (`watcher.py` modifié) et redémarrer `new_issue.py` (`app/projets.py`, `nouveau_projet.py`, `supprimer_projet.py` modifiés). Ne pas lancer l'issue de fusion elle-même pendant qu'une autre issue mode_write tourne dans un autre projet.
 
-# CHANGELOG-723 — à fusionner dans CHANGELOG.md
 
 ## 6 octobre 2026 — issue #723
 
@@ -1249,7 +1211,6 @@ Case « traité/lu » + badges ✅/All : **la copie préfixe désormais une lign
 
 Hors périmètre (rappel de l'issue) : variante « diff » inchangée (diff brut) ; aucun changement côté watcher ni du commentaire posté sur GitHub (JS uniquement — le correctif s'applique donc aussi aux anciennes issues, sans réémission de commentaire) ; `configs/*.conf` non touché. Après fusion : Ctrl+Maj+R suffit, aucun redémarrage de `new_issue.py` nécessaire.
 
-# CHANGELOG-722 — à fusionner dans CHANGELOG.md
 
 ## 6 octobre 2026 — issue #722
 
@@ -1260,7 +1221,6 @@ Documentation uniquement (`BRIDGE_AGENT_DOC.md`) : **le mode lecture ne peut ex�
 
 Hors périmètre (rappel de l'issue) : aucun changement de code ni de comportement du watcher ; `python3` non ajouté à `OUTILS_LECTURE_AUTORISES`.
 
-# CHANGELOG-721 — à fusionner dans CHANGELOG.md
 
 ## 6 octobre 2026 — issue #721
 
@@ -1273,7 +1233,6 @@ Hors périmètre (rappel de l'issue) : aucun changement de code ni de comporteme
 
 Hors périmètre (rappel de l'issue) : `configs/*.conf` non touché, création d'issues inchangée, autres boutons de ligne non touchés.
 
-# CHANGELOG-720 — à fusionner dans CHANGELOG.md
 
 ## 5 octobre 2026 — issue #720
 
@@ -1289,7 +1248,6 @@ Hors périmètre (rappel de l'issue) : `configs/*.conf` non touché, création d
 
 Hors périmètre (rappel de l'issue) : `configs/*.conf` non touché, création d'issues inchangée, comportement de la case pour les issues non relancées inchangé.
 
-# CHANGELOG-719 — à fusionner dans CHANGELOG.md
 
 ## 5 octobre 2026 — issue #719
 
@@ -1301,7 +1259,6 @@ Hors périmètre (rappel de l'issue) : `configs/*.conf` non touché, création d
 
 Hors périmètre (rappel de l'issue) : `configs/*.conf` non touché, circuit de création d'issues inchangé (seule la notification SSE `fichier_recu` est concernée).
 
-# CHANGELOG-718 — à fusionner dans CHANGELOG.md
 
 ## 4 octobre 2026 — issue #718
 
@@ -1314,7 +1271,6 @@ Hors périmètre (rappel de l'issue) : `configs/*.conf` non touché, circuit de 
 
 Hors périmètre (rappel de l'issue) : `configs/*.conf` non touché, contenu/badge/boutons Lancer-Supprimer de l'onglet « En attente » inchangés.
 
-# CHANGELOG-717 — à fusionner dans CHANGELOG.md
 
 ## 4 octobre 2026 — issue #717
 
@@ -1332,7 +1288,6 @@ Constat vérifié le 04/10/2026, depuis un PowerShell NON élevé en `AlainW` : 
 
 Hors périmètre (rappel de l'issue) : `configs/*.conf` non touché, service `CCW-Watcher` de base toujours actif (inchangé), jetons CCW non touchés. Validation réelle (`nssm start` puis `stop` en PowerShell non élevé sur CCW) à faire par Alain après fusion et exécution de `autoriser_demarrage_ccw.ps1`.
 
-# CHANGELOG-716 — à fusionner dans CHANGELOG.md
 
 ## 4 octobre 2026 — issue #716
 
@@ -1343,7 +1298,6 @@ Hors périmètre (rappel de l'issue) : `configs/*.conf` non touché, service `CC
 
 Hors périmètre (rappel de l'issue) : toute vérification automatique de la condition `ATTENTE`, inchangée.
 
-# CHANGELOG-714 — à fusionner dans CHANGELOG.md
 
 ## 3 octobre 2026 — issue #714 (2/2)
 
@@ -1363,7 +1317,6 @@ Hors périmètre (rappel de l'issue) : toute vérification automatique de la con
 
 Hors périmètre (rappel de l'issue, non traité ici) : toute vérification automatique des conditions, le formulaire web, la modification du comportement du watcher.
 
-# CHANGELOG-713 — à fusionner dans CHANGELOG.md
 
 ## 3 octobre 2026 — issue #713 (1/2)
 
@@ -1668,7 +1621,6 @@ automatisé ne peut la remplacer depuis Linux) :
   périmètre de cette issue, a son propre `configurer_logs()` distinct avec
   un `StreamHandler` mais sans `FileHandler` — pas concerné par le doublon).
 
-# CHANGELOG-694
 
 ## Issue #694 — Issue F (plan hybride Windows) : app/issues_inbox.py portable
 
@@ -2247,7 +2199,6 @@ exécuté ici (script destiné au PC Windows CCW). La substitution
 initialisée (ligne 128) et éprouvée plus haut dans le script (clonage,
 AppDirectory du service) — pas de risque de syntaxe PowerShell introduit.
 
-# CHANGELOG-667 — à fusionner dans CHANGELOG.md
 
 ## 27 septembre 2026 — issue #667
 
@@ -2262,7 +2213,6 @@ AppDirectory du service) — pas de risque de syntaxe PowerShell introduit.
 
 Tests : `tests/test_topic_ntfy_facultatif_667.py` (11 scénarios pytest) — `CHAMPS_REQUIS` sans `TOPIC_NTFY`, `charger_config` sur un `.conf` sans la ligne, `url_ntfy` vide/non-vide, `notifier_ntfy`/`notifier()` avec url vide (mock de `subprocess.run`, jamais appelé, aucun log error/warning), `ecrire_conf`/`creer_projet` avec topic vide (placeholder disparu), `sauvegarder_conf` avec `TOPIC_NTFY` vide. Suite complète (125 tests) : aucune régression. Aucune modification de `configs/*.conf`. Aucun `git push`.
 
-# CHANGELOG-666 — à fusionner dans CHANGELOG.md
 
 ## 27 septembre 2026 — issue #666
 
@@ -2274,7 +2224,6 @@ Onglet CCW, section « Finaliser » : `ccwFinaliserProjet()` (`static/js/ccw.js`
 
 Tests : `node --test static/js/tests/` (164 tests, tous passent, aucune régression). Aucune modification de `configs/*.conf`. Aucun `git push`.
 
-# CHANGELOG-659 — à fusionner dans CHANGELOG.md
 
 ## 27 septembre 2026 — issue #659
 
@@ -2294,7 +2243,6 @@ Réconciliation de la contradiction PATH/`AppEnvironmentExtra` entre l'ancien fi
 
 Tests : `python3 tests/test_ajouter_projet_ccw_env_558.py` (6 scénarios, tous passent) + suite complète relancée (`tests/test_*.py`), aucune régression. BOM UTF-8 préservé sur les 3 scripts `.ps1` modifiés. Aucune modification de `configs/*.conf`. Aucun `git push`.
 
-# CHANGELOG-663 — à fusionner dans CHANGELOG.md
 
 ## 27 septembre 2026 — issue #663
 
@@ -2306,7 +2254,6 @@ Point d'attention non traité (hors périmètre de cette issue, marquée « cour
 
 Tests (`static/js/tests/resultats_fichiers.test.js`) : nouveaux cas couvrant explicitement la purge d'une ligne SSE dont le fichier a quitté `rejetes`, sa conservation tant qu'il y reste, et la non-purge d'une ligne « reçu » (statut `recu`, jamais concernée). `VERIFICATIONS_MANUELLES.md` mis à jour (fin de la mention « persistance jusqu'au rechargement » pour les lignes SSE, nouvelle case de vérification manuelle dédiée).
 
-# CHANGELOG-662 — à fusionner dans CHANGELOG.md
 
 ## 27 septembre 2026 — issue #662
 
@@ -2316,7 +2263,6 @@ Purge automatique des sidecars `.motifs` orphelins de `issues_inbox/rejected/` :
 
 Tests : `tests/test_purge_motifs_orphelins_662.py` (5 scénarios pytest) — sidecar orphelin supprimé, sidecar avec fichier rejeté toujours présent conservé, dossier `.motifs` absent ou vide sans plantage, mélange orphelin/conservé.
 
-# CHANGELOG-658 — à fusionner dans CHANGELOG.md
 
 ## 27 septembre 2026 — issue #658
 
@@ -2336,7 +2282,6 @@ Tests : `tests/test_purge_motifs_orphelins_662.py` (5 scénarios pytest) — sid
 
 Tests : aucun test automatisé possible pour l'essentiel de ce script (installation Windows réelle) — le mode `-DryRun` sert de garde-fou de relecture. Pas d'accès à un environnement PowerShell dans ce worktree Linux : vérification faite par relecture manuelle + contrôle d'équilibrage des accolades/parenthèses + recherche des pièges classiques de concaténation de chaînes en mode commande PowerShell (`Info "a" + "b"` n'est PAS une concaténation valide hors expression parenthésée).
 
-# CHANGELOG-656 — à fusionner dans CHANGELOG.md
 
 ## 26 septembre 2026 — issue #656
 
@@ -2355,7 +2300,6 @@ Configuration : le modèle CCL par défaut d'un projet (`MODELE_CCL` du `.conf`)
 
 Tests : `node --test static/js/tests/ static/js/socle/tests/` → 195/195 OK (191 précédents + 4 nouveaux). `python3 -m pytest tests/` → 109 passed (108 précédents + 1 nouveau fichier, 3 scénarios). `py_compile` sur tous les fichiers Python touchés (`app/projets.py`, `app/issues.py`, `scripts/watcher_issues_inbox.py`) = OK.
 
-# CHANGELOG-655 — à fusionner dans CHANGELOG.md
 
 ## 26 septembre 2026 — issue #655
 
@@ -2371,7 +2315,6 @@ Depuis la suppression de l'onglet Watchers (issue #626, étape 2), la ligne d'un
 
 Tests : `node --test static/js/tests/*.test.js` → 157/157 OK (154 précédents + 3 nouveaux). `py_compile` sans changement côté Python (aucun fichier `.py` touché, la route serveur existait déjà).
 
-# CHANGELOG-652 — à fusionner dans CHANGELOG.md
 
 ## 26 septembre 2026 — issue #652
 
@@ -2387,7 +2330,6 @@ Refonte interface web (dernier chantier, ARCHITECTURE.md §6/§6.7) : le formula
 
 Aucune modification Python. `git push` non effectué (Alain pousse après revue).
 
-# CHANGELOG-653 — à fusionner dans CHANGELOG.md
 
 ## 26 septembre 2026 — issue #653
 
@@ -2403,7 +2345,6 @@ Fichiers modifiés : `static/js/socle/dom.js`, `static/js/socle/tests/exports_so
 
 Tests : `node --test static/js/` → 138/138 OK (133 précédents + 5 nouveaux). `py_compile` sans changement côté Python (aucun fichier `.py` touché).
 
-# CHANGELOG-651 — à fusionner dans CHANGELOG.md
 
 ## 26 septembre 2026 — issue #651
 
@@ -2426,7 +2367,6 @@ Fichiers modifiés : `static/js/config.js` (nouveau), `static/js/onglets.js`, `s
 
 Tests : `node --test static/js/tests/ static/js/socle/tests/` → 144 tests, tous au vert (12 nouveaux pour `config.js`). Vérification manuelle du comportement visible (chargement/sauvegarde, suppression de projet avec ses garde-fous) laissée à Alain (VERIFICATIONS_MANUELLES.md), non rejouable en session non interactive (nécessite un navigateur).
 
-# CHANGELOG-650 — à fusionner dans CHANGELOG.md
 
 ## 26 septembre 2026 — issue #650
 
@@ -2447,7 +2387,6 @@ Fichiers modifiés : `static/js/journal.js` (nouveau), `static/js/onglets.js`, `
 
 Tests : `node --test static/js/tests/` (110 tests) et `node --test static/js/socle/tests/` (29 tests) → tous au vert. Vérification manuelle du comportement visible (journal en direct, réinitialisation au changement de projet) laissée à Alain (VERIFICATIONS_MANUELLES.md), non rejouable en session non interactive (nécessite un navigateur).
 
-# CHANGELOG-649 — à fusionner dans CHANGELOG.md
 
 ## 26 septembre 2026 — issue #649
 
@@ -2469,7 +2408,6 @@ Fichiers modifiés : `static/js/ccw.js` (nouveau), `static/js/panneau_lateral.js
 
 Vérifications manuelles (DOM/réseau/rendu) non rejouées par CCL — voir `VERIFICATIONS_MANUELLES.md` section « Onglet CCW » à rejouer par Alain.
 
-# CHANGELOG-648 — à fusionner dans CHANGELOG.md
 
 ## 26 septembre 2026 — issue #648
 
@@ -2490,7 +2428,6 @@ Fichiers modifiés : `nouveau_projet.py`, `app/issues.py`, `scripts/watcher_issu
 
 Tests : `python3 -m pytest tests/` → 106 passed. `py_compile` sur tous les fichiers Python touchés = OK.
 
-# CHANGELOG-647 — à fusionner dans CHANGELOG.md
 
 ## 26 septembre 2026 — issue #647
 
@@ -4298,7 +4235,6 @@ place pour le bouton « Quitter » (fonction `quitter()`,
 media query : uniquement l'`onclick` du bouton, identique sur desktop
 et mobile.
 
-# CHANGELOG-556 — entrées à fusionner dans CHANGELOG.md
 
 ## 15 septembre 2026 — issue #556 (2/3)
 
