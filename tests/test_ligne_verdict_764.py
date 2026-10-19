@@ -6,6 +6,8 @@ Vérifie :
    exactement le motif `MARQUEUR_VERDICT_SUCCES`/`MARQUEUR_VERDICT_ECHEC`
    vaut verdict — un ❌ en tête de ligne dans un extrait/une liste de cas
    (l'ancien faux positif, remplacé par cette issue) ne doit plus matcher.
+   Nuancé par #777 sur la PREMIÈRE ligne uniquement (texte avant le
+   marqueur désormais toléré) — voir test_verdict_prefixe_777.py.
 2. Entre plusieurs lignes de verdict dans la même sortie, c'est la PREMIÈRE
    qui l'emporte (correction reprise de l'étude #762, #757 gardait jusqu'ici
    la dernière).
@@ -86,8 +88,15 @@ def scenario_ligne_verdict_exacte_succes_et_echec():
     # Espaces de bordure tolérés, mais pas de texte additionnel sur la ligne.
     assert watcher._verdict_final(f"  {watcher.MARQUEUR_VERDICT_SUCCES}  \nsuite") \
         == watcher.MARQUEUR_VERDICT_SUCCES
-    assert watcher._verdict_final(f"texte avant {watcher.MARQUEUR_VERDICT_SUCCES}") is None, (
-        "le motif cité au milieu d'une ligne (pas autonome) ne doit pas valoir verdict")
+    # Texte avant le marqueur, sur la PREMIÈRE ligne : désormais accepté
+    # (issue #777, assouplissement étroit — voir test_verdict_prefixe_777.py
+    # pour le détail de ce comportement et de ses limites).
+    assert watcher._verdict_final(f"texte avant {watcher.MARQUEUR_VERDICT_SUCCES}") \
+        == watcher.MARQUEUR_VERDICT_SUCCES
+    # Mais du texte APRÈS le marqueur sur cette même ligne reste rejeté : le
+    # marqueur doit clore la ligne (espaces de bordure seuls tolérés après).
+    assert watcher._verdict_final(f"{watcher.MARQUEUR_VERDICT_SUCCES} texte après") is None, (
+        "un marqueur suivi de texte sur sa ligne ne doit jamais valoir verdict")
     return {"motifs_reconnus_ok": True}
 
 

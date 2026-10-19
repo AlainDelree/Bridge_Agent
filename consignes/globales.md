@@ -78,3 +78,13 @@
   automatique du TIMEOUT (`F_reseau`/`F_local`) — absent, il n'a aucun
   effet. Comme pour COMPLEXITE, cette consigne ne concerne que les issues
   que TU rédiges.
+- **Ligne de verdict de clôture (`<!-- bridge:verdict:succes -->` /
+  `<!-- bridge:verdict:echec -->`) : toujours SEULE sur sa propre ligne**,
+  jamais combinée avec une phrase d'introduction ou tout autre texte sur
+  cette même ligne. Le gabarit de prompt l'exige en toute première ligne de
+  ta réponse, suivie SEULEMENT APRÈS un saut de ligne par le résumé (✅/❌
+  ...) — jamais les deux assemblés sur une seule ligne. Un filet de
+  sécurité tolère désormais un peu de texte AVANT le marqueur sur cette
+  première ligne, mais ne t'y fie pas : une tâche pourtant terminée a déjà
+  été classée à tort en échec, puis retentée trois fois en pure perte,
+  faute de cette ligne autonome (issue #777).

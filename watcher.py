@@ -3888,10 +3888,21 @@ Si la tâche échoue, remplace la toute première ligne par {MARQUEUR_VERDICT_EC
             _nettoyer_arbre_claude(proc, job_windows)
 
 
+# Réponse attendue de `diagnostiquer_echec` quand elle ne trouve AUCUNE cause
+# concrète et vérifiable (issue #777) — préférée à une invention : un
+# diagnostic affirmatif et faux (ex. incident chesscoach #123, dépassement de
+# délai invoqué pour une tentative de 337s sur un délai de 1800s) oriente la
+# relecture humaine dans la mauvaise direction, bien plus nuisible qu'une
+# absence de diagnostic.
+_REPONSE_DIAGNOSTIC_VIDE = "RAS"
+
+
 def diagnostiquer_echec(numero: int, titre: str, body: str,
                         derniere_erreur: str,
                         perimetre: str = None,
-                        cwd: Path = None) -> str | None:
+                        cwd: Path = None,
+                        duree_derniere_tentative: float | None = None,
+                        timeout_tentative: int | None = None) -> str | None:
     """Passe diagnostique courte et en LECTURE SEULE, lancée juste avant de poser
     'needs-human' sur une issue non critique abandonnée (issue #124).
 
@@ -3905,12 +3916,22 @@ def diagnostiquer_echec(numero: int, titre: str, body: str,
     fixe (CFG.timeout_diagnostic), indépendant du timeout de la tâche d'origine.
 
     Best-effort : retourne le texte du diagnostic, ou None si la passe elle-même
-    échoue / timeout (l'appelant n'ajoute alors simplement aucune section). On ne
-    boucle jamais dessus et on ne retente pas.
+    échoue / timeout (l'appelant n'ajoute alors simplement aucune section), ou si
+    cette passe répond `_REPONSE_DIAGNOSTIC_VIDE` (aucune cause concrète trouvée
+    — voir ci-dessous). On ne boucle jamais dessus et on ne retente pas.
 
     perimetre / cwd : mêmes surcharges que lancer_claude (issue #125). Pour un
     projet à périmètre dynamique, le diagnostic doit lire dans REPO_CIBLE et y
-    être lancé, pas dans le rep_travail figé du .conf (placeholder)."""
+    être lancé, pas dans le rep_travail figé du .conf (placeholder).
+
+    duree_derniere_tentative / timeout_tentative (issue #777, incident
+    chesscoach #123) : la version précédente de ce prompt se contentait de
+    citer « tâche simplement trop volumineuse pour le timeout configuré »
+    comme EXEMPLE de cause — ce qui orientait le modèle vers un dépassement de
+    délai même factuellement impossible (incident constaté : tentative de
+    337s pour un délai de 1800s). Ces deux valeurs, quand disponibles,
+    injectent le FAIT RÉEL dans le prompt et interdisent explicitement de le
+    contredire ; l'exemple trompeur est retiré."""
     perimetre_effectif = CFG.perimetre if perimetre is None else perimetre
     if perimetre_effectif:
         clause_perimetre = (
@@ -3920,17 +3941,31 @@ def diagnostiquer_echec(numero: int, titre: str, body: str,
     else:
         clause_perimetre = ""
 
+    clause_faits = ""
+    if isinstance(duree_derniere_tentative, (int, float)) and isinstance(timeout_tentative, (int, float)):
+        a_depasse = duree_derniere_tentative >= timeout_tentative
+        clause_faits = (
+            f"\nFAIT CONNU ET VÉRIFIÉ (ne jamais le contredire) : la dernière "
+            f"tentative a duré {duree_derniere_tentative:.0f}s pour un délai "
+            f"(TIMEOUT) configuré de {timeout_tentative}s — "
+            + ("ce délai A été dépassé.\n" if a_depasse else
+               "ce délai n'a PAS été dépassé : n'évoque surtout pas un "
+               "dépassement de délai comme cause possible, ce serait faux.\n")
+        )
+
     prompt = f"""Tu es l'agent Linux (CCL) du bridge inter-agents, projet « {CFG.nom} ».
 Une tâche (GitHub Issue #{numero}) a échoué de façon répétée et va être confiée à
 un humain. NE tente PAS de résoudre la tâche : n'écris aucun fichier, n'exécute
 aucune commande modifiant l'état du système ou du dépôt.
 
 Ton unique rôle est un diagnostic RAPIDE et en LECTURE SEULE. À partir du titre,
-du corps de la tâche et de la dernière erreur ci-dessous, liste les 3 à 5 causes
-LES PLUS PROBABLES de ce timeout / échec répété — par exemple : boucle infinie
-suspectée, commande interactive qui attend une entrée, opération réseau/IO lente,
-dépendance manquante, tâche simplement trop volumineuse pour le timeout configuré,
-etc. Reste concret et bref.
+du corps de la tâche, de la dernière erreur et du FAIT CONNU ci-dessous (s'il est
+fourni), liste au plus 5 causes CONCRÈTES — appuyées sur un élément réel que tu as
+constaté (titre, corps, dernière erreur, ou lecture effective d'un fichier du
+dépôt), jamais une hypothèse générique non vérifiée. N'évoque JAMAIS une piste
+contredite par le FAIT CONNU ci-dessous quand il est fourni. Si tu ne trouves
+AUCUNE cause concrète et vérifiable, réponds UNIQUEMENT par le mot {_REPONSE_DIAGNOSTIC_VIDE}
+(rien d'autre) — une absence de diagnostic est préférable à une cause inventée.
 
 TITRE : {titre}
 
@@ -3938,9 +3973,11 @@ BODY :
 {body}
 
 DERNIÈRE ERREUR : {derniere_erreur}
-{clause_perimetre}
-Réponds uniquement par une courte liste à puces (3 à 5 pistes) des causes les plus
-probables, sans préambule ni conclusion, et sans tenter de corriger quoi que ce soit."""
+{clause_faits}{clause_perimetre}
+Réponds uniquement par une courte liste à puces (au plus 5 pistes, chacune
+appuyée sur un élément concret) des causes les plus probables, sans préambule ni
+conclusion, et sans tenter de corriger quoi que ce soit — ou par le seul mot
+{_REPONSE_DIAGNOSTIC_VIDE} si tu n'en trouves aucune de concrète et vérifiable."""
 
     try:
         succes, sortie = lancer_claude(
@@ -3957,7 +3994,11 @@ probables, sans préambule ni conclusion, et sans tenter de corriger quoi que ce
         return None
 
     if succes and sortie.strip():
-        return sortie.strip()
+        sortie_nettoyee = sortie.strip()
+        if sortie_nettoyee.upper() == _REPONSE_DIAGNOSTIC_VIDE:
+            log.info(f"  Passe diagnostique #{numero} : aucune cause concrète trouvée (réponse {_REPONSE_DIAGNOSTIC_VIDE}) — abandon sans diagnostic, par préférence (issue #777).")
+            return None
+        return sortie_nettoyee
     log.info(f"  Passe diagnostique #{numero} indisponible (échec/timeout) — abandon sans diagnostic.")
     return None
 
@@ -5583,20 +5624,47 @@ _RE_LIGNE_VERDICT = re.compile(
     re.MULTILINE,
 )
 
+# Assouplissement ÉTROIT (issue #777, incident chesscoach #123) : une tâche
+# pourtant terminée a été classée en échec parce que l'agent a écrit une
+# phrase d'introduction suivie, SUR LA MÊME LIGNE, du marqueur de clôture —
+# cette ligne ne matchait alors plus `_RE_LIGNE_VERDICT` (qui exige la ligne
+# ENTIÈRE). Ce motif-ci tolère du texte AVANT le marqueur, mais reste
+# restreint à la toute PREMIÈRE ligne de `sortie` (celle qui, par gabarit de
+# prompt, doit OUVRIR la réponse — décision #763) : jamais appliqué plus loin
+# dans le texte. C'est cette restriction de PORTÉE (première ligne
+# uniquement), et non une tolérance de motif plus large, qui empêche de
+# retomber dans le défaut corrigé par #762/#763/#764 — un marqueur cité dans
+# un exemple ou employé comme puce de liste, TOUJOURS situé après la première
+# ligne dans un rapport bien formé, ne matche donc jamais ici.
+_RE_PREMIERE_LIGNE_VERDICT = re.compile(
+    r'^.*(' + re.escape(MARQUEUR_VERDICT_SUCCES) + '|' + re.escape(MARQUEUR_VERDICT_ECHEC) + r')[ \t]*$'
+)
+
 
 def _verdict_final(sortie: str) -> str | None:
-    """Retourne MARQUEUR_VERDICT_SUCCES ou MARQUEUR_VERDICT_ECHEC — la
-    PREMIÈRE ligne de verdict trouvée dans `sortie` (voir `_RE_LIGNE_VERDICT`)
-    — ou None si aucune n'est présente.
+    """Retourne MARQUEUR_VERDICT_SUCCES ou MARQUEUR_VERDICT_ECHEC, ou None si
+    aucun verdict reconnu.
 
-    On garde la PREMIÈRE occurrence (issue #764, correction de l'étude #762 —
-    #757 gardait jusqu'ici la DERNIÈRE). Le rapport de clôture réel de
-    l'agent place cette ligne au tout début de sa réponse formatée (voir le
-    gabarit de prompt) : une occurrence supplémentaire plus loin dans la
-    sortie capturée ne peut provenir que d'un texte qui la cite ou d'un tour
-    supplémentaire émis APRÈS le vrai rapport (ex. notification tardive d'un
-    sous-agent en arrière-plan, cas #580 à l'origine du garde-fou #581) — elle
-    ne doit jamais l'emporter sur le verdict réellement rendu en premier."""
+    Deux niveaux, dans cet ordre :
+    1. La toute PREMIÈRE ligne de `sortie` (après suppression des blancs de
+       bordure) est testée en PRIORITÉ via `_RE_PREMIERE_LIGNE_VERDICT` — motif
+       assoupli (issue #777) qui tolère du texte avant le marqueur, tant que
+       celui-ci clôt cette ligne précise. Couvre aussi bien le cas nominal
+       (ligne entièrement dédiée, texte avant vide) que le cas assoupli (texte
+       d'intro sur la même ligne, incident chesscoach #123).
+    2. Seulement si cette première ligne ne contient aucun marqueur, on
+       retombe sur `_RE_LIGNE_VERDICT` (issue #764) appliqué au texte entier :
+       PREMIÈRE ligne AUTONOME (ligne entière, pas de préfixe) trouvée plus
+       loin — cas d'un rapport dont la ligne de clôture arrive après un saut
+       de ligne initial inattendu. On garde la PREMIÈRE occurrence (issue
+       #764/#763, pas la dernière) : le gabarit impose que le verdict ouvre la
+       réponse, une occurrence plus loin ne peut provenir que d'une citation
+       ou d'un tour tardif (cas #580/#581) qui ne doit jamais l'emporter."""
+    sortie_sans_blancs = sortie.strip()
+    premiere_ligne = sortie_sans_blancs.split("\n", 1)[0] if sortie_sans_blancs else ""
+    correspondance = _RE_PREMIERE_LIGNE_VERDICT.match(premiere_ligne)
+    if correspondance:
+        return correspondance.group(1)
     occurrences = _RE_LIGNE_VERDICT.findall(sortie)
     return occurrences[0] if occurrences else None
 
@@ -5694,7 +5762,7 @@ def _executer_une_tentative(numero: int, titre: str, body: str, dry_run: bool, m
                              tentative: int, max_tentatives: int | None = None,
                              tete_avant_traitement: str | None = None,
                              worktree_repris: bool = False,
-                             commits_ecart_worktree: int = 0) -> tuple[bool, str, str | None, float]:
+                             commits_ecart_worktree: int = 0) -> tuple[bool, str, str | None, float, bool]:
     """Une tentative `lancer_claude`, garde-fou de format de clôture (#581) et
     restauration best-effort des configs/*.conf modifiés (#318/#327).
 
@@ -5714,7 +5782,16 @@ def _executer_une_tentative(numero: int, titre: str, body: str, dry_run: bool, m
     conséquence : `lancer_claude` y retourne toujours `succes=True`, qui ne
     passe jamais par ce garde-fou — voir la boucle de tentatives).
 
-    Retourne (succes, sortie, stderr_brut, duree_tentative)."""
+    `verdict_absent` (issue #777) : True uniquement quand le garde-fou #581
+    ci-dessous a reclassé cette tentative en échec faute de LIGNE de verdict
+    lisible — distinct d'un échec déjà constaté au niveau du process
+    (`stderr_brut` non None) ou d'un verdict d'échec explicite (#757). Sert à
+    l'appelant pour décider de ne PAS enchaîner les tentatives restantes
+    quand le worktree contient déjà des commits au-delà de la sauvegarde
+    (incident chesscoach #123 : travail fait, rapport illisible, 3
+    tentatives identiques lancées en pure perte).
+
+    Retourne (succes, sortie, stderr_brut, duree_tentative, verdict_absent)."""
     debut_tentative = time.monotonic()
     succes, sortie = lancer_claude(numero, titre, body, dry_run, mode,
                                    timeout, modele,
@@ -5757,6 +5834,7 @@ def _executer_une_tentative(numero: int, titre: str, body: str, dry_run: bool, m
     # (cas #580) déclenche ce garde-fou. dry_run exclu : sa sortie fixe
     # ("[DRY-RUN] ...") ne respecte jamais ce format et ne passe de toute
     # façon jamais par `commenter_resultat_avec_retry`.
+    verdict_absent = False
     if succes and not dry_run and _verdict_final(sortie) is None:
         log.warning(
             f"  ✗ Tentative {tentative} : sortie de claude sans aucune "
@@ -5766,13 +5844,15 @@ def _executer_une_tentative(numero: int, titre: str, body: str, dry_run: bool, m
             f"Traitée comme un échec de cette tentative."
         )
         succes = False
+        verdict_absent = True
         sortie = (
             "Sortie de claude sans aucune ligne de verdict de clôture "
             "attendue (ni succès ni échec) — probablement une réponse "
             "tardive émise après la fin réelle du traitement (ex. "
             "notification d'un sous-agent en arrière-plan terminé après le "
             "rapport final), qui a écrasé la vraie réponse dans la sortie "
-            f"capturée (issue #581). Sortie obtenue : {sortie.strip()[:500]}"
+            "capturée (issue #581). Fin brute de la sortie capturée (issue "
+            f"#777) : {sortie.strip()[-LIMITE_STDERR_LOG:]}"
         )
 
     # Garde-fou de VALEUR du verdict (issue #757, mis à jour par #764) :
@@ -5798,13 +5878,14 @@ def _executer_une_tentative(numero: int, titre: str, body: str, dry_run: bool, m
         sortie = (
             "Code de retour 0 mais verdict final d'échec : l'agent a "
             "rapporté un échec explicite dans la ligne de clôture de son "
-            f"rapport (issue #757). Sortie obtenue : {sortie.strip()[:500]}"
+            f"rapport (issue #757). Fin brute de la sortie capturée (issue "
+            f"#777) : {sortie.strip()[-LIMITE_STDERR_LOG:]}"
         )
 
     if empreinte_configs_avant is not None:
         _restaurer_configs_modifies(numero, empreinte_configs_avant)
 
-    return succes, sortie, stderr_brut, duree_tentative
+    return succes, sortie, stderr_brut, duree_tentative, verdict_absent
 
 
 def _verifier_violation_scratch(numero: int, titre: str, labels: list[str],
@@ -5920,6 +6001,39 @@ def _avertissement_succes_sans_commit(numero: int, mode: str, dry_run: bool,
         "(tâche n'impliquant pas d'écriture, bug non reproductible, "
         "correctif déjà présent) — à vérifier en relecture humaine.\n"
     )
+
+
+def _commits_au_dela_sauvegarde(cwd_effectif: Path, tete_avant_traitement: str | None) -> list[str]:
+    """Liste (`hash court` + sujet, un par ligne) des commits créés depuis
+    `tete_avant_traitement`, AU-DELÀ du commit de sauvegarde — issue #777,
+    même convention de repérage par POSITION que
+    `_avertissement_succes_sans_commit` (le premier commit après
+    `tete_avant_traitement` est la sauvegarde, jamais par message).
+
+    Sert à `_gerer_verdict_illisible_avec_commits` : un verdict illisible
+    (#581) alors que le worktree contient déjà de tels commits est le signe
+    qu'un travail réel a probablement eu lieu — retenter répéterait ce
+    travail en pure perte (incident chesscoach #123, 3 tentatives
+    identiques).
+
+    Best-effort, comme `_avertissement_succes_sans_commit` : `[]` si
+    `tete_avant_traitement` est absent, si la commande échoue (dépôt
+    inaccessible, timeout...), ou s'il n'y a rien au-delà de la
+    sauvegarde — ne doit jamais faire échouer l'appelant."""
+    if tete_avant_traitement is None:
+        return []
+    try:
+        resultat = subprocess.run(
+            ["git", "log", "--reverse", "--format=%h %s", f"{tete_avant_traitement}..HEAD"],
+            cwd=cwd_effectif, capture_output=True, text=True,
+            encoding="utf-8", errors="replace", timeout=30,
+        )
+        if resultat.returncode != 0:
+            return []
+        commits = [ligne for ligne in resultat.stdout.splitlines() if ligne.strip()]
+    except (OSError, subprocess.SubprocessError):
+        return []
+    return commits[1:]  # exclut le premier (sauvegarde, par position)
 
 
 def _finaliser_succes(numero: int, titre: str, body: str, labels: list[str], mode: str,
@@ -6172,12 +6286,73 @@ def _gerer_tentative_anormalement_rapide(numero: int, titre: str, body: str, lab
         _issue_write_bloquee_ajouter(numero)
 
 
+def _gerer_verdict_illisible_avec_commits(numero: int, titre: str, body: str, labels: list[str],
+                                           mode: str, sortie: str, commits: list[str],
+                                           avertissement_worktree_deja_pris: str,
+                                           avertissement_worktree_repris: str) -> None:
+    """Verdict de clôture illisible (garde-fou #581, `verdict_absent` de
+    `_executer_une_tentative`) alors que le worktree contient déjà des
+    commits au-delà de la sauvegarde (issue #777, incident chesscoach #123 :
+    deux commits présents — backup + fix, correctif déjà fusionné — mais
+    l'issue a quand même été abandonnée après TROIS tentatives identiques,
+    faute de cette vérification).
+
+    Point le plus important de l'issue #777 : la preuve qu'un travail a
+    probablement eu lieu est déjà sous la main (des commits), sans aucune
+    analyse de texte — retenter répéterait ce travail en pure perte. Même
+    mécanisme d'arrêt immédiat que `_gerer_erreur_bloquante` / `_gerer_
+    tentative_anormalement_rapide` : dès la PREMIÈRE tentative concernée,
+    MÊME pour une issue critique (pas de retry infini) — un rapport
+    illisible ne se corrige pas en répétant le travail qu'il décrivait déjà.
+    État distinct (ni succès confirmé, ni échec confirmé) : label posé pour
+    laisser la main à la relecture humaine, qui doit vérifier le travail
+    trouvé avant de le considérer acquis. Termine toujours le traitement de
+    l'issue — l'appelant doit retourner immédiatement après l'appel."""
+    log.error(
+        f"  ✗ Issue #{numero} : verdict de clôture illisible mais "
+        f"{len(commits)} commit(s) déjà présents au-delà de la sauvegarde — "
+        f"arrêt immédiat, sans retenter (issue #777)."
+    )
+    liste_commits = "\n".join(f"- `{c}`" for c in commits)
+    message_echec = (
+        f"⚠️ Verdict de clôture illisible, mais le worktree contient déjà "
+        f"{len(commits)} commit(s) au-delà de la sauvegarde — le travail a "
+        f"probablement eu lieu, seul le rapport est illisible. Traitement "
+        f"arrêté immédiatement, sans consommer les tentatives restantes "
+        f"(une répétition recommencerait un travail déjà fait).\n\n"
+        f"{avertissement_worktree_deja_pris}"
+        f"{avertissement_worktree_repris}"
+        f"Commit(s) trouvé(s) au-delà de la sauvegarde :\n{liste_commits}\n\n"
+        f"Sortie : `{sortie.strip()[:LIMITE_STDERR_LOG]}`\n\n"
+        f"**Vérifier manuellement ce travail avant de le considérer acquis** "
+        f"(revue du diff, tests). Label `{LABEL_ECHEC}` posé : cette issue ne "
+        f"sera plus retraitée automatiquement tant que le label n'est pas "
+        f"retiré (ou l'issue fermée) manuellement."
+    )
+    commenter_issue(numero, message_echec)
+    ajouter_label(numero, LABEL_ECHEC)
+    notifier(
+        labels,
+        titre=f"⚠️ {CFG.nom} #{numero} — verdict illisible, travail probable",
+        message=f"'{titre}' arrêtée : verdict illisible mais {len(commits)} commit(s) déjà présents au-delà de la sauvegarde.",
+        urgence_bureau="critical",
+        priorite_ntfy="high",
+        numero=numero,
+    )
+    notifier_fin_sse(numero)
+    # PAS de retrait de issues_en_cours (issue #576) : même traitement que
+    # _gerer_erreur_bloquante ci-dessus.
+    if mode == MODE_ECRITURE:
+        _issue_write_bloquee_ajouter(numero)
+
+
 def _gerer_abandon_max_essais(numero: int, titre: str, body: str, labels: list[str],
                                mode: str, critique: bool, tentative: int, sortie: str,
                                timeout: int, avertissement_worktree_deja_pris: str,
                                avertissement_worktree_repris: str,
                                perimetre_effectif: str, cwd_effectif: Path,
-                               debut_traitement: float) -> None:
+                               debut_traitement: float,
+                               duree_derniere_tentative: float | None = None) -> None:
     """Nombre maximal de tentatives atteint (`CFG.max_essais`) : issue
     critique ⇒ nouvelle tentative au prochain cycle (retry infini, jamais de
     needs-human) ; sinon abandon définitif (passe diagnostique, label
@@ -6187,7 +6362,14 @@ def _gerer_abandon_max_essais(numero: int, titre: str, body: str, labels: list[s
     avertissement_worktree_repris (issue #725) : même esprit
     qu'avertissement_worktree_deja_pris — reste visible même en cas d'échec
     définitif, pour qu'Alain sache que ce worktree venait d'une tentative
-    précédente de cette même issue avant d'intervenir manuellement."""
+    précédente de cette même issue avant d'intervenir manuellement.
+
+    `duree_derniere_tentative` (issue #777) : durée RÉELLE de la dernière
+    tentative (`_executer_une_tentative`), transmise à `diagnostiquer_echec`
+    pour qu'il ne puisse jamais suggérer un dépassement de délai contredit
+    par ce fait — incident chesscoach #123 (diagnostic ayant inventé un
+    dépassement alors que la tentative avait duré 337s pour un délai de
+    1800s)."""
     if critique:
         alerte_critique(numero, titre, tentative, labels)
         log.warning(f"  Issue critique #{numero} — nouvelle tentative au prochain cycle.")
@@ -6202,7 +6384,9 @@ def _gerer_abandon_max_essais(numero: int, titre: str, body: str, labels: list[s
     log.info(f"  Passe diagnostique courte (lecture seule, {CFG.timeout_diagnostic}s) pour #{numero}...")
     diagnostic = diagnostiquer_echec(numero, titre, body, sortie,
                                      perimetre=perimetre_effectif,
-                                     cwd=cwd_effectif)
+                                     cwd=cwd_effectif,
+                                     duree_derniere_tentative=duree_derniere_tentative,
+                                     timeout_tentative=timeout)
     message_echec = (
         f"❌ Échec après {CFG.max_essais} tentatives.\n\n"
         f"{avertissement_worktree_deja_pris}"
@@ -6350,7 +6534,7 @@ def _traiter_issue_synchrone(issue: dict, dry_run: bool, chemin_worktree: Path |
             tentative += 1
             log.info(f"  Tentative {tentative}/{CFG.max_essais if not critique else '∞'}...")
 
-            succes, sortie, stderr_brut, duree_tentative = _executer_une_tentative(
+            succes, sortie, stderr_brut, duree_tentative, verdict_absent = _executer_une_tentative(
                 numero, titre, body, dry_run, mode, timeout, modele,
                 perimetre_effectif, cwd_effectif, verrou, chemin_scratch,
                 chemin_worktree, empreinte_configs_avant, tentative,
@@ -6370,6 +6554,20 @@ def _traiter_issue_synchrone(issue: dict, dry_run: bool, chemin_worktree: Path |
 
             # Échec
             log.warning(f"  ✗ Tentative {tentative} échouée : {sortie}")
+
+            # Verdict illisible (#581) alors que le worktree a déjà avancé
+            # (issue #777, incident chesscoach #123) : priorité la PLUS
+            # HAUTE, avant même l'erreur bloquante ci-dessous — la preuve
+            # qu'un travail a probablement eu lieu est déjà disponible sans
+            # aucune analyse de texte, et retenter répéterait ce travail.
+            # MÊME pour une issue critique (pas de retry infini ici).
+            if verdict_absent:
+                commits_au_dela = _commits_au_dela_sauvegarde(cwd_effectif, tete_avant_traitement)
+                if commits_au_dela:
+                    _gerer_verdict_illisible_avec_commits(
+                        numero, titre, body, labels, mode, sortie, commits_au_dela,
+                        avertissement_worktree_deja_pris, avertissement_worktree_repris)
+                    return
 
             # Erreur bloquante (clé révoquée, quota/crédit épuisé — issue
             # #760) : arrêt immédiat, prioritaire sur la trace de timeout et
@@ -6406,7 +6604,8 @@ def _traiter_issue_synchrone(issue: dict, dry_run: bool, chemin_worktree: Path |
                 _gerer_abandon_max_essais(numero, titre, body, labels, mode, critique, tentative,
                                            sortie, timeout, avertissement_worktree_deja_pris,
                                            avertissement_worktree_repris,
-                                           perimetre_effectif, cwd_effectif, debut_traitement)
+                                           perimetre_effectif, cwd_effectif, debut_traitement,
+                                           duree_tentative)
                 return
 
             time.sleep(PAUSE_ENTRE_TENTATIVES)  # backoff entre tentatives
