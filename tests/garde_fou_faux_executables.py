@@ -17,6 +17,7 @@ une tentative avec le vrai outil.
 """
 
 import shutil
+import tempfile
 from pathlib import Path
 
 
@@ -42,4 +43,32 @@ def verifier_faux_executables_actifs(bin_dir, noms):
             "GARDE-FOU #710 — faux exécutable(s) inactif(s), test interrompu "
             "AVANT tout appel pour ne jamais risquer d'atteindre le vrai "
             "outil :\n  " + "\n  ".join(problemes)
+        )
+
+
+def verifier_dossier_sous_tmp(chemin, nom="dossier"):
+    """Lève RuntimeError si `chemin` n'est pas situé sous le répertoire
+    temporaire système (`tempfile.gettempdir()`) — garde-fou issue #778.
+
+    Incident du 19/10/2026 : les tests de l'issue #777 redirigeaient bien
+    `REP_TRAVAIL` vers un dossier jetable, mais pas `DOSSIER_WORKTREES_DEDIE`
+    (constante globale de `watcher.py`, par défaut `~/worktrees` — le VRAI
+    dossier où vivent les worktrees du système). Deux dossiers de test y ont
+    été créés et jamais nettoyés, et un repli sur échec de création a appelé
+    `notify-send` pour de vrai (bulle bureau RÉELLE annonçant une issue de
+    test fictive).
+
+    À appeler juste après avoir réaffecté `watcher.DOSSIER_WORKTREES_DEDIE`
+    (ou toute autre constante de chemin similaire) vers un dossier jetable,
+    AVANT tout appel au code testé susceptible d'y créer un worktree —
+    échec FERMÉ si ce chemin pointe par erreur vers un emplacement réel."""
+    chemin = Path(chemin).resolve()
+    tmp = Path(tempfile.gettempdir()).resolve()
+    try:
+        chemin.relative_to(tmp)
+    except ValueError:
+        raise RuntimeError(
+            f"GARDE-FOU #778 — {nom} ({chemin}) n'est PAS sous le répertoire "
+            f"temporaire système ({tmp}) — un test risquerait d'écrire/notifier "
+            f"dans un emplacement réel du système."
         )

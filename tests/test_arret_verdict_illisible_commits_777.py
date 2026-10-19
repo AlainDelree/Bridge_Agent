@@ -45,7 +45,10 @@ RACINE = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(RACINE))
 
 import watcher  # noqa: E402
-from garde_fou_faux_executables import verifier_faux_executables_actifs  # noqa: E402
+from garde_fou_faux_executables import (  # noqa: E402
+    verifier_dossier_sous_tmp,
+    verifier_faux_executables_actifs,
+)
 
 
 def _init_depot_git(rep: Path) -> None:
@@ -111,6 +114,13 @@ def scenario_tete_absente_ou_depot_inaccessible_liste_vide():
 
 FAUX_GH = "#!/bin/bash\nexit 0\n"
 
+# Faux `notify-send` — issue #778, même technique que
+# tests/test_worktree_parallelisation_337.py (issue #611) : sans ce faux
+# exécutable, un repli de création de worktree (toutes tentatives prises,
+# cf. DOSSIER_WORKTREES_DEDIE isolé plus bas) appellerait le VRAI
+# `notify-send` et afficherait une bulle de bureau réelle.
+FAUX_NOTIFY_SEND = "#!/bin/bash\nexit 0\n"
+
 FAUX_CLAUDE = """#!/bin/bash
 # Faux `claude` — issue #777. $# -ge 2 distingue le VRAI appel de la sonde
 # pre-flight (claude --print seul), qui ne doit produire aucun effet de bord.
@@ -141,7 +151,8 @@ exit 0
 def _preparer_bin(tmp_path: Path) -> Path:
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir(exist_ok=True)
-    for nom, contenu in (("claude", FAUX_CLAUDE), ("gh", FAUX_GH)):
+    for nom, contenu in (("claude", FAUX_CLAUDE), ("gh", FAUX_GH),
+                         ("notify-send", FAUX_NOTIFY_SEND)):
         chemin = bin_dir / nom
         chemin.write_text(contenu, encoding="utf-8")
         chemin.chmod(chemin.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
@@ -157,21 +168,30 @@ def _lancer_scenario(tmp_path: Path, rep_travail: Path, bin_dir: Path,
     os.environ["PATH"] = f"{bin_dir}{os.pathsep}{ancien_path}"
     os.environ["TEST_777_DIR"] = str(tmp_path)
     try:
-        verifier_faux_executables_actifs(bin_dir, ["claude", "gh"])
+        verifier_faux_executables_actifs(bin_dir, ["claude", "gh", "notify-send"])
     except Exception:
         os.environ["PATH"] = ancien_path
         raise
 
-    ancien_dossier_verrous       = watcher.DOSSIER_VERROUS
-    ancien_dossier_logs          = watcher.DOSSIER_LOGS
-    ancien_fichier_historique    = watcher.FICHIER_HISTORIQUE
-    ancien_fichier_etat_timeout  = watcher.FICHIER_ETAT_TIMEOUT
-    ancien_fichier_etat_ambiance = watcher.FICHIER_ETAT_AMBIANCE
+    ancien_dossier_verrous        = watcher.DOSSIER_VERROUS
+    ancien_dossier_logs           = watcher.DOSSIER_LOGS
+    ancien_fichier_historique     = watcher.FICHIER_HISTORIQUE
+    ancien_fichier_etat_timeout   = watcher.FICHIER_ETAT_TIMEOUT
+    ancien_fichier_etat_ambiance  = watcher.FICHIER_ETAT_AMBIANCE
+    ancien_dossier_worktrees_dedie = watcher.DOSSIER_WORKTREES_DEDIE
     watcher.DOSSIER_VERROUS = tmp_path / "verrous"
     watcher.DOSSIER_LOGS = tmp_path / "logs"
     watcher.FICHIER_HISTORIQUE = watcher.DOSSIER_LOGS / "historique_durees.json"
     watcher.FICHIER_ETAT_TIMEOUT = watcher.DOSSIER_LOGS / "etat_timeout.json"
     watcher.FICHIER_ETAT_AMBIANCE = watcher.DOSSIER_LOGS / "etat_ambiance.json"
+    # Issue #778 : sans cette isolation, _chemin_worktree (appelée par
+    # traiter_issue pour toute issue mode_write, y compris avec
+    # max_write_parallele=1) créerait le worktree dans le VRAI ~/worktrees
+    # de la machine qui exécute les tests — jamais nettoyé, et source d'un
+    # repli notify-send RÉEL si le chemin est déjà pris (cf. module docstring
+    # ci-dessus et tests/garde_fou_faux_executables.py).
+    watcher.DOSSIER_WORKTREES_DEDIE = tmp_path / "worktrees_dedies"
+    verifier_dossier_sous_tmp(watcher.DOSSIER_WORKTREES_DEDIE, "DOSSIER_WORKTREES_DEDIE")
 
     ancien_cfg = watcher.CFG
     watcher.CFG = watcher.Config(
@@ -221,6 +241,7 @@ def _lancer_scenario(tmp_path: Path, rep_travail: Path, bin_dir: Path,
         watcher.FICHIER_HISTORIQUE = ancien_fichier_historique
         watcher.FICHIER_ETAT_TIMEOUT = ancien_fichier_etat_timeout
         watcher.FICHIER_ETAT_AMBIANCE = ancien_fichier_etat_ambiance
+        watcher.DOSSIER_WORKTREES_DEDIE = ancien_dossier_worktrees_dedie
         watcher.issues_en_cours.discard(numero)
         watcher._issues_write_bloquees_needs_human.clear()
         watcher._issues_write_bloquees_needs_human.update(ancien_bloquees)

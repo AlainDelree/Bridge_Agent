@@ -43,6 +43,7 @@ RACINE = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(RACINE))
 
 import watcher  # noqa: E402
+from garde_fou_faux_executables import verifier_dossier_sous_tmp  # noqa: E402
 
 
 def _init_depot_git(rep: Path) -> None:
@@ -368,6 +369,7 @@ def main():
     dossier_worktrees_dedie_test = tempfile.TemporaryDirectory()
     ancien_dossier_worktrees_dedie = watcher.DOSSIER_WORKTREES_DEDIE
     watcher.DOSSIER_WORKTREES_DEDIE = Path(dossier_worktrees_dedie_test.name)
+    verifier_dossier_sous_tmp(watcher.DOSSIER_WORKTREES_DEDIE, "DOSSIER_WORKTREES_DEDIE")
 
     tests = [
         ("(1) relance avec worktree existant valide : repris, aucun -bis créé",

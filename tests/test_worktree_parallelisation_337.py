@@ -74,7 +74,10 @@ RACINE = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(RACINE))
 
 import watcher  # noqa: E402
-from garde_fou_faux_executables import verifier_faux_executables_actifs  # noqa: E402
+from garde_fou_faux_executables import (  # noqa: E402
+    verifier_dossier_sous_tmp,
+    verifier_faux_executables_actifs,
+)
 
 FAUX_GH = """#!/bin/bash
 # Faux `gh` — issue #337. Stateful sur `issue view --json comments` (marqueur
@@ -1226,6 +1229,7 @@ def main():
     dossier_worktrees_dedie_test = pile.enter_context(tempfile.TemporaryDirectory())
     ancien_dossier_worktrees_dedie = watcher.DOSSIER_WORKTREES_DEDIE
     watcher.DOSSIER_WORKTREES_DEDIE = Path(dossier_worktrees_dedie_test)
+    verifier_dossier_sous_tmp(watcher.DOSSIER_WORKTREES_DEDIE, "DOSSIER_WORKTREES_DEDIE")
 
     tests = [
         ("_chemin_worktree / _branche_worktree : nommage attendu", scenario_chemin_et_branche_worktree),
