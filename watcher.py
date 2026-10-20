@@ -3390,6 +3390,39 @@ AGENTS_CONNUS = {
         "msg_binaire_introuvable": "Mistral Vibe introuvable (vibe non trouvé dans PATH)",
         "clause_sous_agents": _CLAUSE_SOUS_AGENTS_VIBE,
         "signatures_erreur_bloquante": SIGNATURES_ERREUR_BLOQUANTE_VIBE,
+        # Issue #779 (incident chesscoach #126) : Vibe choisit son interface
+        # par défaut (CLI Python historique vs nouvelle TUI Rust, encore en
+        # préversion) selon une bascule distante (cache GrowthBook
+        # `vibe_cli_rust_tui_rollout`), rechargée à chaque lancement — donc
+        # susceptible de changer SILENCIEUSEMENT d'un jour à l'autre, sans la
+        # moindre mise à jour de paquet. Seule la TUI Python expose les
+        # options construites par `_construire_cmd_vibe` (--agent, --workdir,
+        # --prompt) ; forcer `VIBE_CLI=python` fige ce choix côté watcher,
+        # indépendamment de cette bascule distante. Voir
+        # provisioning/vibe/README.md §6 pour la décision complète (et son
+        # complément : figer la VERSION du paquet installé).
+        "env": {"VIBE_CLI": "python"},
+        # Signatures diagnostiques best-effort (issue #779) : affinent
+        # seulement le MESSAGE de `_gerer_tentative_anormalement_rapide`
+        # (jamais utilisées pour décider d'un arrêt, à la différence de
+        # "signatures_erreur_bloquante" ci-dessus) quand la cause réelle
+        # n'est pas un problème d'authentification, contrairement à ce que
+        # suggère aujourd'hui le texte générique de ce garde-fou. Vieillira
+        # avec les versions de l'outil (même mise en garde que pour
+        # SIGNATURES_ERREUR_BLOQUANTE_VIBE) : conservée uniquement comme
+        # confort de diagnostic, le texte générique restant le repli.
+        "causes_connues_echec_rapide": (
+            (
+                "vibe_cli=python",
+                "nouvelle interface Vibe (TUI Rust en préversion) utilisée "
+                "malgré la variable d'environnement VIBE_CLI=python posée "
+                "par ce watcher (issue #779) — texte rapporté tel quel par "
+                "l'outil lui-même.",
+                "vérifier que rien n'écrase VIBE_CLI entre ce watcher et le "
+                "process vibe (voir AGENTS_CONNUS['vibe']['env']), et que "
+                "la version de vibe installée honore encore cette variable.",
+            ),
+        ),
     },
 }
 
@@ -3842,6 +3875,26 @@ Si la tâche échoue, remplace la toute première ligne par {MARQUEUR_VERDICT_EC
         kwargs_popen["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
     else:
         kwargs_popen["start_new_session"] = True
+
+    # Variables d'environnement propres à cet agent (issue #779, incident
+    # chesscoach #126 : une mise à jour silencieuse de Vibe a basculé son
+    # interface par défaut vers une nouvelle TUI en préversion, qui n'accepte
+    # aucune des options construites par `_construire_cmd_vibe` — seule la
+    # variable d'environnement `VIBE_CLI=python`, documentée par l'outil
+    # lui-même, ramène l'interface stable attendue). `AGENTS_CONNUS[agent]
+    # ["env"]` centralise ce besoin au même endroit que le reste de ce qui
+    # est propre à l'agent (binaire, construction de la commande...) plutôt
+    # que de poser la variable ailleurs (ex. au niveau du service systemd,
+    # qui affecterait alors TOUT ce que ce compte lance, pas seulement ce
+    # subprocess). Fusionné sur une COPIE de `os.environ` (jamais substitué
+    # intégralement) : ce process garde tout l'environnement du watcher
+    # (PATH, clé API...), seule la ou les clés listées ici sont surchargées —
+    # et seulement pour CE subprocess, jamais pour le watcher lui-même.
+    # Absent pour "claude" : comportement inchangé (Popen hérite de
+    # `os.environ` par défaut quand `env=` n'est pas fourni).
+    env_agent = AGENTS_CONNUS[CFG.agent].get("env")
+    if env_agent:
+        kwargs_popen["env"] = {**os.environ, **env_agent}
 
     proc = None
     job_windows = None
@@ -5755,6 +5808,44 @@ def _duree_tentative_anormale(stderr_brut: str | None, sortie: str, duree_tentat
     return duree_tentative < SEUIL_DUREE_TENTATIVE_ANORMALE_S
 
 
+def _detecter_cause_connue_echec_rapide(sortie: str) -> tuple[str, str] | None:
+    """Reconnaît, best-effort, la cause d'une tentative anormalement rapide
+    (issue #779, incident chesscoach #126) à partir de signatures CONNUES
+    présentes dans `sortie` — contrairement à `_detecter_erreur_bloquante`,
+    ne décide JAMAIS d'un arrêt (déjà acquis à ce stade par
+    `_duree_tentative_anormale`) : affine seulement le message affiché par
+    `_gerer_tentative_anormalement_rapide`, qui pointait jusqu'ici vers
+    l'authentification quelle que soit la cause réelle.
+
+    Retourne (cause, remède) dès la première signature reconnue, ou None si
+    aucune ne correspond — l'appelant garde alors le texte générique
+    existant. Deux familles de signatures, dans cet ordre :
+    1. "binaire introuvable" : agnostique de l'agent, dérivée directement du
+       message déjà posé par `AGENTS_CONNUS[agent]["msg_binaire_introuvable"]`
+       (voir son unique point d'émission, l'except FileNotFoundError de
+       `lancer_claude`) plutôt que dupliquée ici en dur.
+    2. `AGENTS_CONNUS[agent]["causes_connues_echec_rapide"]` : signatures
+       propres à l'agent (ex. la bascule d'interface de Vibe, issue #779).
+
+    Comme SIGNATURES_ERREUR_BLOQUANTE_*, cette table est un CONFORT de
+    diagnostic, pas un mécanisme sur lequel s'appuyer : elle vieillira avec
+    les versions des outils (le pré-vol d'authentification en est déjà la
+    preuve) — le texte générique reste le repli, jamais remplacé en dur."""
+    agent = AGENTS_CONNUS[CFG.agent]
+    sortie_minuscule = sortie.lower()
+    msg_introuvable = agent.get("msg_binaire_introuvable")
+    if msg_introuvable and msg_introuvable.lower() in sortie_minuscule:
+        return (
+            "binaire introuvable",
+            f"vérifier que `{agent['binaire']}` est installé et accessible "
+            f"depuis le PATH de ce watcher.",
+        )
+    for signature, cause, remede in agent.get("causes_connues_echec_rapide", ()):
+        if signature in sortie_minuscule:
+            return (cause, remede)
+    return None
+
+
 def _executer_une_tentative(numero: int, titre: str, body: str, dry_run: bool, mode: str,
                              timeout: int, modele: str, perimetre_effectif: str,
                              cwd_effectif: Path, verrou, chemin_scratch: Path | None,
@@ -6248,12 +6339,36 @@ def _gerer_tentative_anormalement_rapide(numero: int, titre: str, body: str, lab
     — un échec aussi rapide ne peut pas correspondre à un travail réel
     effectué par l'agent, donc ne se résorbe pas en retentant, MÊME pour une
     issue critique (pas de retry infini). Termine toujours le traitement de
-    l'issue — l'appelant doit retourner immédiatement après l'appel."""
+    l'issue — l'appelant doit retourner immédiatement après l'appel.
+
+    `diagnostic` (issue #779, incident chesscoach #126) : le paragraphe
+    central du message pointait jusqu'ici inconditionnellement vers
+    l'authentification, quelle que soit la cause réelle — ici affiné par
+    `_detecter_cause_connue_echec_rapide` quand `sortie` en contient une
+    signature reconnue (ex. bascule d'interface Vibe), le texte générique
+    restant le repli dans tous les autres cas (voir cette fonction pour
+    pourquoi une table de signatures ne peut être qu'un confort de
+    diagnostic, jamais un mécanisme sur lequel s'appuyer)."""
     log.error(
         f"  ✗ Issue #{numero} : tentative échouée en {duree_tentative:.1f}s "
         f"(< {SEUIL_DUREE_TENTATIVE_ANORMALE_S}s) — arrêt immédiat, sans "
         f"retenter (issue #763)."
     )
+    cause_connue = _detecter_cause_connue_echec_rapide(sortie)
+    if cause_connue:
+        cause, remede = cause_connue
+        diagnostic = (
+            f"Un échec aussi rapide trahit presque toujours un problème "
+            f"d'ENVIRONNEMENT plutôt qu'une tâche difficile. Cause probable "
+            f"reconnue dans la sortie : **{cause}**. {remede} "
+        )
+    else:
+        diagnostic = (
+            f"Un échec aussi rapide trahit presque toujours un problème "
+            f"d'ENVIRONNEMENT plutôt qu'une tâche difficile. **Vérifier que "
+            f"l'agent est bien authentifié sur cette machine et que son binaire "
+            f"fonctionne** (le relancer interactivement une fois, par exemple) "
+        )
     message_echec = (
         f"❌ Tentative échouée en {duree_tentative:.1f}s — bien trop vite pour "
         f"qu'un travail réel ait pu avoir lieu. Traitement arrêté "
@@ -6261,10 +6376,7 @@ def _gerer_tentative_anormalement_rapide(numero: int, titre: str, body: str, lab
         f"{avertissement_worktree_deja_pris}"
         f"{avertissement_worktree_repris}"
         f"Sortie : `{sortie.strip()[:LIMITE_STDERR_LOG]}`\n\n"
-        f"Un échec aussi rapide trahit presque toujours un problème "
-        f"d'ENVIRONNEMENT plutôt qu'une tâche difficile. **Vérifier que "
-        f"l'agent est bien authentifié sur cette machine et que son binaire "
-        f"fonctionne** (le relancer interactivement une fois, par exemple) "
+        f"{diagnostic}"
         f"avant de retirer le label `{LABEL_ECHEC}`. Intervention humaine "
         f"requise : cette issue ne sera plus retraitée automatiquement tant "
         f"que le label n'est pas retiré (ou l'issue fermée) manuellement."

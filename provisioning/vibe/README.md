@@ -122,3 +122,70 @@ ajout : Vibe l'écraserait silencieusement à son prochain démarrage.
    signatures d'erreur bloquante côté Vibe sont des choix best-effort, non
    vérifiés en conditions réelles pendant l'issue #760 (consigne explicite :
    ne pas lancer de session Vibe réelle, facturée).
+
+## 6. Interface CLI figée (`VIBE_CLI=python`, issue #779)
+
+Incident chesscoach #126 : l'issue a échoué en 3,4 secondes, pour toute
+sortie un message de Vibe annonçant qu'une nouvelle interface (TUI Rust,
+encore en préversion) était utilisée par défaut et indiquant comment revenir
+à l'ancienne. Vérifié par lecture du code source installé (`vibe.cli.
+launcher`, module minimal choisi par le script `vibe`) : Vibe choisit entre
+deux implémentations CLI (Python, historique, et Rust, nouvelle) via la
+variable d'environnement `VIBE_CLI` — `python` ou `rust` la fixent
+explicitement ; **absente, elle suit une bascule distante** (cache
+GrowthBook `vibe_cli_rust_tui_rollout`, relu à chaque lancement de `vibe`),
+donc susceptible de changer de choix d'un jour à l'autre **sans la moindre
+mise à jour de paquet**. Seule l'implémentation Python expose, à ce jour,
+les options construites par `_construire_cmd_vibe` dans `watcher.py`
+(`--agent`, `--workdir`, `--prompt`) telles que ce fichier les attend.
+
+**Décision :** `watcher.py` pose `VIBE_CLI=python` dans l'environnement du
+seul subprocess `vibe` qu'il lance (`AGENTS_CONNUS["vibe"]["env"]`, fusionné
+sur une copie de `os.environ` — voir `lancer_claude`), jamais dans
+l'environnement du watcher lui-même ni d'un autre agent. Choisi plutôt
+qu'un endroit plus global (service systemd, profil shell) car c'est le seul
+point qui centralise déjà tout ce qui est propre à cet agent — un futur
+agent n'a qu'à ajouter sa propre clé `"env"` au même endroit.
+
+Best-effort et non définitif : si Mistral retire un jour l'implémentation
+Python, cette variable n'aura plus d'effet et `_construire_cmd_vibe` devra
+être réécrite pour la Rust TUI de l'époque — aucune garantie à long terme,
+seulement la neutralisation de la bascule distante *actuelle*.
+
+## 7. Figer la version installée (issue #779)
+
+Deuxième protection, contre une mise à jour de PAQUET (par opposition à la
+bascule distante du §6, qui ne change pas la version installée) :
+`~/.local/share/uv/tools/mistral-vibe/uv-receipt.toml` déclare aujourd'hui
+`requirements = [{ name = "mistral-vibe" }]`, SANS version — `uv tool
+upgrade mistral-vibe` bascule donc sur la dernière version publiée dès qu'il
+est lancé, sans qu'aucune revue n'ait eu lieu.
+
+**Pistes examinées :**
+- *Sonde de compatibilité avant chaque lancement* (ex. `vibe --help` comparé
+  à la liste d'options attendue) : rejetée — un appel subprocess
+  supplémentaire sur CHAQUE tentative de CHAQUE issue confiée à Vibe, pour
+  un événement qui ne s'est produit qu'une fois en plusieurs mois
+  d'utilisation ; la table d'options attendues vieillirait d'ailleurs
+  elle-même avec les versions de l'outil, exactement comme l'a montré le
+  pré-vol d'authentification (`verifier_preflight_cle_api_vibe`) — un coût
+  systématique pour une protection qui resterait, elle aussi, best-effort.
+- *Version figée* : retenue. Une mise à jour ne peut plus survenir qu'à
+  travers une action délibérée (relire le changelog de Vibe, vérifier que
+  `_construire_cmd_vibe` est toujours valide, puis republier la version
+  choisie) — précisément le but recherché, au prix d'une seule chose :
+  Alain doit penser à relancer explicitement cette mise à jour de temps en
+  temps (Vibe évolue vite), plutôt que de compter sur une bascule automatique.
+
+**Déploiement** (sur chaque machine qui exécute Vibe pour ce watcher) :
+
+```bash
+uv tool install --force "mistral-vibe==2.26.1"
+```
+
+Toute mise à jour future se fait en changeant ce numéro de version
+DÉLIBÉRÉMENT (jamais via `uv tool upgrade mistral-vibe` seul, qui ignorerait
+le pin), après avoir vérifié que l'interface attendue par
+`_construire_cmd_vibe` (options `--agent`/`--workdir`/`--prompt` avec
+`VIBE_CLI=python`, §6 ci-dessus) est toujours celle produite par la nouvelle
+version.
