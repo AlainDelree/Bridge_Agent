@@ -3271,7 +3271,13 @@ def _construire_cmd_vibe(mode: str, modele: str, prompt: str, cwd: Path) -> list
     comportement agent-agnostique existant.
 
     `modele` ignoré : vibe n'expose pas, sur cette ligne de commande, de
-    sélection de modèle équivalente à `--model` côté Claude Code."""
+    sélection de modèle équivalente à `--model` côté Claude Code.
+
+    Plafonds de session (`--max-turns`/`--max-price`/`--max-tokens`, issue
+    #781) : valeurs centralisées dans `AGENTS_CONNUS["vibe"]
+    ["plafonds_session"]` — voir ce dictionnaire pour la justification des
+    valeurs et le choix de ne PAS dupliquer le délai (`--time-limit`), déjà
+    géré par le watcher lui-même (`timeout=` de `proc.communicate`)."""
     if mode == MODE_LECTURE_ACTIVE:
         raise ModeAgentIndisponible(
             "Mistral Vibe : MODE_LECTURE_ACTIVE (lecture active/scratch) "
@@ -3283,7 +3289,14 @@ def _construire_cmd_vibe(mode: str, modele: str, prompt: str, cwd: Path) -> list
             "cette issue en MODE_ECRITURE si le projet l'autorise."
         )
     agent_vibe = "plan" if mode == MODE_LECTURE else "bridge_ecriture"
-    return ["vibe", "--agent", agent_vibe, "--workdir", str(cwd), "--prompt", prompt]
+    cmd = ["vibe", "--agent", agent_vibe, "--workdir", str(cwd), "--prompt", prompt]
+    plafonds = AGENTS_CONNUS["vibe"]["plafonds_session"]
+    cmd += [
+        "--max-turns", str(plafonds["max_turns"]),
+        "--max-price", str(plafonds["max_price_dollars"]),
+        "--max-tokens", str(plafonds["max_tokens"]),
+    ]
+    return cmd
 
 
 # Pré-vol sans appel réseau pour vibe (issue #760, revu #780) : Vibe connaît
@@ -3443,6 +3456,35 @@ AGENTS_CONNUS = {
                 "la version de vibe installée honore encore cette variable.",
             ),
         ),
+        # Plafonds de session explicites (issue #781, incident chesscoach
+        # #127) : `vibe -p` (mode programmatique, seul utilisé par ce
+        # watcher) accepte --max-turns/--max-price/--max-tokens — non
+        # positionnés, vibe retombe sur ses propres valeurs par défaut,
+        # jamais documentées ici, qui peuvent interrompre une session
+        # longue SANS qu'aucune erreur ne le signale au watcher (constaté
+        # sur `vibe --help` : confirmé par l'outil lui-même, "Session will
+        # be interrupted if ... exceeds this limit"). Valeurs ci-dessous
+        # délibérément TRÈS larges — but : savoir ce qui contraint l'agent,
+        # pas le contraindre pour une tâche normale. Le projet chesscoach
+        # comporte des fichiers de plusieurs centaines de ko ; les relire en
+        # contexte à chaque tour peut représenter plusieurs dizaines de
+        # milliers de jetons, d'où la marge large sur max_turns/max_tokens.
+        # Un dépassement se manifeste de façon reconnaissable : code de
+        # retour 3 ("stopped by a limit", documenté par `vibe --help`),
+        # désormais visible dans le journal grâce au code de retour tracé à
+        # chaque tentative (voir lancer_claude).
+        #
+        # --time-limit délibérément ABSENT de ces plafonds : le délai de la
+        # tentative est déjà géré par le watcher lui-même (`timeout=` de
+        # `proc.communicate`, voir lancer_claude) — le dupliquer ici
+        # introduirait une seconde valeur à maintenir en cohérence avec la
+        # première sans aucun bénéfice, le watcher tuant déjà le process au
+        # même instant (issue #781 : "ne pas le dupliquer").
+        "plafonds_session": {
+            "max_turns": 500,
+            "max_price_dollars": 25,
+            "max_tokens": 10_000_000,
+        },
     },
 }
 
@@ -3934,6 +3976,23 @@ Si la tâche échoue, remplace la toute première ligne par {MARQUEUR_VERDICT_EC
             _maj_verrou_pgid(verrou, proc.pid)
         try:
             stdout, stderr = proc.communicate(timeout=timeout)
+            # Code de retour et taille de la sortie capturée (issue #781,
+            # incident chesscoach #127) : avant cette issue, seul l'ÉCHEC
+            # loggait le code de retour, et jamais la taille de stdout/stderr
+            # — perdus dès le retour de cette fonction. Ce sont pourtant les
+            # deux premières choses qu'on cherche quand une tentative se
+            # termine anormalement : le code distingue un plantage d'un
+            # arrêt délibéré (ex. code 3 = plafond de session atteint côté
+            # vibe, voir AGENTS_CONNUS["vibe"]["plafonds_session"]), la
+            # taille distingue une sortie tronquée d'une sortie complète.
+            # Une seule ligne, à chaque tentative (succès compris) — pas de
+            # contenu, juste les deux métriques, pour ne pas alourdir le
+            # journal.
+            log.info(
+                f"  claude (tentative {tentative}) terminé pour issue "
+                f"#{numero} : code retour {proc.returncode}, stdout "
+                f"{len(stdout)} car., stderr {len(stderr)} car."
+            )
             if proc.returncode == 0:
                 return True, stdout.strip()
             else:
@@ -5866,6 +5925,15 @@ def _detecter_cause_connue_echec_rapide(sortie: str) -> tuple[str, str] | None:
     return None
 
 
+# Marqueur partagé (issue #781) : introduit devant la fin brute de la sortie
+# capturée, à la fois dans les deux `sortie` reconstruits ci-dessous
+# (garde-fous #581/#757) et dans `_gerer_verdict_illisible_avec_commits`, qui
+# s'appuie sur lui pour isoler cette fin brute de l'hypothèse de texte qui la
+# précède (celle-ci n'a plus sa place une fois que des commits sont déjà
+# présents — voir cette fonction).
+_MARQUEUR_FIN_BRUTE_SORTIE = "Fin brute de la sortie capturée (issue #777) : "
+
+
 def _executer_une_tentative(numero: int, titre: str, body: str, dry_run: bool, mode: str,
                              timeout: int, modele: str, perimetre_effectif: str,
                              cwd_effectif: Path, verrou, chemin_scratch: Path | None,
@@ -5962,8 +6030,8 @@ def _executer_une_tentative(numero: int, titre: str, body: str, dry_run: bool, m
             "tardive émise après la fin réelle du traitement (ex. "
             "notification d'un sous-agent en arrière-plan terminé après le "
             "rapport final), qui a écrasé la vraie réponse dans la sortie "
-            "capturée (issue #581). Fin brute de la sortie capturée (issue "
-            f"#777) : {sortie.strip()[-LIMITE_STDERR_LOG:]}"
+            f"capturée (issue #581). {_MARQUEUR_FIN_BRUTE_SORTIE}"
+            f"{sortie.strip()[-LIMITE_STDERR_LOG:]}"
         )
 
     # Garde-fou de VALEUR du verdict (issue #757, mis à jour par #764) :
@@ -5989,8 +6057,8 @@ def _executer_une_tentative(numero: int, titre: str, body: str, dry_run: bool, m
         sortie = (
             "Code de retour 0 mais verdict final d'échec : l'agent a "
             "rapporté un échec explicite dans la ligne de clôture de son "
-            f"rapport (issue #757). Fin brute de la sortie capturée (issue "
-            f"#777) : {sortie.strip()[-LIMITE_STDERR_LOG:]}"
+            f"rapport (issue #757). {_MARQUEUR_FIN_BRUTE_SORTIE}"
+            f"{sortie.strip()[-LIMITE_STDERR_LOG:]}"
         )
 
     if empreinte_configs_avant is not None:
@@ -6439,23 +6507,37 @@ def _gerer_verdict_illisible_avec_commits(numero: int, titre: str, body: str, la
     État distinct (ni succès confirmé, ni échec confirmé) : label posé pour
     laisser la main à la relecture humaine, qui doit vérifier le travail
     trouvé avant de le considérer acquis. Termine toujours le traitement de
-    l'issue — l'appelant doit retourner immédiatement après l'appel."""
+    l'issue — l'appelant doit retourner immédiatement après l'appel.
+
+    Message corrigé (issue #781, incident chesscoach #127) : `sortie` est
+    construite par `_executer_une_tentative` sur l'hypothèse #581 (réponse
+    tardive d'un sous-agent ayant écrasé le rapport) — plausible quand AUCUN
+    commit n'est présent, mais manifestement pas ici : des commits existent,
+    donc l'agent a bien travaillé, et s'est arrêté avant d'écrire son
+    rapport (plantage, arrêt du process...), pas APRÈS l'avoir écrit. On
+    n'affiche donc plus cette hypothèse, seule la fin brute de la sortie
+    capturée (après `_MARQUEUR_FIN_BRUTE_SORTIE`, si présent) reste utile au
+    diagnostic."""
     log.error(
         f"  ✗ Issue #{numero} : verdict de clôture illisible mais "
         f"{len(commits)} commit(s) déjà présents au-delà de la sauvegarde — "
         f"arrêt immédiat, sans retenter (issue #777)."
     )
     liste_commits = "\n".join(f"- `{c}`" for c in commits)
+    _avant, _sep, _apres = sortie.partition(_MARQUEUR_FIN_BRUTE_SORTIE)
+    fin_brute_sortie = _apres if _sep else sortie.strip()[:LIMITE_STDERR_LOG]
     message_echec = (
-        f"⚠️ Verdict de clôture illisible, mais le worktree contient déjà "
-        f"{len(commits)} commit(s) au-delà de la sauvegarde — le travail a "
-        f"probablement eu lieu, seul le rapport est illisible. Traitement "
-        f"arrêté immédiatement, sans consommer les tentatives restantes "
-        f"(une répétition recommencerait un travail déjà fait).\n\n"
+        f"⚠️ L'agent ne s'est pas rendu jusqu'à son rapport de clôture "
+        f"(aucune ligne de verdict trouvée dans sa sortie), mais le "
+        f"worktree contient déjà {len(commits)} commit(s) au-delà de la "
+        f"sauvegarde — le travail semble avoir eu lieu, il reste à le "
+        f"vérifier. Traitement arrêté immédiatement, sans consommer les "
+        f"tentatives restantes (une répétition recommencerait un travail "
+        f"déjà fait).\n\n"
         f"{avertissement_worktree_deja_pris}"
         f"{avertissement_worktree_repris}"
         f"Commit(s) trouvé(s) au-delà de la sauvegarde :\n{liste_commits}\n\n"
-        f"Sortie : `{sortie.strip()[:LIMITE_STDERR_LOG]}`\n\n"
+        f"Fin brute de la sortie capturée : `{fin_brute_sortie.strip()}`\n\n"
         f"**Vérifier manuellement ce travail avant de le considérer acquis** "
         f"(revue du diff, tests). Label `{LABEL_ECHEC}` posé : cette issue ne "
         f"sera plus retraitée automatiquement tant que le label n'est pas "

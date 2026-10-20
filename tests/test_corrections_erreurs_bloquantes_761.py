@@ -53,16 +53,31 @@ def _issue_minimale(numero: int, titre: str, labels: list[str]) -> dict:
 def scenario_cwd_transmis_vibe_claude_inchange():
     """Point 1 : `cwd` atteint bien `construire_cmd` pour les deux agents.
     `vibe` le traduit en `--workdir` ; `claude` produit EXACTEMENT la même
-    commande qu'avant l'issue #761 (cwd ignoré, aucun flag ajouté)."""
+    commande qu'avant l'issue #761 (cwd ignoré, aucun flag ajouté).
+
+    Plafonds de session `--max-turns`/`--max-price`/`--max-tokens` (issue
+    #781) : attendus en fin de commande vibe, valeurs lues dans
+    `AGENTS_CONNUS["vibe"]["plafonds_session"]` plutôt qu'en dur ici, pour ne
+    pas lier ce test — qui porte sur `cwd`, pas sur les plafonds — à leur
+    valeur exacte (voir tests/test_plafonds_vibe_et_message_commits_781.py
+    pour un test dédié aux plafonds eux-mêmes)."""
     cwd = Path("/tmp/exemple_perimetre_761")
+    plafonds = watcher.AGENTS_CONNUS["vibe"]["plafonds_session"]
+    suffixe_plafonds = [
+        "--max-turns", str(plafonds["max_turns"]),
+        "--max-price", str(plafonds["max_price_dollars"]),
+        "--max-tokens", str(plafonds["max_tokens"]),
+    ]
 
     cmd_vibe_ecriture = watcher._construire_cmd_vibe(watcher.MODE_ECRITURE, "", "PROMPT", cwd)
-    assert cmd_vibe_ecriture == ["vibe", "--agent", "bridge_ecriture", "--workdir", str(cwd), "--prompt", "PROMPT"], (
-        f"commande vibe inattendue : {cmd_vibe_ecriture}")
+    assert cmd_vibe_ecriture == (
+        ["vibe", "--agent", "bridge_ecriture", "--workdir", str(cwd), "--prompt", "PROMPT"] + suffixe_plafonds
+    ), f"commande vibe inattendue : {cmd_vibe_ecriture}"
 
     cmd_vibe_lecture = watcher._construire_cmd_vibe(watcher.MODE_LECTURE, "", "PROMPT", cwd)
-    assert cmd_vibe_lecture == ["vibe", "--agent", "plan", "--workdir", str(cwd), "--prompt", "PROMPT"], (
-        f"commande vibe inattendue : {cmd_vibe_lecture}")
+    assert cmd_vibe_lecture == (
+        ["vibe", "--agent", "plan", "--workdir", str(cwd), "--prompt", "PROMPT"] + suffixe_plafonds
+    ), f"commande vibe inattendue : {cmd_vibe_lecture}"
 
     # Régression : la commande produite pour claude (agent en production)
     # reste identique à celle d'avant #759/#760/#761, quel que soit `cwd`.
