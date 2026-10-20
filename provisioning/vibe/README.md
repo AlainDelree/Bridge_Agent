@@ -79,15 +79,44 @@ ajouter aussi le chemin du worktree.
 
 ## 3. Authentification
 
-Clé API Mistral, par variable d'environnement `MISTRAL_API_KEY` ou fichier
-`~/.vibe/.env` (`MISTRAL_API_KEY=...`) — lu par Vibe lui-même au démarrage.
-Pas de session qui expire d'elle-même (à la différence du token OAuth de
-Claude Code) : `watcher.py` vérifie seulement, sans appel réseau, que cette
-clé est présente et d'une forme plausible avant de lancer une tâche (voir
-`verifier_preflight_cle_api_vibe` dans `watcher.py`) — ce n'est qu'au moment
-d'un appel réel qu'une clé révoquée ou un quota/crédit épuisé se révèlent
-(voir §5 de l'issue #760 : détection en cours d'exécution, qui arrête alors
-le traitement immédiatement).
+**Connexion par compte (sign-in navigateur), mode en usage depuis l'issue
+#780.** La clé API statique (`MISTRAL_API_KEY`, par variable d'environnement
+ou fichier `~/.vibe/.env`) a été abandonnée : elle facturait l'usage sur un
+forfait distinct de celui du compte, lequel s'est épuisé et bloquait tout
+traitement.
+
+Vérifié en lisant le code source installé de Vibe
+(`vibe.setup.auth.api_key_persistence.persist_api_key`) : les deux modes
+(clé API saisie à la main, ou connexion par compte) finissent persistés par
+le **même** mécanisme, qui privilégie toujours le trousseau système de la
+machine (OS keyring, service `ai.mistral.vibe`, via le paquet tiers
+`keyring`) et ne retombe sur `~/.vibe/.env` en clair que si aucun trousseau
+n'est disponible. Une fois connecté par compte, ni `MISTRAL_API_KEY` ni
+`~/.vibe/.env` ne portent donc la moindre trace de l'authentification
+réelle — le fichier peut exister, vide, sans que cela signifie quoi que ce
+soit.
+
+**Conséquence pour `watcher.py` :** `verifier_preflight_cle_api_vibe` ne
+vérifie plus que `MISTRAL_API_KEY`/`~/.vibe/.env`, quand l'un des deux est
+présent, a une forme plausible (best-effort hérité de #760) — leur absence
+n'est **plus** signalée, puisqu'elle ne prouve plus rien. Lire le trousseau
+système directement depuis `watcher.py` a été envisagé et écarté (issue
+#780) : cela demanderait une dépendance tierce que ce fichier n'a jamais eue
+(bibliothèque standard uniquement, cf. `CONTEXTE.md`), avec un risque réel de
+blocage si le trousseau est verrouillé sans agent de déverrouillage
+disponible (cas plausible pour le service systemd `--user` de ce watcher,
+démarré via `enable-linger` avant toute connexion graphique) — précisément
+ce qu'un pré-vol n'a jamais le droit de faire. `~/.vibe/whoami_cache.json` a
+aussi été examiné : ce n'est qu'un cache d'appels réseau passés (TTL 6h),
+pas la preuve d'une authentification utilisable maintenant. En l'absence de
+tout indice local fiable, ce pré-vol ne vérifie donc plus la présence d'une
+authentification pour cet agent — seulement, best-effort, la forme d'une
+éventuelle clé API encore présente.
+
+Dans les deux modes, pas de session qui expire d'elle-même (à la différence
+du token OAuth de Claude Code) : ce n'est qu'au moment d'un appel réel qu'une
+clé révoquée ou un quota/crédit épuisé se révèlent (voir §5 de l'issue #760 :
+détection en cours d'exécution, qui arrête alors le traitement immédiatement).
 
 ## 4. Modèle actif (`~/.vibe/config.toml`, issue #766)
 

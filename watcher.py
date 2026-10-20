@@ -3286,16 +3286,38 @@ def _construire_cmd_vibe(mode: str, modele: str, prompt: str, cwd: Path) -> list
     return ["vibe", "--agent", agent_vibe, "--workdir", str(cwd), "--prompt", prompt]
 
 
-# Pré-vol sans appel réseau pour vibe (issue #760) : authentification par clé
-# API statique, sans session qui expire d'elle-même (à la différence du token
-# OAuth de Claude Code, qui peut expirer entre deux traitements) — une sonde
-# réseau avant chaque traitement n'a donc pas d'utilité équivalente ici, la
-# clé ne se "dégradant" pas toute seule entre deux traitements. On se
-# contente de vérifier, localement, la présence et la forme générale de la
-# clé : variable d'environnement MISTRAL_API_KEY en priorité, sinon la ligne
-# correspondante de ~/.vibe/.env (fichier lu par vibe lui-même au démarrage).
-# Best-effort, comme verifier_preflight_token : ne bloque jamais le
-# traitement, journalise seulement un avertissement.
+# Pré-vol sans appel réseau pour vibe (issue #760, revu #780) : Vibe connaît
+# deux modes d'authentification — une clé API statique (MISTRAL_API_KEY, par
+# variable d'environnement ou ~/.vibe/.env, lu par vibe lui-même au
+# démarrage) et une connexion par COMPTE (sign-in navigateur). Le second est
+# devenu le mode réellement en usage (le premier facturait sur le mauvais
+# forfait, épuisé — issue #780) : mais, vérifié en lisant le code source
+# installé de Vibe (`vibe.setup.auth.api_key_persistence.persist_api_key`),
+# les deux modes finissent persistés par le MÊME mécanisme, qui privilégie
+# TOUJOURS le trousseau système (OS keyring, service "ai.mistral.vibe", via
+# le paquet tiers `keyring`) et ne retombe sur ~/.vibe/.env en clair que si
+# aucun trousseau n'est disponible — constaté sur cette machine : le fichier
+# existe mais est vide, la clé réelle vivant dans le trousseau. Lire ce
+# trousseau depuis watcher.py demanderait (a) une dépendance tierce que ce
+# fichier n'a jamais eue (bibliothèque standard uniquement, cf. CONTEXTE.md
+# du projet) et (b) un risque de blocage inacceptable pour un pré-vol : si le
+# trousseau est verrouillé et qu'aucun agent de déverrouillage graphique
+# n'est disponible (cas plausible pour le service systemd --user de ce
+# watcher, démarré via enable-linger avant toute connexion graphique), la
+# lecture peut rester en attente d'une interaction qui ne viendra jamais —
+# précisément ce qu'un pré-vol n'a JAMAIS le droit de faire (voir
+# verifier_preflight_token). Aucun autre indice local fiable trouvé :
+# ~/.vibe/whoami_cache.json n'est qu'un cache d'appels réseau passés (TTL 6h,
+# vibe.setup.auth.whoami), pas la preuve d'une authentification utilisable
+# maintenant.
+#
+# Conséquence (consigne explicite de l'issue #780 : mieux vaut ne plus rien
+# vérifier qu'un avertissement systématique et faux) : l'ABSENCE de clé API
+# trouvable ci-dessous n'est PLUS signalée — elle ne prouve plus rien,
+# l'authentification pouvant parfaitement passer par le trousseau système
+# sans laisser ici la moindre trace consultable. Seule la PRÉSENCE d'une
+# valeur de forme suspecte reste signalée (anomalie positive, indépendante
+# du mode d'authentification réellement actif).
 LONGUEUR_MIN_CLE_API_VIBE = 20  # longueur plancher générique — aucun préfixe
 # de clé Mistral confirmé sans appel réseau (contrairement à "sk-ant-" pour
 # Anthropic), donc vérif de forme volontairement large plutôt qu'un motif
@@ -3322,18 +3344,16 @@ def _lire_cle_api_vibe() -> str | None:
 
 
 def verifier_preflight_cle_api_vibe() -> None:
-    """Vérification locale, sans appel réseau (issue #760) : la clé API
-    Mistral est-elle présente et d'une forme plausible ? Voir le commentaire
-    au-dessus de LONGUEUR_MIN_CLE_API_VIBE pour les limites de cette vérif de
-    forme. Appelée depuis verifier_preflight_token via
-    AGENTS_CONNUS['vibe']['verifier_preflight']."""
+    """Vérification locale, sans appel réseau (issue #760, revu #780) : SI
+    une clé API Mistral est trouvée (MISTRAL_API_KEY ou ~/.vibe/.env),
+    est-elle d'une forme plausible ? Ne signale plus rien quand elle est
+    absente — ce n'est plus la preuve d'une authentification manquante
+    depuis la bascule sur la connexion par compte, qui ne laisse ici aucune
+    trace consultable (voir le commentaire au-dessus de
+    LONGUEUR_MIN_CLE_API_VIBE pour le détail). Appelée depuis
+    verifier_preflight_token via AGENTS_CONNUS['vibe']['verifier_preflight']."""
     cle = _lire_cle_api_vibe()
     if not cle:
-        log.warning(
-            "  ⚠️  Pre-flight : aucune clé API Mistral trouvée (ni "
-            "MISTRAL_API_KEY, ni ~/.vibe/.env) — vibe échouera à "
-            "l'authentification."
-        )
         return
     if " " in cle or len(cle) < LONGUEUR_MIN_CLE_API_VIBE:
         log.warning(
