@@ -613,6 +613,12 @@ async function envoyerIssue() {
         if (json.watcher_demarre === true) {
           afficherToast('Watcher démarré automatiquement pour cette issue');
         }
+        // Trace visible (issue #786) d'un label de confort retiré faute
+        // d'exister sur le dépôt (labels_omis, app.issues.creer_issue_gh) —
+        // auparavant retourné par l'API mais jamais affiché, donc invisible.
+        if (Array.isArray(json.labels_omis) && json.labels_omis.length) {
+          afficherToast('Label(s) absent(s) du dépôt, omis : ' + json.labels_omis.join(', '));
+        }
         viderFormulaire(false);
       } else {
         // Alerte explicite de panne GitHub (issue #732) : déclenchée seulement
@@ -1093,6 +1099,10 @@ function afficherResumeLot(resultats, projetForm) {
         l += ' <em>(envoyée sur « ' + escapeHtml(r.projet)
              + ' », ≠ projet sélectionné « ' + escapeHtml(projetForm) + ' »)</em>';
       }
+      // Trace visible (issue #786) d'un label de confort omis, absent du dépôt.
+      if (r.labelsOmis && r.labelsOmis.length) {
+        l += ' <em>(label(s) absent(s) du dépôt, omis : ' + escapeHtml(r.labelsOmis.join(', ')) + ')</em>';
+      }
       return l;
     }
     return '✗ ' + titre + ' — ' + escapeHtml(r.erreur);
@@ -1210,7 +1220,8 @@ async function envoyerLot() {
         if (json.succes) {
           if (json.watcher_demarre === true) watcherDemarre = true;
           resultats.push({succes: true, titre: bloc.titre, projet: projet,
-                          url: json.url, incoherence: incoherence});
+                          url: json.url, incoherence: incoherence,
+                          labelsOmis: json.labels_omis || []});
         } else {
           signalerEchecPossible(json);   // issue #732, même logique que l'envoi mono-issue
           resultats.push({succes: false, titre: bloc.titre, projet: projet,

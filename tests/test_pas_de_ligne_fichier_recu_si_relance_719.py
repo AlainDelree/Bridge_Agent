@@ -139,7 +139,7 @@ def _neutraliser_creation(numero_depart: int = 1):
     def _creer(cfg_i, cfg_p, titre, labels, body):
         url = f"https://github.com/AlainDelree/Bridge_Agent/issues/{compteur['n']}"
         compteur["n"] += 1
-        return True, url
+        return True, url, []
 
     w._creer_issue = _creer
     w._issue_ouverte_meme_titre = lambda cfg_p, titre: None

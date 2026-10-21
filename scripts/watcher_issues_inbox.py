@@ -1128,11 +1128,15 @@ def _creer_issue(cfg: ConfigInbox, cfg_projet, titre: str, labels: str, body: st
         f.write(body)
         chemin_body = f.name
     try:
-        # gh issue create robuste à un label manquant sur le dépôt (issue #648,
-        # régression #647) : creer_issue_gh() retire de lui-même un label absent
-        # du dépôt et journalise l'anomalie (log.warning côté app.issues), au
-        # lieu de faire échouer — et rejeter — toute la création pour un label
-        # secondaire oublié lors du provisionnement d'un dépôt.
+        # gh issue create robuste à un label de CONFORT manquant sur le dépôt
+        # (issue #648, régression #647) : creer_issue_gh() retire de lui-même
+        # un tel label et journalise l'anomalie (log.warning ci-dessous ET
+        # côté app.issues), au lieu de faire échouer — et rejeter — toute la
+        # création pour un label secondaire oublié lors du provisionnement
+        # d'un dépôt. Un label CRITIQUE absent (mode ou destination, voir
+        # app.issues.LABELS_CRITIQUES) fait au contraire échouer `succes`
+        # avec la cause et le correctif dans `resultat` (issue #786) —
+        # `labels_omis` reste alors vide, remonté tel quel par l'appelant.
         succes, resultat, _labels_effectifs, labels_omis = creer_issue_gh(
             cfg_projet.depot, titre, labels, chemin_body, env=env
         )
@@ -1140,7 +1144,7 @@ def _creer_issue(cfg: ConfigInbox, cfg_projet, titre: str, labels: str, body: st
             log.warning(f"Issue « {titre} » créée sans le(s) label(s) "
                         f"{', '.join(labels_omis)} (absent(s) du dépôt "
                         f"{cfg_projet.depot}).")
-        return succes, resultat
+        return succes, resultat, labels_omis
     finally:
         Path(chemin_body).unlink(missing_ok=True)
 
@@ -1203,7 +1207,7 @@ def _traiter_bloc(cfg: ConfigInbox, contenu_bloc: str):
 
     labels = construire_labels(champs)
     body, info_timeout = construire_body(champs, cfg_projet)
-    succes, resultat = _creer_issue(cfg, cfg_projet, champs["titre"], labels, body)
+    succes, resultat, labels_omis = _creer_issue(cfg, cfg_projet, champs["titre"], labels, body)
     if not succes:
         return (False, champs["titre"], champs["projet"],
                 f"gh issue create a échoué : {resultat}", "", None, None)
@@ -1236,6 +1240,13 @@ def _traiter_bloc(cfg: ConfigInbox, contenu_bloc: str):
     # déposé (issue #752, §4) — préfixe la ligne de log (OK) avant tout autre
     # suffixe (démarrage watcher/CCW), concaténés par l'appelant (titre + texte).
     suffixe = f" — {info_timeout}" if info_timeout else ""
+    # Trace visible (issue #786, point 2) d'un label de CONFORT omis faute
+    # d'exister sur le dépôt : log.warning seul (déjà émis dans _creer_issue)
+    # ne remonte pas jusqu'à logs/issues_inbox.log, lu par l'onglet web
+    # (app.issues_inbox.etat_inbox) — sans ce suffixe, le retrait restait
+    # invisible hors du journal watcher_issues_inbox, jamais consulté.
+    if labels_omis:
+        suffixe += f" — label(s) absent(s) du dépôt omis : {', '.join(labels_omis)}"
     if "for-linux" in labels.split(","):
         demarre, pid, _trace = redemarrer_si_eteint(cfg_projet)
         if demarre:

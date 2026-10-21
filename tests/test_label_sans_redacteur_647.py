@@ -91,7 +91,7 @@ def _traiter_et_capturer_labels(tmp_path, contenu):
 
     def _creer_issue(cfg_i, cfg_p, titre, labels, body):
         captures["labels"] = labels
-        return True, "https://x/1"
+        return True, "https://x/1", []
 
     w._issue_ouverte_meme_titre = lambda cfg_p, titre: None
     w._creer_issue = _creer_issue

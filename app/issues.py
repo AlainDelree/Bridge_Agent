@@ -296,28 +296,80 @@ def construire_labels(data: dict) -> str:
 # la fois même si plusieurs labels sont absents.
 _LABEL_INTROUVABLE_RE = re.compile(r"could not add label: '([^']+)' not found")
 
+# Labels CRITIQUES (issue #786) : labels qui PILOTENT un comportement réel de
+# l'issue — par opposition aux labels de confort (notification, traçabilité,
+# statut posé plus tard par le watcher), dont l'absence ne change rien au
+# traitement. Liste établie à partir de ce que chaque label pilote
+# RÉELLEMENT dans le code (pas d'après son nom) :
+# - for-linux / for-windows : décident QUEL watcher voit l'issue (CFG.label de
+#   watcher.Config, comparé aux labels de l'issue à chaque cycle) — absent, la
+#   tâche n'est traitée par AUCUN agent, silencieusement.
+# - mode_write / mode_scratch (LABEL_ECRITURE / LABEL_SCRATCH) : ARMENT le mode
+#   d'exécution (watcher._deduire_mode) — absent, l'issue s'exécute en lecture
+#   seule au lieu du mode demandé. C'est exactement la cause du dernier
+#   incident (#785/#786) : `mode_scratch` manquait du dépôt, silencieusement
+#   omis par cette fonction, et l'agent a travaillé une heure en lecture seule
+#   sur une tâche qui exigeait d'écrire.
+# Tous les autres labels posés à la création (bridge, notif_pc/notif_gsm/
+# notif_tous, sans-redacteur) ne pilotent qu'un affichage ou une notification
+# — jamais le traitement — et restent omis en best-effort comme avant (#648).
+# needs-human/done/agent-claude/agent-vibe ne sont eux jamais demandés À LA
+# CRÉATION (posés plus tard par watcher.fermer_issue()) : absents de cette
+# liste faute d'y transiter jamais par ce chemin.
+LABELS_CRITIQUES = {"for-linux", "for-windows", LABEL_ECRITURE, LABEL_SCRATCH}
+
+
+def _message_label_critique_absent(label: str, depot: str) -> str:
+    """Message de refus (issue #786, points 1 et 3) : nomme la cause et la
+    commande exacte pour la corriger. Un dépôt créé avant l'ajout de ce label
+    à `nouveau_projet.LABELS` ne le reçoit jamais rétroactivement — situation
+    normale (déjà vue pour sans-redacteur #648, agent-claude/agent-vibe #768,
+    mode_scratch #785), qui se règle en une seule commande `gh label
+    create`."""
+    return (
+        f"Label « {label} » absent du dépôt {depot} : ce label pilote le mode "
+        f"ou la destination de l'issue (voir app.issues.LABELS_CRITIQUES) — "
+        f"création refusée plutôt que d'exécuter l'issue avec un comportement "
+        f"différent de celui demandé. Pour corriger : "
+        f"gh label create \"{label}\" --repo {depot}"
+    )
+
 
 def creer_issue_gh(depot: str, titre: str, labels: str, chemin_body: str, *,
                     env: dict | None = None, timeout: int = 30):
-    """Appelle `gh issue create`, en retirant automatiquement de la liste tout
-    label ABSENT du dépôt cible plutôt que de faire échouer toute la création
-    (issue #648 — régression #647 : `sans-redacteur` n'avait été ajouté à
-    aucun dépôt existant, si bien qu'une simple issue sans REDACTEUR échouait
-    entièrement avec « could not add label: 'sans-redacteur' not found »).
+    """Appelle `gh issue create`.
 
-    L'échec de gh étant atomique (constaté ci-dessus), réessayer sans le label
-    fautif ne risque jamais de créer un doublon. gh ne signalant qu'un label
-    manquant à la fois, la boucle retire les labels un par un — plafonnée au
-    nombre de labels de départ pour ne jamais tourner indéfiniment si l'échec
-    provient d'autre chose (dépôt inconnu, réseau, etc.).
+    Deux comportements selon la NATURE du label manquant (issue #786) :
+    - label de CONFORT (notification, traçabilité…) : retiré automatiquement
+      de la liste plutôt que de faire échouer toute la création (issue #648 —
+      régression #647 : `sans-redacteur` n'avait été ajouté à aucun dépôt
+      existant, si bien qu'une simple issue sans REDACTEUR échouait
+      entièrement avec « could not add label: 'sans-redacteur' not found »).
+      Toujours journalisé (log.warning), succès comme échec final.
+    - label CRITIQUE (`LABELS_CRITIQUES` — pilote le mode ou la destination
+      de l'issue) : la création est refusée IMMÉDIATEMENT, avec la cause et la
+      commande de correction (`_message_label_critique_absent`) — mieux vaut
+      refuser de créer l'issue que la créer avec un comportement différent de
+      celui demandé (cause du dernier incident #785/#786 : `mode_scratch`
+      manquant → issue exécutée en lecture seule une heure durant, sans
+      aucune trace).
+
+    L'échec de gh étant atomique (constaté ci-dessus), réessayer sans un label
+    de confort fautif ne risque jamais de créer un doublon. gh ne signalant
+    qu'un label manquant à la fois, la boucle retire les labels de confort un
+    par un — plafonnée au nombre de labels de départ pour ne jamais tourner
+    indéfiniment si l'échec provient d'autre chose (dépôt inconnu, réseau,
+    etc.).
 
     Retourne (succes, resultat, labels_effectifs, labels_omis) :
-    - `resultat` : URL de l'issue créée si succès, message d'erreur sinon ;
+    - `resultat` : URL de l'issue créée si succès, message d'erreur sinon
+      (cause + correctif si le refus vient d'un label critique absent) ;
     - `labels_effectifs` : liste des labels réellement transmis à gh (donc
       réellement posés en cas de succès) ;
-    - `labels_omis` : labels retirés faute d'exister sur le dépôt — à
-      journaliser par l'appelant comme anomalie (`gh label create` manquant
-      sur ce dépôt) ; toujours vide en cas de succès du premier essai."""
+    - `labels_omis` : labels de CONFORT retirés faute d'exister sur le dépôt —
+      à journaliser par l'appelant comme anomalie (`gh label create` manquant
+      sur ce dépôt) ; toujours vide en cas de succès du premier essai ou de
+      refus sur label critique."""
     labels_courants = [lab for lab in labels.split(",") if lab]
     labels_omis = []
     for _ in range(len(labels_courants) + 1):
@@ -346,6 +398,11 @@ def creer_issue_gh(depot: str, titre: str, labels: str, chemin_body: str, *,
                 False, panne_probable=github_status.classer_echec_gh(msg), origine="creer_issue_gh")
             return (False, msg, labels_courants, labels_omis)
         label_absent = m.group(1)
+        if label_absent in LABELS_CRITIQUES:
+            msg = _message_label_critique_absent(label_absent, depot)
+            log.error(msg)
+            github_status.signaler_resultat_gh(False, panne_probable=False, origine="creer_issue_gh")
+            return False, msg, labels_courants, labels_omis
         log.warning(f"Label « {label_absent} » absent du dépôt {depot} — omis de "
                     "cette création plutôt que de la faire échouer (gh label "
                     "create manquant sur ce dépôt, cf. issue #648).")

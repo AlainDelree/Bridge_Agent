@@ -137,7 +137,7 @@ def scenario_9_traiter_fichier_redacteur_egal_projet_traite_normalement(tmp_path
     cfg.rejected_dir.mkdir(parents=True, exist_ok=True)
 
     def _creer_issue(cfg_i, cfg_p, titre, labels, body):
-        return True, "https://x/1"
+        return True, "https://x/1", []
 
     w._issue_ouverte_meme_titre = lambda cfg_p, titre: None
     w._creer_issue = _creer_issue
@@ -212,7 +212,7 @@ def scenario_11_traiter_fichier_canal_ccw_for_windows_traite_normalement(tmp_pat
     cfg.rejected_dir.mkdir(parents=True, exist_ok=True)
 
     w._issue_ouverte_meme_titre = lambda cfg_p, titre: None
-    w._creer_issue = lambda cfg_i, cfg_p, titre, labels, body: (True, "https://x/2")
+    w._creer_issue = lambda cfg_i, cfg_p, titre, labels, body: (True, "https://x/2", [])
     watchers_mod.demarrer_watcher = lambda cfg_p, forcer=False: (False, 2222)
 
     chemin = cfg.inbox_dir / "issue.txt"
@@ -246,7 +246,7 @@ def scenario_12_traiter_fichier_sans_redacteur_traite_normalement(tmp_path_facto
     cfg.rejected_dir.mkdir(parents=True, exist_ok=True)
 
     w._issue_ouverte_meme_titre = lambda cfg_p, titre: None
-    w._creer_issue = lambda cfg_i, cfg_p, titre, labels, body: (True, "https://x/3")
+    w._creer_issue = lambda cfg_i, cfg_p, titre, labels, body: (True, "https://x/3", [])
     watchers_mod.demarrer_watcher = lambda cfg_p, forcer=False: (False, 3333)
 
     chemin = cfg.inbox_dir / "issue.txt"

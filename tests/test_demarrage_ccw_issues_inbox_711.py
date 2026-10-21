@@ -82,7 +82,7 @@ def scenario_creation_for_windows_demarre_ccw_sans_watcher():
 
         appels = {"ccw": [], "watcher_appele": False}
         w._creer_issue = lambda cfg, cfg_p, titre, labels, body: (
-            True, "https://github.com/AlainDelree/Bridge_Agent/issues/55")
+            True, "https://github.com/AlainDelree/Bridge_Agent/issues/55", [])
         w.redemarrer_si_eteint = _appel_interdit("redemarrer_si_eteint")
         w.demarrer_service_ccw_arriere_plan = lambda nom_projet: appels["ccw"].append(nom_projet)
 
@@ -110,7 +110,7 @@ def scenario_creation_for_linux_inchangee():
 
         appels = {"watcher_pour": None}
         w._creer_issue = lambda cfg, cfg_p, titre, labels, body: (
-            True, "https://github.com/AlainDelree/Bridge_Agent/issues/56")
+            True, "https://github.com/AlainDelree/Bridge_Agent/issues/56", [])
 
         def _faux_redemarrer(cfg):
             appels["watcher_pour"] = cfg.nom
@@ -140,7 +140,7 @@ def scenario_creation_for_windows_echec_ccw_n_empeche_pas_la_creation():
         _preparer(tmp_dir, cfg_projet)
 
         w._creer_issue = lambda cfg, cfg_p, titre, labels, body: (
-            True, "https://github.com/AlainDelree/Bridge_Agent/issues/57")
+            True, "https://github.com/AlainDelree/Bridge_Agent/issues/57", [])
         w.redemarrer_si_eteint = _appel_interdit("redemarrer_si_eteint")
 
         def _ccw_qui_explose(nom_projet):
