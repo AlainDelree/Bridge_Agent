@@ -347,14 +347,15 @@ async function marquerCases(cases) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 3. MOTEUR DE COPIE FIABLE (issue #636)
+// 3. MOTEUR DE COPIE FIABLE (issue #636, mode moderne revu #782)
 //    Un seul chemin pour toutes les copies « fetch puis écriture » : cocher une
-//    case, badges ✅/Diff/All. La copie est ENGAGÉE pendant le geste ; le succès
-//    n'est signalé QUE s'il a réellement eu lieu.
+//    case, badges ✅/Diff/All. Le succès n'est signalé QUE s'il a réellement eu
+//    lieu. Mode moderne (voir copierModerne) : le texte est préparé AVANT la
+//    demande d'écriture et les écritures sont sérialisées — cocher plusieurs
+//    cases rapprochées ne fait plus échouer toutes les copies sauf la
+//    dernière (issue #782, voir le rapport pour la reproduction).
 // ─────────────────────────────────────────────────────────────────────────────
 
-const ERREUR_VIDE = Symbol('copie-vide');
-const ERREUR_AUCUN = Symbol('copie-aucun');   // aucun diff (issue en lecture seule)
 const TITRE_COPIE_VIDE = 'Réponse pas encore disponible — réessaie dans quelques secondes';
 
 function texteVide(t) { return !t || !t.trim(); }
@@ -452,41 +453,58 @@ function copierExecCommand(texte) {
   }
 }
 
-// Cœur du correctif (issue #636) : engage la copie AU GESTE.
-//   - moderne : navigator.clipboard.write([ClipboardItem({text: promesse})]) —
-//     appelé SYNCHRONEMENT, le texte est fetché ensuite dans la promesse.
-//   - repli : le texte doit déjà être préchargé (textesPrepares) → copie
+// ─── Mode « moderne » : sérialisé (issue #782) ────────────────────────────────
+// Diagnostic établi par reproduction (WebDriver + Firefox, voir le rapport de
+// l'issue) : navigator.clipboard.write() ANNULE (NotAllowedError) une écriture
+// encore PENDANTE dès qu'une NOUVELLE est lancée avant que la précédente ait
+// abouti — seule la plus récente survit. Cocher plusieurs cases rapprochées
+// (chacune fetchant son contenu avant d'écrire) laissait donc plusieurs
+// écritures en vol en même temps, et toutes sauf la dernière échouaient. Le
+// correctif tient en deux points : le texte est intégralement PRÊT avant de
+// demander l'écriture (jamais de Blob en promesse pendante confié à
+// ClipboardItem — testé jusqu'à 5s de latence réseau sans que la seule
+// activation du clic ne soit requise au moment de l'appel), et les appels sont
+// CHAÎNÉS pour qu'une seule écriture soit en vol à la fois, même si plusieurs
+// textes deviennent prêts au même instant.
+let chaineCopieModerne = Promise.resolve();
+
+function copierModerne(projet, numero, producteur, feedback) {
+  const tache = chaineCopieModerne.then(async () => {
+    let t;
+    try {
+      t = await producteur(projet, numero);
+    } catch (e) {
+      if (e && e.aucun) { feedback.aucun ? feedback.aucun() : feedback.vide(); }
+      else feedback.echec(e);
+      return;
+    }
+    if (texteVide(t)) { feedback.vide(); return; }
+    avertirVolumineux(t);
+    try {
+      await navigator.clipboard.write([new ClipboardItem({ 'text/plain': new Blob([t], { type: 'text/plain' }) })]);
+      feedback.succes();
+    } catch (e) {
+      feedback.echec(e, t);   // texte transmis : reste accessible malgré l'échec (issue #782)
+    }
+  });
+  // La chaîne continue même après un échec : un copierModerne en erreur ne doit
+  // jamais bloquer les suivants.
+  chaineCopieModerne = tache.catch(() => {});
+}
+
+// ─── Point d'entrée unique (issue #636, mode repli revu #782) ────────────────
+//   - moderne : voir copierModerne ci-dessus.
+//   - repli   : le texte doit déjà être préchargé (textesPrepares) → copie
 //     synchrone execCommand ; sinon feedback « en préparation » + préchargement.
 // `variante` ∈ {all, diff, reponse}. `feedback` = { succes, echec, vide, aucun, nonPret }.
 function lancerCopie(projet, numero, producteur, feedback) {
-  const cle = cleIC(projet, numero);
-  const variante = producteur === texteAll ? 'all' : producteur === texteDiff ? 'diff' : 'reponse';
   if (modeCopie() === 'moderne') {
-    // Le contenu est fourni de façon DIFFÉRÉE (ClipboardItem alimenté par une
-    // promesse) : navigator.clipboard.write est appelé SYNCHRONEMENT au clic, le
-    // texte est fetché ensuite (hors fenêtre d'activation, mais la copie est déjà
-    // engagée). Un try/catch protège d'un throw synchrone (ClipboardItem/promesse
-    // non supporté) → feedback d'échec honnête, jamais de faux succès.
-    const traiter = (e) => {
-      if (e === ERREUR_VIDE) feedback.vide();
-      else if (e && e.aucun) feedback.aucun ? feedback.aucun() : feedback.vide();
-      else feedback.echec(e);
-    };
-    try {
-      const blobP = Promise.resolve().then(() => producteur(projet, numero)).then((t) => {
-        if (texteVide(t)) throw ERREUR_VIDE;
-        avertirVolumineux(t);
-        return new Blob([t], { type: 'text/plain' });
-      });
-      // Éviter un rejet non capturé si write() ignore la promesse du ClipboardItem.
-      blobP.catch(() => {});
-      navigator.clipboard.write([new ClipboardItem({ 'text/plain': blobP })])
-        .then(() => feedback.succes())
-        .catch(traiter);
-    } catch (e) { traiter(e); }
+    copierModerne(projet, numero, producteur, feedback);
     return;
   }
   // Mode repli (--lan) : texte requis AVANT le clic.
+  const cle = cleIC(projet, numero);
+  const variante = producteur === texteAll ? 'all' : producteur === texteDiff ? 'diff' : 'reponse';
   const prep = textesPrepares.get(cle);
   const t = prep ? prep[variante] : undefined;
   if (t === undefined) {
@@ -498,7 +516,7 @@ function lancerCopie(projet, numero, producteur, feedback) {
   if (texteVide(t)) { feedback.vide(); return; }
   avertirVolumineux(t);
   if (copierExecCommand(t)) feedback.succes();
-  else feedback.echec();
+  else feedback.echec(undefined, t);   // texte transmis : reste accessible malgré l'échec (issue #782)
 }
 
 // Précharge (mode repli) le texte d'une variante pour (projet, numero).
@@ -536,11 +554,23 @@ function precharderVisiblesRepli() {
 }
 
 // ─── Feedbacks ────────────────────────────────────────────────────────────────
+const MESSAGE_ECHEC_COPIE = 'Copie impossible — le presse-papier n\'a pas pu être écrit.';
+
+// Échec de copie (issue #782) : le texte n'est JAMAIS simplement perdu — quand
+// il est disponible (toute cause d'échec SAUF un texte vide, déjà couvert par
+// `vide`), il est joint au toast d'erreur dans une zone sélectionnable
+// (`texteSecours`, voir toasts.js) pour un Ctrl+C manuel. Ce filet vaut quelle
+// que soit la cause de l'échec (API presse-papier refusée, execCommand en
+// échec, etc.), pas seulement celle corrigée ci-dessus.
+function signalerEchecCopie(texte) {
+  toasts.erreur(MESSAGE_ECHEC_COPIE, true, texte ? { texteSecours: texte } : undefined);
+}
+
 // Cochage d'une case : feedback par TOAST (pas de badge sur la case).
 function feedbackToast() {
   return {
     succes: () => toasts.succes('Rapport copié dans le presse-papier.', false),
-    echec: () => toasts.erreur('Copie impossible — le presse-papier n\'a pas pu être écrit.'),
+    echec: (e, texte) => signalerEchecCopie(texte),
     vide: () => toasts.avertissement(TITRE_COPIE_VIDE),
     nonPret: () => toasts.info('Préparation de la copie en cours — recoche dans un instant.', false),
   };
@@ -554,7 +584,7 @@ function feedbackBadge(badge) {
   const flash = (symbole) => { if (badge) { badge.textContent = symbole; setTimeout(restaurer, 1500); } };
   return {
     succes: () => flash('✓'),
-    echec: () => { toasts.erreur('Copie impossible — le presse-papier n\'a pas pu être écrit.'); },
+    echec: (e, texte) => signalerEchecCopie(texte),
     vide: () => { if (badge) { badge.textContent = '⚠'; badge.title = TITRE_COPIE_VIDE; setTimeout(restaurer, 2000); } },
     aucun: () => flash('∅'),
     nonPret: () => { toasts.info('Contenu en préparation — reclique dans un instant.', false); },

@@ -15,6 +15,13 @@
 //   JAMAIS de boîte à fermer avec « OK » pour info/succes/erreur/avertissement
 //   (fini les alert()) — ce sont les remplaçants de alert(...) et
 //   afficherToast(...).
+//   - toasts.erreur(texte, comptabilise, {texteSecours}) (issue #782) : un
+//     texte qu'une action a échoué à produire/écrire ailleurs (ex. presse-
+//     papier refusé) peut être joint — affiché dans une zone <textarea>
+//     sélectionnable (pré-sélectionnée) plutôt que simplement perdu. Ces
+//     toasts ne sont JAMAIS fusionnés par l'anti-empilement (sinon le texte
+//     d'un appel précédent serait effacé par le suivant) : chaque occurrence
+//     reste un toast séparé.
 //
 //   Tous les messages affichés (quel que soit l'appelant) sont en outre
 //   journalisés (voir `journaliser`) dans un historique borné
@@ -336,6 +343,10 @@ function injecterStyles() {
   font-size:13px;cursor:pointer;background:#fff;color:#1a1a18}
 .socle-modal-boutons button.danger{background:#a32d2d;color:#fff;border-color:#a32d2d}
 .socle-toast-contenu{display:flex;align-items:center;gap:10px}
+.socle-toast-secours{display:block;box-sizing:border-box;width:100%;margin-top:8px;
+  max-height:160px;font-family:monospace;font-size:11px;line-height:1.4;
+  padding:6px 8px;border:none;border-radius:6px;resize:vertical;
+  color:#1a1a18;background:#fff}
 .socle-toast-fermer{pointer-events:auto;flex:0 0 auto;background:none;border:none;
   color:#fff;opacity:.8;cursor:pointer;font-size:15px;line-height:1;padding:0}
 .socle-toast-fermer:hover{opacity:1}
@@ -379,8 +390,9 @@ function fermerToast(cle) {
 }
 
 // (Re)construit le contenu d'un toast : texte + bouton « × » si `avecFermeture`
-// (erreur/avertissement, issue #730 — fermeture manuelle uniquement).
-function definirContenuToast(toast, texte, avecFermeture, onFermer) {
+// (erreur/avertissement, issue #730 — fermeture manuelle uniquement), + zone
+// sélectionnable optionnelle (`texteSecours`, issue #782 — voir `afficher`).
+function definirContenuToast(toast, texte, avecFermeture, onFermer, texteSecours) {
   toast.textContent = '';
   const conteneur = doc().createElement('span');
   conteneur.className = 'socle-toast-contenu';
@@ -397,17 +409,42 @@ function definirContenuToast(toast, texte, avecFermeture, onFermer) {
     conteneur.appendChild(bouton);
   }
   toast.appendChild(conteneur);
+  if (texteSecours) {
+    const zone = doc().createElement('textarea');
+    zone.className = 'socle-toast-secours';
+    zone.readOnly = true;
+    zone.value = texteSecours;
+    zone.title = 'Texte non copié — sélectionne-le et copie-le manuellement (Ctrl+C).';
+    zone.addEventListener('click', () => zone.select());
+    toast.appendChild(zone);
+    // Pré-sélectionné pour un Ctrl+C immédiat sans avoir à cliquer dedans.
+    setTimeout(() => zone.select(), 0);
+  }
 }
 
-function afficher(texte, type, comptabiliseDemande = true) {
+/** Clé de regroupement anti-empilement (issue #635) d'un toast. Un texte de
+ * secours (issue #782, voir `definirContenuToast`) rend la clé UNIQUE —
+ * `compteurUnique` doit être différent à chaque appel — car le mécanisme
+ * anti-empilement REMPLACE le contenu affiché par le nouvel appel : sans
+ * clé unique, le texte de secours d'un appel précédent (ex. un rapport
+ * resté non copié) serait silencieusement effacé par le suivant. Pure —
+ * testable sans DOM (voir toasts.test.js). */
+export function cleToast(type, texte, texteSecours, compteurUnique) {
+  return texteSecours ? `${type} ${texte} #${compteurUnique}` : `${type} ${texte}`;
+}
+
+let compteurCleSecours = 0;
+
+function afficher(texte, type, comptabiliseDemande = true, options = {}) {
+  const { texteSecours } = options || {};
   const d = doc();
   if (!d) { return; }
   injecterStyles();
   journaliser(texte, type, estComptabilise(type, comptabiliseDemande));
 
   const duree = dureeAffichage(type);
-  const cle = type + ' ' + texte;
-  const actif = toastsActifs.get(cle);
+  const cle = cleToast(type, texte, texteSecours, texteSecours ? ++compteurCleSecours : undefined);
+  const actif = texteSecours ? null : toastsActifs.get(cle);
   if (actif) {
     actif.compteur += 1;
     definirContenuToast(actif.element, texte + ' (×' + actif.compteur + ')', duree === null, () => fermerToast(cle));
@@ -428,7 +465,7 @@ function afficher(texte, type, comptabiliseDemande = true) {
   }
   const toast = d.createElement('div');
   toast.className = `socle-toast ${type}`;
-  definirContenuToast(toast, texte, duree === null, () => fermerToast(cle));
+  definirContenuToast(toast, texte, duree === null, () => fermerToast(cle), texteSecours);
   conteneur.appendChild(toast);
   // Forcer un reflow puis lancer la transition d'apparition.
   requestAnimationFrame(() => toast.classList.add('visible'));
@@ -505,7 +542,11 @@ export const toasts = {
   // pastille. Sans effet sur erreur/avertissement (toujours comptabilisés).
   info: (texte, comptabilise = true) => afficher(texte, 'info', comptabilise),
   succes: (texte, comptabilise = true) => afficher(texte, 'succes', comptabilise),
-  erreur: (texte, comptabilise = true) => afficher(texte, 'erreur', comptabilise),
+  // `options.texteSecours` (issue #782) : jointe au toast dans une zone
+  // sélectionnable — pour qu'un texte qui a échoué à être copié (presse-papier
+  // refusé, execCommand en échec…) reste accessible pour un Ctrl+C manuel,
+  // au lieu d'être simplement perdu.
+  erreur: (texte, comptabilise = true, options) => afficher(texte, 'erreur', comptabilise, options),
   avertissement: (texte, comptabilise = true) => afficher(texte, 'avertissement', comptabilise),
   confirmer,
 };

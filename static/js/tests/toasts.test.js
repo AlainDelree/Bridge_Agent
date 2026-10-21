@@ -14,6 +14,7 @@ import {
   formaterHeureJournal,
   estComptabilise,
   entreeComptabilisee,
+  cleToast,
 } from '../socle/toasts.js';
 
 // ─── dureeAffichage : durée de vie selon le type ───────────────────────────
@@ -159,4 +160,30 @@ test('entreeComptabilisee : comptabilise=true → comptabilisée', () => {
 
 test('entreeComptabilisee : entrée ancienne sans le champ → lue comme comptabilisée (compatibilité session)', () => {
   assert.equal(entreeComptabilisee({ id: 1, type: 'succes', texte: 'Ancien message', horodatage: 0 }), true);
+});
+
+// ─── cleToast (issue #782) : clé de regroupement anti-empilement ──────────
+// Sans texte de secours, deux appels identiques doivent se fusionner (clé
+// identique, comportement d'avant #782, issue #635) ; avec un texte de
+// secours, chaque appel doit rester un toast séparé (clé jamais réutilisée),
+// sinon le contenu sélectionnable d'un appel précédent serait effacé.
+
+test('cleToast : sans texte de secours → même (type, texte) ⇒ même clé (fusion attendue)', () => {
+  assert.equal(cleToast('erreur', 'Copie impossible.', undefined, 1), cleToast('erreur', 'Copie impossible.', undefined, 2));
+});
+
+test('cleToast : sans texte de secours → clé composée de type + texte', () => {
+  assert.equal(cleToast('erreur', 'Copie impossible.'), 'erreur Copie impossible.');
+});
+
+test('cleToast : avec texte de secours → clé UNIQUE même pour un (type, texte) identique', () => {
+  const cle1 = cleToast('erreur', 'Copie impossible.', 'Issue #1 — texte A', 1);
+  const cle2 = cleToast('erreur', 'Copie impossible.', 'Issue #2 — texte B', 2);
+  assert.notEqual(cle1, cle2);
+});
+
+test('cleToast : avec texte de secours → deux appels successifs (compteur croissant) ne se fusionnent jamais', () => {
+  const vues = new Set();
+  for (let i = 1; i <= 5; i++) vues.add(cleToast('erreur', 'Copie impossible.', 'texte', i));
+  assert.equal(vues.size, 5);
 });
