@@ -236,24 +236,30 @@ circuit normal.
 | `notif_pc` | Ajoute une notification bureau (notify-send) |
 | `notif_gsm` | Ajoute une notification push (ntfy) |
 | `notif_tous` | notify-send + ntfy |
+| `mode_scratch` | **ARME le mode lecture active** — écriture confinée au dossier scratch, voir §5 |
 | `sans-redacteur` | Posé automatiquement quand `REDACTEUR` est absent de l'en-tête — purement informatif, voir §3.4 |
 | `agent-claude` | Posé automatiquement à la clôture — **agent d'exécution** Claude Code (clé `AGENT` du `.conf`, issue #768) |
 | `agent-vibe` | Posé automatiquement à la clôture — **agent d'exécution** Mistral Vibe (clé `AGENT` du `.conf`, issue #768) |
 
 > `agent-claude`/`agent-vibe` identifient l'agent qui a RÉELLEMENT traité
 > l'issue (`CFG.label_agent`), distinct de `for-linux`/`for-windows` (qui ne
-> désignent que la plateforme visée). Comme `sans-redacteur`, ils sont
-> provisionnés d'office sur tout nouveau projet (`nouveau_projet.LABELS`)
-> mais doivent être créés à la main (`gh label create`) sur un dépôt déjà
-> existant — posés best-effort, un échec de pose (label absent du dépôt) ne
-> bloque jamais la clôture elle-même.
+> désignent que la plateforme visée). Comme `sans-redacteur` et `mode_scratch`,
+> ils sont provisionnés d'office sur tout nouveau projet
+> (`nouveau_projet.LABELS`) mais doivent être créés à la main (`gh label
+> create`) sur un dépôt déjà existant — posés best-effort, un échec de pose
+> (label absent du dépôt) ne bloque jamais la clôture elle-même.
 
 > Sans label `notif_pc` / `notif_gsm` / `notif_tous`, aucune notification
 > sonore ou push n'est déclenchée. Le bip est strictement opt-in.
 
-> `mode_scratch` (lecture active, voir §5) n'est pas dans cette liste : il
-> n'est **pas provisionné automatiquement** sur un nouveau projet — il doit
-> être créé à la main sur le dépôt GitHub avant de pouvoir l'utiliser.
+> `mode_scratch` (lecture active, voir §5) a longtemps manqué de cette
+> provision automatique (introduit par #327, oublié de `nouveau_projet.LABELS`
+> jusqu'à #785) : sur un dépôt où le label n'a jamais été créé à la main,
+> `creer_issue_gh` le retirait silencieusement (même repli que #648/#768
+> ci-dessus) et l'issue s'exécutait en lecture seule sans que rien ne le
+> signale — voir l'écart MODE déclaré/retenu journalisé et commenté sur
+> l'issue (§5) depuis #785, qui détecte désormais ce cas (et tout autre
+> label de mode manquant) au lancement.
 
 ---
 

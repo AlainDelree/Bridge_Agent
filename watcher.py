@@ -33,6 +33,7 @@ import ctypes
 import ctypes.wintypes
 import base64
 import binascii
+import unicodedata
 from logging.handlers import RotatingFileHandler
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -338,6 +339,99 @@ def _deduire_mode(labels: list[str]) -> str:
     if LABEL_SCRATCH in labels:
         return MODE_LECTURE_ACTIVE
     return MODE_LECTURE
+
+
+# ─── Écart entre le MODE déclaré dans l'en-tête et le MODE réellement retenu
+# (issue #785) ────────────────────────────────────────────────────────────
+# Le MODE réel reste EXCLUSIVEMENT armé par les labels GitHub (_deduire_mode
+# ci-dessus) — jamais par ce texte, qui ne transite par aucun contrôle
+# d'accès (même principe que le refus symétrique côté RELANCE, voir
+# scripts/watcher_issues_inbox.py §"MODE reste exclu"). `extraire_mode_entete`
+# ne sert donc PAS à déterminer le mode d'exécution, seulement à détecter un
+# écart avec `_deduire_mode(labels)` — révélateur d'un label de mode attendu
+# resté absent à la création. Cause concrète trouvée par #785 : `mode_scratch`
+# manquait de `nouveau_projet.LABELS`, si bien que `creer_issue_gh`
+# (app/issues.py) l'omettait silencieusement faute d'exister sur le dépôt
+# (même repli que #648) — une issue en « lecture active » s'exécutait alors
+# en lecture seule sans qu'aucune anomalie ne soit journalisée ni commentée,
+# jusqu'à ce que l'agent le découvre lui-même, une heure plus tard, en tentant
+# d'écrire. Reconnaissance tolérante, calquée sur reconnaitre_mode
+# (scripts/watcher_issues_inbox.py) et reconnaitreModeTexte
+# (static/js/creation.js) — l'ordre du tuple est significatif : « lecture
+# active » doit être testé avant « lecture » seul, sous peine d'être absorbé
+# par ce dernier.
+MODE_SYNONYMES_ENTETE = (
+    (MODE_ECRITURE,       ("écriture", "ecriture", "write", "mode_write")),
+    (MODE_LECTURE_ACTIVE, ("lecture active", "scratch", "mode_scratch")),
+    (MODE_LECTURE,        ("lecture seule", "lecture", "read", "mode_read")),
+)
+
+
+def _sans_accents(texte: str) -> str:
+    decompose = unicodedata.normalize("NFKD", texte or "")
+    return "".join(c for c in decompose if not unicodedata.combining(c))
+
+
+def extraire_mode_entete(body: str) -> str | None:
+    """Mode DÉCLARÉ par le champ d'en-tête `| MODE | ... |` du body (lecture
+    tolérante, accents/casse ignorés), ou None si le champ est absent ou non
+    reconnu. `parts[1].strip().upper() == "MODE"` (plutôt qu'un simple « in »)
+    pour ne jamais confondre avec le champ voisin `MODELE`."""
+    for ligne in (body or "").splitlines():
+        parts = ligne.split("|")
+        if len(parts) >= 3 and parts[1].strip().upper() == "MODE":
+            brut = _sans_accents(parts[2].strip().lower())
+            for valeur, motifs in MODE_SYNONYMES_ENTETE:
+                if any(_sans_accents(motif) in brut for motif in motifs):
+                    return valeur
+    return None
+
+
+_LIBELLES_MODE = {MODE_ECRITURE: "écriture", MODE_LECTURE_ACTIVE: "lecture active", MODE_LECTURE: "lecture seule"}
+
+
+def _texte_ecart_mode(body: str, mode: str) -> str:
+    """Compare le MODE déclaré dans l'en-tête à `mode` (déjà déduit des
+    labels par l'appelant) — retourne un avertissement à insérer dans un
+    commentaire GitHub en cas d'écart, chaîne vide sinon. Fonction PURE (pas
+    de log, pas d'effet de bord) : réutilisée aussi bien par
+    `_avertissement_ecart_mode` ci-dessous (qui journalise en plus, une
+    seule fois, au moment de la déduction du mode) que par chacun des
+    gestionnaires d'échec (`_gerer_erreur_bloquante` et consorts, issue
+    #785), qui recalculent ce même texte à partir des `body`/`mode` qu'ils
+    reçoivent déjà en paramètre — pas de tuyauterie supplémentaire. Ne
+    change jamais `mode` lui-même : un écart est signalé, jamais corrigé à
+    la volée (le mode réel reste celui des labels, seul mécanisme sous
+    contrôle d'accès)."""
+    mode_declare = extraire_mode_entete(body)
+    if mode_declare is None or mode_declare == mode:
+        return ""
+    return (
+        f"\n⚠️ **Écart de MODE détecté** : l'en-tête de cette issue déclarait "
+        f"« {_LIBELLES_MODE[mode_declare]} », mais le label GitHub effectivement posé "
+        f"correspond à « {_LIBELLES_MODE[mode]} » — c'est ce dernier qui a piloté "
+        f"l'exécution (le mode réel est toujours armé par le label, jamais par "
+        f"ce texte). Vérifier que le label attendu existe sur ce dépôt et qu'il "
+        f"a bien été posé à la création (cf. issue #785).\n"
+    )
+
+
+def _avertissement_ecart_mode(numero: int, body: str, mode: str) -> str:
+    """Comme `_texte_ecart_mode`, mais journalise aussi l'écart (une seule
+    fois — appelée uniquement depuis `_deduire_mode_et_logguer`, au moment
+    de la déduction du mode) : c'est cette ligne de log qui rend l'écart
+    visible dans le journal du watcher, indépendamment du commentaire
+    GitHub (issue #785 — point 3 : l'un ne doit jamais se substituer à
+    l'autre)."""
+    texte = _texte_ecart_mode(body, mode)
+    if texte:
+        mode_declare = extraire_mode_entete(body)
+        log.warning(
+            f"  ⚠️  Issue #{numero} : écart MODE — en-tête déclare « {_LIBELLES_MODE[mode_declare]} » "
+            f"mais le label GitHub retient « {_LIBELLES_MODE[mode]} » (label de mode absent ou "
+            f"mal posé à la création — cf. issue #785, nouveau_projet.LABELS/gh label create)."
+        )
+    return texte
 
 
 def _etiquette_calibration(mode: str) -> str:
@@ -5442,14 +5536,16 @@ def _guards_precoces_et_bootstrap(issue: dict, numero: int, titre: str, body: st
 
 
 def _deduire_mode_et_logguer(numero: int, titre: str, body: str, labels: list[str],
-                              chemin_worktree: Path | None) -> tuple[str, str, str, bool, int, str]:
+                              chemin_worktree: Path | None) -> tuple[str, str, str, bool, int, str, str]:
     """Déduit priorité/critique/timeout/modèle/mode pour cette issue et
     journalise les avertissements associés (mode écriture ou lecture active
-    armé, mention configs/*.conf dans le corps). Retourne
-    (mode, mode_txt, priorite, critique, timeout, modele)."""
+    armé, mention configs/*.conf dans le corps, écart MODE déclaré/retenu —
+    issue #785). Retourne
+    (mode, mode_txt, priorite, critique, timeout, modele, avertissement_mode)."""
     priorite = extraire_priorite(body)
     critique = priorite in PRIORITES_CRITIQUES
     mode     = _deduire_mode(labels)
+    avertissement_mode = _avertissement_ecart_mode(numero, body, mode)
     # mode calculé AVANT timeout (issue #752) : extraire_timeout applique son
     # plancher écriture seulement si mode == MODE_ECRITURE (déduit du label
     # GitHub mode_write, jamais du texte du body — cohérent avec le principe
@@ -5481,7 +5577,7 @@ def _deduire_mode_et_logguer(numero: int, titre: str, body: str, labels: list[st
             f"rappel : CCL/CCW ne doit JAMAIS modifier ces fichiers (consignes/globales.md, "
             f"issue #318), même si l'issue le demande explicitement. Garde-fou technique actif."
         )
-    return mode, mode_txt, priorite, critique, timeout, modele
+    return mode, mode_txt, priorite, critique, timeout, modele, avertissement_mode
 
 
 @dataclass
@@ -6391,6 +6487,7 @@ def _gerer_erreur_bloquante(numero: int, titre: str, body: str, labels: list[str
         f"immédiatement, sans consommer les tentatives restantes.\n\n"
         f"{avertissement_worktree_deja_pris}"
         f"{avertissement_worktree_repris}"
+        f"{_texte_ecart_mode(body, mode)}"
         f"Cause détectée (signature reconnue) : `{cause}`\n\n"
         f"Sortie : `{sortie.strip()[:LIMITE_STDERR_LOG]}`\n\n"
         f"Ce type d'erreur (clé API révoquée, quota ou crédit épuisé...) ne se "
@@ -6469,6 +6566,7 @@ def _gerer_tentative_anormalement_rapide(numero: int, titre: str, body: str, lab
         f"immédiatement, sans consommer les tentatives restantes.\n\n"
         f"{avertissement_worktree_deja_pris}"
         f"{avertissement_worktree_repris}"
+        f"{_texte_ecart_mode(body, mode)}"
         f"Sortie : `{sortie.strip()[:LIMITE_STDERR_LOG]}`\n\n"
         f"{diagnostic}"
         f"avant de retirer le label `{LABEL_ECHEC}`. Intervention humaine "
@@ -6542,6 +6640,7 @@ def _gerer_verdict_illisible_avec_commits(numero: int, titre: str, body: str, la
         f"déjà fait).\n\n"
         f"{avertissement_worktree_deja_pris}"
         f"{avertissement_worktree_repris}"
+        f"{_texte_ecart_mode(body, mode)}"
         f"Commit(s) trouvé(s) au-delà de la sauvegarde :\n{liste_commits}\n\n"
         f"Fin brute de la sortie capturée : `{fin_brute_sortie.strip()}`\n\n"
         f"**Vérifier manuellement ce travail avant de le considérer acquis** "
@@ -6611,6 +6710,7 @@ def _gerer_abandon_max_essais(numero: int, titre: str, body: str, labels: list[s
         f"❌ Échec après {CFG.max_essais} tentatives.\n\n"
         f"{avertissement_worktree_deja_pris}"
         f"{avertissement_worktree_repris}"
+        f"{_texte_ecart_mode(body, mode)}"
         f"Dernière erreur : `{sortie}`\n\n"
     )
     if diagnostic:
@@ -6716,7 +6816,7 @@ def _traiter_issue_synchrone(issue: dict, dry_run: bool, chemin_worktree: Path |
     if labels is None:
         return
 
-    mode, mode_txt, _priorite, critique, timeout, modele = _deduire_mode_et_logguer(
+    mode, mode_txt, _priorite, critique, timeout, modele, avertissement_mode = _deduire_mode_et_logguer(
         numero, titre, body, labels, chemin_worktree)
 
     contexte = _resoudre_contexte_execution(numero, body, mode, chemin_worktree, echec_worktree_deja_pris)
@@ -6724,7 +6824,13 @@ def _traiter_issue_synchrone(issue: dict, dry_run: bool, chemin_worktree: Path |
         return
     perimetre_effectif = contexte.perimetre_effectif
     cwd_effectif        = contexte.cwd_effectif
-    avertissement_conflit = contexte.avertissement_conflit
+    # avertissement_mode (issue #785, écart MODE déclaré/retenu) concaténé ICI
+    # plutôt que filé comme paramètre séparé à travers les ~8 fonctions
+    # _poster_resultat_*/_traiter_echec_* : avertissement_conflit est déjà
+    # transmis partout jusqu'au commentaire de clôture (issue #125), un
+    # simple texte d'avertissement de plus n'a pas besoin de sa propre
+    # tuyauterie.
+    avertissement_conflit = contexte.avertissement_conflit + avertissement_mode
     avertissement_worktree_deja_pris = contexte.avertissement_worktree_deja_pris
 
     verrou = _acquerir_verrou_pour_issue(numero, cwd_effectif, timeout, mode)

@@ -52,11 +52,21 @@ DOC = RACINE / "BRIDGE_AGENT_DOC.md"
 # provisionnés d'office sur tout nouveau projet, les dépôts déjà existants
 # nécessitent un `gh label create` manuel une fois (cf. rapport de clôture
 # #768).
+# mode_scratch (issue #785) : ARME la lecture active (écriture confinée au
+# scratch, issue #327) — oublié de cette liste depuis l'introduction du mode
+# en #327, exactement la même régression que sans-redacteur (#648) : le label
+# n'existant sur AUCUN dépôt déjà provisionné, `creer_issue_gh` (app/issues.py)
+# le retire silencieusement faute d'exister (comportement #648, volontaire
+# pour ne pas rejeter toute la création) — une issue en « lecture active »
+# s'exécutait donc en lecture seule, sans qu'aucune erreur ne le signale.
+# Dépôts déjà existants : même procédure que sans-redacteur/agent-claude/
+# agent-vibe, `gh label create` manuel une fois (cf. rapport de clôture #785).
 LABELS = [
     ("for-linux",      "0e8a16", "Requis — le watcher ne voit que ces issues"),
     ("for-windows",    "0e8a16", "Watcher Windows (CCW) — même principe que for-linux"),
     ("bridge",         "1d76db", "Marque l'issue comme tâche bridge (traçabilité)"),
     ("mode_write",     "d93f0b", "ARME le mode écriture — CCL peut modifier des fichiers"),
+    ("mode_scratch",   "1a4d8f", "ARME la lecture active — écriture confinée au dossier scratch"),
     ("needs-human",    "b60205", "Posé après 3 échecs — stoppe le retraitement auto"),
     ("done",           "0e8a16", "Posé automatiquement au succès"),
     ("notif_pc",       "fbca04", "Ajoute une notification bureau (notify-send)"),
