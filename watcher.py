@@ -3854,6 +3854,12 @@ le travail déjà fait par cette tentative précédente. Dans ce cas :
         # Avant #767, la consigne de choix ("ou \"aucun\" si lecture seule")
         # restait accolée au modèle à remplir ; copiée telle quelle au lieu
         # d'être appliquée sur quatre issues consécutives d'un même projet.
+        # ATTENTION (issue #784) : cette ligne est reconnue côté web par
+        # hashesDeCommit() (static/js/app.js) pour extraire les hash du bouton
+        # de copie du diff — un test (static/js/tests/hashes_commit.test.js)
+        # lit CETTE f-string et casse si la forme change sans que la
+        # reconnaissance suive. Ne change pas le texte ci-dessous sans
+        # relancer ce test.
         if mode == MODE_ECRITURE:
             ligne_commits = f"Commits (dans {cwd_effectif}) : [hash backup] (backup) + [hash fix] (fix)"
         else:

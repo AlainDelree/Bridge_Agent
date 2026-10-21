@@ -1953,15 +1953,20 @@ function reponseCompleteCcl(it) {
 // ─── Onglets Réponse / Diff du détail d'une issue (issue #114) ────────────────
 
 // Extrait la liste des hash de commit mentionnés dans la réponse CCL (dernier
-// commentaire). Le template de réponse porte une ligne « Commits : <hash>
-// (backup) + <hash> (fix) — … » (ou « Commits : aucun » en lecture seule) : on
-// cible cette ligne et on en tire les jetons hexadécimaux 7-40 caractères,
-// dédupliqués dans l'ordre. Liste vide si aucun commit (issue en lecture seule).
+// commentaire). Le template de réponse (watcher.py::ligne_commits, cf. commentaire
+// croisé à cet endroit) porte une ligne « Commits (dans <cwd>) : <hash> (backup)
+// + <hash> (fix) — … » (ou « Commits (dans <cwd>) : aucun » en lecture seule) :
+// on cible cette ligne — en tolérant ce qui s'intercale entre « Commits » et
+// « : », chemin de travail compris (issue #784 : le chemin a été ajouté au
+// gabarit le 30/08, cassant la reconnaissance qui n'attendait rien entre les
+// deux) — et on en tire les jetons hexadécimaux 7-40 caractères, dédupliqués
+// dans l'ordre. Liste vide si aucun commit (issue en lecture seule). Couverture :
+// static/js/tests/hashes_commit.test.js (lit le gabarit réel de watcher.py).
 function hashesDeCommit(it) {
   const comms = (it && it.comments) || [];
   if (!comms.length) return [];
   const corps = comms[comms.length - 1].body || '';
-  const ligneCommits = corps.split('\n').find(l => /^\s*commits?\s*:/i.test(l));
+  const ligneCommits = corps.split('\n').find(l => /^\s*commits?\b[^:]*:/i.test(l));
   if (!ligneCommits) return [];
   const trouves = ligneCommits.match(/\b[0-9a-f]{7,40}\b/gi) || [];
   const vus = [];
