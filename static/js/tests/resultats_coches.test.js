@@ -17,6 +17,9 @@ import {
   ligneIdentite,
   prefixerIdentite,
   texteCopieAvecIdentite,
+  fusionnerInventaireFichier,
+  construireInventaireCumule,
+  texteSectionFichiers,
 } from '../resultats_coches.js';
 
 // ─── normaliserNumero ─────────────────────────────────────────────────────────
@@ -221,4 +224,89 @@ test('texteCopieAvecIdentite : « diff » → identité ABSENTE, texte brut inch
   const it = { number: 9, title: 'T' };
   const diffBrut = '===== Diff abc1234 =====\n\n+ligne ajoutée';
   assert.equal(texteCopieAvecIdentite('diff', it, 'p', diffBrut), diffBrut);
+});
+
+// ─── fusionnerInventaireFichier / construireInventaireCumule / texteSectionFichiers (issue #788) ──
+
+test('fusionnerInventaireFichier : premier passage — reprend tel quel les compteurs du fichier', () => {
+  const acc = fusionnerInventaireFichier({}, { chemin: 'a.py', statut: 'modifié', ancien_chemin: null, ajoutees: 3, supprimees: 1 });
+  assert.deepEqual(acc, { 'a.py': { statut: 'modifié', ancienChemin: null, ajoutees: 3, supprimees: 1 } });
+});
+
+test('fusionnerInventaireFichier : second passage sur le même chemin — somme les compteurs, garde le DERNIER statut', () => {
+  let acc = fusionnerInventaireFichier({}, { chemin: 'a.py', statut: 'ajouté', ancien_chemin: null, ajoutees: 10, supprimees: 0 });
+  acc = fusionnerInventaireFichier(acc, { chemin: 'a.py', statut: 'modifié', ancien_chemin: null, ajoutees: 2, supprimees: 1 });
+  assert.deepEqual(acc, { 'a.py': { statut: 'modifié', ancienChemin: null, ajoutees: 12, supprimees: 1 } });
+});
+
+test('fusionnerInventaireFichier : compteur binaire (null) d\'un côté → somme null, jamais un faux total', () => {
+  let acc = fusionnerInventaireFichier({}, { chemin: 'img.png', statut: 'ajouté', ancien_chemin: null, ajoutees: null, supprimees: null });
+  acc = fusionnerInventaireFichier(acc, { chemin: 'img.png', statut: 'modifié', ancien_chemin: null, ajoutees: 4, supprimees: 2 });
+  assert.equal(acc['img.png'].ajoutees, null);
+  assert.equal(acc['img.png'].supprimees, null);
+});
+
+test('fusionnerInventaireFichier : immuable — ne modifie pas l\'accumulateur reçu', () => {
+  const acc = { 'a.py': { statut: 'modifié', ancienChemin: null, ajoutees: 1, supprimees: 0 } };
+  fusionnerInventaireFichier(acc, { chemin: 'b.py', statut: 'ajouté', ancien_chemin: null, ajoutees: 5, supprimees: 0 });
+  assert.deepEqual(Object.keys(acc), ['a.py']);
+});
+
+test('construireInventaireCumule : agrège les fichiers de plusieurs commits réussis', () => {
+  const { fichiers, erreurs } = construireInventaireCumule([
+    { hash: 'aaa', fichiers: [{ chemin: 'a.py', statut: 'modifié', ancien_chemin: null, ajoutees: 1, supprimees: 0 }] },
+    { hash: 'bbb', fichiers: [{ chemin: 'b.py', statut: 'ajouté', ancien_chemin: null, ajoutees: 2, supprimees: 0 }] },
+  ]);
+  assert.deepEqual(Object.keys(fichiers).sort(), ['a.py', 'b.py']);
+  assert.deepEqual(erreurs, []);
+});
+
+test('construireInventaireCumule : un commit en échec est reporté dans erreurs, n\'empêche pas les autres', () => {
+  const { fichiers, erreurs } = construireInventaireCumule([
+    { hash: 'aaa', fichiers: [{ chemin: 'a.py', statut: 'modifié', ancien_chemin: null, ajoutees: 1, supprimees: 0 }] },
+    { hash: 'bbb', erreur: 'Commit bbb introuvable.' },
+  ]);
+  assert.deepEqual(Object.keys(fichiers), ['a.py']);
+  assert.deepEqual(erreurs, [{ hash: 'bbb', message: 'Commit bbb introuvable.' }]);
+});
+
+test('texteSectionFichiers : etat « aucun » → chaîne vide (pas de section, pas d\'alerte)', () => {
+  assert.equal(texteSectionFichiers('aucun', [{ hash: 'aaa', fichiers: [] }]), '');
+});
+
+test('texteSectionFichiers : etat « absente » → anomalie signalée, jamais en silence', () => {
+  const texte = texteSectionFichiers('absente', []);
+  assert.match(texte, /===== Fichiers modifiés =====/);
+  assert.match(texte, /absente ou non reconnue/);
+});
+
+test('texteSectionFichiers : etat « hashes » avec renommage → ancien → nouveau explicite', () => {
+  const texte = texteSectionFichiers('hashes', [
+    { hash: 'aaa', fichiers: [{ chemin: 'nouveau.py', statut: 'renommé', ancien_chemin: 'ancien.py', ajoutees: 0, supprimees: 0 }] },
+  ]);
+  assert.match(texte, /renommé {2}ancien\.py → nouveau\.py {2}\(\+0 -0\)/);
+});
+
+test('texteSectionFichiers : etat « hashes » avec suppression → visible avec son statut', () => {
+  const texte = texteSectionFichiers('hashes', [
+    { hash: 'aaa', fichiers: [{ chemin: 'mort.py', statut: 'supprimé', ancien_chemin: null, ajoutees: 0, supprimees: 8 }] },
+  ]);
+  assert.match(texte, /supprimé {2}mort\.py {2}\(\+0 -8\)/);
+});
+
+test('texteSectionFichiers : fichier binaire → « (binaire) » plutôt qu\'un compte inventé', () => {
+  const texte = texteSectionFichiers('hashes', [
+    { hash: 'aaa', fichiers: [{ chemin: 'img.png', statut: 'ajouté', ancien_chemin: null, ajoutees: null, supprimees: null }] },
+  ]);
+  assert.match(texte, /ajouté {2}img\.png {2}\(binaire\)/);
+});
+
+test('texteSectionFichiers : aucun fichier et aucune erreur (commit(s) vide(s)) → mention explicite', () => {
+  const texte = texteSectionFichiers('hashes', [{ hash: 'aaa', fichiers: [] }]);
+  assert.match(texte, /aucun fichier/);
+});
+
+test('texteSectionFichiers : échec de commit → signalé, jamais avalé en silence (constat issue #788)', () => {
+  const texte = texteSectionFichiers('hashes', [{ hash: 'aaa', erreur: 'Timeout (git n\'a pas répondu en 30s).' }]);
+  assert.match(texte, /⚠ Commit aaa : inventaire impossible — Timeout/);
 });

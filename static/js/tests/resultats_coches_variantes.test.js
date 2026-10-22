@@ -21,15 +21,33 @@ import { resultatsCoches } from '../resultats_coches.js';
 
 const PROJET = 'projet_test_787';
 
+// Inventaire par défaut (issue #788) pour les deux hashes fournis par
+// window.hashesDeCommit ci-dessous — un fichier modifié, un fichier ajouté.
+const INVENTAIRE_DEFAUT = {
+  aaa1111: [{ chemin: 'app/issues.py', statut: 'modifié', ancien_chemin: null, ajoutees: 12, supprimees: 3 }],
+  bbb2222: [{ chemin: 'static/js/app.js', statut: 'ajouté', ancien_chemin: null, ajoutees: 5, supprimees: 0 }],
+};
+
 // Reconstruit un environnement minimal « mode moderne » (clipboard.write) à
-// chaque test : fetch mocké pour /issue, /diff et /cases-cochees ; ancien code
-// (pont) réduit à reponseCompleteCcl/hashesDeCommit/majPastillesFiltres.
-function fixerEnvironnement() {
+// chaque test : fetch mocké pour /issue, /diff, /inventaire-commit et
+// /cases-cochees ; ancien code (pont) réduit à reponseCompleteCcl/
+// hashesDeCommit/etatCommitsDeclares/majPastillesFiltres.
+//   - etatCommits : simule le retour de etatCommitsDeclares (app.js) — par
+//     défaut des hashes exploitables, comme avant l'issue #788.
+//   - inventaireParHash : réponse /inventaire-commit par hash (défaut ci-dessus).
+//   - inventaireEnEchec : ensemble de hashes pour lesquels /inventaire-commit
+//     doit échouer (404), pour vérifier que l'échec est signalé, pas avalé.
+function fixerEnvironnement({
+  etatCommits = { etat: 'hashes', hashes: ['aaa1111', 'bbb2222'] },
+  inventaireParHash = INVENTAIRE_DEFAUT,
+  inventaireEnEchec = new Set(),
+} = {}) {
   global.document = { getElementById: () => null, querySelectorAll: () => [] };
   global.window = globalThis;
   window.isSecureContext = true;
   window.reponseCompleteCcl = (it) => 'Corps du rapport pour #' + it.number;
-  window.hashesDeCommit = () => ['aaa1111', 'bbb2222'];
+  window.hashesDeCommit = () => etatCommits.hashes;
+  window.etatCommitsDeclares = () => etatCommits;
   window.majPastillesFiltres = () => {};
   global.ClipboardItem = class { constructor(data) { this.data = data; } };
   global.fetch = async (url) => {
@@ -39,6 +57,13 @@ function fixerEnvironnement() {
     if (url.startsWith('/diff/')) {
       const hash = decodeURIComponent(url.slice(url.lastIndexOf('/') + 1));
       return { ok: true, text: async () => JSON.stringify({ diff: 'DIFF-' + hash }) };
+    }
+    if (url.startsWith('/inventaire-commit/')) {
+      const hash = decodeURIComponent(url.slice(url.lastIndexOf('/') + 1));
+      if (inventaireEnEchec.has(hash)) {
+        return { ok: false, status: 404, text: async () => JSON.stringify({ erreur: 'Commit ' + hash + ' introuvable.' }) };
+      }
+      return { ok: true, text: async () => JSON.stringify({ fichiers: inventaireParHash[hash] || [] }) };
     }
     if (url.startsWith('/cases-cochees/')) {
       return { ok: true, text: async () => '' };
@@ -71,7 +96,7 @@ function evenementBadge() {
   return { stopPropagation() {}, currentTarget: { textContent: '', title: '' } };
 }
 
-test('case à cocher (basculer) : copie le résultat SEUL, sans diff', async () => {
+test('case à cocher (basculer) : copie le résultat SEUL, sans diff, + inventaire des fichiers (#788)', async () => {
   fixerEnvironnement();
   const copie = attendreProchaineCopie();
   resultatsCoches.basculer(evenementCase(), PROJET, 101);
@@ -79,18 +104,22 @@ test('case à cocher (basculer) : copie le résultat SEUL, sans diff', async () 
   assert.match(texte, /Issue #787 — projet_test_787 — Titre/);   // ligne d'identité (#723)
   assert.match(texte, /Corps du rapport pour #787/);
   assert.doesNotMatch(texte, /DIFF-/, 'la case ne doit PAS copier le diff (issue #787)');
+  assert.match(texte, /===== Fichiers modifiés =====/);
+  assert.match(texte, /modifié {2}app\/issues\.py {2}\(\+12 -3\)/);
+  assert.match(texte, /ajouté {2}static\/js\/app\.js {2}\(\+5 -0\)/);
 });
 
-test('badge ✅ (copierReponseBadge) : copie le résultat SEUL, sans diff', async () => {
+test('badge ✅ (copierReponseBadge) : copie le résultat SEUL, sans diff, + inventaire des fichiers', async () => {
   fixerEnvironnement();
   const copie = attendreProchaineCopie();
   resultatsCoches.copierReponseBadge(evenementBadge(), PROJET, 102);
   const texte = await copie;
   assert.match(texte, /Corps du rapport pour #787/);
   assert.doesNotMatch(texte, /DIFF-/);
+  assert.match(texte, /===== Fichiers modifiés =====/);
 });
 
-test('badge Diff (copierDiffBadge) : copie le diff SEUL, sans le résultat ni identité', async () => {
+test('badge Diff (copierDiffBadge) : copie le diff SEUL, sans le résultat ni identité ni inventaire', async () => {
   fixerEnvironnement();
   const copie = attendreProchaineCopie();
   resultatsCoches.copierDiffBadge(evenementBadge(), PROJET, 103);
@@ -99,9 +128,10 @@ test('badge Diff (copierDiffBadge) : copie le diff SEUL, sans le résultat ni id
   assert.match(texte, /DIFF-bbb2222/);
   assert.doesNotMatch(texte, /Corps du rapport/);
   assert.doesNotMatch(texte, /Issue #787/);   // pas d'identité pour la variante diff (#723)
+  assert.doesNotMatch(texte, /Fichiers modifiés/, 'le bouton Diff ne doit pas changer (issue #788, point 4)');
 });
 
-test('badge All (copierAllBadge) : copie le résultat ET le diff', async () => {
+test('badge All (copierAllBadge) : copie le résultat ET le diff, sans inventaire (comportement inchangé)', async () => {
   fixerEnvironnement();
   const copie = attendreProchaineCopie();
   resultatsCoches.copierAllBadge(evenementBadge(), PROJET, 104);
@@ -110,4 +140,47 @@ test('badge All (copierAllBadge) : copie le résultat ET le diff', async () => {
   assert.match(texte, /Corps du rapport pour #787/);
   assert.match(texte, /DIFF-aaa1111/);
   assert.match(texte, /DIFF-bbb2222/);
+  assert.doesNotMatch(texte, /Fichiers modifiés/, 'le bouton All ne doit pas changer (issue #788, point 4)');
+});
+
+// ─── Issue #788 : section « Fichiers modifiés » — les 3 cas à distinguer ─────
+
+test('case à cocher : ligne « Commits » dit « aucun » (lecture seule) → PAS de section, pas d\'alerte', async () => {
+  fixerEnvironnement({ etatCommits: { etat: 'aucun', hashes: [] } });
+  const copie = attendreProchaineCopie();
+  resultatsCoches.basculer(evenementCase(), PROJET, 105);
+  const texte = await copie;
+  assert.match(texte, /Corps du rapport pour #787/);
+  assert.doesNotMatch(texte, /Fichiers modifiés/);
+});
+
+test('case à cocher : ligne « Commits » absente/non reconnue → anomalie signalée dans le texte copié', async () => {
+  fixerEnvironnement({ etatCommits: { etat: 'absente', hashes: [] } });
+  const copie = attendreProchaineCopie();
+  resultatsCoches.basculer(evenementCase(), PROJET, 106);
+  const texte = await copie;
+  assert.match(texte, /===== Fichiers modifiés =====/);
+  assert.match(texte, /absente ou non reconnue/);
+});
+
+test('case à cocher : commit introuvable côté serveur → échec signalé dans la section, jamais en silence', async () => {
+  fixerEnvironnement({ inventaireEnEchec: new Set(['bbb2222']) });
+  const copie = attendreProchaineCopie();
+  resultatsCoches.basculer(evenementCase(), PROJET, 107);
+  const texte = await copie;
+  assert.match(texte, /===== Fichiers modifiés =====/);
+  assert.match(texte, /modifié {2}app\/issues\.py {2}\(\+12 -3\)/);   // le commit en succès reste listé
+  assert.match(texte, /⚠ Commit bbb2222 : inventaire impossible — Commit bbb2222 introuvable\./);
+});
+
+test('case à cocher : commit de sauvegarde vide (aucun fichier) → mention explicite, pas de silence', async () => {
+  fixerEnvironnement({
+    etatCommits: { etat: 'hashes', hashes: ['ccc3333'] },
+    inventaireParHash: { ccc3333: [] },
+  });
+  const copie = attendreProchaineCopie();
+  resultatsCoches.basculer(evenementCase(), PROJET, 108);
+  const texte = await copie;
+  assert.match(texte, /===== Fichiers modifiés =====/);
+  assert.match(texte, /aucun fichier/);
 });

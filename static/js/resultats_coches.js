@@ -183,6 +183,97 @@ export function texteCopieAvecIdentite(variante, it, projet, texte) {
   return variante === 'diff' ? texte : prefixerIdentite(it, projet, texte);
 }
 
+// ─── Section « Fichiers modifiés » ajoutée au texte copié (issue #788) ───────
+// Construite à partir de l'inventaire SERVEUR (statut + lignes +/- par
+// fichier, JAMAIS le contenu du patch — route /inventaire-commit) des commits
+// de l'issue, pour qu'un rapport d'agent inexact (ex. accents perdus dans un
+// fichier réécrit) soit détectable sans dérouler le diff complet. Trois règles
+// (constats de l'issue) :
+//   - ligne « Commits » explicitement « aucun » (lecture seule) → aucune
+//     section, aucune alerte : c'est le cas normal.
+//   - ligne absente/non reconnue, OU un commit en échec (introuvable, git en
+//     panne…) → le dire CLAIREMENT dans la section, jamais en silence
+//     (contrairement au bouton Diff, qui ignore un diff en échec) — un bug de
+//     reconnaissance des commits est déjà resté invisible deux mois (#784).
+//   - inventaire CUMULÉ (pas commit par commit) : un fichier touché par
+//     plusieurs commits de l'issue n'apparaît qu'une fois, lignes +/- sommées,
+//     statut du commit le plus RÉCENT à l'avoir touché (l'appelant fournit
+//     les résultats dans l'ordre chronologique de hashesDeCommit : backup
+//     puis fix) — reflète l'état final, pas l'historique intermédiaire. Un
+//     commit de sauvegarde vide ne contribue simplement aucun fichier.
+
+const TITRE_SECTION_FICHIERS = 'Fichiers modifiés';
+
+// Somme deux compteurs, sauf si l'un des deux est inconnu (fichier binaire,
+// compté `null` côté serveur) — jamais d'addition qui affirmerait un compte
+// faux.
+function sommeOuNull(a, b) {
+  return (a == null || b == null) ? null : a + b;
+}
+
+// Fusionne l'inventaire d'UN fichier (tel que renvoyé par /inventaire-commit)
+// dans l'accumulateur { chemin → {statut, ancienChemin, ajoutees, supprimees} }.
+// Retour immuable (comme ajouterDansEtat/retirerDansEtat plus haut).
+export function fusionnerInventaireFichier(acc, fichier) {
+  const existant = acc[fichier.chemin];
+  return {
+    ...acc,
+    [fichier.chemin]: {
+      statut: fichier.statut,
+      ancienChemin: fichier.ancien_chemin || null,
+      ajoutees: existant ? sommeOuNull(existant.ajoutees, fichier.ajoutees) : fichier.ajoutees,
+      supprimees: existant ? sommeOuNull(existant.supprimees, fichier.supprimees) : fichier.supprimees,
+    },
+  };
+}
+
+// Combine les résultats /inventaire-commit de plusieurs commits (dans l'ordre
+// chronologique) en { fichiers, erreurs } — `resultatsParCommit` = [{ hash,
+// fichiers:[...] } | { hash, erreur }, ...] (un élément par commit, succès ou
+// échec : voir inventaireCommits ci-dessous).
+export function construireInventaireCumule(resultatsParCommit) {
+  let fichiers = {};
+  const erreurs = [];
+  for (const r of (resultatsParCommit || [])) {
+    if (r.erreur) { erreurs.push({ hash: r.hash, message: r.erreur }); continue; }
+    for (const f of (r.fichiers || [])) fichiers = fusionnerInventaireFichier(fichiers, f);
+  }
+  return { fichiers, erreurs };
+}
+
+function libelleCompteurs(f) {
+  return (f.ajoutees == null || f.supprimees == null)
+    ? '(binaire)' : '(+' + f.ajoutees + ' -' + f.supprimees + ')';
+}
+
+// Construit le texte de la section, ou '' si aucune section ne doit être
+// ajoutée (`etatCommits` === 'aucun'). `etatCommits` ∈ {'hashes','aucun',
+// 'absente'} (voir etatCommitsDeclares, app.js) ; `resultatsParCommit` est
+// ignoré si `etatCommits` !== 'hashes'.
+export function texteSectionFichiers(etatCommits, resultatsParCommit) {
+  if (etatCommits === 'aucun') return '';
+  const lignes = ['===== ' + TITRE_SECTION_FICHIERS + ' ====='];
+  if (etatCommits === 'absente') {
+    lignes.push('', '⚠ Ligne « Commits » absente ou non reconnue dans la réponse CCL — '
+      + 'inventaire des fichiers impossible (anomalie à vérifier, pas un cas normal).');
+    return lignes.join('\n');
+  }
+  const { fichiers, erreurs } = construireInventaireCumule(resultatsParCommit);
+  const chemins = Object.keys(fichiers).sort();
+  if (!chemins.length && !erreurs.length) {
+    lignes.push('', '(aucun fichier — commit(s) vide(s), ex. sauvegarde)');
+  }
+  for (const chemin of chemins) {
+    const f = fichiers[chemin];
+    const nom = f.ancienChemin ? f.ancienChemin + ' → ' + chemin : chemin;
+    lignes.push(f.statut + '  ' + nom + '  ' + libelleCompteurs(f));
+  }
+  for (const e of erreurs) {
+    lignes.push('⚠ Commit ' + e.hash + ' : inventaire impossible — ' + e.message);
+  }
+  return lignes.join('\n');
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // 2. ÉTAT SERVEUR DES CASES (store.casesCochees ⇄ routes /cases-cochees)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -405,6 +496,46 @@ async function diffCommits(projet, hashes) {
   return morceaux;
 }
 
+// Inventaire /inventaire-commit de chaque hash, dans l'ordre reçu — CONTRAIREMENT
+// à diffCommits ci-dessus, un échec n'est jamais avalé : il est transmis tel
+// quel ({ hash, erreur }) pour que texteSectionFichiers le signale (issue #788).
+async function inventaireCommits(projet, hashes) {
+  const resultats = [];
+  for (const h of hashes) {
+    try {
+      const j = await api.get('/inventaire-commit/' + enc(projet) + '/' + enc(h), { silencieux: true });
+      resultats.push({ hash: h, fichiers: (j && j.fichiers) || [] });
+    } catch (e) {
+      resultats.push({ hash: h, erreur: messageErreurInventaire(e) });
+    }
+  }
+  return resultats;
+}
+
+// ErreurApi (api.js) porte le corps JSON brut de la réponse en échec — on y
+// retrouve le message `erreur` posé par la route Flask (ex. « Commit … introuvable »)
+// plutôt que le générique « Erreur 404 sur … ».
+function messageErreurInventaire(e) {
+  if (e && e.corps) {
+    try {
+      const j = JSON.parse(e.corps);
+      if (j && j.erreur) return j.erreur;
+    } catch (_) { /* corps non-JSON : retombe sur e.message */ }
+  }
+  return (e && e.message) || 'échec inattendu';
+}
+
+// Section « Fichiers modifiés » (issue #788) à ajouter au texte de la case —
+// '' si la ligne « Commits » dit explicitement « aucun » (cas normal, lecture
+// seule). Voir texteSectionFichiers pour le détail des trois cas.
+async function sectionFichiersModifies(projet, it) {
+  const etatCommits = appelerAncien('etatCommitsDeclares', it) || { etat: 'absente', hashes: [] };
+  const resultats = etatCommits.etat === 'hashes'
+    ? await inventaireCommits(projet, etatCommits.hashes)
+    : [];
+  return texteSectionFichiers(etatCommits.etat, resultats);
+}
+
 // Producteurs de texte (réutilisent reponseCompleteCcl/hashesDeCommit d'app.js
 // via le pont — aucune duplication de la reconstruction markdown). La ligne
 // d'identité (issue #723) est préfixée ici, pas dans reponseCompleteCcl : elle
@@ -412,7 +543,13 @@ async function diffCommits(projet, hashes) {
 async function texteReponse(projet, numero) {
   const it = await detailIssue(projet, numero);
   if (!it) return '';
-  const corps = appelerAncien('reponseCompleteCcl', it) || '';
+  let corps = appelerAncien('reponseCompleteCcl', it) || '';
+  // Pas encore répondue (corps vide) : pas de section, pour rester détecté
+  // par texteVide en amont comme avant ce correctif.
+  if (corps.trim()) {
+    const section = await sectionFichiersModifies(projet, it);
+    if (section) corps += '\n\n' + section;
+  }
   return texteCopieAvecIdentite('reponse', it, projet, corps);
 }
 async function texteAll(projet, numero) {

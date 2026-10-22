@@ -1962,16 +1962,42 @@ function reponseCompleteCcl(it) {
 // deux) — et on en tire les jetons hexadécimaux 7-40 caractères, dédupliqués
 // dans l'ordre. Liste vide si aucun commit (issue en lecture seule). Couverture :
 // static/js/tests/hashes_commit.test.js (lit le gabarit réel de watcher.py).
-function hashesDeCommit(it) {
+// Trouve la ligne « Commits … : … » du dernier commentaire, ou null — partagée
+// par hashesDeCommit et etatCommitsDeclares (issue #788) pour que les deux ne
+// puissent jamais diverger sur la détection de la ligne.
+function ligneCommitsDeclares(it) {
   const comms = (it && it.comments) || [];
-  if (!comms.length) return [];
+  if (!comms.length) return null;
   const corps = comms[comms.length - 1].body || '';
-  const ligneCommits = corps.split('\n').find(l => /^\s*commits?\b[^:]*:/i.test(l));
+  return corps.split('\n').find(l => /^\s*commits?\b[^:]*:/i.test(l)) || null;
+}
+
+function hashesDeCommit(it) {
+  const ligneCommits = ligneCommitsDeclares(it);
   if (!ligneCommits) return [];
   const trouves = ligneCommits.match(/\b[0-9a-f]{7,40}\b/gi) || [];
   const vus = [];
   trouves.forEach(h => { h = h.toLowerCase(); if (!vus.includes(h)) vus.push(h); });
   return vus;
+}
+
+// Classifie la ligne « Commits … » pour l'inventaire de fichiers de la case à
+// cocher (issue #788) — trois cas à ne JAMAIS confondre :
+//   - 'hashes'  : au moins un commit exploitable → inventaire à construire.
+//   - 'aucun'   : la ligne le dit explicitement (issue en lecture seule,
+//                 gabarit watcher.py::ligne_commits "… : aucun (lecture seule)")
+//                 → cas normal, aucune section ni alerte à ajouter.
+//   - 'absente' : ligne absente du commentaire, OU présente mais ni "aucun" ni
+//                 un hash reconnu (gabarit changé, reconnaissance cassée…) →
+//                 une anomalie à signaler dans le texte copié, jamais en
+//                 silence (un bug de reconnaissance des commits est déjà resté
+//                 invisible deux mois, issue #784, cf. hashesDeCommit).
+function etatCommitsDeclares(it) {
+  const ligneCommits = ligneCommitsDeclares(it);
+  if (!ligneCommits) return { etat: 'absente', hashes: [] };
+  const hashes = hashesDeCommit(it);
+  if (hashes.length) return { etat: 'hashes', hashes };
+  return { etat: /\baucun\b/i.test(ligneCommits) ? 'aucun' : 'absente', hashes: [] };
 }
 
 // Colore un texte de diff (sortie de `git show`) ligne par ligne : ajouts en

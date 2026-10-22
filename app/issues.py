@@ -1058,6 +1058,144 @@ def diff_commit(nom_projet, hash_commit):
         return jsonify(erreur=str(e)), 500
 
 
+# ─── Inventaire des fichiers d'un commit, sans le patch (issue #788) ──────────
+# La case à cocher de l'onglet Résultats copie désormais, en plus du résultat,
+# une section d'inventaire (statut + lignes +/-) des fichiers touchés par les
+# commits de l'issue — pour qu'un rapport d'agent inexact (ex. accents perdus
+# dans un fichier réécrit) soit détectable sans dérouler le diff complet. Le
+# `--stat` du bouton Diff (ci-dessus) ne convient pas : il rend mal les
+# suppressions/renommages. On repart donc de `--name-status` (statut exact,
+# y compris R.../C... pour un renommage/copie) et `--numstat` (lignes +/-),
+# chacun en mode `-z` (séparateurs NUL) pour un parsing sans ambiguïté — et
+# `--find-renames` pour que renommage et copie soient bien détectés même si
+# la config locale `diff.renames` ne les activerait pas par défaut.
+
+def _parser_name_status_z(sortie: str) -> list[dict]:
+    """Parse `git show --name-status --find-renames -z --format=` : chaque
+    enregistrement est `<statut>\\0<chemin>\\0` (ajout/modif/suppression), ou
+    `<statut>\\0<ancien_chemin>\\0<nouveau_chemin>\\0` pour un renommage/copie
+    (statut commençant par R ou C). `sortie` peut être vide (commit sans
+    fichier, ex. sauvegarde `--allow-empty`) : renvoie alors une liste vide."""
+    jetons = sortie.split("\0")
+    i = 0
+    enregistrements = []
+    while i < len(jetons) - 1:  # dernier jeton = "" après le \0 final
+        statut = jetons[i]
+        if not statut:
+            i += 1
+            continue
+        if statut[0] in ("R", "C"):
+            enregistrements.append({"statut": statut, "chemin": jetons[i + 2],
+                                     "ancien_chemin": jetons[i + 1]})
+            i += 3
+        else:
+            enregistrements.append({"statut": statut, "chemin": jetons[i + 1],
+                                     "ancien_chemin": None})
+            i += 2
+    return enregistrements
+
+
+def _parser_numstat_z(sortie: str) -> dict:
+    """Parse `git show --numstat --find-renames -z --format=` en
+    { chemin_final: (ajoutees, supprimees) }. Cas courant : chemin et
+    compteurs tiennent dans le MÊME jeton NUL (`<ajout>\\t<suppr>\\t<chemin>`,
+    un seul jeton à consommer). Renommage : le champ chemin de ce jeton est
+    vide, et le chemin — ancien PUIS nouveau — occupe à la place les DEUX
+    jetons NUL suivants (trois jetons à consommer au total ; le chemin final
+    retenu est le second des deux, `jetons[i + 2]`). `-` (fichier binaire,
+    compte inconnu) devient None plutôt que 0, pour ne jamais affirmer
+    « 0 ligne » à tort."""
+    jetons = sortie.split("\0")
+    i = 0
+    resultat = {}
+    while i < len(jetons) - 1:
+        entete = jetons[i]
+        if not entete:
+            i += 1
+            continue
+        parties = entete.split("\t")
+        if len(parties) < 3:
+            i += 1
+            continue
+        ajoutees_brut, supprimees_brut, chemin = parties[0], parties[1], "\t".join(parties[2:])
+        ajoutees = None if ajoutees_brut == "-" else int(ajoutees_brut)
+        supprimees = None if supprimees_brut == "-" else int(supprimees_brut)
+        if chemin == "":
+            resultat[jetons[i + 2]] = (ajoutees, supprimees)
+            i += 3
+        else:
+            resultat[chemin] = (ajoutees, supprimees)
+            i += 1
+    return resultat
+
+
+_LIBELLES_STATUT = {
+    "A": "ajouté", "M": "modifié", "D": "supprimé",
+    "R": "renommé", "C": "copié", "T": "type modifié",
+}
+
+
+def _statut_libelle(statut: str) -> str:
+    """Code git (A/M/D/R100/C075/T/...) → libellé français stable pour
+    l'inventaire. Statut inconnu (U, X...) : le code brut, jamais masqué."""
+    return _LIBELLES_STATUT.get(statut[:1], statut)
+
+
+def inventaire_commit(nom_projet, hash_commit):
+    """Inventaire compact (statut + lignes ajoutées/supprimées par fichier,
+    JAMAIS le contenu du patch) d'un commit, pour la section ajoutée au texte
+    copié par la case à cocher. Même contrat d'erreur que diff_commit (hash
+    invalide, projet/dépôt introuvable, commit introuvable, timeout, git
+    absent) : le client ne doit jamais lire un succès silencieux en cas
+    d'échec — à la différence du bouton Diff, cette section doit SIGNALER
+    tout échec plutôt que l'ignorer (voir resultats_coches.js)."""
+    cfg = projet_par_nom(nom_projet)
+    if not cfg:
+        return jsonify(erreur="Projet introuvable."), 404
+    hash_commit = str(hash_commit).lower()
+    if not HASH_COMMIT_RE.match(hash_commit):
+        return jsonify(erreur="Hash de commit invalide."), 400
+    if not cfg.rep_travail.is_dir():
+        return jsonify(erreur="Répertoire de travail introuvable."), 404
+    rep = str(cfg.rep_travail)
+    try:
+        res_statut = subprocess.run(
+            ["git", "-C", rep, "show", "--no-color", "--name-status",
+             "--find-renames", "-z", "--format=", hash_commit, "--"],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30
+        )
+        if res_statut.returncode != 0:
+            return jsonify(erreur=(res_statut.stderr.strip()
+                                   or f"Commit {hash_commit} introuvable.")), 404
+        res_num = subprocess.run(
+            ["git", "-C", rep, "show", "--no-color", "--numstat",
+             "--find-renames", "-z", "--format=", hash_commit, "--"],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30
+        )
+        if res_num.returncode != 0:
+            return jsonify(erreur=(res_num.stderr.strip()
+                                   or f"Commit {hash_commit} introuvable.")), 404
+    except subprocess.TimeoutExpired:
+        return jsonify(erreur="Timeout (git n'a pas répondu en 30s)."), 504
+    except FileNotFoundError:
+        return jsonify(erreur="git introuvable dans le PATH."), 500
+    except Exception as e:
+        return jsonify(erreur=str(e)), 500
+
+    compteurs = _parser_numstat_z(res_num.stdout)
+    fichiers = [
+        {
+            "chemin": enr["chemin"],
+            "ancien_chemin": enr["ancien_chemin"],
+            "statut": _statut_libelle(enr["statut"]),
+            "ajoutees": compteurs.get(enr["chemin"], (None, None))[0],
+            "supprimees": compteurs.get(enr["chemin"], (None, None))[1],
+        }
+        for enr in _parser_name_status_z(res_statut.stdout)
+    ]
+    return jsonify(fichiers=fichiers)
+
+
 # ─── Temps restant estimé des issues ouvertes (issue #91) ─────────────────────
 # L'heure de début de traitement d'une issue n'est persistée NULLE PART par le
 # watcher (le set issues_en_cours est en mémoire, sans horodatage, et perdu au

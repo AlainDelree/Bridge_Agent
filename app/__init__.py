@@ -98,9 +98,9 @@ def _enregistrer_routes(app: Flask) -> None:
     from app.watchers import (watchers, lancer_watcher,
                               arreter_watcher_route, statut)
     from app.issues import (apercu, envoyer, issues_liste, issue_detail,
-                            diff_commit, issues_en_attente, annuler_issue,
-                            fermer_issue, joindre_image, recherche_issues,
-                            modifier_label_notif)
+                            diff_commit, inventaire_commit, issues_en_attente,
+                            annuler_issue, fermer_issue, joindre_image,
+                            recherche_issues, modifier_label_notif)
     from app.templates import (templates_liste, templates_sauvegarder,
                                templates_supprimer)
     from app.journal import journal
@@ -143,6 +143,7 @@ def _enregistrer_routes(app: Flask) -> None:
     app.add_url_rule("/recherche-issues/<nom_projet>", "recherche_issues", login_requis(recherche_issues))
     app.add_url_rule("/issue/<nom_projet>/<numero>", "issue_detail", login_requis(issue_detail))
     app.add_url_rule("/diff/<nom_projet>/<hash_commit>", "diff_commit", login_requis(diff_commit))
+    app.add_url_rule("/inventaire-commit/<nom_projet>/<hash_commit>", "inventaire_commit", login_requis(inventaire_commit))
     app.add_url_rule("/issues-en-attente/<nom_projet>", "issues_en_attente", login_requis(issues_en_attente))
     app.add_url_rule("/annuler-issue/<nom_projet>/<numero>", "annuler_issue", login_requis(annuler_issue), methods=["POST"])
     app.add_url_rule("/fermer-issue/<nom_projet>/<numero>", "fermer_issue", login_requis(fermer_issue), methods=["POST"])

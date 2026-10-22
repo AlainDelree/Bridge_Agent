@@ -78,15 +78,16 @@ function chargerHashesDeCommit() {
   sandbox.addEventListener = () => {};
   vm.createContext(sandbox);
   new vm.Script(code, { filename: CHEMIN_APP_JS }).runInContext(sandbox);
-  return sandbox.hashesDeCommit;
+  return { hashesDeCommit: sandbox.hashesDeCommit, etatCommitsDeclares: sandbox.etatCommitsDeclares };
 }
 
-const hashesDeCommitVm = chargerHashesDeCommit();
-// hashesDeCommitVm() renvoie un tableau construit dans le réalm vm (Array
-// différent du réalm hôte) : assert.deepEqual le jugerait non égal à un
-// littéral ['x'] malgré un contenu identique. Array.from() le ramène dans le
-// réalm hôte avant comparaison.
-const hashesDeCommit = (it) => Array.from(hashesDeCommitVm(it));
+const fonctionsVm = chargerHashesDeCommit();
+// Les fonctions vm renvoient des structures construites dans le réalm vm
+// (Array/objet différents du réalm hôte) : assert.deepEqual les jugerait non
+// égales à un littéral malgré un contenu identique. On les ramène dans le
+// réalm hôte via JSON avant comparaison.
+const hashesDeCommit = (it) => Array.from(fonctionsVm.hashesDeCommit(it));
+const etatCommitsDeclares = (it) => JSON.parse(JSON.stringify(fonctionsVm.etatCommitsDeclares(it)));
 const { ecriture, lectureSeule } = gabaritsLigneCommits();
 
 test('hashesDeCommit : reconnaît la ligne réelle du gabarit écriture (chemin intercalé, issue #784)', () => {
@@ -102,4 +103,34 @@ test('hashesDeCommit : forme lecture seule du gabarit (aucun hash) → liste vid
 test('hashesDeCommit : aucun commentaire → liste vide', () => {
   assert.deepEqual(hashesDeCommit({ comments: [] }), []);
   assert.deepEqual(hashesDeCommit({}), []);
+});
+
+// ─── etatCommitsDeclares (issue #788) : distingue « aucun » (normal) d'une
+//     anomalie de reconnaissance (ligne absente/non reconnue) — sur les
+//     MÊMES gabarits réels que ci-dessus, pour que les deux fonctions restent
+//     alignées sur ce que produit vraiment watcher.py.
+
+test('etatCommitsDeclares : forme écriture du gabarit → etat "hashes", mêmes hash que hashesDeCommit', () => {
+  const it = { comments: [{ body: `✅ Tâche terminée — exemple\n${ecriture}\npy_compile : OK` }] };
+  assert.deepEqual(etatCommitsDeclares(it), { etat: 'hashes', hashes: ['abc1234', 'def5678'] });
+});
+
+test('etatCommitsDeclares : forme lecture seule du gabarit (« … : aucun … ») → etat "aucun", cas normal', () => {
+  const it = { comments: [{ body: `✅ Tâche terminée — rien à faire\n${lectureSeule}\npy_compile : N/A` }] };
+  assert.deepEqual(etatCommitsDeclares(it), { etat: 'aucun', hashes: [] });
+});
+
+test('etatCommitsDeclares : aucun commentaire → etat "absente" (anomalie, pas "aucun")', () => {
+  assert.deepEqual(etatCommitsDeclares({ comments: [] }), { etat: 'absente', hashes: [] });
+  assert.deepEqual(etatCommitsDeclares({}), { etat: 'absente', hashes: [] });
+});
+
+test('etatCommitsDeclares : ligne « Commits » absente du corps → etat "absente"', () => {
+  const it = { comments: [{ body: '✅ Tâche terminée — exemple\npy_compile : OK' }] };
+  assert.deepEqual(etatCommitsDeclares(it), { etat: 'absente', hashes: [] });
+});
+
+test('etatCommitsDeclares : ligne « Commits » présente mais ni hash ni « aucun » → etat "absente" (reconnaissance cassée, à signaler — pas le silence de l\'issue #784)', () => {
+  const it = { comments: [{ body: '✅ Tâche terminée — exemple\nCommits (dans /chemin) : ???\npy_compile : OK' }] };
+  assert.deepEqual(etatCommitsDeclares(it), { etat: 'absente', hashes: [] });
 });
