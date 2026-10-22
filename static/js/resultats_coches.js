@@ -278,7 +278,13 @@ function basculer(event, projet, numero) {
 
   // 1) Copie IMMÉDIATE au clic si on coche (avant toute écriture réseau de l'état,
   //    pour rester dans la fenêtre d'activation utilisateur). Indépendante du reste.
-  if (coche) lancerCopie(projet, numero, texteAll, feedbackToast());
+  //    Variante 'reponse' (résultat SEUL, issue #787) : le bouton Diff copie le
+  //    diff seul, le bouton All copie les deux — la case ne doit copier que le
+  //    résultat. Avant ce correctif, la case appelait texteAll par erreur ; le
+  //    défaut est resté invisible deux mois tant que la reconnaissance des
+  //    numéros de commit (#784) était cassée, texteAll ne trouvant alors jamais
+  //    de diff à ajouter.
+  if (coche) lancerCopie(projet, numero, texteReponse, feedbackToast());
 
   // 2) Mise à jour optimiste : store + grisage + pastilles.
   const avant = etatCases();
