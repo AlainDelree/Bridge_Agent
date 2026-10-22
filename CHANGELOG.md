@@ -9,6 +9,10 @@ milliers de caractères sur une seule ligne logique, coûteux à relire et
 
 Convention d'ajout : voir §10 de `BRIDGE_AGENT_DOC.md`.
 
+## 22 octobre 2026 — issue #790
+
+Onglet Résultats, boutons **Diff** et **All** : au-delà du seuil de lignes déjà utilisé pour l'avertissement « Diff volumineux » (`static/js/resultats_coches.js`, désormais centralisé dans `SEUIL_LIGNES_VOLUMINEUX = 1000`), la copie dans le presse-papier est remplacée par le téléchargement d'un fichier `.txt` contenant le même texte (nom reconnaissable : `<projet>-<numéro>-<diff|all>.txt`) — pour un diff que Claude.ai risquait de ne pas lire en entier, Alain peut maintenant le joindre à la conversation au lieu de le coller. Sous le seuil, comportement inchangé (copie directe). La variante « réponse » (case à cocher) n'est pas concernée (comportement de l'issue #787 préservé) ; l'ancien toast d'avertissement reste donc affiché tel quel pour elle au-delà du seuil. Le téléchargement (lien `<a download>` + `Blob`) ne passe pas par l'API presse-papier, donc ne réintroduit aucun des défauts d'activation déjà corrigés par les issues #636/#782. Tests ajoutés : logique pure (`doitTelecharger`/`nomFichierCopie`/`messageFichierVolumineux`) et bout-en-bout (badges Diff/All avec un diff artificiellement volumineux → fichier téléchargé, `clipboard.write` jamais appelé).
+
 ## 22 octobre 2026 — issue #788
 
 La case à cocher de l'onglet Résultats copiait jusqu'ici uniquement le
