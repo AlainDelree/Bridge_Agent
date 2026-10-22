@@ -353,13 +353,17 @@ async function marquerCases(cases) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 3. MOTEUR DE COPIE FIABLE (issue #636, mode moderne revu #782)
+// 3. MOTEUR DE COPIE FIABLE (issue #636, mode moderne revu #782, fichier #790)
 //    Un seul chemin pour toutes les copies « fetch puis écriture » : cocher une
 //    case, badges ✅/Diff/All. Le succès n'est signalé QUE s'il a réellement eu
 //    lieu. Mode moderne (voir copierModerne) : le texte est préparé AVANT la
 //    demande d'écriture et les écritures sont sérialisées — cocher plusieurs
 //    cases rapprochées ne fait plus échouer toutes les copies sauf la
 //    dernière (issue #782, voir le rapport pour la reproduction).
+//    Diff/All au-delà de SEUIL_LIGNES_VOLUMINEUX lignes (issue #790) : ni
+//    moderne ni repli ne copient — un fichier .txt est téléchargé à la place
+//    (voir telechargerOuSignalerVolumineux/declencherTelechargement). 'reponse'
+//    n'est jamais concernée (seul l'ancien toast d'avertissement s'applique).
 // ─────────────────────────────────────────────────────────────────────────────
 
 const TITRE_COPIE_VIDE = 'Réponse pas encore disponible — réessaie dans quelques secondes';
@@ -432,10 +436,72 @@ async function texteDiff(projet, numero) {
   return (await diffCommits(projet, hashes)).join('\n\n');
 }
 
+// Seuil de lignes au-delà duquel Claude.ai risque de ne pas lire le texte en
+// entier — SOURCE UNIQUE (issue #790, remplace l'ancien `1000` dupliqué dans
+// `avertirVolumineux`). Pour 'diff'/'all' dépassant ce seuil, on bascule sur un
+// fichier téléchargé (voir `doitTelecharger`) ; pour 'reponse', seul l'ancien
+// toast d'avertissement s'applique (comportement volontairement inchangé).
+export const SEUIL_LIGNES_VOLUMINEUX = 1000;
+
+export function nombreLignes(texte) {
+  return (texte || '').split('\n').length;
+}
+
+// 'diff'/'all' seulement (pas 'reponse', issue #790 point 5) : au-delà du
+// seuil, on télécharge un fichier au lieu de copier dans le presse-papier.
+export function doitTelecharger(variante, texte, seuil = SEUIL_LIGNES_VOLUMINEUX) {
+  return (variante === 'diff' || variante === 'all') && nombreLignes(texte) > seuil;
+}
+
+// Nom de fichier reconnaissable à coup sûr : projet + numéro d'issue + variante
+// (issue #790 point 3). Caractères hors [a-zA-Z0-9_-] neutralisés (nom de
+// projet potentiellement inattendu) pour rester un nom de fichier valide.
+export function nomFichierCopie(projet, numero, variante) {
+  const propre = (s) => String(s).replace(/[^a-zA-Z0-9_-]+/g, '_');
+  return propre(projet) + '-' + normaliserNumero(numero) + '-' + variante + '.txt';
+}
+
+function libelleVariante(variante) {
+  return variante === 'diff' ? 'Le diff' : 'Le rapport (résultat + diff)';
+}
+
+// Message de remplacement de l'avertissement « Diff volumineux » quand un
+// fichier est téléchargé à la place de la copie (issue #790 point 4) : dit
+// que le texte était trop long, qu'un fichier a été produit, et où le
+// retrouver.
+export function messageFichierVolumineux(variante, nbLignes, nomFichier) {
+  return libelleVariante(variante) + ' était trop long (' + nbLignes + ' lignes) pour être copié '
+    + 'dans le presse-papier — un fichier a été téléchargé à la place : ' + nomFichier
+    + ' (dossier de téléchargements du navigateur).';
+}
+
 function avertirVolumineux(texte) {
-  const nb = texte.split('\n').length;
-  if (nb > 1000) {
+  const nb = nombreLignes(texte);
+  if (nb > SEUIL_LIGNES_VOLUMINEUX) {
     toasts.avertissement('Diff volumineux (' + nb + ' lignes) — Claude.ai pourrait ne pas le lire.');
+  }
+}
+
+// Déclenche le téléchargement de `texte` sous le nom `nomFichier` (lien <a
+// download> éphémère + Blob) — pas de contrainte d'activation comme le
+// presse-papier (issues #636/#782) : un clic programmatique sur <a download>
+// n'exige pas d'être synchrone avec le geste utilisateur, donc aucun risque de
+// réintroduire ces défauts ici.
+function declencherTelechargement(nomFichier, texte) {
+  try {
+    const blob = new Blob([texte], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = nomFichier;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    return true;
+  } catch (e) {
+    console.warn('resultats_coches : échec du téléchargement de secours.', e);
+    return false;
   }
 }
 
@@ -474,7 +540,29 @@ function copierExecCommand(texte) {
 // textes deviennent prêts au même instant.
 let chaineCopieModerne = Promise.resolve();
 
+// Variante associée à un producteur de texte — un seul endroit (issue #790,
+// réutilisé par copierModerne ET lancerCopie en mode repli, qui dupliquaient
+// ce test).
+function variantDuProducteur(producteur) {
+  return producteur === texteAll ? 'all' : producteur === texteDiff ? 'diff' : 'reponse';
+}
+
+// Bascule commune (moderne/repli) une fois le texte en main : fichier
+// téléchargé au-delà du seuil (diff/all), copie sinon — partagée pour que les
+// deux modes appliquent EXACTEMENT la même règle (issue #790).
+function telechargerOuSignalerVolumineux(projet, numero, variante, t, feedback) {
+  if (doitTelecharger(variante, t)) {
+    const nomFichier = nomFichierCopie(projet, numero, variante);
+    declencherTelechargement(nomFichier, t);
+    feedback.fichier(messageFichierVolumineux(variante, nombreLignes(t), nomFichier));
+    return true;
+  }
+  avertirVolumineux(t);
+  return false;
+}
+
 function copierModerne(projet, numero, producteur, feedback) {
+  const variante = variantDuProducteur(producteur);
   const tache = chaineCopieModerne.then(async () => {
     let t;
     try {
@@ -485,7 +573,7 @@ function copierModerne(projet, numero, producteur, feedback) {
       return;
     }
     if (texteVide(t)) { feedback.vide(); return; }
-    avertirVolumineux(t);
+    if (telechargerOuSignalerVolumineux(projet, numero, variante, t, feedback)) return;
     try {
       await navigator.clipboard.write([new ClipboardItem({ 'text/plain': new Blob([t], { type: 'text/plain' }) })]);
       feedback.succes();
@@ -510,7 +598,7 @@ function lancerCopie(projet, numero, producteur, feedback) {
   }
   // Mode repli (--lan) : texte requis AVANT le clic.
   const cle = cleIC(projet, numero);
-  const variante = producteur === texteAll ? 'all' : producteur === texteDiff ? 'diff' : 'reponse';
+  const variante = variantDuProducteur(producteur);
   const prep = textesPrepares.get(cle);
   const t = prep ? prep[variante] : undefined;
   if (t === undefined) {
@@ -520,7 +608,7 @@ function lancerCopie(projet, numero, producteur, feedback) {
   }
   if (t && t.aucun) { feedback.aucun ? feedback.aucun() : feedback.vide(); return; }
   if (texteVide(t)) { feedback.vide(); return; }
-  avertirVolumineux(t);
+  if (telechargerOuSignalerVolumineux(projet, numero, variante, t, feedback)) return;
   if (copierExecCommand(t)) feedback.succes();
   else feedback.echec(undefined, t);   // texte transmis : reste accessible malgré l'échec (issue #782)
 }
@@ -572,10 +660,14 @@ function signalerEchecCopie(texte) {
   toasts.erreur(MESSAGE_ECHEC_COPIE, true, texte ? { texteSecours: texte } : undefined);
 }
 
-// Cochage d'une case : feedback par TOAST (pas de badge sur la case).
+// Cochage d'une case : feedback par TOAST (pas de badge sur la case). `fichier`
+// n'est en pratique jamais appelé ici : la case ne copie que 'reponse' (issue
+// #787), jamais soumise au téléchargement (issue #790 point 5) — gardé pour
+// que l'objet reste un contrat complet, au cas où un futur appelant l'utilise.
 function feedbackToast() {
   return {
     succes: () => toasts.succes('Rapport copié dans le presse-papier.', false),
+    fichier: (message) => toasts.avertissement(message),
     echec: (e, texte) => signalerEchecCopie(texte),
     vide: () => toasts.avertissement(TITRE_COPIE_VIDE),
     nonPret: () => toasts.info('Préparation de la copie en cours — recoche dans un instant.', false),
@@ -583,6 +675,8 @@ function feedbackToast() {
 }
 
 // Badge de liste (✅/Diff/All) : ✓ bref sur succès, ⚠/∅ sur vide/aucun, toast sur échec.
+// `fichier` (issue #790, boutons Diff/All au-delà du seuil de lignes) : ⬇ bref
+// sur le badge + toast persistant détaillant le fichier téléchargé.
 function feedbackBadge(badge) {
   const original = badge ? badge.textContent : '';
   const titre = badge ? badge.title : '';
@@ -590,6 +684,7 @@ function feedbackBadge(badge) {
   const flash = (symbole) => { if (badge) { badge.textContent = symbole; setTimeout(restaurer, 1500); } };
   return {
     succes: () => flash('✓'),
+    fichier: (message) => { flash('⬇'); toasts.avertissement(message); },
     echec: (e, texte) => signalerEchecCopie(texte),
     vide: () => { if (badge) { badge.textContent = '⚠'; badge.title = TITRE_COPIE_VIDE; setTimeout(restaurer, 2000); } },
     aucun: () => flash('∅'),

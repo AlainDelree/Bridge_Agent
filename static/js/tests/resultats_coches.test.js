@@ -17,6 +17,11 @@ import {
   ligneIdentite,
   prefixerIdentite,
   texteCopieAvecIdentite,
+  SEUIL_LIGNES_VOLUMINEUX,
+  nombreLignes,
+  doitTelecharger,
+  nomFichierCopie,
+  messageFichierVolumineux,
 } from '../resultats_coches.js';
 
 // ─── normaliserNumero ─────────────────────────────────────────────────────────
@@ -221,4 +226,58 @@ test('texteCopieAvecIdentite : « diff » → identité ABSENTE, texte brut inch
   const it = { number: 9, title: 'T' };
   const diffBrut = '===== Diff abc1234 =====\n\n+ligne ajoutée';
   assert.equal(texteCopieAvecIdentite('diff', it, 'p', diffBrut), diffBrut);
+});
+
+// ─── doitTelecharger / nomFichierCopie / messageFichierVolumineux (issue #790) ─
+test('nombreLignes : compte les lignes, tolère un texte vide', () => {
+  assert.equal(nombreLignes('a\nb\nc'), 3);
+  assert.equal(nombreLignes(''), 1);
+  assert.equal(nombreLignes(undefined), 1);
+});
+
+test('doitTelecharger : « diff »/« all » au-delà du seuil → vrai', () => {
+  const texteLong = Array(SEUIL_LIGNES_VOLUMINEUX + 2).fill('x').join('\n');
+  assert.equal(doitTelecharger('diff', texteLong), true);
+  assert.equal(doitTelecharger('all', texteLong), true);
+});
+
+test('doitTelecharger : « reponse » n\'est JAMAIS concernée, même au-delà du seuil (issue #790 pt.5)', () => {
+  const texteLong = Array(SEUIL_LIGNES_VOLUMINEUX + 2).fill('x').join('\n');
+  assert.equal(doitTelecharger('reponse', texteLong), false);
+});
+
+test('doitTelecharger : sous le seuil → faux, quelle que soit la variante', () => {
+  const texteCourt = 'a\nb\nc';
+  assert.equal(doitTelecharger('diff', texteCourt), false);
+  assert.equal(doitTelecharger('all', texteCourt), false);
+  assert.equal(doitTelecharger('reponse', texteCourt), false);
+});
+
+test('doitTelecharger : exactement au seuil → faux (strictement supérieur requis)', () => {
+  const texteAuSeuil = Array(SEUIL_LIGNES_VOLUMINEUX).fill('x').join('\n');
+  assert.equal(doitTelecharger('diff', texteAuSeuil), false);
+});
+
+test('nomFichierCopie : projet + numéro + variante, reconnaissable', () => {
+  assert.equal(nomFichierCopie('bridge_agent', 790, 'diff'), 'bridge_agent-790-diff.txt');
+  assert.equal(nomFichierCopie('bridge_agent', '790', 'all'), 'bridge_agent-790-all.txt');
+});
+
+test('nomFichierCopie : neutralise les caractères inattendus du nom de projet', () => {
+  assert.equal(nomFichierCopie('mon projet/x', 12, 'diff'), 'mon_projet_x-12-diff.txt');
+});
+
+test('messageFichierVolumineux : nomme le fichier et le dossier de téléchargements', () => {
+  const msg = messageFichierVolumineux('diff', 1234, 'bridge_agent-790-diff.txt');
+  assert.match(msg, /trop long/);
+  assert.match(msg, /1234 lignes/);
+  assert.match(msg, /bridge_agent-790-diff\.txt/);
+  assert.match(msg, /dossier de téléchargements/);
+});
+
+test('messageFichierVolumineux : distingue « diff » (diff seul) et « all » (résultat + diff)', () => {
+  const msgDiff = messageFichierVolumineux('diff', 1234, 'f.txt');
+  const msgAll = messageFichierVolumineux('all', 1234, 'f.txt');
+  assert.match(msgDiff, /diff/i);
+  assert.match(msgAll, /résultat/i);
 });
