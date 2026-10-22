@@ -686,12 +686,18 @@ function variantDuProducteur(producteur) {
 
 // Bascule commune (moderne/repli) une fois le texte en main : fichier
 // téléchargé au-delà du seuil (diff/all), copie sinon — partagée pour que les
-// deux modes appliquent EXACTEMENT la même règle (issue #790).
+// deux modes appliquent EXACTEMENT la même règle (issue #790). Si le
+// téléchargement échoue, pas de « fichier téléchargé » mensonger : on retombe
+// sur le mécanisme d'échec de copie existant (issue #782), texte à l'appui
+// pour une copie manuelle (issue #791).
 function telechargerOuSignalerVolumineux(projet, numero, variante, t, feedback) {
   if (doitTelecharger(variante, t)) {
     const nomFichier = nomFichierCopie(projet, numero, variante);
-    declencherTelechargement(nomFichier, t);
-    feedback.fichier(messageFichierVolumineux(variante, nombreLignes(t), nomFichier));
+    if (declencherTelechargement(nomFichier, t)) {
+      feedback.fichier(messageFichierVolumineux(variante, nombreLignes(t), nomFichier));
+    } else {
+      feedback.echec(undefined, t);
+    }
     return true;
   }
   avertirVolumineux(t);

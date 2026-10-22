@@ -42,6 +42,12 @@ const INVENTAIRE_DEFAUT = {
 //   - diffParHash (issue #790) : fonction hash → contenu du diff, pour fabriquer
 //     un diff volumineux (au-delà du seuil) dans les tests de téléchargement.
 // Retourne la liste des téléchargements capturés (issue #790).
+// Éléments DOM créés durant le test courant (issue #791) : réinitialisé à
+// chaque appel de fixerEnvironnement, assez riche pour que toasts.js (toast
+// d'échec avec texteSecours, voir définirContenuToast) s'exécute sans lever,
+// afin de pouvoir inspecter son contenu (zoneSecoursToast/texteDesToasts).
+let elementsCrees = [];
+
 function fixerEnvironnement(options = {}) {
   const {
     etatCommits = { etat: 'hashes', hashes: ['aaa1111', 'bbb2222'] },
@@ -50,19 +56,35 @@ function fixerEnvironnement(options = {}) {
     diffParHash,
   } = typeof options === 'function' ? { diffParHash: options } : options;
   const telechargements = [];
+  elementsCrees = [];
   global.document = {
     getElementById: () => null,
     querySelectorAll: () => [],
     // Mock minimal du lien <a download> (issue #790) : capture href/download
-    // au moment du click plutôt que de vraiment manipuler le DOM.
-    createElement: (tag) => ({
-      tag,
-      click() { if (this.tag === 'a') telechargements.push({ nom: this.download, href: this.href }); },
-    }),
+    // au moment du click plutôt que de vraiment manipuler le DOM. Assez de
+    // DOM (classList/appendChild/addEventListener) pour que toasts.js
+    // construise un toast d'échec sans lever (issue #791).
+    createElement: (tag) => {
+      const el = {
+        tag,
+        textContent: '',
+        className: '',
+        classList: { add() {}, remove() {} },
+        appendChild() {},
+        addEventListener() {},
+        setAttribute() {},
+        remove() {},
+        select() {},
+        click() { if (this.tag === 'a') telechargements.push({ nom: this.download, href: this.href }); },
+      };
+      elementsCrees.push(el);
+      return el;
+    },
     body: { appendChild: () => {}, removeChild: () => {} },
     querySelector: () => null,
   };
   global.URL = { createObjectURL: () => 'blob:mock', revokeObjectURL: () => {} };
+  global.requestAnimationFrame = (cb) => cb();
   global.window = globalThis;
   window.isSecureContext = true;
   window.reponseCompleteCcl = (it) => 'Corps du rapport pour #' + it.number;
@@ -229,6 +251,28 @@ async function attendreTelechargement(telechargements, tentativesMax = 50) {
   return telechargements[0];
 }
 
+// Zone <textarea> de secours (texteSecours, issue #782) du dernier toast
+// d'échec affiché — voir definirContenuToast dans toasts.js.
+function zoneSecoursToast() {
+  return elementsCrees.find((e) => e.className === 'socle-toast-secours');
+}
+
+// Textes de tous les toasts affichés jusqu'ici (span interne sans classe,
+// voir definirContenuToast) — pour vérifier qu'aucun n'annonce un fichier
+// téléchargé (issue #791).
+function texteDesToasts() {
+  return elementsCrees.filter((e) => e.tag === 'span' && e.className === '').map((e) => e.textContent);
+}
+
+// Attend l'apparition de la zone de secours d'un toast d'échec (asynchrone,
+// comme le téléchargement) — même principe que attendreTelechargement.
+async function attendreZoneSecours(tentativesMax = 50) {
+  for (let i = 0; i < tentativesMax && !zoneSecoursToast(); i++) {
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  return zoneSecoursToast();
+}
+
 test('badge Diff, diff volumineux (> seuil) : fichier téléchargé, pas de copie', async () => {
   const telechargements = fixerEnvironnement((hash) => (hash === 'aaa1111' ? DIFF_VOLUMINEUX : 'DIFF-' + hash));
   interdireCopiePressePapier();
@@ -255,4 +299,56 @@ test('badge Diff, diff COURT (sous le seuil) : copie inchangée, aucun télécha
   const texte = await copie;
   assert.match(texte, /DIFF-aaa1111/);
   assert.equal(telechargements.length, 0, 'un diff court ne doit générer aucun fichier');
+});
+
+// ─── Échec du téléchargement au-delà du seuil (issue #791) : pas de faux
+//     « fichier téléchargé », échec signalé via le mécanisme existant ────────
+
+test('badge Diff, diff volumineux (> seuil) MAIS téléchargement en échec : aucun "fichier téléchargé", échec signalé avec le texte complet', async () => {
+  const telechargements = fixerEnvironnement((hash) => (hash === 'aaa1111' ? DIFF_VOLUMINEUX : 'DIFF-' + hash));
+  interdireCopiePressePapier();
+  // Simule l'échec de la création du lien de téléchargement (ex. Blob/URL
+  // indisponible) — declencherTelechargement le capture et renvoie faux.
+  global.URL.createObjectURL = () => { throw new Error('échec simulé de URL.createObjectURL'); };
+  resultatsCoches.copierDiffBadge(evenementBadge(), PROJET, 301);
+  const zone = await attendreZoneSecours();
+  assert.equal(telechargements.length, 0, 'aucun téléchargement n\'a réellement eu lieu');
+  assert.ok(zone, 'l\'échec doit être signalé via le mécanisme de secours existant (issue #782)');
+  assert.match(zone.value, /Diff aaa1111/, 'le texte complet doit rester accessible pour une copie manuelle');
+  const messages = texteDesToasts();
+  assert.ok(
+    !messages.some((m) => /téléchargé/.test(m)),
+    'aucun message ne doit annoncer un fichier téléchargé puisque le téléchargement a échoué',
+  );
+});
+
+test('badge All, texte volumineux (> seuil) MAIS téléchargement en échec : aucun "fichier téléchargé", échec signalé avec le texte complet', async () => {
+  const telechargements = fixerEnvironnement((hash) => (hash === 'aaa1111' ? DIFF_VOLUMINEUX : 'DIFF-' + hash));
+  interdireCopiePressePapier();
+  global.URL.createObjectURL = () => { throw new Error('échec simulé de URL.createObjectURL'); };
+  resultatsCoches.copierAllBadge(evenementBadge(), PROJET, 302);
+  const zone = await attendreZoneSecours();
+  assert.equal(telechargements.length, 0, 'aucun téléchargement n\'a réellement eu lieu');
+  assert.ok(zone, 'l\'échec doit être signalé via le mécanisme de secours existant (issue #782)');
+  assert.match(zone.value, /Corps du rapport pour #787/, 'le texte complet doit rester accessible pour une copie manuelle');
+  const messages = texteDesToasts();
+  assert.ok(
+    !messages.some((m) => /téléchargé/.test(m)),
+    'aucun message ne doit annoncer un fichier téléchargé puisque le téléchargement a échoué',
+  );
+});
+
+test('badge Diff, diff volumineux (> seuil) ET téléchargement en SUCCÈS : le toast annonce bien un fichier téléchargé (comportement inchangé)', async () => {
+  fixerEnvironnement((hash) => (hash === 'aaa1111' ? DIFF_VOLUMINEUX : 'DIFF-' + hash));
+  interdireCopiePressePapier();
+  resultatsCoches.copierDiffBadge(evenementBadge(), PROJET, 303);
+  // Le toast de succès (comme la zone de secours) est posé de façon
+  // asynchrone — même attente que pour la zone de secours.
+  let messages = texteDesToasts();
+  for (let i = 0; i < 50 && !messages.some((m) => /téléchargé/.test(m)); i++) {
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    messages = texteDesToasts();
+  }
+  assert.ok(messages.some((m) => /téléchargé/.test(m)), 'le succès du téléchargement doit toujours être annoncé');
+  assert.ok(!zoneSecoursToast(), 'aucune zone de secours ne doit apparaître en cas de succès');
 });
