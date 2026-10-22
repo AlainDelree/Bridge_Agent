@@ -17,7 +17,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { resultatsCoches } from '../resultats_coches.js';
+import { resultatsCoches, SEUIL_LIGNES_VOLUMINEUX } from '../resultats_coches.js';
 
 const PROJET = 'projet_test_787';
 
@@ -32,17 +32,37 @@ const INVENTAIRE_DEFAUT = {
 // chaque test : fetch mocké pour /issue, /diff, /inventaire-commit et
 // /cases-cochees ; ancien code (pont) réduit à reponseCompleteCcl/
 // hashesDeCommit/etatCommitsDeclares/majPastillesFiltres.
+// Argument : soit un objet d'options (issue #788), soit directement la fonction
+// diffParHash (issue #790) — les deux formes d'appel coexistent dans ce fichier.
 //   - etatCommits : simule le retour de etatCommitsDeclares (app.js) — par
 //     défaut des hashes exploitables, comme avant l'issue #788.
 //   - inventaireParHash : réponse /inventaire-commit par hash (défaut ci-dessus).
 //   - inventaireEnEchec : ensemble de hashes pour lesquels /inventaire-commit
 //     doit échouer (404), pour vérifier que l'échec est signalé, pas avalé.
-function fixerEnvironnement({
-  etatCommits = { etat: 'hashes', hashes: ['aaa1111', 'bbb2222'] },
-  inventaireParHash = INVENTAIRE_DEFAUT,
-  inventaireEnEchec = new Set(),
-} = {}) {
-  global.document = { getElementById: () => null, querySelectorAll: () => [] };
+//   - diffParHash (issue #790) : fonction hash → contenu du diff, pour fabriquer
+//     un diff volumineux (au-delà du seuil) dans les tests de téléchargement.
+// Retourne la liste des téléchargements capturés (issue #790).
+function fixerEnvironnement(options = {}) {
+  const {
+    etatCommits = { etat: 'hashes', hashes: ['aaa1111', 'bbb2222'] },
+    inventaireParHash = INVENTAIRE_DEFAUT,
+    inventaireEnEchec = new Set(),
+    diffParHash,
+  } = typeof options === 'function' ? { diffParHash: options } : options;
+  const telechargements = [];
+  global.document = {
+    getElementById: () => null,
+    querySelectorAll: () => [],
+    // Mock minimal du lien <a download> (issue #790) : capture href/download
+    // au moment du click plutôt que de vraiment manipuler le DOM.
+    createElement: (tag) => ({
+      tag,
+      click() { if (this.tag === 'a') telechargements.push({ nom: this.download, href: this.href }); },
+    }),
+    body: { appendChild: () => {}, removeChild: () => {} },
+    querySelector: () => null,
+  };
+  global.URL = { createObjectURL: () => 'blob:mock', revokeObjectURL: () => {} };
   global.window = globalThis;
   window.isSecureContext = true;
   window.reponseCompleteCcl = (it) => 'Corps du rapport pour #' + it.number;
@@ -56,7 +76,8 @@ function fixerEnvironnement({
     }
     if (url.startsWith('/diff/')) {
       const hash = decodeURIComponent(url.slice(url.lastIndexOf('/') + 1));
-      return { ok: true, text: async () => JSON.stringify({ diff: 'DIFF-' + hash }) };
+      const diff = diffParHash ? diffParHash(hash) : 'DIFF-' + hash;
+      return { ok: true, text: async () => JSON.stringify({ diff }) };
     }
     if (url.startsWith('/inventaire-commit/')) {
       const hash = decodeURIComponent(url.slice(url.lastIndexOf('/') + 1));
@@ -70,6 +91,7 @@ function fixerEnvironnement({
     }
     throw new Error('URL non mockée dans ce test : ' + url);
   };
+  return telechargements;
 }
 
 // Arme navigator.clipboard.write pour résoudre dès le PROCHAIN appel — chaque
@@ -183,4 +205,54 @@ test('case à cocher : commit de sauvegarde vide (aucun fichier) → mention exp
   const texte = await copie;
   assert.match(texte, /===== Fichiers modifiés =====/);
   assert.match(texte, /aucun fichier/);
+});
+
+// ─── Diff/All au-delà du seuil de lignes (issue #790) : fichier, pas de copie ──
+const DIFF_VOLUMINEUX = Array(SEUIL_LIGNES_VOLUMINEUX + 10).fill('+ligne').join('\n');
+
+// clipboard.write ne doit JAMAIS être appelé dans ces tests — poser une sentinelle
+// qui échoue le test si elle est sollicitée, au lieu d'attendre une résolution
+// qui ne viendra jamais.
+function interdireCopiePressePapier() {
+  global.navigator = {
+    clipboard: { write: async () => { throw new Error('clipboard.write ne doit pas être appelé (diff volumineux, #790)'); } },
+  };
+}
+
+// Attend que le téléchargement (asynchrone : fetch /issue puis /diff) ait eu
+// lieu, en laissant la chaîne de promesses internes se dérouler — pas de
+// hook exposé par le module pour l'attendre directement.
+async function attendreTelechargement(telechargements, tentativesMax = 50) {
+  for (let i = 0; i < tentativesMax && telechargements.length === 0; i++) {
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  return telechargements[0];
+}
+
+test('badge Diff, diff volumineux (> seuil) : fichier téléchargé, pas de copie', async () => {
+  const telechargements = fixerEnvironnement((hash) => (hash === 'aaa1111' ? DIFF_VOLUMINEUX : 'DIFF-' + hash));
+  interdireCopiePressePapier();
+  resultatsCoches.copierDiffBadge(evenementBadge(), PROJET, 201);
+  const fichier = await attendreTelechargement(telechargements);
+  assert.ok(fichier, 'le téléchargement attendu n\'a pas eu lieu');
+  assert.equal(fichier.nom, PROJET + '-201-diff.txt');
+  assert.equal(telechargements.length, 1);
+});
+
+test('badge All, texte volumineux (> seuil) : fichier téléchargé, pas de copie', async () => {
+  const telechargements = fixerEnvironnement((hash) => (hash === 'aaa1111' ? DIFF_VOLUMINEUX : 'DIFF-' + hash));
+  interdireCopiePressePapier();
+  resultatsCoches.copierAllBadge(evenementBadge(), PROJET, 202);
+  const fichier = await attendreTelechargement(telechargements);
+  assert.ok(fichier, 'le téléchargement attendu n\'a pas eu lieu');
+  assert.equal(fichier.nom, PROJET + '-202-all.txt');
+});
+
+test('badge Diff, diff COURT (sous le seuil) : copie inchangée, aucun téléchargement', async () => {
+  const telechargements = fixerEnvironnement();
+  const copie = attendreProchaineCopie();
+  resultatsCoches.copierDiffBadge(evenementBadge(), PROJET, 203);
+  const texte = await copie;
+  assert.match(texte, /DIFF-aaa1111/);
+  assert.equal(telechargements.length, 0, 'un diff court ne doit générer aucun fichier');
 });
