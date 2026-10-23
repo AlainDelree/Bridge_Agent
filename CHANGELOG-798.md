@@ -1,0 +1,11 @@
+## Issue #798 — retrait du script d'expiration de licence inutilisé et son fichier de données
+
+`provisioning/windows/verifier_expiration_ccw.py` calculait les jours restants avant l'expiration de la licence d'évaluation Windows à partir de `provisioning/windows/eval-expiration.json`. Aucun code ni script du dépôt ne l'appelait (ni cron, ni minuteur systemd, ni historique de terminal), et il recalculait une date fausse (installation + 90 jours, ignorant la date mesurée du JSON). Remplacé en pratique par le suivi de l'échéance dans l'annuaire (projet AnnuaireToken, issue #746). Les deux fichiers ont été supprimés (108 et 9 lignes).
+
+`tests/test_retrait_bandeaux_historiques_746.py` : retrait des 3 scénarios qui dépendaient de ces deux fichiers (`test_json_eval_expiration_sans_cle_oauth_token`, `test_verifier_expiration_ccw_lit_toujours_le_fichier_sans_la_cle`, `test_ancienne_copie_avec_cle_oauth_token_ignoree_sans_effet`), ainsi que leur déclaration dans la liste d'exécution et le passage de la docstring qui les décrivait — 10 scénarios avant, 7 après. Tous les tests sur le retrait des bandeaux sont conservés.
+
+`ARCHITECTURE.md` (§9) et `provisioning/windows/REINSTALLATION_WINDOWS.md` (lignes 20 et 141) : mentions du script et du fichier retirées, remplacées par un renvoi à l'annuaire pour le suivi de l'échéance de la licence Windows.
+
+Volontairement laissés inchangés : les scripts de VM (`creer_vm_ccw.py`, `lancer_provisioning.py`, `demarrer_ccw.sh`, `autounattend.xml`), `.gitignore`, `CHANGELOG.md` — hors périmètre de cette issue. Deux mentions historiques des noms de fichiers supprimés subsistent volontairement dans `ARCHITECTURE.md` et dans la docstring d'en-tête de `tests/test_retrait_bandeaux_historiques_746.py` : elles documentent le contexte et la suppression elle-même (issues #746/#798), pas un usage fonctionnel.
+
+Suite complète (`tests/lancer_tous_les_tests.py`) : 81/81 fichiers réussis, 0 échec. `git diff --numstat` : `ARCHITECTURE.md` +7/-10, `provisioning/windows/REINSTALLATION_WINDOWS.md` +4/-2, `provisioning/windows/eval-expiration.json` +0/-9 (supprimé), `provisioning/windows/verifier_expiration_ccw.py` +0/-108 (supprimé), `tests/test_retrait_bandeaux_historiques_746.py` +1/-72. Recherche de références restantes aux deux fichiers (hors `CHANGELOG.md` et `.git`) : vide après traitement.
