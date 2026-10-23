@@ -3,9 +3,9 @@
   issue précise (issue #323, suite #320 — bouton « Interrompre » de l'onglet
   Résultats côté for-windows).
 
-  Exécuté À DISTANCE depuis app/interruption.py (Linux) via « VBoxManage
-  guestcontrol run », après copie du script — jamais interactif. Regroupe en
-  UNE seule exécution, pour limiter le nombre d'allers-retours guestcontrol
+  Exécuté À DISTANCE depuis app/interruption.py (Linux) via SSH, après copie
+  du script par SCP — jamais interactif. Regroupe en
+  UNE seule exécution, pour limiter le nombre d'allers-retours SSH
   (chacun coûte plusieurs secondes de latence) :
 
     1. Arrêt du service NSSM ($Service).
@@ -28,7 +28,7 @@
   jamais reconstruit depuis $Service ni depuis le nom du projet Linux, qui
   peuvent diverger (cf. §"résolution des identités" de l'issue #323).
 
-  Exécution en administrateur, DANS la VM CCW-Build.
+  Exécution en administrateur, sur le PC CCW (physique).
 #>
 
 [CmdletBinding()]

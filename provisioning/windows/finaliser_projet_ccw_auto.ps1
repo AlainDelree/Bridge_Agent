@@ -4,7 +4,7 @@
   finaliser_projet_ccw.ps1 / issue #173).
 
   Pensé pour être poussé + exécuté par l'onglet CCW de l'interface web (Linux)
-  via « VBoxManage guestcontrol ». Là où finaliser_projet_ccw.ps1 demande
+  via SSH/SCP. Là où finaliser_projet_ccw.ps1 demande
   TOPIC_NTFY (Read-Host), fait une pause pour créer le token puis appelle la
   version interactive de mettre_a_jour_tokens_ccw.ps1, CE script lit TOUTES les
   valeurs (TOPIC_NTFY + les deux tokens) dans un fichier « clé=valeur » fourni
@@ -31,8 +31,8 @@
 
   SÉCURITÉ : les tokens ne transitent JAMAIS en argument de ligne de commande
   (invisibles dans les process/event logs Windows) — seulement via le fichier,
-  poussé par guestcontrol copyto avec des permissions restreintes. Ce script
-  SUPPRIME ce fichier dans un finally (nettoyage côté VM) ; l'appelant Linux
+  poussé par scp avec des permissions restreintes. Ce script
+  SUPPRIME ce fichier dans un finally (nettoyage côté PC CCW) ; l'appelant Linux
   supprime de son côté sa copie locale (nettoyage des deux côtés).
 
   Le code de sortie est celui de mettre_a_jour_tokens_ccw.ps1 (0 = OK,
@@ -194,7 +194,7 @@ try {
     exit $codeTokens
 }
 finally {
-    # Nettoyage côté VM : suppression du fichier de valeurs quoi qu'il arrive.
+    # Nettoyage côté PC CCW : suppression du fichier de valeurs quoi qu'il arrive.
     # (L'appelant Linux supprime de son côté sa copie locale — nettoyage des
     # deux côtés.)
     if (Test-Path $FichierValeurs) {

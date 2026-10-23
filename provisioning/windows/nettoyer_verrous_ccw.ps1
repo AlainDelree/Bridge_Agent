@@ -12,8 +12,8 @@
   service via nssm suffit, l'objectif étant justement de déverrouiller sans
   dépendre d'une issue précise.
 
-  Exécuté À DISTANCE depuis app/ccw.py (Linux) via « VBoxManage guestcontrol
-  run », après copie du script — jamais interactif. Émis en JSON encadré par
+  Exécuté À DISTANCE depuis app/ccw.py (Linux) via SSH, après copie du
+  script par SCP — jamais interactif. Émis en JSON encadré par
   les mêmes marqueurs que lister_projets_ccw.ps1 (<<<CCW_JSON>>> /
   <<<CCW_END>>>), pour réutiliser le même extracteur côté Linux
   (_extraire_projets).
@@ -23,7 +23,7 @@
   reconstruit depuis $Service ni depuis le nom du projet Linux, qui peuvent
   diverger (cf. §"résolution des identités" de l'issue #323).
 
-  Exécution en administrateur, DANS la VM CCW-Build.
+  Exécution en administrateur, sur le PC CCW (physique).
 #>
 
 [CmdletBinding()]

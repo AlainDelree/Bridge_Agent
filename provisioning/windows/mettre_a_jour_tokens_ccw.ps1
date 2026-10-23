@@ -4,7 +4,7 @@
     Windows CCW-Watcher, sans manipulation manuelle de chaîne PowerShell.
 
 .DESCRIPTION
-    À exécuter DANS la VM CCW-Build (issue #168). Renouvellement des tokens
+    À exécuter sur le PC CCW (physique) (issue #168). Renouvellement des tokens
     (alignés ~90 j, cf. issue d'expiration #167) :
 
     1. Récupère les deux valeurs SANS les passer en argument de commande :
@@ -12,7 +12,7 @@
        clair une fois collées), soit — avec -FichierTokens (issue #174) — en les
        lisant dans un fichier « clé=valeur » poussé par l'appelant. Ce second
        mode permet à l'onglet CCW (interface web, Linux) de poser les tokens à
-       distance via guestcontrol sans saisie manuelle dans la VM.
+       distance via SSH/SCP sans saisie manuelle sur le PC CCW.
 
        Issue #743 : UN SEUL des deux tokens peut être fourni (vide/absent du
        fichier accepté pour l'autre) — au moins un est requis. Le token omis
@@ -67,7 +67,7 @@
     managés (BSTR) sont libérés.
 
 .NOTES
-    Écrit côté CCL (Linux) — non exécuté contre une VM réelle. Test manuel
+    Écrit côté CCL (Linux) — non exécuté contre un PC CCW réel. Test manuel
     par Alain au prochain renouvellement de token.
 #>
 
@@ -75,7 +75,7 @@
 param(
     # Nom du service Windows géré par NSSM.
     [string]$NomService = 'CCW-Watcher',
-    # Dépôt cloné dans la VM (cf. provisionner.ps1, RepCCW\Bridge_Agent).
+    # Dépôt cloné sur le PC CCW (cf. provisionner.ps1, RepCCW\Bridge_Agent).
     [string]$RepDepot = 'C:\CCW\Bridge_Agent',
     # Nom du fichier de log du service, dans <RepDepot>\logs. Par défaut celui de
     # CCW-Watcher (mono-projet) ; pour un service multi-projets CCW-Watcher-<Nom>,
@@ -87,7 +87,7 @@ param(
     # demandées interactivement (Read-Host) — c'est ce qui permet de piloter la
     # pose des tokens à distance depuis l'onglet CCW de l'interface web (Linux)
     # sans jamais passer les secrets en argument de ligne de commande. Le fichier
-    # est fourni par l'appelant (poussé via guestcontrol copyto, permissions
+    # est fourni par l'appelant (poussé via scp, permissions
     # restreintes) et supprimé par lui ; ce script ne l'écrit ni ne le supprime.
     [string]$FichierTokens = '',
     # Secondes d'attente avant lecture des logs (laisser le watcher démarrer).
@@ -207,7 +207,7 @@ function Lire-EnvironnementActuelService([string]$nomService, [string]$cle, [ref
 # 0. Vérifications préalables.
 # ---------------------------------------------------------------------------
 if (-not (Get-Command nssm -ErrorAction SilentlyContinue)) {
-    Avert "Commande « nssm » introuvable dans le PATH. Ce script doit tourner DANS la VM CCW (NSSM installé par provisionner.ps1)."
+    Avert "Commande « nssm » introuvable dans le PATH. Ce script doit tourner sur le PC CCW (NSSM installé par provisionner.ps1)."
     exit 1
 }
 if (-not (Get-Service -Name $NomService -ErrorAction SilentlyContinue)) {
@@ -223,7 +223,7 @@ $LogService = Join-Path $RepDepot (Join-Path 'logs' $NomLog)
 #      • interactif (défaut) : Read-Host -AsSecureString (jamais affiché) ;
 #      • non interactif (-FichierTokens) : lecture d'un fichier clé=valeur
 #        poussé par l'appelant (onglet CCW, issue #174). Utile pour piloter la
-#        pose des tokens à distance sans saisie manuelle dans la VM.
+#        pose des tokens à distance sans saisie manuelle sur le PC CCW.
 # ---------------------------------------------------------------------------
 if ([string]::IsNullOrWhiteSpace($FichierTokens)) {
     Info 'Renouvellement des tokens du service CCW-Watcher.'

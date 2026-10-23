@@ -1,5 +1,5 @@
 ﻿<#
-  ajouter_projet_ccw.ps1 — Instancier un NOUVEAU projet CCW dans la VM (issue #170).
+  ajouter_projet_ccw.ps1 — Instancier un NOUVEAU projet CCW sur le PC CCW (issue #170).
 
   Généralisation multi-projets de CCW, sur le modèle des watchers CCL côté
   Linux : chaque projet a son propre clone, son propre config et son propre
@@ -41,7 +41,7 @@
         -NomProjet <NomProjet>
 
   Prérequis : provisionner.ps1 déjà passé (Git, Python, NSSM installés).
-  Exécution en administrateur, DANS la VM CCW-Build.
+  Exécution en administrateur, sur le PC CCW (physique).
 
   Exemple concret (Scrabble, dépôt public — aucun token requis pour le clone) :
     powershell -ExecutionPolicy Bypass -File provisioning\windows\ajouter_projet_ccw.ps1 `

@@ -1,9 +1,9 @@
 ﻿<#
   lister_projets_ccw.ps1 — Inventaire JSON des projets CCW (issue #174).
 
-  Exécuté À DISTANCE depuis l'onglet CCW de l'interface web (Linux) via
-  « VBoxManage guestcontrol run » — jamais interactif. Énumère les services
-  Windows « CCW-Watcher* » enregistrés dans la VM (NSSM) et, pour chacun,
+  Exécuté À DISTANCE depuis l'onglet CCW de l'interface web (Linux) via SSH,
+  après copie du script par SCP — jamais interactif. Énumère les services
+  Windows « CCW-Watcher* » enregistrés sur le PC CCW (NSSM) et, pour chacun,
   émet : le nom du service, le nom de projet dérivé, l'état (running/stopped)
   et l'état du placeholder TOPIC_NTFY (encore à définir ou non) lu dans le
   fichier config correspondant.
@@ -18,7 +18,7 @@
     • service « CCW-Watcher-<NomProjet> » → C:\CCW\<NomProjet>,
                                             configs\<nom-minuscule>-ccw.conf
 
-  Exécution en administrateur, DANS la VM CCW-Build.
+  Exécution en administrateur, sur le PC CCW (physique).
 #>
 
 [CmdletBinding()]

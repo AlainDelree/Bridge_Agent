@@ -28,13 +28,13 @@
 
   Prérequis : le projet doit AVOIR ÉTÉ CRÉÉ au préalable par ajouter_projet_ccw.ps1
   (le clone, le config et le service doivent exister). Exécution en administrateur,
-  DANS la VM CCW-Build.
+  sur le PC CCW (physique).
 
   Exemple concret (Scrabble) :
     powershell -ExecutionPolicy Bypass -File provisioning\windows\finaliser_projet_ccw.ps1 `
         -NomProjet Scrabble
 
-  Non exécuté contre une VM réelle — test manuel par Alain.
+  Non exécuté contre un PC CCW réel — test manuel par Alain.
 #>
 
 [CmdletBinding()]

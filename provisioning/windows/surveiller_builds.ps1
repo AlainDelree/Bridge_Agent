@@ -1,7 +1,7 @@
 ﻿<#
 .SYNOPSIS
     Surveille en continu les processus de build (Claude Code / ISCC) et la
-    croissance du dossier de sortie d'un build en cours, sur la VM CCW.
+    croissance du dossier de sortie d'un build en cours, sur le PC CCW.
 #>
 
 param(
