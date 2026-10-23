@@ -938,11 +938,11 @@ entrées ordinaires de `jetons.json` (saisies côté AnnuaireToken), pour
 jour. Le libellé du bandeau de l'annuaire est donc générique — « Échéance
 `<service>` (`<id>`) », plutôt que « Jeton `<service>` (`<id>`) » — pour
 rester exact face à une entrée qui n'est pas un jeton (la licence Windows).
-`provisioning/windows/eval-expiration.json` garde toutes ses autres clés
-(toujours lu par `verifier_expiration_ccw.py` et la réinstallation du PC
-fixe) ; seule la clé `date_expiration_oauth_token` en a été retirée, devenue
-redondante avec l'annuaire. **La date de la licence Windows doit être mise à
-jour dans l'annuaire quand le PC fixe CCW est réinstallé.**
+`provisioning/windows/eval-expiration.json` et le script qui le lisait,
+`provisioning/windows/verifier_expiration_ccw.py`, inutilisés depuis ce
+retrait, ont été supprimés (issue #798). **L'échéance de la licence
+Windows se suit désormais uniquement dans l'annuaire, à mettre à jour
+quand le PC fixe CCW est réinstallé.**
 
 **Chemin du fichier** : par défaut `~/.config/annuairetoken/jetons.json`,
 surchargeable par la variable d'environnement `BRIDGE_JETONS_CHEMIN` —
@@ -1004,11 +1004,8 @@ jeton critique est masqué ; ligne des entrées ignorées toujours en dernier).
 `tests/test_retrait_bandeaux_historiques_746.py` couvre spécifiquement le
 retrait (`app/eval_windows.py` absent, `app/vues.py` propre), les seuils
 réutilisés depuis `app/jetons_annuaire.py`, le nouveau libellé « Échéance »
-(jeton classique et entrée de type licence Windows), le rendu du gabarit
-sans l'ancien bandeau, et `eval-expiration.json` sans
-`date_expiration_oauth_token` toujours lu par `verifier_expiration_ccw.py`
-(y compris une ancienne copie qui contiendrait encore cette clé, ignorée
-sans effet).
+(jeton classique et entrée de type licence Windows), et le rendu du
+gabarit sans l'ancien bandeau.
 
 ## 10. Renouveler un seul jeton CCW, et le poser sur tous les services en une fois (issue #743)
 

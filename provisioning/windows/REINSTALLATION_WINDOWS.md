@@ -17,7 +17,8 @@ voir §3 ci-dessous pour ce cas particulier.
 
 **Édition** : Windows 11 IoT Enterprise LTSC (évaluation 90 jours) — même
 édition que celle déjà en place sur le PC fixe (cf. `REINSTALLATION_CCW.md`
-et `eval-expiration.json`).
+; l'échéance de cette évaluation se suit dans l'annuaire, projet
+AnnuaireToken).
 
 **Source de l'ISO officielle** :
 https://www.microsoft.com/fr-fr/evalcenter/evaluate-windows-11-iot-enterprise-ltsc
@@ -138,7 +139,8 @@ Get-ScheduledTask -TaskPath "\Microsoft\Windows\UpdateOrchestrator\*" |
 > cumulative appliquée automatiquement en arrière-plan, sans action de
 > l'utilisateur — l'objectif est qu'aucun mécanisme résiduel de Windows ne
 > puisse la réappliquer d'ici la prochaine réinstallation planifiée
-> (~tous les 3 mois, cf. `eval-expiration.json`).
+> (~tous les 3 mois, échéance suivie dans l'annuaire, projet
+> AnnuaireToken).
 
 ---
 
