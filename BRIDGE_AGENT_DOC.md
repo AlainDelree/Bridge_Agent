@@ -458,9 +458,7 @@ page, bien plus bas.
   vu la langue française) **doit** commencer par un BOM UTF-8 (octets
   `EF BB BF`) : Windows PowerShell 5.1 — celui installé sur le PC fixe CCW —
   interprète sinon un fichier UTF-8 sans BOM comme de l'ANSI (Windows-1252),
-  et le script plante au parsing dès la première exécution. `autounattend.xml`
-  n'est **pas** concerné (lu par le parseur XML de l'installateur Windows, pas
-  par PowerShell).
+  et le script plante au parsing dès la première exécution.
 - **Dogfooding** : Bridge_Agent se développe lui-même via ses propres issues.
 - **Niveau de détail des issues (issue #281)** : Claude Chat décrit le
   problème, la cause et l'intention du fix. Il ne rédige pas le code complet
@@ -659,8 +657,7 @@ calibration (constantes actuelles du code : `K_VARIABILITE` = 3, issue
 
 ---
 
-*Dernière mise à jour : 23 octobre 2026 — §11 : remplacement de la mention
-« VM CCW » obsolète par « PC fixe CCW » pour la règle du BOM UTF-8
-PowerShell (issue #795).*
+*Dernière mise à jour : 23 octobre 2026 — §11 : retrait de la mention de
+`autounattend.xml` (supprimé, issue #801).*
 
 Historique complet : voir [`CHANGELOG.md`](CHANGELOG.md).
