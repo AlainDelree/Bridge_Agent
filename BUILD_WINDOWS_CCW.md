@@ -18,7 +18,7 @@ Un build PyInstaller/Inno Setup lancé **directement** sur
 (diagnostiqué sur Scrabble, fix #338).
 
 **Contournement standard :** le script de build copie d'abord les sources
-vers un répertoire local à la VM (`C:\Temp\<Projet>Build` ou équivalent),
+vers un répertoire local au PC fixe CCW (`C:\Temp\<Projet>Build` ou équivalent),
 construit **entièrement** là, puis ne recopie vers le partage que
 l'artefact final (installeur ou `dist\`).
 

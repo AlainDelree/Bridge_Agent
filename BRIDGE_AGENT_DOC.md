@@ -456,7 +456,7 @@ page, bien plus bas.
 - **Scripts PowerShell (`.ps1`) : BOM UTF-8 obligatoire dès la création.**
   Tout fichier `.ps1` contenant des caractères accentués (donc quasiment tous,
   vu la langue française) **doit** commencer par un BOM UTF-8 (octets
-  `EF BB BF`) : Windows PowerShell 5.1 — celui embarqué dans les VM CCW —
+  `EF BB BF`) : Windows PowerShell 5.1 — celui installé sur le PC fixe CCW —
   interprète sinon un fichier UTF-8 sans BOM comme de l'ANSI (Windows-1252),
   et le script plante au parsing dès la première exécution. `autounattend.xml`
   n'est **pas** concerné (lu par le parseur XML de l'installateur Windows, pas
@@ -659,8 +659,8 @@ calibration (constantes actuelles du code : `K_VARIABILITE` = 3, issue
 
 ---
 
-*Dernière mise à jour : 18 octobre 2026 — correction de l'ordre
-fusion/consolidation du changelog dans `WORKTREES.md` : fusionner d'abord,
-consolider ensuite depuis `REP_TRAVAIL`, jamais l'inverse (issue #776).*
+*Dernière mise à jour : 23 octobre 2026 — §11 : remplacement de la mention
+« VM CCW » obsolète par « PC fixe CCW » pour la règle du BOM UTF-8
+PowerShell (issue #795).*
 
 Historique complet : voir [`CHANGELOG.md`](CHANGELOG.md).

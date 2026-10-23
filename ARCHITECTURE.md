@@ -930,8 +930,8 @@ n'arrive. Les seuils/niveaux (`_niveau()`, `SEUIL_ORANGE`=14j,
 **Retrait des bandeaux historiques « Éval Windows CCW » et « OAuth Token
 CCW » (issue #746).** Ces deux bandeaux lisaient
 `provisioning/windows/eval-expiration.json` (`app/eval_windows.py`,
-supprimé) : l'échéance de la licence d'évaluation Windows de la VM
-CCW-Build (issue #454) et celle du `CLAUDE_CODE_OAUTH_TOKEN` du service CCW
+supprimé) : l'échéance de la licence d'évaluation Windows du PC fixe
+CCW (issue #454) et celle du `CLAUDE_CODE_OAUTH_TOKEN` du service CCW
 (issue #456). L'annuaire suit désormais ces deux échéances comme deux
 entrées ordinaires de `jetons.json` (saisies côté AnnuaireToken), pour
 éviter le doublon d'affichage et n'avoir plus qu'un seul endroit à tenir à
@@ -939,10 +939,10 @@ jour. Le libellé du bandeau de l'annuaire est donc générique — « Échéanc
 `<service>` (`<id>`) », plutôt que « Jeton `<service>` (`<id>`) » — pour
 rester exact face à une entrée qui n'est pas un jeton (la licence Windows).
 `provisioning/windows/eval-expiration.json` garde toutes ses autres clés
-(toujours lu par `verifier_expiration_ccw.py` et la (re)création de la VM) ;
-seule la clé `date_expiration_oauth_token` en a été retirée, devenue
+(toujours lu par `verifier_expiration_ccw.py` et la réinstallation du PC
+fixe) ; seule la clé `date_expiration_oauth_token` en a été retirée, devenue
 redondante avec l'annuaire. **La date de la licence Windows doit être mise à
-jour dans l'annuaire quand la VM/machine CCW est recréée.**
+jour dans l'annuaire quand le PC fixe CCW est réinstallé.**
 
 **Chemin du fichier** : par défaut `~/.config/annuairetoken/jetons.json`,
 surchargeable par la variable d'environnement `BRIDGE_JETONS_CHEMIN` —

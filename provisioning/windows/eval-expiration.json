@@ -1,9 +1,9 @@
 {
-  "_commentaire": "Métadonnées de l'évaluation 90 jours de la VM CCW-Build (Windows 11 IoT Enterprise LTSC 2024). Lu par verifier_expiration_ccw.py. Voir BRIDGE_AGENT_DOC.md §16 et issue #167.",
+  "_commentaire": "Métadonnées de l'évaluation 90 jours du PC fixe CCW (Windows 11 IoT Enterprise LTSC 2024). Lu par verifier_expiration_ccw.py. Voir BRIDGE_AGENT_DOC.md §16 et issue #167.",
   "machine": "PC-fixe-CCW",
   "windows": "Windows 11 IoT Enterprise LTSC 2024",
   "eval_jours": 90,
   "date_installation": "2026-08-17",
-  "date_expiration": "2026-11-15",
-  "note": "date_installation = date d'installation effective de Windows dans la VM. date_expiration = date_installation + eval_jours. Après expiration, Windows redémarre automatiquement toutes les heures, ce qui casse le service CCW-Watcher : recréer la VM avant (creer_vm_ccw.py --recreate). Si la date d'install réelle diffère, ajuster date_installation ci-dessus ; date_expiration est purement informative et recalculée par le script à partir de date_installation + eval_jours. L'échéance de la licence d'évaluation Windows et celle du jeton Claude du service CCW se saisissent désormais dans l'annuaire (projet annuairetoken, issues #741/#742/#746) : mettre à jour la date de la licence Windows dans l'annuaire quand la VM/machine CCW est recréée."
+  "date_expiration": "2026-12-26",
+  "note": "date_installation = date d'installation effective de Windows sur le PC fixe CCW. date_expiration = valeur mesurée directement sur le PC le 2026-10-23 via `slmgr /xpr` (expiration à 14h32) ; la formule date_installation + eval_jours ne la prédit plus (90 jours après le 2026-08-17 donneraient le 2026-11-15, différent de la date mesurée). Après expiration, Windows redémarre automatiquement toutes les heures, ce qui casse le service CCW-Watcher : réinstaller le PC fixe avant. Si la date d'install réelle diffère, ajuster date_installation ci-dessus. L'échéance de la licence d'évaluation Windows et celle du jeton Claude du service CCW se saisissent désormais dans l'annuaire (projet annuairetoken, issues #741/#742/#746) : mettre à jour la date de la licence Windows dans l'annuaire quand le PC fixe CCW est réinstallé."
 }
