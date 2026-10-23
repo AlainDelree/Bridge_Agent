@@ -11,7 +11,7 @@ vers Claude Code Linux (CCL) via Bridge_Agent.
 |-------|------|
 | `bridge` | Marque l'issue comme tâche du bridge |
 | `for-linux` | Cible : agent Linux (CCL) sur le ThinkPad |
-| `for-windows` | Cible : agent Windows (CCW) sur la VM |
+| `for-windows` | Cible : agent Windows (CCW) sur le PC fixe CCW |
 | `mode_write` | **ARME le mode écriture** — CCL peut modifier des fichiers et committer |
 | `mode_scratch` | **ARME la lecture active** — CCL peut écrire uniquement dans un dossier scratch temporaire |
 | `done` | Posé automatiquement par le watcher en cas de succès |
