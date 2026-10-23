@@ -9,6 +9,14 @@ milliers de caractères sur une seule ligne logique, coûteux à relire et
 
 Convention d'ajout : voir §10 de `BRIDGE_AGENT_DOC.md`.
 
+## Issue #802 — guide « comment demander un build Windows » et règle associée au §16 de BRIDGE_AGENT_DOC.md
+
+`BUILD_WINDOWS_CCW.md` réécrit comme un guide pour les Claude Chat des projets, qui rédigent eux-mêmes les issues de build Windows : quand l'utiliser, ce qu'il faut vérifier avant de déposer l'issue (service CCW-Watcher démarré, numéro de build = max(`version.json`@master, plus haute étiquette `v<N>`) + 1), déroulement d'un build (worktree dédié, outil PowerShell, staging local `C:\Temp\<Projet>Build`), ce que l'agent vérifie et rapporte, ce qu'il ne fait jamais (push, Release, modification de l'archive), ce que fait Alain ensuite (récupération des fichiers, fusion, ordre Release-puis-push recommandé à vérifier, suppression du worktree), conduite en cas d'échec, fiches Rummikub/Scrabble/Actualise corrigées (Rummikub : chemin `Z:\CCW\rummikub` et « 6 étapes » périmés retirés, recherche d'Inno Setup dans `C:\CCW\tools\InnoSetup6` avant `.tools\InnoSetup6` à vérifier avant le premier build), et un modèle d'issue de build dont la contrainte de fichiers modifiés autorise `version.json` et `CHANGELOG-<numéro>.md`.
+
+`BRIDGE_AGENT_DOC.md` §16 : ajout d'une règle courte renvoyant vers `BUILD_WINDOWS_CCW.md` (commande `curl` incluse) avant de rédiger une issue de build Windows. Dernière ligne mise à jour en conséquence.
+
+Points marqués « à confirmer » dans le guide : la syntaxe exacte de l'option `--build <N>` du script Rummikub, et la réaction d'Actualise face à une archive de Release introuvable.
+
 ## Issue #801 — retrait des scripts et de la documentation de l'ancienne VM CCW-Build
 
 Suppression des quatre fichiers qui ne servaient qu'à la VM VirtualBox `CCW-Build` (supprimée par Alain) : `provisioning/windows/creer_vm_ccw.py`, `provisioning/windows/lancer_provisioning.py`, `provisioning/windows/demarrer_ccw.sh`, `provisioning/windows/autounattend.xml`. Aucun appel depuis `app/*.py`, `watcher.py` ou les tests ; seuls des documents et `provisionner.ps1` (traité par une autre issue) les citaient.
