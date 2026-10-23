@@ -396,7 +396,7 @@ class _ReponseErreurSansContexte:
     UNIQUEMENT quand aucun contexte applicatif Flask n'est actif — thread
     démon de demarrer_service_ccw_arriere_plan (issue #709) ou process séparé
     de scripts/watcher_issues_inbox.py (issue #711, point 4), tous deux
-    susceptibles d'appeler _preparer()/_lister_projets_vm() via la fonction
+    susceptibles d'appeler _preparer()/_lister_projets_ccw() via la fonction
     « pure » _piloter_service_ccw_action SANS qu'un contexte Flask soit
     garanti. jsonify() lève RuntimeError hors contexte applicatif — voir
     _reponse_erreur_ssh ci-dessous."""
@@ -430,7 +430,7 @@ def _preparer() -> tuple[tuple[str, str, str] | None, object]:
 
 # ─── Routes Flask ─────────────────────────────────────────────────────────────
 
-def _lister_projets_vm(hote: str, utilisateur: str, cle_privee: str):
+def _lister_projets_ccw(hote: str, utilisateur: str, cle_privee: str):
     """Interroge lister_projets_ccw.ps1 sur le PC fixe (copie + exécution SSH).
 
     Retourne (projets, None) où projets est une liste de dicts (clés service,
@@ -462,7 +462,7 @@ def ccw_projets():
     if err:
         return err
     hote, utilisateur, cle_privee = ctx
-    projets, err = _lister_projets_vm(hote, utilisateur, cle_privee)
+    projets, err = _lister_projets_ccw(hote, utilisateur, cle_privee)
     if err:
         return err
     return jsonify(succes=True, projets=projets)
@@ -660,7 +660,7 @@ def _piloter_service_ccw_action(nom_projet: str, action_nssm: str, verbe: str, *
     """Fonction PURE (issue #709, étape C du retrofit CCW) : nom de projet +
     action nssm (« restart », « start », « stop ») → résolution du nom EXACT
     du service via lister_projets_ccw.ps1 (source de vérité unique — voir
-    _lister_projets_vm), ce qui gère de fait le spécial-cas « Bridge_Agent »
+    _lister_projets_ccw), ce qui gère de fait le spécial-cas « Bridge_Agent »
     → « CCW-Watcher » (sans suffixe) sans dupliquer la règle, garde-fou sur le
     format du service, puis exécution à distance (nssm est déjà dans le PATH
     du PC fixe). Aucun objet Flask en entrée ni en sortie : extraite de
@@ -711,7 +711,7 @@ def _piloter_service_ccw_action(nom_projet: str, action_nssm: str, verbe: str, *
                     message=_texte_erreur_json(err), code=None, sortie=None)
     hote, utilisateur, cle_privee = ctx
 
-    projets, err = _lister_projets_vm(hote, utilisateur, cle_privee)
+    projets, err = _lister_projets_ccw(hote, utilisateur, cle_privee)
     if err:
         return dict(succes=False, service=None, etat_avant=None, deja_dans_cet_etat=False,
                     message=_texte_erreur_json(err), code=None, sortie=None)
@@ -899,7 +899,7 @@ def demarrer_service_ccw_arriere_plan(nom_projet: str) -> None:
 
 def _texte_erreur_json(reponse_json) -> str:
     """Extrait le champ erreur d'une réponse d'échec de _preparer/
-    _lister_projets_vm (jsonify(...) en contexte Flask, ou
+    _lister_projets_ccw (jsonify(...) en contexte Flask, ou
     _ReponseErreurSansContexte hors contexte — issue #711, même interface
     `.get_json()` dans les deux cas) — même logique que _erreur_de dans
     app/interruption.py, dupliquée ici pour éviter un import circulaire
@@ -931,7 +931,7 @@ def ccw_nettoyer_verrous():
         return jsonify(statut="echec", message=_texte_erreur_json(err))
     hote, utilisateur, cle_privee = ctx
 
-    projets, err = _lister_projets_vm(hote, utilisateur, cle_privee)
+    projets, err = _lister_projets_ccw(hote, utilisateur, cle_privee)
     if err:
         return jsonify(statut="echec", message=_texte_erreur_json(err))
 

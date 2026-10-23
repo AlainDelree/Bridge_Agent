@@ -210,7 +210,7 @@ def test_piloter_action_bascule_locale_succes():
     with Patch(ccw.os, "name", "nt"), \
          Patch(ccw, "_charger_config_ssh", lambda: (None, "non configuré")), \
          Patch(ccw, "_preparer", _appel_interdit), \
-         Patch(ccw, "_lister_projets_vm", _appel_interdit), \
+         Patch(ccw, "_lister_projets_ccw", _appel_interdit), \
          Patch(ccw.subprocess, "run", _run):
         res = ccw._piloter_service_ccw_action("Rummikub", "start", "démarrage")
     assert res["succes"] is True, res

@@ -346,9 +346,9 @@ function Install-WindowsAppRuntime {
             Info 'Téléchargement du Windows App Runtime (installeur autonome x64, 1.8)…'
             Invoke-WebRequest -Uri $runtimeUrl -OutFile $exePath -UseBasicParsing
         } catch {
-            # Erreur réseau (VM en NAT : accès sortant requis) — message clair.
+            # Erreur réseau (accès sortant requis) — message clair.
             throw ("Téléchargement du Windows App Runtime échoué : $($_.Exception.Message). " +
-                   "La VM doit avoir un accès Internet sortant (NAT). " +
+                   "Un accès Internet sortant est requis. " +
                    "Voir https://learn.microsoft.com/windows/apps/windows-app-sdk/downloads pour un dépannage manuel.")
         }
 

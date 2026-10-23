@@ -98,7 +98,7 @@ def _liste_projets(projets):
 def scenario_route_nom_invalide():
     """Nom vide → même message qu'avant l'extraction, AUCUN appel SSH."""
     with Patch(ccw, "_preparer", _appel_interdit), \
-         Patch(ccw, "_lister_projets_vm", _appel_interdit), \
+         Patch(ccw, "_lister_projets_ccw", _appel_interdit), \
          Patch(ccw, "_executer_commande_ps", _appel_interdit):
         res = ccw._piloter_service_ccw_action("", "start", "démarrage")
     assert res["succes"] is False
@@ -111,7 +111,7 @@ def scenario_route_nom_invalide():
 
 def scenario_route_projet_introuvable():
     with Patch(ccw, "_preparer", _ctx_prepare_ok), \
-         Patch(ccw, "_lister_projets_vm", _liste_projets(
+         Patch(ccw, "_lister_projets_ccw", _liste_projets(
              [{"projet": "autre", "service": "CCW-Watcher-Autre", "etat": "running"}])), \
          Patch(ccw, "_executer_commande_ps", _appel_interdit):
         res = ccw._piloter_service_ccw_action("rummikub", "start", "démarrage")
@@ -131,7 +131,7 @@ def scenario_route_demarrage_succes_identique_avant_extraction():
         return FauxResultat(0, stdout="Service started.\n")
 
     with Patch(ccw, "_preparer", _ctx_prepare_ok), \
-         Patch(ccw, "_lister_projets_vm", _liste_projets(
+         Patch(ccw, "_lister_projets_ccw", _liste_projets(
              [{"projet": "rummikub", "service": "CCW-Watcher-Rummikub", "etat": "stopped"}])), \
          Patch(ccw, "_executer_commande_ps", _exec):
         res = ccw._piloter_service_ccw_action("rummikub", "start", "démarrage")
@@ -148,7 +148,7 @@ def scenario_route_demarrage_echec_nssm_identique_avant_extraction():
         return FauxResultat(1, stderr="nssm: erreur\n")
 
     with Patch(ccw, "_preparer", _ctx_prepare_ok), \
-         Patch(ccw, "_lister_projets_vm", _liste_projets(
+         Patch(ccw, "_lister_projets_ccw", _liste_projets(
              [{"projet": "rummikub", "service": "CCW-Watcher-Rummikub", "etat": "stopped"}])), \
          Patch(ccw, "_executer_commande_ps", _exec):
         res = ccw._piloter_service_ccw_action("rummikub", "start", "démarrage")
@@ -167,7 +167,7 @@ def scenario_route_flask_jsonify_inchangee():
         return FauxResultat(0, stdout="ok")
 
     with Patch(ccw, "_preparer", _ctx_prepare_ok), \
-         Patch(ccw, "_lister_projets_vm", _liste_projets(
+         Patch(ccw, "_lister_projets_ccw", _liste_projets(
              [{"projet": "rummikub", "service": "CCW-Watcher-Rummikub", "etat": "stopped"}])), \
          Patch(ccw, "_executer_commande_ps", _exec), \
          APP_FLASK.test_request_context("/ccw/demarrer-projet", method="POST",
@@ -177,7 +177,7 @@ def scenario_route_flask_jsonify_inchangee():
                    "sortie": "ok", "erreur": None}, rep
 
     with Patch(ccw, "_preparer", _ssh_non_configure), \
-         Patch(ccw, "_lister_projets_vm", _appel_interdit), \
+         Patch(ccw, "_lister_projets_ccw", _appel_interdit), \
          APP_FLASK.test_request_context("/ccw/demarrer-projet", method="POST",
                                          json={"nom": "rummikub"}):
         rep2 = ccw.ccw_demarrer_projet().get_json()
@@ -196,7 +196,7 @@ def scenario_service_arrete_demarre():
         return FauxResultat(0, stdout="Service started.\n")
 
     with Patch(ccw, "_preparer", _ctx_prepare_ok), \
-         Patch(ccw, "_lister_projets_vm", _liste_projets(
+         Patch(ccw, "_lister_projets_ccw", _liste_projets(
              [{"projet": "rummikub", "service": "CCW-Watcher-Rummikub", "etat": "stopped"}])), \
          Patch(ccw, "_executer_commande_ps", _exec):
         ccw_demarre, avertissement = ccw._demarrer_service_ccw_sync("rummikub")
@@ -208,7 +208,7 @@ def scenario_service_arrete_demarre():
 
 def scenario_deja_en_marche_aucun_appel_ssh():
     with Patch(ccw, "_preparer", _ctx_prepare_ok), \
-         Patch(ccw, "_lister_projets_vm", _liste_projets(
+         Patch(ccw, "_lister_projets_ccw", _liste_projets(
              [{"projet": "rummikub", "service": "CCW-Watcher-Rummikub", "etat": "running"}])), \
          Patch(ccw, "_executer_commande_ps", _appel_interdit):
         ccw_demarre, avertissement = ccw._demarrer_service_ccw_sync("rummikub")
@@ -219,7 +219,7 @@ def scenario_deja_en_marche_aucun_appel_ssh():
 
 def scenario_ssh_non_configure_ignore_silencieusement():
     with Patch(ccw, "_preparer", _ssh_non_configure), \
-         Patch(ccw, "_lister_projets_vm", _appel_interdit), \
+         Patch(ccw, "_lister_projets_ccw", _appel_interdit), \
          Patch(ccw, "_executer_commande_ps", _appel_interdit):
         ccw_demarre, avertissement = ccw._demarrer_service_ccw_sync("rummikub")
     assert ccw_demarre is None, ccw_demarre
@@ -229,7 +229,7 @@ def scenario_ssh_non_configure_ignore_silencieusement():
 
 def scenario_projet_sans_service_ccw_ignore_silencieusement():
     with Patch(ccw, "_preparer", _ctx_prepare_ok), \
-         Patch(ccw, "_lister_projets_vm", _liste_projets(
+         Patch(ccw, "_lister_projets_ccw", _liste_projets(
              [{"projet": "autre", "service": "CCW-Watcher-Autre", "etat": "running"}])), \
          Patch(ccw, "_executer_commande_ps", _appel_interdit):
         ccw_demarre, avertissement = ccw._demarrer_service_ccw_sync("rummikub")
@@ -243,7 +243,7 @@ def scenario_echec_ssh_demarrage_avertissement_non_bloquant():
         return FauxResultat(1, stderr="nssm: erreur\n")
 
     with Patch(ccw, "_preparer", _ctx_prepare_ok), \
-         Patch(ccw, "_lister_projets_vm", _liste_projets(
+         Patch(ccw, "_lister_projets_ccw", _liste_projets(
              [{"projet": "rummikub", "service": "CCW-Watcher-Rummikub", "etat": "stopped"}])), \
          Patch(ccw, "_executer_commande_ps", _exec):
         ccw_demarre, avertissement = ccw._demarrer_service_ccw_sync("rummikub")
@@ -267,7 +267,7 @@ def scenario_stop_pending_une_seule_nouvelle_tentative():
     try:
         time.sleep = lambda _s: None  # test rapide, pas de vraie pause de 2s
         with Patch(ccw, "_preparer", _ctx_prepare_ok), \
-             Patch(ccw, "_lister_projets_vm", _liste_projets(
+             Patch(ccw, "_lister_projets_ccw", _liste_projets(
                  [{"projet": "rummikub", "service": "CCW-Watcher-Rummikub",
                    "etat": "stoppending"}])), \
              Patch(ccw, "_executer_commande_ps", _exec):
@@ -292,7 +292,7 @@ def scenario_stop_pending_echec_persistant_pas_de_boucle():
     try:
         time.sleep = lambda _s: None
         with Patch(ccw, "_preparer", _ctx_prepare_ok), \
-             Patch(ccw, "_lister_projets_vm", _liste_projets(
+             Patch(ccw, "_lister_projets_ccw", _liste_projets(
                  [{"projet": "rummikub", "service": "CCW-Watcher-Rummikub",
                    "etat": "stoppending"}])), \
              Patch(ccw, "_executer_commande_ps", _exec):
@@ -369,7 +369,7 @@ def test_envoyer_for_windows_echec_ssh_n_affecte_pas_la_creation():
          Patch(anp, "ajouter_issue_surveillee", lambda depot, numero, labels: None), \
          Patch(afi, "emettre_creation_issue", lambda *a, **k: None), \
          Patch(ccw, "_preparer", _ctx_prepare_ok), \
-         Patch(ccw, "_lister_projets_vm", _liste_projets(
+         Patch(ccw, "_lister_projets_ccw", _liste_projets(
              [{"projet": "projet_test_709", "service": "CCW-Watcher-ProjetTest709",
                "etat": "stopped"}])), \
          Patch(ccw, "_executer_commande_ps", _exec_ssh_echoue), \

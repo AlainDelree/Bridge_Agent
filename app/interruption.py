@@ -44,7 +44,7 @@ from app.projets import projet_par_depot
 from app import github_status
 from app.ccw import (
     _preparer, _copier, _executer_ps,
-    _lister_projets_vm, _extraire_projets, _message_echec,
+    _lister_projets_ccw, _extraire_projets, _message_echec,
     DOSSIER_WINDOWS, TIMEOUT_COURT, TIMEOUT_LONG,
     demarrer_service_ccw_arriere_plan,  # (issue #711, étape D)
 )
@@ -514,7 +514,7 @@ def interrompre_windows(cfg) -> list:
         return _etapes_windows_echec(_erreur_de(err))
     hote, utilisateur, cle_privee = ctx
 
-    projets, err = _lister_projets_vm(hote, utilisateur, cle_privee)
+    projets, err = _lister_projets_ccw(hote, utilisateur, cle_privee)
     if err:
         return _etapes_windows_echec(_erreur_de(err))
 
