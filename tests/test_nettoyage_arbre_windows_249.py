@@ -19,7 +19,7 @@ crée pour la durée du test) et de `os.name` forcé à "nt", que :
 - une exception inattendue pendant le nettoyage (CloseHandle qui lève) est
   absorbée et journalisée, jamais remontée (issue #249 point 4).
 
-⚠️ Ce test NE remplace PAS une validation réelle sur la VM CCW : il vérifie
+⚠️ Ce test NE remplace PAS une validation réelle sur le PC CCW : il vérifie
 que le code ctypes effectue les bons appels avec les bons arguments, pas que
 Windows tue effectivement l'arbre de process en pratique. Une validation par
 build réel sur CCW reste nécessaire avant de considérer #249 clos en
@@ -227,7 +227,7 @@ def main():
     print(
         "\n⚠️  Rappel : ces scénarios mockent kernel32 pour vérifier que le "
         "code ctypes effectue les bons appels — ils ne remplacent PAS une "
-        "validation réelle sur la VM CCW. Seul un build Windows réel peut "
+        "validation réelle sur le PC CCW. Seul un build Windows réel peut "
         "confirmer que l'objet Job tue effectivement l'arbre de process en "
         "pratique."
     )

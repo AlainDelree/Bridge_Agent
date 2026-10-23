@@ -793,7 +793,7 @@ def ccw_redemarrer_projet():
     """Redémarre le service Windows d'un projet CCW (issue #180).
 
     Cas d'usage : relancer un service après une correction manuelle ou un
-    diagnostic, sans repasser par PowerShell dans la VM ni reposer topic/tokens.
+    diagnostic, sans repasser par PowerShell sur le PC CCW ni reposer topic/tokens.
     Simple « nssm restart <service> » — voir _piloter_service_ccw."""
     return _piloter_service_ccw("restart", "redémarrage")
 
@@ -810,7 +810,7 @@ def ccw_arreter_projet():
     """Arrête le service Windows d'un projet CCW (issue #203).
 
     Contrôle indépendant du redémarrage : « nssm stop <service> ». Utile pour
-    arrêter temporairement un service (économie de ressources VM) sans le
+    arrêter temporairement un service (économie de ressources du PC CCW) sans le
     relancer aussitôt. Voir _piloter_service_ccw."""
     return _piloter_service_ccw("stop", "arrêt")
 

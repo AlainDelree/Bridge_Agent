@@ -277,7 +277,7 @@ def main():
     print(
         "\n⚠️  Rappel : ces scénarios mockent kernel32 pour vérifier que le "
         "code ctypes effectue les bons appels — ils ne remplacent PAS une "
-        "validation réelle sur la VM CCW (voir procédure de test manuel dans "
+        "validation réelle sur le PC CCW (voir procédure de test manuel dans "
         "le CHANGELOG, issue #701)."
     )
 

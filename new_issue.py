@@ -202,7 +202,7 @@ def main():
     # Détection serveur des transitions d'issues (issue #187) : polling GitHub
     # périodique qui déclenche bip/notify-send/ntfy sur le ThinkPad pour toute
     # issue fermée (succès) ou marquée needs-human (échec), y compris celles
-    # traitées par la VM Windows (CCW) — sans aucun appel réseau depuis la VM.
+    # traitées par le PC Windows (CCW) — sans aucun appel réseau depuis le PC CCW.
     # Daemon → n'empêche jamais l'arrêt du processus. Désactivable via
     # BRIDGE_NOTIF_SCOPE=off.
     Thread(target=surveiller_transitions, daemon=True).start()
