@@ -1,9 +1,0 @@
-## Issue #796 — remplacement du mot « VM » par « PC CCW »/« machine CCW » dans les commentaires, docstrings et messages
-
-Suite à l'audit en lecture seule #792 : plusieurs fichiers Python parlaient encore de « VM » pour désigner le PC Windows physique CCW (depuis le passage SSH d'issue #447, il n'y a plus de VirtualBox). Le mécanisme décrit à chaque occurrence restait exact — seul le mot était périmé. Remplacement texte uniquement (commentaires, docstrings, un message affiché), aucune logique touchée.
-
-Fichiers modifiés (9, 16 lignes au total) : `app/ccw.py` (2 lignes, commentaires de docstring), `watcher.py` (2, commentaires inline), `notifications.py` (2, docstring d'en-tête), `app/notifications_poller.py` (4, docstring d'en-tête), `new_issue.py` (1, commentaire), `app/interruption.py` (1, message affiché à l'utilisateur : « Réponse du PC CCW vide ou illisible. »), `tests/test_interruption_windows_701.py` (1, rappel imprimé), `tests/test_nettoyage_arbre_windows_249.py` (2, docstring + rappel imprimé), `provisioning/windows/verifier_expiration_ccw.py` (1, docstring uniquement — le comportement du script n'a pas été touché).
-
-Volontairement laissés inchangés : la phrase d'historique de l'en-tête d'`app/ccw.py` (issues #174/#447, exacte) ; les lignes 83/90/97 de `verifier_expiration_ccw.py` (`print()`, hors périmètre de cette issue qui ne portait que sur la docstring) ; `provisioning/windows/lancer_provisioning.py` et `provisioning/windows/creer_vm_ccw.py` (parlent d'une vraie VM VirtualBox historique de provisioning, hors constats de l'issue) ; `CHANGELOG.md` (hors périmètre).
-
-`py_compile` OK sur les 9 fichiers. Suite complète (`tests/lancer_tous_les_tests.py`) : 81/81 réussis, 0 échec. Comptage de caractères non-ASCII inchangé avant/après pour chacun des 9 fichiers (le remplacement « VM » → « PC CCW » est entièrement ASCII).
