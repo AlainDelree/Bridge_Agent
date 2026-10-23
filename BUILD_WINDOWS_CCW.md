@@ -8,8 +8,9 @@ un modèle d'issue prêt à l'emploi. Le pattern général d'une issue
 documenté au §16 de `BRIDGE_AGENT_DOC.md` ; ce fichier se concentre sur les
 builds et sur ce qui est spécifique à chaque projet.
 
-Convention d'ajout : une nouvelle fiche par projet buildé, à la suite,
-la plus récente en premier. Ne pas renuméroter les entrées existantes.
+Convention d'ajout : une nouvelle fiche par projet buildé, ajoutée en tête
+de liste (la plus récente en premier). Ne pas renuméroter les entrées
+existantes.
 
 ---
 
@@ -31,9 +32,19 @@ il contient le modèle à utiliser en bas de page.
 - **Calculer le numéro de build.** Regarder sur GitHub où en est le
   projet : prendre le plus haut entre le `build` de `version.json` sur la
   branche `master` et la plus haute étiquette `v<N>` du dépôt, puis
-  ajouter 1. Cela garantit que l'étiquette de Release sera libre et que le
-  numéro dépasse tout ce qui est déjà installé. Exemple (Rummikub) :
+  ajouter 1. Cela vise à garantir que l'étiquette de Release sera libre et
+  que le numéro dépasse tout ce qui est déjà installé. Exemple (Rummikub) :
   `version.json` indique 4, les étiquettes montent à `v12` → numéro 13.
+  Commandes utilisables par un Chat pour obtenir ces deux informations :
+  ```
+  curl -sL https://raw.githubusercontent.com/AlainDelree/<Projet>/master/version.json
+  git ls-remote --tags https://github.com/AlainDelree/<Projet>
+  ```
+  **Ne pas utiliser l'API GitHub non authentifiée** (`api.github.com`) pour
+  cette vérification : elle refuse rapidement les requêtes au-delà d'un
+  faible quota (limite de débit sans jeton). Pour un dépôt privé, ces deux
+  commandes échouent également sans authentification : c'est alors Alain
+  qui doit faire ces vérifications lui-même avant de transmettre le numéro.
 - **Vérifier les prérequis du script de build** propres au projet (voir la
   fiche du projet plus bas) — notamment l'emplacement d'Inno Setup pour un
   projet avec installeur.
@@ -54,7 +65,9 @@ il contient le modèle à utiliser en bas de page.
   Python, PyInstaller, Inno Setup), puis recopie les résultats dans
   `installeur\output` du worktree. Ce contournement existe parce qu'un
   build lancé directement dans un dossier partagé a produit des fichiers
-  tronqués.
+  tronqués. Ce dossier de build local et l'installation d'Inno Setup sont
+  utilisés par le **script**, pas par l'agent : l'agent n'a aucune raison
+  de lire ni d'écrire ailleurs que dans le worktree.
 - En mode publication (`--publier`), le script calcule le numéro de build,
   écrit `version.json` (numéro et somme SHA-256 de l'archive produite) et
   fait un commit local. **Il ne pousse jamais et ne crée jamais de Release**
@@ -64,7 +77,10 @@ il contient le modèle à utiliser en bas de page.
   Alain doit les récupérer avant de supprimer le worktree.
 - Commits attendus dans le worktree à l'issue d'un build réussi : une
   sauvegarde vide, le commit de `version.json` fait par le script, et
-  l'entrée de changelog `CHANGELOG-<numéro>.md` ajoutée par l'agent.
+  l'entrée de changelog `CHANGELOG-<numéro-de-l'issue>.md` ajoutée par
+  l'agent (le numéro est celui de l'issue de build, pas celui du build —
+  exemple réel : build 13 de Scrabble, fichier `CHANGELOG-470.md`, issue
+  470).
 
 ---
 
@@ -86,11 +102,21 @@ il contient le modèle à utiliser en bas de page.
 
 ## Ce que l'agent ne fait jamais
 
+- Il ne lance **jamais** `git pull` (le worktree est fixé sur sa branche ;
+  un `pull` n'y a aucune raison d'être et peut interagir avec l'état laissé
+  par un build précédent).
 - Il ne lance **jamais** `git push`.
 - Il ne crée **jamais** de Release GitHub (aucune commande `gh release`).
 - Il ne recompresse ni ne modifie l'archive produite par le script de
   build : sa somme SHA-256 ne correspondrait plus à celle de
   `version.json`.
+- Il ne lit ni n'écrit **jamais** hors du worktree : le dossier de build
+  local et Inno Setup sont utilisés par le script, pas par l'agent.
+- Il n'écrit **jamais** de jeton ni de secret dans son rapport : celui-ci
+  est publié en commentaire public sur l'issue GitHub.
+- Si une vérification préalable échoue, il **s'arrête sans rien
+  construire** plutôt que de poursuivre en espérant que l'étape suivante
+  corrige le problème.
 
 ---
 
@@ -99,17 +125,19 @@ il contient le modèle à utiliser en bas de page.
 1. Récupère les fichiers produits (`installeur\output` du worktree) avant
    de supprimer le worktree.
 2. Fusionne la branche du worktree dans `master` (en passant par
-   Relecture_Bridge), puis pousse.
-3. **Ordre de publication recommandé** (point à prendre comme une
-   recommandation, pas comme un fait établi) : le script lui-même rappelle
-   « git push, puis Release ». Or pousser `version.json` sur `master`
-   déclenche la recherche de l'archive par les clients (voir
-   « Actualise » ci-dessous). Créer la Release GitHub **d'abord**, puis
-   pousser, évite un intervalle où l'archive n'existe pas encore. Comment
-   Actualise réagit concrètement à une archive introuvable n'a pas été
-   vérifié.
-4. Vérifie qu'Actualise propose bien la mise à jour sur un PC de test.
-5. Supprime le worktree une fois les fichiers récupérés et la Release
+   Relecture_Bridge), **sans pousser** à ce stade.
+3. Crée la Release GitHub (étiquette `v<N>`, archive `<projet>-v<N>.zip`).
+   **Ordre de publication recommandé** (point à prendre comme une
+   recommandation, pas comme un fait établi) : créer la Release **avant**
+   de pousser — le script lui-même rappelle plutôt « git push, puis
+   Release », mais pousser `version.json` sur `master` déclenche la
+   recherche de l'archive par les clients (voir « Actualise » ci-dessous),
+   et créer la Release d'abord évite un intervalle où l'archive n'existe
+   pas encore. Comment Actualise réagit concrètement à une archive
+   introuvable n'a pas été vérifié.
+4. Pousse `master`.
+5. Vérifie qu'Actualise propose bien la mise à jour sur un PC de test.
+6. Supprime le worktree une fois les fichiers récupérés et la Release
    publiée.
 
 ---
@@ -141,17 +169,18 @@ liste de numéros, indépendante des autres.
 
 ### Rummikub
 
-- **Script de build** : `build\rebuild_rummikub.bat --publier`, option
-  `--build <N>` pour imposer le numéro de build (à confirmer en lisant
-  l'en-tête du script avant de s'y fier).
+- **Script de build** (ligne de commande exacte) :
+  `build\rebuild_rummikub.bat --publier --build <N>` — à confirmer en
+  lisant l'en-tête du script avant de s'y fier.
 - **Inno Setup** : le script doit chercher Inno Setup d'abord dans
   `C:\CCW\tools\InnoSetup6` (installé hors des dépôts), puis dans le
   dossier `.tools\InnoSetup6` du dépôt — ce second chemin n'existe pas
   dans un worktree, le dossier `.tools/` étant ignoré par git. **À
-  vérifier avant le premier build** : le script de Rummikub ne cherchait
-  jusqu'ici que dans `.tools\InnoSetup6` ; une correction est en cours
-  côté projet Rummikub pour ajouter la recherche dans
-  `C:\CCW\tools\InnoSetup6` en priorité.
+  vérifier avant le premier build**, en lisant le script, que cet ordre de
+  recherche (`C:\CCW\tools\InnoSetup6` avant `.tools\InnoSetup6`) y est
+  bien implémenté.
+- **`.spec`** : `rummikub.spec` — liste explicite des `datas`
+  (`src/rummikub/ui/web/`), aucun `collect_tree` en bloc.
 - **Deux garde-fous de taille distincts** (issue #57 — dist non compressé
   et installeur compressé sont deux grandeurs différentes) :
   - dossier non compressé : fourchette 20-45 Mo
@@ -160,15 +189,23 @@ liste de numéros, indépendante des autres.
 
 ### Scrabble
 
-- **Script de build** : `build\rebuild_scrabble.bat --publier <N>`.
+- **Script de build** (ligne de commande exacte) :
+  `build\rebuild_scrabble.bat --publier <N>`.
 - **Build de référence** : build 13, issue réussie, 283 secondes de durée
-  réelle — worktree `C:\CCW\worktrees\scrabble-ccw-issue470`.
+  réelle — worktree `C:\CCW\worktrees\scrabble-ccw-issue470`. Taille de
+  référence du build 13 (les dictionnaires ne sont plus embarqués, valeur
+  périmée avant cette correction) : archive 13 275 222 octets, installeur
+  12 843 901 octets, 77 fichiers dans l'archive.
 - **`.spec`** : `scrabble.spec`, liste explicite des `datas` (pas de
   `collect_tree` en bloc, suite à l'incident du dump wiktionnaire embarqué
   en bloc).
 
 ### Actualise
 
+- **Script de build** (ligne de commande exacte) :
+  `build\rebuild_actualise.bat --publier --build <N>` — numéro automatique
+  si `--build` est omis (`version.json` existant + 1).
+- **Dossier de build local** : `C:\Temp\ActualiseBuild`.
 - Pas d'étape Inno Setup — Actualise se distribue en `dist\Actualise\` nu
   via Release GitHub, pas d'installeur.
 - **`.spec`** : `actualise.spec` — `--onedir --noconsole` (invisible
@@ -178,36 +215,49 @@ liste de numéros, indépendante des autres.
   (manifeste `{"build": N, "supprimer": []}`), calcule le SHA-256, écrit
   `version.json`, fait un commit local — jamais de `git push` ni de
   Release GitHub.
+- **Durée de référence** : 90,47 secondes (build réel, marge confortable
+  avec un TIMEOUT de 1800s).
+- **Taille de référence** : `dist\Actualise\` non compressé, 20 970 000
+  octets environ (20,97 Mo, 29 fichiers) — `Actualise.exe` seul :
+  4 388 786 octets, SHA-256
+  `61A3373D6EE2D48A357E34BA9E967236B101F3F580BD98BC20DD667C86772F47`
+  (référence du 3 août 2026).
 
 ---
 
 ## Modèle d'issue de build
 
-Paramètres à remplacer : `<Projet>`, `<numéro-de-build>`, `<nom-du-script>`.
+Paramètres à remplacer : `<Projet>`, `<numéro-de-build>`,
+`<numéro-de-l'issue>` (connu seulement une fois l'issue créée, à reporter
+dans le nom du fichier de changelog), `<ligne-de-commande-exacte-du-script>`
+(donnée par la fiche du projet ci-dessus).
 
 ```
 #Titre: Build Windows <Projet> — version v<numéro-de-build>
 
-| Champ    | Valeur |
-|----------|--------|
-| PROJET   | <Projet> |
-| LABELS   | for-windows |
-| MODE     | écriture |
+| PROJET    | <Projet> |
+| REDACTEUR | <Projet> |
+| LABELS    | for-windows |
+| MODE      | écriture |
+| TIMEOUT   | 1800s |
 
 ## Contexte
 Build de publication de <Projet>, numéro de build <numéro-de-build>
 (calculé à partir de `version.json` sur master et de la plus haute
-étiquette `v<N>` existante, +1).
+étiquette `v<N>` existante, +1). Durées observées sur les builds déjà
+réalisés : entre 90 et 333 secondes selon le projet — 1800s de TIMEOUT
+laisse une marge confortable.
 
 ## Vérifications préalables
 - Branche et dossier de travail propres avant toute action.
 - Commit de sauvegarde avant toute modification.
 - [si installeur] Inno Setup disponible à l'emplacement attendu par le
   script.
+- Si une de ces vérifications échoue, s'arrêter sans rien construire.
 
 ## Construire
-Lancer <nom-du-script> --publier <numéro-de-build> avec l'outil
-PowerShell, depuis la racine du worktree (jamais Git Bash).
+Lancer <ligne-de-commande-exacte-du-script> avec l'outil PowerShell, depuis
+la racine du worktree (jamais Git Bash).
 
 ## Vérifier le résultat
 - `version.json` : numéro de build et SHA-256 de l'archive, recalculé et
@@ -220,9 +270,12 @@ PowerShell, depuis la racine du worktree (jamais Git Bash).
 - Avertissements éventuels du build.
 
 ## Ne pas publier
-Ne jamais lancer `git push`, ne jamais créer de Release GitHub (aucune
-commande `gh release`), ne jamais recompresser ni modifier l'archive
-produite.
+Ne jamais lancer `git push` ni `git pull`, ne jamais créer de Release
+GitHub (aucune commande `gh release`), ne jamais recompresser ni modifier
+l'archive produite. Ne rien lire ni écrire hors du worktree (le dossier de
+build local et Inno Setup sont utilisés par le script, pas par l'agent).
+N'écrire aucun jeton ni secret dans le rapport : il est publié en
+commentaire public sur GitHub.
 
 ## Conduite en cas d'échec
 Rapporter l'erreur rencontrée (sortie du script, étape atteinte) sans
@@ -230,7 +283,7 @@ tenter de contournement ; ne rien pousser.
 
 ## Contraintes
 Fichiers modifiés limités à `version.json` et à l'entrée de changelog
-`CHANGELOG-<numéro-de-build>.md`.
+`CHANGELOG-<numéro-de-l'issue>.md` (numéro de l'issue, pas du build).
 
 ## Rapport attendu
 Résultat des vérifications ci-dessus, chemin des fichiers produits dans
