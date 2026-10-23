@@ -613,6 +613,11 @@ d'abord les sources en local sur le PC Windows, builder entièrement là,
 puis ne recopier que l'artefact final vers le partage. Détails et
 checklist par projet : `BUILD_WINDOWS_CCW.md`.
 
+**Avant de rédiger une issue de build Windows**, lire
+`BUILD_WINDOWS_CCW.md` avec
+`curl -sL https://raw.githubusercontent.com/AlainDelree/Bridge_Agent/master/BUILD_WINDOWS_CCW.md`
+— il contient le modèle d'issue à utiliser.
+
 **Issue coincée.** Le bouton ⛔ « Interrompre cette issue » de l'interface
 web arrête le service côté Windows et nettoie son verrou si le process est
 bien confirmé mort ; l'issue n'est **pas** fermée (label `needs-human`
@@ -657,7 +662,7 @@ calibration (constantes actuelles du code : `K_VARIABILITE` = 3, issue
 
 ---
 
-*Dernière mise à jour : 23 octobre 2026 — §11 : retrait de la mention de
-`autounattend.xml` (supprimé, issue #801).*
+*Dernière mise à jour : 23 octobre 2026 — §16 : règle de lecture de
+`BUILD_WINDOWS_CCW.md` avant une issue de build Windows (issue #802).*
 
 Historique complet : voir [`CHANGELOG.md`](CHANGELOG.md).
