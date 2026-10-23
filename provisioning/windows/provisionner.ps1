@@ -1,6 +1,5 @@
 ﻿<#
-  provisionner.ps1 — Provisioning LOGICIEL du PC fixe Windows CCW (issue #450,
-  suite #447 — le PC fixe physique a remplacé la VM VirtualBox CCW-Build).
+  provisionner.ps1 — Provisioning LOGICIEL du PC fixe Windows CCW (issue #450).
 
   Ce script s'exécute SUR le PC fixe, manuellement dans une console
   PowerShell ADMINISTRATEUR (ou via la session SSH ouverte par
@@ -9,11 +8,6 @@
   éval 90 jours). Il installe l'outillage nécessaire à l'agent Claude Code
   Windows (CCW) puis met en place le service Windows (NSSM) qui lancera le
   watcher au démarrage.
-
-  Historiquement (phase 2, issue #147), il était poussé et exécuté à
-  distance depuis CCL par lancer_provisioning.py (VBoxManage guestcontrol)
-  dans la VM CCW-Build — ce mode reste documenté à titre historique mais
-  n'a plus lieu d'être sur le PC physique : lancement manuel uniquement.
 
   Ce qu'il fait :
     1. installe Git, GitHub CLI (gh), Python 3.12 et NSSM par TÉLÉCHARGEMENT

@@ -2488,9 +2488,6 @@ function ouvrirModalInterrompre(resultat, avertTree) {
   let rappelTexte = resultat.agent === 'windows'
     ? 'Service CCW-Watcher arrêté — relance via l\'onglet CCW (pas de rallumage automatique).'
     : 'Relance manuelle du watcher obligatoire (panneau latéral Infrastructure) — pas de rallumage automatique.';
-  if (resultat.agent === 'windows' && resultat.vm_running === false) {
-    rappelTexte += ' ⚠ La VM CCW-Build ne semble pas démarrée actuellement.';
-  }
   if (resultat.statut_global === 'echec_critique') {
     rappelTexte += " ⛔ Un process n'a pas pu être confirmé mort — vérifiez avec ps / le "
                  + 'Gestionnaire des tâches AVANT de relancer le watcher (le verrou a été '

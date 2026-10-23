@@ -164,9 +164,8 @@ function ccwOccupe(idBtn, occupe, labelOccupe) {
   }
 }
 
-// Ouverture de l'onglet : liste des projets (le PC fixe est toujours allumé,
-// plus d'état de VM à vérifier — issue #447). Appelée via le pont par
-// onglets.js (voir en-tête).
+// Ouverture de l'onglet : liste des projets (le PC fixe est toujours allumé).
+// Appelée via le pont par onglets.js (voir en-tête).
 export function ccwOuvrirOnglet() {
   ccwChargerProjets();
 }
@@ -280,8 +279,9 @@ function ccwPreselectionnerProjet(nom) {
 }
 
 // Redémarre le service d'un projet CCW (issue #180) : simple « nssm restart »
-// côté VM, sans reposer topic ni tokens. Le bouton passé (btn) est désactivé le
-// temps de l'opération. Résultat affiché dans le bandeau + le terminal communs.
+// sur le PC fixe, sans reposer topic ni tokens. Le bouton passé (btn) est
+// désactivé le temps de l'opération. Résultat affiché dans le bandeau + le
+// terminal communs.
 export async function ccwRedemarrerProjet(nom, btn) {
   if (!nom) return;
   const ok = await toasts.confirmer(
@@ -310,8 +310,9 @@ export async function ccwRedemarrerProjet(nom, btn) {
   }
 }
 
-// Démarre le service d'un projet CCW (issue #203) : « nssm start » côté VM,
-// contrôle indépendant du redémarrage. Même pattern que ccwRedemarrerProjet.
+// Démarre le service d'un projet CCW (issue #203) : « nssm start » sur le
+// PC fixe, contrôle indépendant du redémarrage. Même pattern que
+// ccwRedemarrerProjet.
 async function ccwDemarrerProjet(nom, btn) {
   if (!nom) return;
   const labelInitial = btn ? btn.textContent : null;
@@ -335,8 +336,9 @@ async function ccwDemarrerProjet(nom, btn) {
   }
 }
 
-// Arrête le service d'un projet CCW (issue #203) : « nssm stop » côté VM, pour
-// libérer des ressources sans le relancer aussitôt. Confirmation demandée.
+// Arrête le service d'un projet CCW (issue #203) : « nssm stop » sur le PC
+// fixe, pour libérer des ressources sans le relancer aussitôt. Confirmation
+// demandée.
 async function ccwArreterProjet(nom, btn) {
   if (!nom) return;
   const ok = await toasts.confirmer(

@@ -1,12 +1,11 @@
 """Onglet CCW — pilotage du PC Windows physique CCW et de ses projets depuis
 Linux.
 
-Issue #174 (VBoxManage guestcontrol), remplacé par SSH en issue #447 (CCW
-tourne désormais sur un PC fixe physique, plus de VM VirtualBox). Cet onglet
-remplace l'usage manuel de PowerShell SUR le PC pour les opérations courantes
-(ajout de projet, finalisation avec tokens) : tout est piloté depuis CCL
-(Linux) via SSH/SCP. Les scripts PowerShell existants restent l'implémentation
-sous-jacente, appelés à distance — seul le transport a changé.
+Cet onglet pilote le PC fixe Windows CCW depuis CCL (Linux) via SSH/SCP,
+remplaçant l'usage manuel de PowerShell SUR le PC pour les opérations
+courantes (ajout de projet, finalisation avec tokens). Les scripts
+PowerShell existants restent l'implémentation sous-jacente, appelés à
+distance — seul le transport a changé.
 
 SÉCURITÉ — tokens (impératif) :
   Les valeurs de tokens (GH_TOKEN, CLAUDE_CODE_OAUTH_TOKEN) ne transitent

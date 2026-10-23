@@ -37,10 +37,6 @@
 // ES), plus via le pont — voir l'en-tête de ccw.js pour le sens inverse
 // (ccw.js → ce module, resté sur le pont pour éviter un cycle d'imports).
 //
-// MONITORING VM SUPPRIMÉ (issue #628) : l'ancien appel à /ccw/vm-statut (route
-// disparue côté serveur depuis #447, VirtualBox retiré) et le bouton
-// sidebarDemarrerVm (jamais défini) n'existent plus.
-//
 // MUTUALISATION /watchers (issue #628) : rafraichirWatchersPartages() est
 // l'UNIQUE source de lecture de /watchers, écrite dans store.watchers — le
 // bandeau de repli REP_TRAVAIL (static/js/app.js) s'y abonne désormais au lieu

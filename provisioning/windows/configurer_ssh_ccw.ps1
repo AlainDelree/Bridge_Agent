@@ -7,8 +7,8 @@
   C'est la PREMIÈRE des deux étapes manuelles de remise en service du PC
   fixe, suivie de provisionner.ps1 (logiciels + service CCW-Watcher).
 
-  Remplace la procédure faite manuellement lors de la bascule VM → PC
-  physique (issue #447) : installation d'OpenSSH Server, règle pare-feu,
+  Remplace la procédure faite manuellement lors de la mise en service du
+  PC fixe (issue #447) : installation d'OpenSSH Server, règle pare-feu,
   clé publique CCL dans administrators_authorized_keys (accès SSH en tant
   qu'administrateur local, requis pour piloter le PC depuis l'onglet CCW),
   permissions du fichier de clés, activation de PubkeyAuthentication.
