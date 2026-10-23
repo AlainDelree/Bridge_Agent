@@ -276,9 +276,7 @@
       d'onglet et à l'ouverture/fermeture du panneau. À vérifier avec un
       rechargement complet (Ctrl+Maj+R, pas juste F5) pour écarter tout ancien
       CSS/JS caché en cache de navigateur.
-- [ ] Zone monitoring : une ligne par watcher CCL / service CCW. **Plus aucune
-      ligne « VM » et plus aucune requête `/ccw/vm-statut`** (onglet Réseau,
-      F12) — route disparue côté serveur depuis #447 (issue #628).
+- [ ] Zone monitoring : une ligne par watcher CCL / service CCW.
 - [ ] **Bouton « ⏹ Arrêter » par watcher CCL (issue #655)** : visible
       **seulement** à côté de « ↺ Relancer » sur un watcher **actif** (🟢) —
       absent quand il est éteint (⚫, bouton « ▶ Lancer » seul). Cliquer

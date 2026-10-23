@@ -40,12 +40,8 @@ résultat différent et n'est pas celui utilisé jusqu'ici.
 > commodité, en tenir compte au §2 (ordre de boot) et au §3 (le
 > comportement de réparation en place peut différer).
 
-Avant de graver, **ne PAS injecter** de fichier `autounattend.xml` sur la
-clé pour un usage physique manuel sur ce PC — `autounattend.xml` (ce
-dossier) est prévu pour le provisioning **automatisé de la VM CCW-Build**
-(`creer_vm_ccw.py`), pas pour la réinstallation physique du PC fixe décrite
-ici. Une installation manuelle classique (écrans OOBE répondus à la main)
-est le cas normal pour ce PC.
+Une installation manuelle classique (écrans OOBE répondus à la main) est le
+cas normal pour ce PC.
 
 ### 2. Booter depuis la clé USB
 

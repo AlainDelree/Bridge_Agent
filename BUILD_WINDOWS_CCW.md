@@ -13,9 +13,11 @@ la plus récente en premier. Ne pas renuméroter les entrées existantes.
 
 ## Pattern général — staging local (issue #297)
 
-Un build PyInstaller/Inno Setup lancé **directement** sur
-`\\VBOXSVR\CCW_Share` peut produire des fichiers tronqués/corrompus
-(diagnostiqué sur Scrabble, fix #338).
+Un build PyInstaller/Inno Setup lancé **directement** sur un dossier réseau
+partagé peut produire des fichiers tronqués/corrompus (diagnostiqué sur
+Scrabble, fix #338). Les builds s'exécutent dans le dossier du projet sous
+`C:\CCW` (clone GitHub local) ; `C:\CCW_Share` est le dossier partagé du PC
+fixe.
 
 **Contournement standard :** le script de build copie d'abord les sources
 vers un répertoire local au PC fixe CCW (`C:\Temp\<Projet>Build` ou équivalent),

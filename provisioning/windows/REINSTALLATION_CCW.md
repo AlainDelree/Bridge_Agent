@@ -28,9 +28,10 @@ niveau système (service + stratégie/registre + tâches planifiées) — à ne
 pas confondre avec la désactivation faite par `provisionner.ps1` à l'étape
 4 ci-dessous, qui n'agit qu'au niveau de son propre provisioning.
 
-`autounattend.xml` de ce dossier n'intervient PAS dans cette étape : il est
-réservé au provisioning automatisé de la VM `CCW-Build`
-(`creer_vm_ccw.py`), pas à la réinstallation physique du PC fixe.
+**Conséquence de l'expiration de la licence d'évaluation (90 jours).** Une
+fois cette échéance dépassée, Windows redémarre toutes les heures, ce qui
+casse le service `CCW-Watcher`. L'échéance se suit dans l'annuaire (projet
+AnnuaireToken) ; réinstaller avant qu'elle n'arrive.
 
 ### 2. Configurer l'accès SSH depuis CCL
 
