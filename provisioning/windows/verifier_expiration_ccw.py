@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Vérifie combien de jours restent avant l'expiration de l'évaluation 90 jours
-de la VM Windows CCW-Build (côté Linux/CCL).
+du PC Windows CCW-Build (côté Linux/CCL).
 
 Lit provisioning/windows/eval-expiration.json, recalcule la date d'expiration à
 partir de `date_installation` + `eval_jours` (la clé `date_expiration` du fichier

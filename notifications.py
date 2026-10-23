@@ -8,8 +8,8 @@ watcher.py, afin qu'elle soit importable par les DEUX programmes :
   • watcher.py    (agent CCL / CCW) — notifie à la fin d'une issue qu'il traite ;
   • new_issue.py  (interface web, tourne en permanence sur le ThinkPad d'Alain) —
     détecte les transitions d'issues par polling GitHub et notifie localement,
-    y compris pour les issues traitées par la VM Windows (CCW), sans qu'aucun
-    appel réseau ne soit initié par la VM.
+    y compris pour les issues traitées par le PC Windows (CCW), sans qu'aucun
+    appel réseau ne soit initié par le PC CCW.
 
 Les fonctions sont VOLONTAIREMENT sans état et sans dépendance à l'objet global
 `CFG` de watcher.py ni à Flask : tout ce dont elles ont besoin (nom du projet,

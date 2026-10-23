@@ -562,7 +562,7 @@ def interrompre_windows(cfg) -> list:
             "message": item.get("message", ""),
         })
     if not etapes:
-        return _etapes_windows_echec("Réponse de la VM vide ou illisible.")
+        return _etapes_windows_echec("Réponse du PC CCW vide ou illisible.")
     return etapes
 
 

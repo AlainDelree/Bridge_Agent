@@ -525,7 +525,7 @@ class Config:
     fichier_contexte: str  = ""    # fichier de contexte projet injecté dans le prompt (chemin relatif au rep_travail ou absolu ; vide = aucun)
     couleur: str           = ""    # couleur d'accent du projet dans l'interface (hex #RRGGBB ; vide = repli map fixe/hash côté frontend)
     perimetre_dynamique: bool = False  # périmètre fourni par l'issue (REPO_CIBLE) plutôt que figé dans le .conf — outil d'audit multi-dépôts (issue #125)
-    notifier_local: bool   = True  # ce watcher émet-il lui-même bip/notify-send/ntfy à la fin d'une issue (issue #187) ? True = comportement historique. Mettre à False sur la VM CCW (et éventuellement CCL) pour laisser new_issue.py notifier de façon centralisée sur le ThinkPad, sans doublon.
+    notifier_local: bool   = True  # ce watcher émet-il lui-même bip/notify-send/ntfy à la fin d'une issue (issue #187) ? True = comportement historique. Mettre à False sur le PC CCW (et éventuellement CCL) pour laisser new_issue.py notifier de façon centralisée sur le ThinkPad, sans doublon.
     delai_inactivite_min: int = 20  # auto-extinction : minutes sans aucune issue traitable avant que le watcher ne s'arrête proprement (issue #200). 0 = désactivé (le watcher tourne indéfiniment, comportement historique).
     libelle_agent: str     = ""    # libellé de l'agent affiché dans l'ACK (ex. "agent Linux", "agent Windows") — vide = déduit automatiquement de la plateforme (issue #239)
     max_write_parallele: int = 2   # parallélisation mode_write via git worktrees (issue #337) : nombre max de tâches mode_write concurrentes, effectivement appliqué (déjà plafonné à 4, issue #568). 1 = comportement séquentiel historique (aucun worktree, aucun thread). 0 = désactivé (identique à 1).
@@ -816,7 +816,7 @@ def notifier(labels: list[str], titre: str, message: str,
     n'émet AUCUN signal lui-même — la notification est laissée à new_issue.py,
     qui détecte la transition par polling GitHub et notifie de façon centralisée
     sur le ThinkPad d'Alain (évite les doublons, et fait remonter les transitions
-    CCW dont le bip/notify-send tomberaient sinon dans la VM). Par défaut True :
+    CCW dont le bip/notify-send tomberaient sinon sur le PC CCW). Par défaut True :
     comportement historique préservé (notamment CCL, déjà fonctionnel).
 
     `numero`, si fourni, permet au bip de notifier new_issue.py de la fin de

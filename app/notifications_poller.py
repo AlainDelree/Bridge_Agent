@@ -5,15 +5,15 @@ notification centralisée (issue #187).
 Pourquoi ce module existe
 -------------------------
 Jusqu'ici, c'est watcher.py qui émettait bip/notify-send/ntfy à la fin d'une
-issue qu'il traitait. Problème : le watcher CCW tourne dans la VM Windows — son
+issue qu'il traitait. Problème : le watcher CCW tourne sur le PC Windows — son
 bip et sa bulle bureau y restent, hors de portée d'Alain, et son ntfy ferait
 doublon avec une éventuelle notification centralisée.
 
-Plutôt que la VM ouvre un canal réseau vers le ThinkPad (surface d'attaque,
+Plutôt que le PC CCW ouvre un canal réseau vers le ThinkPad (surface d'attaque,
 NAT, secret partagé — approche écartée), new_issue.py — qui tourne en
 permanence sur le ThinkPad — détecte LUI-MÊME les transitions en interrogeant
 GitHub via `gh` (exactement comme il le fait déjà pour l'onglet Résultats et
-les badges). La VM continue de n'écrire QUE sur GitHub (labels, commentaires) ;
+les badges). Le PC CCW continue de n'écrire QUE sur GitHub (labels, commentaires) ;
 new_issue.py lit ces écritures par polling et déclenche les notifications
 localement, sur le ThinkPad, quel que soit l'agent (CCL ou CCW) à l'origine.
 
@@ -86,7 +86,7 @@ Anti-doublon (issue #187, point 4 ; portée du BIP seule depuis #693)
 Ce poller et watcher.py peuvent tous deux notifier (bip/bulle/ntfy). Pour
 éviter qu'Alain reçoive deux fois le même signal, deux réglages se combinent :
   • côté watcher : `NOTIFIER_LOCAL = false` dans le .conf coupe la notification
-    locale du watcher (à poser sur la VM CCW, et sur CCL si l'on bascule en
+    locale du watcher (à poser sur le PC CCW, et sur CCL si l'on bascule en
     centralisation complète) ;
   • côté poller  : la portée `BRIDGE_NOTIF_SCOPE` restreint désormais
     UNIQUEMENT le bip/bulle/ntfy effectivement émis par ce poller
