@@ -54,6 +54,18 @@ le ThinkPad** (CCL) — la clé publique correspondant à la clé privée
 
 Depuis le ThinkPad :
 
+> **Avant ce premier test.** La réinstallation de Windows (étape 1) fait
+> générer une nouvelle clé d'hôte au serveur SSH du PC fixe ; le ThinkPad
+> refuse alors la connexion tant qu'il se souvient de l'ancienne. Oublier
+> l'ancienne clé avant de tester :
+> ```bash
+> ssh-keygen -R <ip>
+> ```
+> (même `<ip>` que celle utilisée ci-dessous.) Ceci vaut aussi bien pour
+> Bridge_Agent (onglet **CCW**, démarrage automatique des services) que pour
+> `relecture_web` : les deux partagent le même fichier `~/.ssh/known_hosts`
+> sur le ThinkPad.
+
 ```bash
 ssh -i ~/.ssh/ccl_ccw AlainW@<ip>
 ```
@@ -61,6 +73,30 @@ ssh -i ~/.ssh/ccl_ccw AlainW@<ip>
 (`<ip>` = adresse IP locale du PC fixe.) La connexion doit s'établir sans
 demande de mot de passe. En cas d'échec, revérifier l'étape 2 (OpenSSH
 Server actif, clé bien copiée dans `authorized_keys`) avant de poursuivre.
+
+**Adresse du PC fixe.** Elle est réservée sur la box pour la carte réseau du
+PC fixe : `<ip>` reste donc identique après une réinstallation, tant que la
+carte réseau elle-même ne change pas. Si elle change malgré tout, mettre à
+jour l'adresse à deux endroits : la configuration SSH de Bridge_Agent
+(`configs/ccw_ssh.conf`, clé `HOTE`, ou variable d'environnement
+`CCW_SSH_HOTE` — voir `app/ccw.py`) et le fichier personnel `ccw_host.conf`
+de `relecture_web` (hors dépôt, projet Relecture_Bridge).
+
+**Diagnostic d'un échec.** Le message affiché par `ssh` indique la cause :
+
+| Message                        | Cause probable                                             | Vérification |
+|---------------------------------|--------------------------------------------------------------|---------------|
+| `Host key verification failed` | Clé d'hôte modifiée par la réinstallation                     | Voir l'encadré ci-dessus (`ssh-keygen -R <ip>`) |
+| `Permission denied (publickey)`| Clé publique absente ou mal copiée dans `authorized_keys`    | Revoir l'étape 2 |
+| `Connection refused`           | Le serveur SSH du PC fixe n'écoute pas                        | Vérifier que le service OpenSSH est démarré sur le PC fixe |
+| Délai dépassé (pas de réponse) | Adresse incorrecte, ou PC fixe éteint ou injoignable          | Vérifier `<ip>` et le réseau |
+
+> ⚠️ **Symptôme à connaître.** Quand la clé d'hôte est la cause (premier cas
+> ci-dessus), `relecture_web` affiche « PC fixe éteint ou injoignable » — un
+> message trompeur, puisque le PC fixe est bien allumé et joignable. Côté
+> Bridge_Agent, l'onglet **CCW** échoue de la même façon, et le démarrage
+> automatique des services à la création d'une issue `for-windows` échoue
+> aussi, **sans aucun message**.
 
 ### 4. Provisionner le logiciel
 
