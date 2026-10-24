@@ -5,8 +5,8 @@ __pycache__/
 *.pyc
 venv/
 ssl/
-# Copie locale d'autounattend.xml avec le vrai mot de passe (placeholder
-# remplacé) — ne doit JAMAIS être committée. Cf. en-tête d'autounattend.xml.
+# Ancienne copie locale d'un fichier de réponses d'installation Windows,
+# contenant un mot de passe réel — ne doit JAMAIS être committée.
 provisioning/windows/autounattend.local.xml
 # Bibliothèque de templates d'issues récurrentes par projet (issue #284) :
 # état de formulaire local, pas du code — jamais committé.
