@@ -193,11 +193,13 @@ l'écriture disque, horodatée dans `logs/configs_legitimes.json` (purge
 automatique au-delà d'une heure, `DUREE_VALIDITE_S`). `_restaurer_configs_modifies`
 consulte cette trace avant d'agir sur un fichier changé : une action légitime
 postérieure au début du traitement de l'issue n'est ni annulée ni restaurée
-(message INFO au lieu du WARNING habituel). Seuls ces trois points appellent
-`enregistrer()` — le traitement d'une issue (`watcher.py`, `lancer_claude`,
-`traiter_issue`) n'appelle jamais cette fonction, seulement sa contrepartie en
-lecture (`instant_legitime`) : une issue ne peut donc pas s'ajouter elle-même
-à cette trace.
+(message INFO au lieu du WARNING habituel). Un quatrième point appelle aussi
+`enregistrer()` depuis l'issue #804 : l'écriture automatique de la clé
+`REP_TRAVAIL_CCW` par `app/projet_ccw.py` (`_ecrire_rep_travail_ccw`). Seuls
+ces quatre points appellent `enregistrer()` — le traitement d'une issue
+(`watcher.py`, `lancer_claude`, `traiter_issue`) n'appelle jamais cette
+fonction, seulement sa contrepartie en lecture (`instant_legitime`) : une
+issue ne peut donc pas s'ajouter elle-même à cette trace.
 
 Ce garde-fou technique (`watcher.py`, issue #318) ne distingue pas une
 modification manuelle d'Alain (édition directe d'un `configs/*.conf`

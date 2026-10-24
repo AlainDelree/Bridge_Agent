@@ -25,10 +25,18 @@ il contient le modèle à utiliser en bas de page.
 
 ## Avant de déposer l'issue
 
-- **Le service doit déjà tourner.** Chaque projet a son propre service
-  Windows dédié (nom du type `CCW-Watcher-<Projet>`). Démarrer ce service
-  depuis l'onglet CCW de l'interface web **avant** de déposer l'issue :
-  créer l'issue ne le rallume pas.
+- **Le service se démarre normalement tout seul.** Chaque projet a son
+  propre service Windows dédié (nom du type `CCW-Watcher-<Projet>`),
+  éteint par défaut : depuis les issues #709/#711, créer une issue
+  `for-windows` par le formulaire web ou par un fichier déposé dans
+  `issues_inbox/` le démarre automatiquement en arrière-plan. Un échec
+  (SSH par exemple) ne fait pas échouer la création de l'issue et
+  n'affiche aucun message — si l'issue ne démarre pas, regarder l'onglet
+  CCW. Deux cas ne bénéficient pas de ce démarrage automatique et exigent
+  de démarrer le service à la main (`nssm start <service>` ou bouton
+  **Démarrer** de l'onglet CCW) avant de déposer l'issue : une issue créée
+  par `gh issue create` direct, et `new_issue.py` lancé nativement sous
+  Windows.
 - **Calculer le numéro de build.** Regarder sur GitHub où en est le
   projet : prendre le plus haut entre le `build` de `version.json` sur la
   branche `master` et la plus haute étiquette `v<N>` du dépôt, puis
@@ -116,9 +124,23 @@ il contient le modèle à utiliser en bas de page.
   local et Inno Setup sont utilisés par le script, pas par l'agent.
 - Il n'écrit **jamais** de jeton ni de secret dans son rapport : celui-ci
   est publié en commentaire public sur l'issue GitHub.
-- Si une vérification préalable échoue, il **s'arrête sans rien
-  construire** plutôt que de poursuivre en espérant que l'étape suivante
-  corrige le problème.
+- La branche courante est celle de cette issue ; si `git status --short` ne
+  montre rien, un commit de sauvegarde vide est fait avant toute action.
+  S'il montre des modifications, il s'agit probablement d'une reprise
+  d'une tentative précédente de cette même issue : vérifier ce travail
+  avant de le conserver, ne pas le refaire, et l'indiquer en tête du
+  rapport. Il **s'arrête seulement** si la branche courante n'est pas
+  celle de l'issue ou si le commit de départ n'est pas un ancêtre de
+  `HEAD`.
+- Pour une issue de build, **le numéro de build est toujours imposé
+  explicitement** (jamais laissé au script) : une reprise qui laisserait
+  le script choisir le numéro après qu'une tentative précédente a déjà
+  écrit `version.json` sauterait un numéro. Si le script refuse ce numéro
+  parce qu'il n'est pas strictement supérieur à celui de `version.json`,
+  c'est que le build a déjà été écrit par une tentative précédente :
+  vérifier ce travail existant plutôt que de le refaire. Les fichiers
+  produits par une tentative interrompue ne sont jamais réutilisés tels
+  quels — le script est toujours relancé entièrement.
 
 ---
 
@@ -134,7 +156,8 @@ il contient le modèle à utiliser en bas de page.
    récemment (ex. création d'un nouveau projet CCW), compter environ cinq
    minutes après le push avant que l'entrée `_ccw` apparaisse dans l'outil
    (cache de `raw.githubusercontent.com`). **Sans pousser** à ce stade.
-3. Crée la Release GitHub (étiquette `v<N>`, archive `<projet>-v<N>.zip`).
+3. Crée la Release GitHub (étiquette `v<N>`), avec **DEUX fichiers** :
+   l'installeur `<Projet>-Setup-v<N>.exe` et l'archive `<projet>-v<N>.zip`.
    **Ordre de publication recommandé** (point à prendre comme une
    recommandation, pas comme un fait établi) : créer la Release **avant**
    de pousser — le script lui-même rappelle plutôt « git push, puis
@@ -223,7 +246,47 @@ liste de numéros, indépendante des autres.
 
 ### Actualise
 
-La fiche d'Actualise est en cours de révision : son processus de build (trois scripts séparés, publication qui n'écrit pas `version.json`) diffère de celui de Rummikub et de Scrabble et doit être uniformisé. **Ne pas rédiger d'issue de build d'Actualise d'après ce guide avant la mise à jour de cette fiche.**
+- **Script de build** (ligne de commande exacte) :
+  `build\rebuild_actualise.bat --publier [--build N]` — sans `--build`, le
+  numéro est le build de `version.json` plus 1.
+- **Dix étapes** numérotées de 0 à 9 (Rummikub et Scrabble n'en ont que
+  neuf, de 0 à 8), parce qu'Actualise produit deux builds PyInstaller
+  distincts (`Actualise.exe` en dossier, `ActualiseUI.exe` en fichier
+  unique) et a une étape d'archive séparée.
+- **Inno Setup** : trouvé dans `C:\CCW\tools\InnoSetup6\ISCC.exe`.
+- **Artefacts et dossier fixe** : `Actualise-Setup-v<N>.exe` et
+  `actualise-v<N>.zip` produits dans `installeur\output` du worktree, et
+  copiés en plus dans `C:\CCW_Share\_derniers_builds\actualise\` **dans
+  tous les modes**, même sans `--publier`.
+- **Garde-fou** (issue #71 d'Actualise) : le script refuse, avant toute
+  copie, construction ou écriture et dans tous les modes, un numéro qui
+  n'est pas un entier strictement supérieur au build de `version.json`,
+  ainsi que `--build` sans valeur et tout argument inconnu, avec un
+  message et le code de sortie 1.
+- **Archive** : 31 entrées — à la racine `Actualise.exe`, `ActualiseUI.exe`,
+  `manifest.json` (`{"build": N, "supprimer": []}`, sans BOM UTF-8) et le
+  dossier `_internal` (28 entrées).
+- **Tailles de référence (build 11, publié)** : installeur 20 641 285
+  octets ; archive 20 575 302 octets ; `Actualise.exe` 4 159 103 octets ;
+  `dist\Actualise` non compressé 21 635 190 octets ; `ActualiseUI.exe`
+  entre 10 314 263 et 10 315 521 octets selon la reconstruction.
+- **Durée observée** : environ 2 minutes pour le script ; les issues #70
+  et #71 d'Actualise ont pris respectivement 668 et 675 secondes en tout.
+- **Release à deux fichiers** : comme pour Rummikub et Scrabble, la
+  Release porte l'installeur ET l'archive, créée par Alain avant de
+  pousser `master`.
+- **Essais toujours en `--build 99`**, jamais avec le numéro automatique ni
+  avec un numéro proche d'un build réel : la copie vers le dossier fixe
+  (`C:\CCW_Share\_derniers_builds\actualise\`) a lieu dans tous les modes.
+  Alain supprime à la main les fichiers de l'essai après coup.
+- **Particularité : Actualise se met à jour lui-même.** Ne jamais publier
+  un build d'essai ; tester la mise à jour automatique sur un PC avant de
+  généraliser, car une archive défectueuse pourrait empêcher les mises à
+  jour suivantes. Le nouvel `updater.bat` (issue #68 d'Actualise) ne
+  s'exécutera chez un client qu'à la mise à jour de la v12 à la v13.
+- **Remarque PowerShell** : avec `2>&1`, une ligne d'information de
+  PyInstaller apparaît comme `NativeCommandError` — ce n'est pas une
+  erreur (code de sortie 0 malgré cette apparence).
 
 ---
 
@@ -256,14 +319,28 @@ Durées observées sur les builds déjà réalisés : entre 90 et 333 secondes
 selon le projet — 1800s de TIMEOUT laisse une marge confortable.
 
 ## Vérifications préalables
-- Branche et dossier de travail propres avant toute action.
-- Commit de sauvegarde avant toute modification.
+- La branche courante est celle de cette issue ; si `git status --short` ne
+  montre rien, un commit de sauvegarde vide est fait avant toute action.
+  S'il montre des modifications, il s'agit probablement d'une reprise
+  d'une tentative précédente de cette même issue : vérifier ce travail
+  avant de le conserver, ne pas le refaire, et l'indiquer en tête du
+  rapport.
 - Le commit à construire (<commit-a-construire>) est un ancêtre de `HEAD` :
   `git merge-base --is-ancestor <commit-a-construire> HEAD`.
+- Le numéro de build (<numéro-de-build>) est toujours imposé explicitement
+  à la ligne de commande, jamais laissé au script : en cas de reprise, le
+  laisser choisir sauterait un numéro si une tentative précédente a déjà
+  écrit `version.json`.
 - [si installeur] Inno Setup disponible à l'emplacement attendu par le
   script.
 - [vérifications propres au projet, recopiées depuis sa fiche ci-dessus]
-- Si une de ces vérifications échoue, s'arrêter sans rien construire.
+- S'arrêter seulement si la branche courante n'est pas celle de l'issue ou
+  si le commit de départ n'est pas un ancêtre de `HEAD`. Si le script
+  refuse le numéro imposé parce qu'il n'est pas strictement supérieur à
+  celui de `version.json`, c'est que le build a déjà été écrit par une
+  tentative précédente : vérifier ce travail existant plutôt que de le
+  refaire — ne jamais réutiliser tels quels les fichiers produits par une
+  tentative interrompue, le script est toujours relancé entièrement.
 
 ## Construire
 Lancer <ligne-de-commande-exacte-du-script> avec l'outil PowerShell, depuis
