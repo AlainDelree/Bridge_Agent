@@ -301,7 +301,7 @@ function Installer-Winget($id, $nom) {
 #   -RegisterByFamilyName échoue pareillement. Microsoft fournit un installeur
 #   autonome officiel (.exe) qui déploie EN UNE FOIS tous les paquets du Windows
 #   App SDK Runtime (framework, main, singleton, DDLM), silencieusement, tant
-#   qu'il est lancé en élevé — acquis sur CCW-Build depuis la désactivation d'UAC.
+#   qu'il est lancé en élevé.
 #
 #   URL VÉRIFIÉE le 2026-07-19 sur la page officielle « Latest Windows App SDK
 #   downloads » + son archive (un lien figé de ce type a déjà été signalé cassé,
@@ -363,8 +363,8 @@ function Install-WindowsAppRuntime {
         }
     }
 
-    # (3) Installation SILENCIEUSE (--quiet). Requiert l'élévation (acquise sur
-    #     CCW-Build, UAC désactivé) : sans elle, l'installeur renvoie 0x80070005.
+    # (3) Installation SILENCIEUSE (--quiet). Requiert l'élévation :
+    #     sans elle, l'installeur renvoie 0x80070005.
     #     Un .exe natif ne lève pas d'exception sur code non nul — on teste
     #     explicitement $LASTEXITCODE (0x0 = succès).
     try {
