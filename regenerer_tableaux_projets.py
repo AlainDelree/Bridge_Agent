@@ -20,6 +20,15 @@ pas un projet watcher) est ignoré silencieusement. Les projets sont triés
 par ordre alphabétique du NOM (l'ordre chronologique d'ajout historique
 n'est pas reconstituable depuis le disque).
 
+Clé optionnelle REP_TRAVAIL_CCW (issue #804) : un projet qui a un clone
+Windows dédié (`.conf` portant cette clé) reçoit, dans le tableau §2
+UNIQUEMENT, une ligne supplémentaire `<nom>_ccw` juste après la sienne — un
+chemin Windows (barres obliques inverses), seul format que l'outil de
+relecture distant (`relecture_web`) reconnaît comme un projet distant.
+Cette ligne est réservée à la relecture (voir la note statique sous le
+tableau dans BRIDGE_AGENT_DOC.md) : jamais un second `.conf`, jamais un
+second projet/watcher — n'apparaît donc jamais dans le tableau §7.
+
 Deux usages :
   - Automatique : appelé par `nouveau_projet.py` (Flask et CLI) à la fin de
     la création d'un projet, une fois son `.conf` déjà écrit sur disque, et
@@ -45,7 +54,7 @@ import sys
 from datetime import date
 from pathlib import Path
 
-from palette import couleur_affichee
+from palette import COULEUR_PROJET_INACTIF, couleur_affichee, generer_palette
 from watcher import lire_conf
 
 RACINE = Path(__file__).resolve().parent
@@ -70,8 +79,20 @@ MARQUEUR_FIN_PERIMETRE = "<!-- FIN:TABLEAU_PERIMETRE_PROJETS -->"
 
 def lire_projets(dossier_configs: Path = DOSSIER_CONFIGS) -> list[dict]:
     """Scanne configs/*.conf et renvoie la liste des projets (dicts nom/
-    depot/rep_travail/perimetre/couleur), triés par nom. Fichiers sans champ
-    NOM ignorés (ex. ccw_ssh.conf).
+    depot/rep_travail/rep_travail_ccw/perimetre/couleur), triés par nom.
+    Fichiers sans champ NOM ignorés (ex. ccw_ssh.conf).
+
+    rep_travail_ccw (clé optionnelle REP_TRAVAIL_CCW, issue #804) : chemin
+    Windows du clone dédié sur le PC CCW pour les projets qui en ont un (ex.
+    `C:\\CCW\\rummikub`) — écrit par `app/projet_ccw.py` à la finalisation du
+    bootstrap CCW, jamais par ce script. Un projet SANS cette clé renvoie ""
+    (comportement inchangé). Cette liste reste la liste des PROJETS réels
+    (un `.conf` = un projet, cf. tête de fichier) : la ligne de relecture
+    `<nom>_ccw` correspondante n'est PAS un élément de cette liste, elle est
+    construite à la volée par `_lignes_tableau_actifs` ci-dessous — ainsi
+    `n_projets`/`projets` renvoyés par `regenerer()` continuent de compter
+    exactement les projets, et `_lignes_tableau_perimetre` (tableau §7),
+    qui n'itère que sur cette liste, ne voit jamais ces lignes.
 
     couleur_affichee vient de palette.py (issue #620) — avant l'extraction,
     elle vivait dans nouveau_projet.py, qui importe déjà ce module (issue
@@ -88,6 +109,7 @@ def lire_projets(dossier_configs: Path = DOSSIER_CONFIGS) -> list[dict]:
             "nom": nom,
             "depot": brut.get("DEPOT", ""),
             "rep_travail": brut.get("REP_TRAVAIL", ""),
+            "rep_travail_ccw": brut.get("REP_TRAVAIL_CCW", ""),
             "perimetre": brut.get("PERIMETRE") or brut.get("REP_TRAVAIL", ""),
             "couleur": couleur_affichee(nom, brut.get("COULEUR", "")),
         })
@@ -101,16 +123,57 @@ def _afficher_rep(rep: str) -> str:
     return rep.replace(home, "~", 1) if rep.startswith(home) else rep
 
 
+def _chemin_windows(rep: str) -> str:
+    """Normalise un chemin Windows en barres obliques INVERSES (issue #804)
+    — format que `relecture_web` exige pour reconnaître une ligne comme
+    distante (lettre de lecteur + ':\\'). REP_TRAVAIL_CCW est censé déjà être
+    saisi dans ce format (voir app/projet_ccw.py), mais une valeur tapée à la
+    main dans un `.conf` avec des barres obliques normales (`C:/CCW/...`)
+    resterait invisible côté relecture sans cette normalisation défensive."""
+    return rep.replace("/", "\\")
+
+
+def _couleur_ccw(couleurs_en_usage: dict[str, str]) -> str:
+    """Couleur dédiée à UNE ligne de relecture `<nom>_ccw` (issue #804),
+    distincte — garantie par construction, pas par estimation — de TOUTES
+    les couleurs déjà en usage à cet instant (projets CCL + lignes `_ccw`
+    déjà attribuées dans ce même appel de `_lignes_tableau_actifs`).
+
+    Réutilise `generer_palette` (palette.py, issue #539) plutôt qu'un simple
+    hash : un hash du nom ne garantit par construction NI la distance Lab ni
+    l'écart de teinte minimal vis-à-vis des couleurs déjà prises (c'est
+    exactement le trou que #539 a comblé pour les couleurs de projet
+    normales). `generer_palette(1, couleurs_a_eviter=couleurs_en_usage)` est
+    déterministe : à ensemble de couleurs évitées identique, le résultat est
+    toujours le même (stabilité demandée par l'issue). Repli sur le gris
+    partagé COULEUR_PROJET_INACTIF si la palette est épuisée (cas limite,
+    jamais atteint au nombre de projets actuel — voir NB_COULEURS_PALETTE)."""
+    candidats = generer_palette(1, couleurs_a_eviter=couleurs_en_usage)
+    return candidats[0] if candidats else COULEUR_PROJET_INACTIF
+
+
 def _lignes_tableau_actifs(projets: list[dict]) -> list[str]:
     # Colonne « Couleur » ajoutée en DERNIÈRE position (issue #608) : ne pas
     # décaler les colonnes existantes, lues par d'autres consommateurs
     # (relecture_web notamment, seule source pour lui — voir le § « Couleur
     # d'accent des projets »).
+    #
+    # Lignes `<nom>_ccw` (issue #804) : une ligne de RELECTURE SEULE, jamais
+    # un projet, insérée juste après la ligne de son projet (ordre demandé),
+    # pour chaque projet dont le `.conf` porte REP_TRAVAIL_CCW — voir la note
+    # statique sous ce tableau dans BRIDGE_AGENT_DOC.md.
     lignes = ["| Nom | Dépôt GitHub | Répertoire de travail CCL | Topic ntfy | Couleur |",
               "|-----|-------------|--------------------------|------------|---------|"]
+    couleurs_en_usage = {p["nom"]: p["couleur"] for p in projets}
     for p in projets:
         lignes.append(f"| `{p['nom']}` | {p['depot']} | "
                        f"{_afficher_rep(p['rep_travail'])} | (conf local) | `{p['couleur']}` |")
+        if p["rep_travail_ccw"]:
+            nom_ccw = f"{p['nom']}_ccw"
+            couleur_ccw = _couleur_ccw(couleurs_en_usage)
+            couleurs_en_usage[nom_ccw] = couleur_ccw
+            lignes.append(f"| `{nom_ccw}` | {p['depot']} | "
+                           f"{_chemin_windows(p['rep_travail_ccw'])} | (lecture CCW) | `{couleur_ccw}` |")
     return lignes
 
 

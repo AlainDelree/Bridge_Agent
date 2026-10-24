@@ -28,7 +28,14 @@ exécutable sur le PATH) :
   encore créé — garde-fou #560**), puis chemin de succès bout en bout — les
   2 issues sont créées avec les BONS labels/corps, la référence croisée est
   postée, et le démarrage du watcher (best-effort) est neutralisé pour ne
-  jamais lancer un vrai sous-processus watcher.py pendant le test.
+  jamais lancer un vrai sous-processus watcher.py pendant le test ;
+- `_ecrire_rep_travail_ccw`/suite de `bootstrap_projet_ccw` (issue #804) :
+  une fois les 2 issues créées, REP_TRAVAIL_CCW est écrite dans
+  configs/<nom>.conf avec le chemin déterministe du clone Windows
+  (RACINE_CLONES_CCW + nom), puis `regenerer_tableaux_projets.regenerer`/
+  `committer_pousser_doc` sont appelés — UNIQUEMENT si le `.conf` existe
+  réellement (best-effort, jamais un échec si absent, cf. le scénario
+  « succès complet » qui vérifie l'absence d'appel dans ce cas).
 
 Exécution :  python3 tests/test_projet_ccw_559.py
 Sortie      :  code 0 si tous les scénarios passent, 1 sinon.
@@ -356,6 +363,15 @@ def scenario_bootstrap_succes_complet(tmp_path_factory):
     appels_demarrer = []
     watchers_mod.demarrer_watcher = lambda cfg, forcer=False: (appels_demarrer.append(cfg.nom), (False, 0))[1]
 
+    # Issue #804 : « monprojet » n'a pas de configs/monprojet.conf réel dans
+    # ce test (DOSSIER_SCRIPT non monkeypatché) — _ecrire_rep_travail_ccw
+    # doit donc faire un no-op silencieux, SANS appeler regenerer() (qui
+    # toucherait le vrai BRIDGE_AGENT_DOC.md/configs du dépôt depuis ce
+    # test) : on le vérifie explicitement plutôt que de le supposer.
+    ancien_regenerer = projet_ccw.regenerer_tableaux_projets.regenerer
+    appels_regenerer = []
+    projet_ccw.regenerer_tableaux_projets.regenerer = lambda: (appels_regenerer.append(True), {})[1]
+
     try:
         os.environ["PATH"] = f"{bin_dir}{os.pathsep}{ancien_path}"
         verifier_faux_executables_actifs(bin_dir, ["gh"])
@@ -369,6 +385,8 @@ def scenario_bootstrap_succes_complet(tmp_path_factory):
             "gh_token": "ghp_secretGH", "oauth_token": "oauth_secretCC",
         })
         assert r["succes"], r
+        assert appels_regenerer == [], (
+            "regenerer() n'aurait pas dû être appelé : configs/monprojet.conf n'existe pas")
         numero_ccl = r["issue_ccl_numero"]
         numero_ccw = r["issue_ccw_numero"]
         assert numero_ccw == numero_ccl + 1, r
@@ -407,6 +425,93 @@ def scenario_bootstrap_succes_complet(tmp_path_factory):
             os.environ.pop(var, None)
         projet_ccw.CHEMIN_CLE_PUBLIQUE_CACHE = ancien_cle
         projet_ccw._config_bridge_agent = ancien_config_ba
+        projet_ccw.regenerer_tableaux_projets.regenerer = ancien_regenerer
+        watchers_mod.demarrer_watcher = ancien_demarrer
+    return {}
+
+
+def scenario_bootstrap_ecrit_rep_travail_ccw(tmp_path_factory):
+    """Issue #804 : une fois les 2 issues créées, REP_TRAVAIL_CCW est écrite
+    dans configs/<nom>.conf avec le chemin déterministe
+    RACINE_CLONES_CCW\\<nom>, PUIS les tableaux §2/§7 sont régénérés et
+    commités — mais seulement parce que le .conf existe réellement ici
+    (DOSSIER_SCRIPT monkeypatché vers un dossier jetable), cas normal : ce
+    bootstrap suit toujours une création de projet CCL déjà aboutie."""
+    tmp = tmp_path_factory()
+    bin_dir = _preparer_bin(tmp)
+    priv, pub = _generer_paire_cles(tmp / "cles")
+
+    ancien_path = os.environ.get("PATH", "")
+    ancien_cle = projet_ccw.CHEMIN_CLE_PUBLIQUE_CACHE
+    ancien_config_ba = projet_ccw._config_bridge_agent
+    ancien_dossier = projet_ccw.DOSSIER_SCRIPT
+    ancien_regenerer = projet_ccw.regenerer_tableaux_projets.regenerer
+    ancien_commit = projet_ccw.regenerer_tableaux_projets.committer_pousser_doc
+    ancien_enregistrer = projet_ccw.etat_configs_legitimes.enregistrer
+
+    configs = tmp / "configs"
+    configs.mkdir()
+    conf_monprojet = configs / "monprojet.conf"
+    conf_monprojet.write_text(
+        "NOM = monprojet\nDEPOT = AlainDelree/MonProjet\n"
+        "REP_TRAVAIL = /home/alain/MonProjet\n", encoding="utf-8")
+
+    log_create = tmp / "log_create.txt"
+    log_comment = tmp / "log_comment.txt"
+    compteur = tmp / "compteur.txt"
+    os.environ["TEST_559_LOG_CREATE"] = str(log_create)
+    os.environ["TEST_559_LOG_COMMENT"] = str(log_comment)
+    os.environ["TEST_559_COMPTEUR"] = str(compteur)
+    os.environ.pop("TEST_559_LISTE_OUVERTES", None)
+
+    import app.watchers as watchers_mod
+    ancien_demarrer = watchers_mod.demarrer_watcher
+    watchers_mod.demarrer_watcher = lambda cfg, forcer=False: (False, 0)
+
+    appels_regenerer = []
+    appels_commit = []
+    projet_ccw.etat_configs_legitimes.enregistrer = lambda nom_fichier: None
+
+    def _faux_regenerer():
+        appels_regenerer.append(True)
+        return {"existe": True, "modifie": True, "erreur": None, "n_projets": 1, "projets": []}
+
+    def _faux_commit(message):
+        appels_commit.append(message)
+        return {"statut": "ok", "detail": "test", "commande_manuelle": None}
+
+    try:
+        os.environ["PATH"] = f"{bin_dir}{os.pathsep}{ancien_path}"
+        verifier_faux_executables_actifs(bin_dir, ["gh"])
+        projet_ccw.CHEMIN_CLE_PUBLIQUE_CACHE = pub
+        projet_ccw.DOSSIER_SCRIPT = tmp
+        cfg_ba = SimpleNamespace(depot=DEPOT_INEXISTANT_559, nom="bridge_agent")
+        projet_ccw._config_bridge_agent = lambda: cfg_ba
+        projet_ccw.regenerer_tableaux_projets.regenerer = _faux_regenerer
+        projet_ccw.regenerer_tableaux_projets.committer_pousser_doc = _faux_commit
+
+        r = _appeler_bootstrap({
+            "nom": "monprojet", "depot": "AlainDelree/MonProjet",
+            "topic": "bridge-monprojet",
+            "gh_token": "ghp_x", "oauth_token": "oauth_y",
+        })
+        assert r["succes"], r
+
+        contenu_conf = conf_monprojet.read_text(encoding="utf-8")
+        assert "REP_TRAVAIL_CCW = C:\\CCW\\monprojet" in contenu_conf, contenu_conf
+        assert appels_regenerer == [True], appels_regenerer
+        assert appels_commit == ["Ajout du clone CCW de monprojet (§2)"], appels_commit
+    finally:
+        os.environ["PATH"] = ancien_path
+        for var in ("TEST_559_LOG_CREATE", "TEST_559_LOG_COMMENT", "TEST_559_COMPTEUR",
+                    "TEST_559_LISTE_OUVERTES"):
+            os.environ.pop(var, None)
+        projet_ccw.CHEMIN_CLE_PUBLIQUE_CACHE = ancien_cle
+        projet_ccw._config_bridge_agent = ancien_config_ba
+        projet_ccw.DOSSIER_SCRIPT = ancien_dossier
+        projet_ccw.regenerer_tableaux_projets.regenerer = ancien_regenerer
+        projet_ccw.regenerer_tableaux_projets.committer_pousser_doc = ancien_commit
+        projet_ccw.etat_configs_legitimes.enregistrer = ancien_enregistrer
         watchers_mod.demarrer_watcher = ancien_demarrer
     return {}
 
@@ -480,6 +585,8 @@ def main():
          lambda: scenario_bootstrap_cle_publique_absente(_tmp_path_factory)),
         ("bootstrap_projet_ccw : chemin complet, succès (2 issues, format CREATION, cross-réf, watcher neutralisé)",
          lambda: scenario_bootstrap_succes_complet(_tmp_path_factory)),
+        ("bootstrap_projet_ccw : écrit REP_TRAVAIL_CCW dans le .conf puis régénère/commite la doc (#804)",
+         lambda: scenario_bootstrap_ecrit_rep_travail_ccw(_tmp_path_factory)),
         ("bootstrap_projet_ccw : dépôt pas encore créé → refus propre, aucune issue (garde-fou #560)",
          lambda: scenario_bootstrap_depot_inexistant_refuse(_tmp_path_factory)),
     ]

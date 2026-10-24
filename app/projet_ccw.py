@@ -48,12 +48,22 @@ import datetime
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 
 from flask import jsonify, request
 
 DOSSIER_SCRIPT = Path(__file__).resolve().parent.parent
+
+# Racine du projet (dossier parent du package app/) : regenerer_tableaux_projets.py
+# et etat_configs_legitimes.py y vivent — même ajout au sys.path que
+# app/nouveau_projet.py et app/projets.py, pour que l'import fonctionne même
+# en import isolé du module (issue #804).
+sys.path.insert(0, str(DOSSIER_SCRIPT))
+
+import etat_configs_legitimes  # noqa: E402
+import regenerer_tableaux_projets  # noqa: E402
 
 # Cache local de la clé publique de bootstrap (voir décision en tête de
 # fichier) — hors de configs/*.conf (le garde-fou §11 sur les .conf projets
@@ -63,6 +73,15 @@ CHEMIN_CLE_PUBLIQUE_CACHE = DOSSIER_SCRIPT / "configs" / "ccw_bootstrap_publique
 # Chemin de la clé publique côté CCW — DOIT rester synchronisé avec
 # $CheminPublique de provisioning/windows/provisionner.ps1 (issue #554, 1/3).
 CHEMIN_CLE_PUBLIQUE_DISTANT = "C:/CCW/cles_bootstrap/bootstrap_publique.pem"
+
+# Racine des clones dédiés CCW — miroir de $RepCCW par défaut dans
+# Get-CheminsProjetCcw (provisioning/windows/ccw-commun.psm1), appelé par
+# ajouter_projet_ccw.ps1 : le clone du projet y est créé à
+# $RepCCW\<NomProjet> (Join-Path), CASSE EXACTE de `nom` conservée — jamais
+# mise en minuscules côté dossier (contrairement au préfixe du config/
+# service). REP_TRAVAIL_CCW (issue #804) doit refléter ce chemin au mot pour
+# mot, jamais une valeur déduite indépendamment.
+RACINE_CLONES_CCW = "C:\\CCW"
 
 TIMEOUT_OPENSSL   = 30
 TIMEOUT_SSH_CLE   = 30
@@ -293,6 +312,47 @@ def _commenter_issue_gh(depot: str, numero: int, message: str) -> bool:
         os.unlink(chemin_body)
 
 
+# ─── REP_TRAVAIL_CCW dans le .conf du projet CCL (issue #804) ──────────────
+
+def _ecrire_rep_travail_ccw(nom: str, chemin_ccw: str) -> bool:
+    """Écrit (ou met à jour) la clé REP_TRAVAIL_CCW dans configs/<nom>.conf —
+    rend visible, dans le tableau §2 de BRIDGE_AGENT_DOC.md
+    (regenerer_tableaux_projets.py), le clone Windows que l'issue CCW créée
+    juste avant va mettre en place, sous la forme d'une ligne `<nom>_ccw`
+    réservée à la relecture (jamais un second `.conf`, jamais un second
+    projet/watcher — voir la docstring de ce module).
+
+    Duplique volontairement la logique de préservation de structure de
+    `app.projets.sauvegarder_conf` plutôt que de l'appeler : cette dernière
+    ne touche QUE les clés de CLES_EDITABLES (exposées à l'onglet
+    Configuration) — REP_TRAVAIL_CCW ne doit JAMAIS y figurer, c'est un fait
+    d'infrastructure déterminé par ce bootstrap, pas un réglage modifiable à
+    la main. Idempotent (clé déjà présente → remplacée en place, ex. une
+    réexécution après rotation du clone). Renvoie False sans rien écrire si
+    le .conf n'existe pas (ne devrait pas arriver en usage normal — ce
+    bootstrap suit toujours une création de projet CCL déjà aboutie — mais
+    ne doit jamais faire échouer le reste du flux)."""
+    chemin = DOSSIER_SCRIPT / "configs" / f"{nom}.conf"
+    if not chemin.exists():
+        return False
+    cle_cible = "REP_TRAVAIL_CCW"
+    nouvelles_lignes = []
+    trouve = False
+    for ligne in chemin.read_text(encoding="utf-8").splitlines():
+        cle, sep, _ = ligne.strip().partition("=")
+        if sep and cle.strip().upper() == cle_cible:
+            nouvelles_lignes.append(f"{cle_cible} = {chemin_ccw}")
+            trouve = True
+        else:
+            nouvelles_lignes.append(ligne)
+    if not trouve:
+        nouvelles_lignes.append("")
+        nouvelles_lignes.append(f"{cle_cible} = {chemin_ccw}")
+    chemin.write_text("\n".join(nouvelles_lignes) + "\n", encoding="utf-8")
+    etat_configs_legitimes.enregistrer(chemin.name)
+    return True
+
+
 # ─── Route principale ───────────────────────────────────────────────────────
 
 def _depot_existe_deja(depot: str) -> bool:
@@ -390,7 +450,24 @@ def bootstrap_projet_ccw():
     _commenter_issue_gh(cfg_ba.depot, res_ccl["numero"],
                          f"Issue CCW liée (création du service) : #{res_ccw['numero']}.")
 
-    # 4. Démarrage automatique du watcher for-linux de bridge_agent (même
+    # 4. REP_TRAVAIL_CCW dans configs/<nom>.conf + régénération des tableaux
+    #    §2/§7 (issue #804). Chemin déterministe (RACINE_CLONES_CCW\<nom>,
+    #    voir sa docstring) : connu dès maintenant, sans attendre que l'issue
+    #    CCW ci-dessus soit réellement traitée (CCW peut être éteint) — les 2
+    #    issues garantissent que ce clone finira par exister à ce chemin
+    #    exact. Best-effort, comme l'étape 3 : un échec ici (ou l'absence du
+    #    .conf, cas qui ne devrait pas arriver) ne doit jamais transformer le
+    #    succès des 2 créations d'issues en échec global ; la régénération
+    #    des tableaux n'est tentée QUE si le .conf a réellement été modifié,
+    #    pour ne jamais toucher BRIDGE_AGENT_DOC.md sans raison.
+    chemin_ccw = f"{RACINE_CLONES_CCW}\\{nom}"
+    if _ecrire_rep_travail_ccw(nom, chemin_ccw):
+        resultat_doc = regenerer_tableaux_projets.regenerer()
+        if resultat_doc["modifie"]:
+            regenerer_tableaux_projets.committer_pousser_doc(
+                f"Ajout du clone CCW de {nom} (§2)")
+
+    # 5. Démarrage automatique du watcher for-linux de bridge_agent (même
     #    logique que app.issues.envoyer pour toute issue for-linux, issue
     #    #202) — best-effort, ne doit jamais transformer un succès en échec.
     #    Un échec produit désormais un log.warning visible (issue #600) au

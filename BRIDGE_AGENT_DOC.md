@@ -55,6 +55,15 @@ Claude Chat → crée une issue → GitHub → watcher.py détecte → CCL/CCW e
 Chaque projet a son propre watcher (`watcher.py --config configs/<nom>.conf`)
 et son propre journal de log (`logs/watcher-<nom>.log`).
 
+> **Lignes `<nom>_ccw`.** Un projet qui a un clone dédié sur le PC Windows
+> (`.conf` portant `REP_TRAVAIL_CCW`) reçoit, juste après sa propre ligne,
+> une seconde ligne `<nom>_ccw` — même dépôt GitHub, répertoire de travail
+> le chemin Windows du clone (ex. `C:\CCW\rummikub`). Elle ne sert QU'à
+> l'outil de relecture (`relecture_web`), qui l'identifie comme distante
+> grâce à ce chemin : ce n'est PAS un projet — aucun `.conf` dédié, aucun
+> watcher — et elle ne doit JAMAIS être utilisée comme valeur du champ
+> `PROJET` d'une issue (issue #804).
+
 ---
 
 ## 3. Créer une issue — la méthode normale : watcher `issues_inbox` (issue #483)
@@ -662,7 +671,8 @@ calibration (constantes actuelles du code : `K_VARIABILITE` = 3, issue
 
 ---
 
-*Dernière mise à jour : 23 octobre 2026 — §16 : règle de lecture de
-`BUILD_WINDOWS_CCW.md` avant une issue de build Windows (issue #802).*
+*Dernière mise à jour : 24 octobre 2026 — §2 : ligne `<nom>_ccw` automatique
+(clé `REP_TRAVAIL_CCW`) pour les projets ayant un clone Windows, réservée à
+la relecture (issue #804).*
 
 Historique complet : voir [`CHANGELOG.md`](CHANGELOG.md).
