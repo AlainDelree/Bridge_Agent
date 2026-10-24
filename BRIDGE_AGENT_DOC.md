@@ -49,6 +49,7 @@ Claude Chat → crée une issue → GitHub → watcher.py détecte → CCL/CCW e
 | `gestionmail` | AlainDelree/GestionMail | ~/GestionMail | (conf local) | `#3B45A0` |
 | `relecture_bridge` | AlainDelree/Relecture_Bridge | ~/Relecture_Bridge | (conf local) | `#CCFF00` |
 | `rummikub` | AlainDelree/Rummikub | ~/Rummikub | (conf local) | `#ADFF8F` |
+| `rummikub_ccw` | AlainDelree/Rummikub | C:\CCW\rummikub | (lecture CCW) | `#C9D8FF` |
 | `scrabble` | AlainDelree/Scrabble | ~/Scrabble | (conf local) | `#7AFFFF` |
 <!-- FIN:TABLEAU_PROJETS_ACTIFS -->
 
