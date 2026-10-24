@@ -80,16 +80,29 @@ carte réseau elle-même ne change pas. Si elle change malgré tout, mettre à
 jour l'adresse à deux endroits : la configuration SSH de Bridge_Agent
 (`configs/ccw_ssh.conf`, clé `HOTE`, ou variable d'environnement
 `CCW_SSH_HOTE` — voir `app/ccw.py`) et le fichier personnel `ccw_host.conf`
-de `relecture_web` (hors dépôt, projet Relecture_Bridge).
+de `relecture_web` (hors dépôt, projet Relecture_Bridge ; modèle versionné :
+`ccw_host.conf.example`).
 
 **Diagnostic d'un échec.** Le message affiché par `ssh` indique la cause :
 
-| Message                        | Cause probable                                             | Vérification |
-|---------------------------------|--------------------------------------------------------------|---------------|
-| `Host key verification failed` | Clé d'hôte modifiée par la réinstallation                     | Voir l'encadré ci-dessus (`ssh-keygen -R <ip>`) |
-| `Permission denied (publickey)`| Clé publique absente ou mal copiée dans `authorized_keys`    | Revoir l'étape 2 |
-| `Connection refused`           | Le serveur SSH du PC fixe n'écoute pas                        | Vérifier que le service OpenSSH est démarré sur le PC fixe |
-| Délai dépassé (pas de réponse) | Adresse incorrecte, ou PC fixe éteint ou injoignable          | Vérifier `<ip>` et le réseau |
+| Cause                              | Message                        | Cause probable                                             | Vérification |
+|-------------------------------------|---------------------------------|--------------------------------------------------------------|---------------|
+| clé d'hôte modifiée                | `Host key verification failed` | Clé d'hôte modifiée par la réinstallation                     | Voir l'encadré ci-dessus (`ssh-keygen -R <ip>`) |
+| clé refusée                        | `Permission denied (publickey)`| Clé publique absente ou mal copiée dans `authorized_keys`    | Revoir l'étape 2 |
+| connexion refusée                  | `Connection refused`           | Le serveur SSH du PC fixe n'écoute pas                        | Vérifier que le service OpenSSH est démarré sur le PC fixe |
+| PC éteint ou adresse introuvable   | Délai dépassé (`Connection timed out` ou `No route to host`) | Adresse incorrecte, ou PC fixe éteint ou injoignable | Vérifier `<ip>` et le réseau |
+
+Ces quatre libellés de cause (« clé d'hôte modifiée », « clé refusée »,
+« connexion refusée », « PC éteint ou adresse introuvable ») sont repris
+tels quels par `relecture_web` (projet Relecture_Bridge) : ne pas les
+renommer sans prévenir ce projet.
+
+> **Remarque sur la langue.** Les messages de connexion de SSH restent en
+> anglais même dans une session système en français : constaté sur le
+> ThinkPad (`fr_FR.UTF-8`) pour le message `Connection refused`, avec ou
+> sans `LC_ALL=C` devant la commande. Les libellés du tableau ci-dessus
+> reprennent donc le texte anglais tel qu'il s'affiche ; les autres
+> messages du tableau n'ont pas été testés sur ce point.
 
 > ⚠️ **Symptôme à connaître.** Quand la clé d'hôte est la cause (premier cas
 > ci-dessus), `relecture_web` affiche « PC fixe éteint ou injoignable » — un
