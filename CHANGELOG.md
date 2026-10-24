@@ -9,6 +9,17 @@ milliers de caractères sur une seule ligne logique, coûteux à relire et
 
 Convention d'ajout : voir §10 de `BRIDGE_AGENT_DOC.md`.
 
+## Issue #809 — Retrait des trois dernières mentions de CCW-Build
+
+Deux commentaires de `provisioning/windows/provisionner.ps1` (lignes ~304 et
+~366-367) reformulés : la mention de la VM `CCW-Build` et de la
+désactivation d'UAC (non confirmée ailleurs dans le script) est retirée ;
+seul le besoin d'exécution élevée est conservé, sens technique inchangé.
+Commentaire de `.gitignore` (lignes 8-9) reformulé pour ne plus citer
+`autounattend.xml` (supprimé du dépôt) ; la ligne `.gitignore` elle-même
+(`provisioning/windows/autounattend.local.xml`) est conservée. Aucun
+changement de comportement.
+
 ## Issue #808 — onglet Résultats : la section « Fichiers modifiés » d'une issue Windows doit dire clairement que l'inventaire n'est pas disponible
 
 Depuis l'issue #788, la case à cocher d'une issue copie, en plus du résultat, une section « Fichiers modifiés » construite depuis l'inventaire serveur (`/inventaire-commit`) des commits de l'issue — route qui interroge le dépôt de travail du ThinkPad. Pour une issue Windows (label `for-windows`), les commits n'existent que sur le PC fixe (worktree `C:\CCW\worktrees\…`) : le ThinkPad ne les connaît pas, et chaque commit faisait échouer la requête (« ⚠ Commit … : inventaire impossible — fatal: bad revision … »). Correct mais déroutant : ce n'est pas une anomalie, seulement un cas où l'inventaire est impossible par construction.
