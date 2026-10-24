@@ -13,10 +13,17 @@
   Ce qu'il fait, pour un projet <NomProjet> (dépôt <owner/repo>) :
     1. clone le dépôt (lecture seule) dans C:\CCW\<NomProjet> — jamais de push,
        même prudence que Bridge_Agent ;
-    2. écrit configs\<nom>-ccw.conf (NOM=<nom>-ccw, DEPOT=<owner/repo>,
+    2. complète .git\info\exclude du clone avec configs\ et logs\ (issue #813)
+       — réglage LOCAL au clone, jamais versionné dans le dépôt du projet,
+       qui masque les fichiers non suivis du service CCW (config, logs) pour
+       que relecture_web (projet Relecture_Bridge) ne les signale pas comme
+       « modifications non committées » et ne refuse pas la fusion sur ce
+       clone ; seules les lignes manquantes sont ajoutées, sans doublon ni
+       écrasement du contenu existant ;
+    3. écrit configs\<nom>-ccw.conf (NOM=<nom>-ccw, DEPOT=<owner/repo>,
        LABEL=for-windows, REP_TRAVAIL / PERIMETRE = C:\CCW\<NomProjet>,
        TOPIC_NTFY = placeholder à renseigner manuellement) ;
-    3. enregistre un NOUVEAU service NSSM « CCW-Watcher-<NomProjet> » qui lance
+    4. enregistre un NOUVEAU service NSSM « CCW-Watcher-<NomProjet> » qui lance
        watcher.py --config configs\<nom>-ccw.conf au démarrage : SERVICE_AUTO_START,
        AppExit Default Restart (un vrai plantage relance le service) + AppExit 42
        Exit (retrofit CCW, issue #712) — le code de sortie 42 signale l'auto-
@@ -129,7 +136,36 @@ if (Test-Path (Join-Path $RepDepot '.git')) {
 }
 
 # ---------------------------------------------------------------------------
-# 2. Écriture de configs\<nom>-ccw.conf.
+# 2. Exclusions locales du clone (.git\info\exclude) — issue #813.
+#    configs\ et logs\ contiennent les fichiers du service CCW (config,
+#    logs), non suivis par git (comme Bridge_Agent) mais aussi non listés
+#    dans le .gitignore DU PROJET (ex. Rummikub, Actualise) — sans cette
+#    exclusion LOCALE au clone, relecture_web (projet Relecture_Bridge) les
+#    voit comme « modifications non committées » et refuse la fusion sur ce
+#    clone (constaté le 24/10/2026 sur C:\CCW\rummikub et C:\CCW\scrabble).
+#    Réglage propre à CE clone : jamais versionné dans le dépôt du projet.
+#    Idempotent : seules les lignes manquantes sont ajoutées, sans doublon
+#    ni écrasement du contenu existant de .git\info\exclude.
+# ---------------------------------------------------------------------------
+$RepGitInfo = Join-Path $RepDepot '.git\info'
+if (-not (Test-Path $RepGitInfo)) { New-Item -ItemType Directory -Path $RepGitInfo -Force | Out-Null }
+$CheminExclude = Join-Path $RepGitInfo 'exclude'
+
+$LignesRequisesExclude = @('configs/', 'logs/')
+$LignesExistantesExclude = @()
+if (Test-Path $CheminExclude) {
+    $LignesExistantesExclude = @(Get-Content -Path $CheminExclude)
+}
+$LignesManquantesExclude = $LignesRequisesExclude | Where-Object { $LignesExistantesExclude -notcontains $_ }
+if ($LignesManquantesExclude.Count -gt 0) {
+    Add-Content -Path $CheminExclude -Value $LignesManquantesExclude
+    Info "Exclusions locales ajoutées à .git\info\exclude : $($LignesManquantesExclude -join ', ')"
+} else {
+    Info "Exclusions locales (configs/, logs/) déjà présentes dans .git\info\exclude."
+}
+
+# ---------------------------------------------------------------------------
+# 3. Écriture de configs\<nom>-ccw.conf.
 #    REP_TRAVAIL / PERIMETRE pointent vers le clone dédié C:\CCW\<NomProjet>
 #    (chaque projet est isolé dans son propre dossier, comme les REP_TRAVAIL
 #    distincts des watchers CCL). TOPIC_NTFY reste un placeholder à renseigner
@@ -191,7 +227,7 @@ if ($topicPreserve) {
 }
 
 # ---------------------------------------------------------------------------
-# 3. Service Windows dédié (NSSM) : CCW-Watcher-<NomProjet>.
+# 4. Service Windows dédié (NSSM) : CCW-Watcher-<NomProjet>.
 #    Mêmes réglages que CCW-Watcher (provisionner.ps1) : démarrage au boot sans
 #    session, redémarrage automatique sur échec, logs dédiés.
 #
@@ -317,7 +353,7 @@ if ($tokensPreserve) {
 nssm start $NomService | Out-Null
 
 # ---------------------------------------------------------------------------
-# 4. Droits de démarrage/arrêt sans élévation UAC (issue #717, persistance).
+# 5. Droits de démarrage/arrêt sans élévation UAC (issue #717, persistance).
 #    nssm remove + nssm install (étape 3 ci-dessus) efface tout réglage
 #    sc.exe sdset posé précédemment — on le repose donc ICI systématiquement,
 #    à chaque création OU recréation, pour qu'AlainW n'ait jamais besoin de

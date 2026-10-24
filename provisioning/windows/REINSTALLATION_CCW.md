@@ -19,6 +19,18 @@ réinstallation, pas la paire de clés côté CCL.
 
 ### 1. Réinstallation Windows
 
+> **Avant de réinstaller.** Noter, avant d'effacer le disque : la liste des
+> projets CCW actifs et leur dépôt GitHub (lignes `<nom>_ccw` du tableau §2
+> de `BRIDGE_AGENT_DOC.md`), et la valeur du `TOPIC_NTFY` de chacun (dans
+> `configs\<nom>-ccw.conf`, pour chaque projet dédié, et dans `configs\
+> ccw.conf` pour le canal unifié). Puis copier ces fichiers `*-ccw.conf` et
+> `ccw.conf` **hors du disque qui sera effacé** (par exemple sur le
+> ThinkPad). Aucun de ces fichiers n'est versionné (voir l'étape 7
+> ci-dessous) : sans cette copie, seul le repli de l'étape 7 (recréation via
+> `creer_projet_ccw_complet.ps1`) permet de reconstituer les projets, sans
+> retrouver le `TOPIC_NTFY` déjà choisi pour chacun. Ne pas recopier le
+> contenu de ces fichiers dans cette documentation.
+
 **Voir `REINSTALLATION_WINDOWS.md` (ce dossier)** pour la procédure complète
 en amont de cette étape : fabrication de la clé USB bootable (source de
 l'ISO, outil recommandé), boot BIOS/UEFI sur ce PC fixe, cas standard vs
@@ -65,6 +77,13 @@ Depuis le ThinkPad :
 > Bridge_Agent (onglet **CCW**, démarrage automatique des services) que pour
 > `relecture_web` : les deux partagent le même fichier `~/.ssh/known_hosts`
 > sur le ThinkPad.
+>
+> Après ce `ssh-keygen -R`, le test manuel ci-dessous (`ssh -i …`)
+> redemandera de confirmer l'empreinte du PC fixe (répondre `yes`) — normal,
+> puisque la clé d'hôte est effectivement nouvelle. Bridge_Agent et
+> `relecture_web`, eux, n'ont besoin d'aucune connexion manuelle préalable :
+> les deux utilisent `StrictHostKeyChecking=accept-new`, qui accepte et
+> enregistre seul un hôte encore inconnu dès leur toute première connexion.
 
 ```bash
 ssh -i ~/.ssh/ccl_ccw AlainW@<ip>
@@ -90,12 +109,14 @@ de `relecture_web` (hors dépôt, projet Relecture_Bridge ; modèle versionné :
 | clé d'hôte modifiée                | `Host key verification failed` | Clé d'hôte modifiée par la réinstallation                     | Voir l'encadré ci-dessus (`ssh-keygen -R <ip>`) |
 | clé refusée                        | `Permission denied (publickey)`| Clé publique absente ou mal copiée dans `authorized_keys`    | Revoir l'étape 2 |
 | connexion refusée                  | `Connection refused`           | Le serveur SSH du PC fixe n'écoute pas                        | Vérifier que le service OpenSSH est démarré sur le PC fixe |
-| PC éteint ou adresse introuvable   | Délai dépassé (`Connection timed out` ou `No route to host`) | Adresse incorrecte, ou PC fixe éteint ou injoignable | Vérifier `<ip>` et le réseau |
+| PC éteint ou adresse introuvable   | Délai dépassé (`Connection timed out` ou `No route to host`), ou `Network is unreachable` / `Could not resolve hostname` | Adresse incorrecte, ou PC fixe éteint ou injoignable | Vérifier `<ip>` et le réseau |
 
 Ces quatre libellés de cause (« clé d'hôte modifiée », « clé refusée »,
 « connexion refusée », « PC éteint ou adresse introuvable ») sont repris
 tels quels par `relecture_web` (projet Relecture_Bridge) : ne pas les
-renommer sans prévenir ce projet.
+renommer sans prévenir ce projet. Pour une cause qui ne correspond à aucune
+de ces quatre lignes, `relecture_web` affiche un message générique suivi de
+la première ligne du message d'erreur de SSH.
 
 > **Remarque sur la langue.** Les messages de connexion de SSH restent en
 > anglais même dans une session système en français : constaté sur le
@@ -105,11 +126,13 @@ renommer sans prévenir ce projet.
 > messages du tableau n'ont pas été testés sur ce point.
 
 > ⚠️ **Symptôme à connaître.** Quand la clé d'hôte est la cause (premier cas
-> ci-dessus), `relecture_web` affiche « PC fixe éteint ou injoignable » — un
-> message trompeur, puisque le PC fixe est bien allumé et joignable. Côté
-> Bridge_Agent, l'onglet **CCW** échoue de la même façon, et le démarrage
-> automatique des services à la création d'une issue `for-windows` échoue
-> aussi, **sans aucun message**.
+> ci-dessus), `relecture_web` affiche désormais la cause identifiée (« clé
+> d'hôte modifiée ») avec la commande `ssh-keygen -R` à exécuter — le
+> message « PC fixe éteint ou injoignable » ne s'affiche plus que pour la
+> catégorie « PC éteint ou adresse introuvable », ou en repli pour une cause
+> non reconnue. Côté Bridge_Agent, rien ne change : l'onglet **CCW** échoue
+> de la même façon, et le démarrage automatique des services à la création
+> d'une issue `for-windows` échoue aussi, **sans aucun message**.
 
 ### 4. Provisionner le logiciel
 
@@ -245,19 +268,36 @@ le service NSSM et ses tokens ne survivent pas.
 > aucun réglage à reproduire pour lui. Retour arrière pour un service donné :
 > `nssm set <service> AppExit 42 Restart`.
 
-Rappel : les fichiers `.conf` de chaque projet (ex. `configs\alchess-ccw.conf`)
-vivent dans le dépôt du projet lui-même, donc **survivent** à la
-réinstallation — rien à reconstruire de ce côté. Seuls la recréation du
-service NSSM et la resaisie des deux tokens (GitHub dédié + Claude Code)
-par projet restent nécessaires.
+**Attention — ces fichiers ne survivent PAS à une réinstallation propre.**
+Les fichiers `.conf` de chaque projet (ex. `configs\alchess-ccw.conf`) ne
+sont **pas versionnés** (`.gitignore`) et vivent dans le clone **dédié** du
+projet (`C:\CCW\<Projet>\configs\<nom>-ccw.conf`), pas dans celui de
+Bridge_Agent. Une réinstallation propre efface `C:\CCW` et refait chaque
+clone par `git clone`, qui ne ramène aucun fichier non versionné : sans la
+copie faite à l'étape 1 (« Avant de réinstaller »), ils sont donc perdus —
+voir le repli plus bas si cette copie est absente ou incomplète. La
+recréation du service NSSM et la resaisie des deux tokens (GitHub dédié +
+Claude Code) par projet restent de toute façon nécessaires, copie ou pas.
+
+**Autre fichier local non versionné du clone : les exclusions `.git/info/
+exclude`.** Chaque clone dédié a aussi un réglage local non versionné, qui
+masque `configs/` et `logs/` (fichiers du service CCW) pour éviter que
+`relecture_web` (projet Relecture_Bridge) ne signale « modifications non
+committées » et ne refuse la fusion sur ce clone. Comme les fichiers
+`.conf` ci-dessus, ces lignes ne survivent pas à une réinstallation propre ;
+`ajouter_projet_ccw.ps1` (appelé par `creer_projet_ccw_complet.ps1`, donc
+par ce script) les recrée après le clonage — rien à faire manuellement de
+ce côté.
 
 **Liste non codée en dur (issue #597, suite de #552/#571)** : contrairement
 à l'ancienne version de ce script, `reinstaller_projets_ccw.ps1` (ce
 dossier) ne maintient plus de tableau `$Projets` figé. Il énumère
 DYNAMIQUEMENT, à chaque exécution, les fichiers `configs\*-ccw.conf`
-présents sur le disque (`C:\CCW\Bridge_Agent\configs\`) — un fichier par
-projet dédié, créé par `ajouter_projet_ccw.ps1` à la création du projet et
-jamais retiré automatiquement à sa suppression. Chaque fichier fournit à la
+présents sous la racine des clones CCW (`C:\CCW\*\configs\`, et non plus le
+seul `configs\` de Bridge_Agent — correction #813, ce dernier ne contenant
+que le canal unifié `ccw.conf`) — un fichier par projet dédié, créé par
+`ajouter_projet_ccw.ps1` à la création du projet et jamais retiré
+automatiquement à sa suppression. Chaque fichier fournit à la
 fois le nom du projet (préfixe avant `-ccw.conf`) et son dépôt GitHub (clé
 `DEPOT=`). Le canal unifié `for-windows` (`configs\ccw.conf`, sans suffixe
 projet) est explicitement exclu de cette énumération — il est déjà couvert
@@ -274,15 +314,41 @@ avec `regenerer_tableaux_projets.py` (celui-ci régénère §2/§7 de
 `BRIDGE_AGENT_DOC.md` depuis les `.conf`, mais dans un sous-ensemble
 manuellement choisi — ici, la source de vérité est directement le disque).
 
-Toujours en admin sur le PC fixe, depuis `C:\CCW\Bridge_Agent` :
+Toujours en admin sur le PC fixe, depuis `C:\CCW\Bridge_Agent`, en limitant
+la recréation aux projets qui ont aujourd'hui une ligne `<nom>_ccw` dans le
+tableau §2 de `BRIDGE_AGENT_DOC.md` (sans le suffixe `_ccw` — à ce jour :
+`actualise`, `rummikub`, `scrabble`) :
 
 ```powershell
-.\provisioning\windows\reinstaller_projets_ccw.ps1
+.\provisioning\windows\reinstaller_projets_ccw.ps1 -SeulementProjets actualise,rummikub,scrabble
 ```
 
-Ce script séquence l'appel à `creer_projet_ccw_complet.ps1` (racine du
-dépôt, §16.5 de `BRIDGE_AGENT_DOC.md`) pour chacun des projets détectés —
-évitant de devoir taper une commande par projet de mémoire. Les deux tokens
+Préciser `-SeulementProjets` évite de recréer le service d'un projet dont
+CCW n'a plus besoin aujourd'hui (ex. `alchess`, `Relecture_Bridge`) même si
+son fichier `.conf` est présent ou restauré sur le disque : un fichier
+`.conf` n'est **jamais retiré automatiquement** à la décommission d'un
+projet (voir ci-dessus, « Liste non codée en dur »). Un projet ainsi
+écarté peut être recréé plus tard à la demande, avec
+`creer_projet_ccw_complet.ps1` (repli ci-dessous).
+
+**Repli — si aucun fichier `*-ccw.conf` n'a été restauré** (copie de
+l'étape 1 absente ou incomplète) : `reinstaller_projets_ccw.ps1` ne trouve
+alors rien à recréer et se termine en erreur avec un message explicite.
+Dans ce cas, appeler `creer_projet_ccw_complet.ps1` directement pour chaque
+projet de la liste, avec son dépôt — il recrée le clone, le service **et**
+le fichier de configuration :
+
+```powershell
+.\creer_projet_ccw_complet.ps1 -NomProjet actualise -Depot AlainDelree/Actualise
+.\creer_projet_ccw_complet.ps1 -NomProjet rummikub -Depot AlainDelree/Rummikub
+.\creer_projet_ccw_complet.ps1 -NomProjet scrabble -Depot AlainDelree/Scrabble
+```
+
+`reinstaller_projets_ccw.ps1` séquence l'appel à `creer_projet_ccw_complet.ps1`
+(racine du dépôt, §16.5 de `BRIDGE_AGENT_DOC.md`) pour chacun des projets
+détectés — évitant de devoir taper une commande par projet de mémoire (cas
+normal, fichiers `.conf` restaurés ; le repli ci-dessus appelle le même
+script directement, projet par projet). Les deux tokens
 restent demandés **par projet**, à l'intérieur de la boucle : le script
 structure la séquence, il ne contourne pas la saisie. En cas d'échec sur un
 projet, il s'arrête et affiche comment reprendre uniquement les projets
