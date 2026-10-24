@@ -134,3 +134,38 @@ test('etatCommitsDeclares : ligne « Commits » présente mais ni hash ni « auc
   const it = { comments: [{ body: '✅ Tâche terminée — exemple\nCommits (dans /chemin) : ???\npy_compile : OK' }] };
   assert.deepEqual(etatCommitsDeclares(it), { etat: 'absente', hashes: [] });
 });
+
+// ─── etatCommitsDeclares : état "windows" (issue #808) — une issue for-windows
+//     n'a ses commits que sur le PC fixe (worktree CCW), le dépôt du ThinkPad
+//     ne les connaît pas : inventaire impossible par construction, pas une
+//     anomalie — et PRIORITAIRE sur "hashes"/"aucun"/"absente", quels que
+//     soient les commits indiqués.
+
+test('etatCommitsDeclares : issue for-windows avec des hashes exploitables → etat "windows" (prioritaire sur "hashes")', () => {
+  const it = {
+    labels: ['for-windows'],
+    comments: [{ body: `✅ Tâche terminée — exemple\n${ecriture}\npy_compile : OK` }],
+  };
+  assert.deepEqual(etatCommitsDeclares(it), { etat: 'windows', hashes: ['abc1234', 'def5678'] });
+});
+
+test('etatCommitsDeclares : issue for-windows en lecture seule (« … : aucun … ») → etat "windows" quand même', () => {
+  const it = {
+    labels: [{ name: 'for-windows' }],
+    comments: [{ body: `✅ Tâche terminée — rien à faire\n${lectureSeule}\npy_compile : N/A` }],
+  };
+  assert.deepEqual(etatCommitsDeclares(it), { etat: 'windows', hashes: [] });
+});
+
+test('etatCommitsDeclares : issue for-windows sans ligne « Commits » du tout → etat "windows" (pas "absente")', () => {
+  const it = { labels: ['for-windows'], comments: [{ body: '✅ Tâche terminée — exemple\npy_compile : OK' }] };
+  assert.deepEqual(etatCommitsDeclares(it), { etat: 'windows', hashes: [] });
+});
+
+test('etatCommitsDeclares : label for-windows absent → comportement inchangé (etat "hashes", "aucun", "absente")', () => {
+  const itHashes = { comments: [{ body: `✅ Tâche terminée — exemple\n${ecriture}\npy_compile : OK` }] };
+  assert.deepEqual(etatCommitsDeclares(itHashes), { etat: 'hashes', hashes: ['abc1234', 'def5678'] });
+  const itAucun = { comments: [{ body: `✅ Tâche terminée — rien à faire\n${lectureSeule}\npy_compile : N/A` }] };
+  assert.deepEqual(etatCommitsDeclares(itAucun), { etat: 'aucun', hashes: [] });
+  assert.deepEqual(etatCommitsDeclares({ comments: [] }), { etat: 'absente', hashes: [] });
+});

@@ -187,8 +187,12 @@ export function texteCopieAvecIdentite(variante, it, projet, texte) {
 // Construite à partir de l'inventaire SERVEUR (statut + lignes +/- par
 // fichier, JAMAIS le contenu du patch — route /inventaire-commit) des commits
 // de l'issue, pour qu'un rapport d'agent inexact (ex. accents perdus dans un
-// fichier réécrit) soit détectable sans dérouler le diff complet. Trois règles
-// (constats de l'issue) :
+// fichier réécrit) soit détectable sans dérouler le diff complet. Quatre règles
+// (constats de l'issue, complétées par l'issue #808) :
+//   - issue for-windows (etat 'windows') → l'inventaire n'est PAS DEMANDÉ au
+//     serveur (ses commits sont sur le PC fixe, le dépôt du ThinkPad ne les
+//     connaît pas) : texte neutre expliquant pourquoi et où regarder à la
+//     place, sans symbole d'alerte — ce n'est pas une anomalie.
 //   - ligne « Commits » explicitement « aucun » (lecture seule) → aucune
 //     section, aucune alerte : c'est le cas normal.
 //   - ligne absente/non reconnue, OU un commit en échec (introuvable, git en
@@ -203,6 +207,15 @@ export function texteCopieAvecIdentite(variante, it, projet, texte) {
 //     commit de sauvegarde vide ne contribue simplement aucun fichier.
 
 const TITRE_SECTION_FICHIERS = 'Fichiers modifiés';
+
+// Texte neutre affiché pour une issue for-windows (etat 'windows', issue
+// #808) : pas de symbole d'alerte, ce n'est pas une anomalie — seulement un
+// cas où l'inventaire est impossible par construction depuis le ThinkPad.
+const TEXTE_INVENTAIRE_WINDOWS =
+  'L\'inventaire des fichiers modifiés n\'est pas disponible depuis le ThinkPad pour une '
+  + 'issue Windows : ses commits sont sur le PC fixe, dans le worktree indiqué par la ligne '
+  + '« Commits ». Pour voir les fichiers modifiés, ouvrir dans l\'outil de relecture l\'entrée '
+  + 'du projet dont le nom se termine par « _ccw ».';
 
 // Somme deux compteurs, sauf si l'un des deux est inconnu (fichier binaire,
 // compté `null` côté serveur) — jamais d'addition qui affirmerait un compte
@@ -247,12 +260,16 @@ function libelleCompteurs(f) {
 }
 
 // Construit le texte de la section, ou '' si aucune section ne doit être
-// ajoutée (`etatCommits` === 'aucun'). `etatCommits` ∈ {'hashes','aucun',
-// 'absente'} (voir etatCommitsDeclares, app.js) ; `resultatsParCommit` est
-// ignoré si `etatCommits` !== 'hashes'.
+// ajoutée (`etatCommits` === 'aucun'). `etatCommits` ∈ {'windows','hashes',
+// 'aucun','absente'} (voir etatCommitsDeclares, app.js) ; `resultatsParCommit`
+// est ignoré si `etatCommits` !== 'hashes'.
 export function texteSectionFichiers(etatCommits, resultatsParCommit) {
   if (etatCommits === 'aucun') return '';
   const lignes = ['===== ' + TITRE_SECTION_FICHIERS + ' ====='];
+  if (etatCommits === 'windows') {
+    lignes.push('', TEXTE_INVENTAIRE_WINDOWS);
+    return lignes.join('\n');
+  }
   if (etatCommits === 'absente') {
     lignes.push('', '⚠ Ligne « Commits » absente ou non reconnue dans la réponse CCL — '
       + 'inventaire des fichiers impossible (anomalie à vérifier, pas un cas normal).');
@@ -531,7 +548,10 @@ function messageErreurInventaire(e) {
 
 // Section « Fichiers modifiés » (issue #788) à ajouter au texte de la case —
 // '' si la ligne « Commits » dit explicitement « aucun » (cas normal, lecture
-// seule). Voir texteSectionFichiers pour le détail des trois cas.
+// seule). L'inventaire n'est demandé au serveur QUE pour l'etat 'hashes' —
+// une issue for-windows (etat 'windows', issue #808) ne déclenche donc aucune
+// requête /inventaire-commit, le dépôt du ThinkPad ne connaissant pas ses
+// commits. Voir texteSectionFichiers pour le détail des quatre cas.
 async function sectionFichiersModifies(projet, it) {
   const etatCommits = appelerAncien('etatCommitsDeclares', it) || { etat: 'absente', hashes: [] };
   const resultats = etatCommits.etat === 'hashes'

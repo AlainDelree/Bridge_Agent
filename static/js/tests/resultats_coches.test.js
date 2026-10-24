@@ -279,6 +279,22 @@ test('texteSectionFichiers : etat « aucun » → chaîne vide (pas de section, 
   assert.equal(texteSectionFichiers('aucun', [{ hash: 'aaa', fichiers: [] }]), '');
 });
 
+test('texteSectionFichiers : etat « windows » → texte neutre, sans symbole d\'alerte, renvoie vers l\'outil de relecture (issue #808)', () => {
+  const texte = texteSectionFichiers('windows', [{ hash: 'aaa', fichiers: [] }]);
+  assert.match(texte, /===== Fichiers modifiés =====/);
+  assert.match(texte, /ThinkPad/);
+  assert.match(texte, /PC fixe/);
+  assert.match(texte, /_ccw/);
+  assert.doesNotMatch(texte, /⚠/, 'pas un cas d\'anomalie — aucun symbole d\'alerte');
+});
+
+test('texteSectionFichiers : etat « windows » sans hashes (issue Windows en lecture seule) → même texte neutre', () => {
+  const texte = texteSectionFichiers('windows', []);
+  assert.match(texte, /===== Fichiers modifiés =====/);
+  assert.match(texte, /ThinkPad/);
+  assert.doesNotMatch(texte, /⚠/);
+});
+
 test('texteSectionFichiers : etat « absente » → anomalie signalée, jamais en silence', () => {
   const texte = texteSectionFichiers('absente', []);
   assert.match(texte, /===== Fichiers modifiés =====/);

@@ -285,15 +285,24 @@ function prefixeTypeIssue(it) {
   return t === 'chef' ? '🎯' : (t === 'ouvrier' ? '👷' : '');
 }
 
+// Vrai si l'issue porte le label for-windows (traitée par l'agent CCW, sur le
+// PC fixe) — détection PARTAGÉE par prefixeOSCible (icône) et
+// etatCommitsDeclares (état "windows" de l'inventaire de fichiers, issue
+// #808), pour que les deux ne puissent jamais diverger sur ce qui compte
+// comme une issue Windows.
+function estIssuePourWindows(it) {
+  const noms = ((it && it.labels) || [])
+    .map(l => ((l && l.name) || l || '').toLowerCase());
+  return noms.includes('for-windows');
+}
+
 // Préfixe emoji de l'OS CIBLE d'une issue : 🪟 for-windows (CCW), rien sinon.
 // Dimension DISTINCTE du type (chef/ouvrier) : les deux se cumulent (ex. un
 // ouvrier for-windows affiche 👷🪟). On ne pose pas d'icône pour for-linux :
 // c'est le cas par défaut (CCL), déjà signalé par le badge « for-linux » du
 // détail — n'ajouter une icône que pour ce qui sort de l'ordinaire (issue #165).
 function prefixeOSCible(it) {
-  const noms = ((it && it.labels) || [])
-    .map(l => ((l && l.name) || l || '').toLowerCase());
-  return noms.includes('for-windows') ? '🪟' : '';
+  return estIssuePourWindows(it) ? '🪟' : '';
 }
 
 // Badge coloré pour un label dans le panneau de détail.
@@ -1982,7 +1991,14 @@ function hashesDeCommit(it) {
 }
 
 // Classifie la ligne « Commits … » pour l'inventaire de fichiers de la case à
-// cocher (issue #788) — trois cas à ne JAMAIS confondre :
+// cocher (issue #788) — quatre cas à ne JAMAIS confondre :
+//   - 'windows' : l'issue porte le label for-windows (estIssuePourWindows) →
+//                 PRIORITAIRE sur tous les autres cas, quels que soient les
+//                 commits indiqués (hashes, "aucun" ou ligne absente) : ses
+//                 commits sont sur le PC fixe (worktree CCW), le dépôt
+//                 interrogé par cette page (ThinkPad) ne les connaît pas —
+//                 inventaire par construction impossible, pas une anomalie
+//                 (issue #808).
 //   - 'hashes'  : au moins un commit exploitable → inventaire à construire.
 //   - 'aucun'   : la ligne le dit explicitement (issue en lecture seule,
 //                 gabarit watcher.py::ligne_commits "… : aucun (lecture seule)")
@@ -1993,6 +2009,7 @@ function hashesDeCommit(it) {
 //                 silence (un bug de reconnaissance des commits est déjà resté
 //                 invisible deux mois, issue #784, cf. hashesDeCommit).
 function etatCommitsDeclares(it) {
+  if (estIssuePourWindows(it)) return { etat: 'windows', hashes: hashesDeCommit(it) };
   const ligneCommits = ligneCommitsDeclares(it);
   if (!ligneCommits) return { etat: 'absente', hashes: [] };
   const hashes = hashesDeCommit(it);
