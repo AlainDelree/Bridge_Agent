@@ -78,9 +78,11 @@ il contient le modèle à utiliser en bas de page.
 - Commits attendus dans le worktree à l'issue d'un build réussi : une
   sauvegarde vide, le commit de `version.json` fait par le script, et
   l'entrée de changelog `CHANGELOG-<numéro-de-l'issue>.md` ajoutée par
-  l'agent (le numéro est celui de l'issue de build, pas celui du build —
-  exemple réel : build 13 de Scrabble, fichier `CHANGELOG-470.md`, issue
-  470).
+  l'agent (le numéro est celui de l'issue du **projet buildé**, dans son
+  propre dépôt GitHub — pas une issue de Bridge_Agent, ni le numéro du
+  build — même règle que pour le nom du worktree ci-dessus ; exemple réel :
+  build 13 de Scrabble, fichier `CHANGELOG-470.md`, issue 470 du dépôt
+  Scrabble).
 
 ---
 
@@ -124,8 +126,14 @@ il contient le modèle à utiliser en bas de page.
 
 1. Récupère les fichiers produits (`installeur\output` du worktree) avant
    de supprimer le worktree.
-2. Fusionne la branche du worktree dans `master` (en passant par
-   Relecture_Bridge), **sans pousser** à ce stade.
+2. Fusionne la branche du worktree dans `master`, en passant par l'outil de
+   relecture (`relecture_web`) et en y choisissant l'entrée `<projet>_ccw`
+   — pas l'entrée du projet lui-même : c'est elle qui montre le clone
+   Windows et ses worktrees, et qui permet de fusionner la branche du
+   build (depuis les issues #804/#805). Si le tableau a été modifié
+   récemment (ex. création d'un nouveau projet CCW), compter environ cinq
+   minutes après le push avant que l'entrée `_ccw` apparaisse dans l'outil
+   (cache de `raw.githubusercontent.com`). **Sans pousser** à ce stade.
 3. Crée la Release GitHub (étiquette `v<N>`, archive `<projet>-v<N>.zip`).
    **Ordre de publication recommandé** (point à prendre comme une
    recommandation, pas comme un fait établi) : créer la Release **avant**
@@ -170,22 +178,33 @@ liste de numéros, indépendante des autres.
 ### Rummikub
 
 - **Script de build** (ligne de commande exacte) :
-  `build\rebuild_rummikub.bat --publier --build <N>` — à confirmer en
-  lisant l'en-tête du script avant de s'y fier.
-- **Inno Setup** : le script doit chercher Inno Setup d'abord dans
-  `C:\CCW\tools\InnoSetup6` (installé hors des dépôts), puis dans le
-  dossier `.tools\InnoSetup6` du dépôt — ce second chemin n'existe pas
-  dans un worktree, le dossier `.tools/` étant ignoré par git. **À
-  vérifier avant le premier build**, en lisant le script, que cet ordre de
-  recherche (`C:\CCW\tools\InnoSetup6` avant `.tools\InnoSetup6`) y est
-  bien implémenté.
+  `build\rebuild_rummikub.bat --publier --build <N>` — syntaxe confirmée
+  par le build 13 (issue #177 du dépôt Rummikub, réussi tel quel).
+- **Inno Setup** : confirmé par le build 13 — le script cherche bien Inno
+  Setup d'abord dans `C:\CCW\tools\InnoSetup6` (installé hors des dépôts),
+  puis dans le dossier `.tools\InnoSetup6` du dépôt (ce second chemin
+  n'existe pas dans un worktree, le dossier `.tools/` étant ignoré par
+  git) ; il l'a trouvé au premier emplacement. Cet ordre de recherche n'est
+  vérifié que pour Rummikub — relire le script avant le premier build de
+  tout autre projet avec installeur Inno Setup qui n'aurait pas encore ce
+  point confirmé dans sa propre fiche.
 - **`.spec`** : `rummikub.spec` — liste explicite des `datas`
   (`src/rummikub/ui/web/`), aucun `collect_tree` en bloc.
 - **Deux garde-fous de taille distincts** (issue #57 — dist non compressé
   et installeur compressé sont deux grandeurs différentes) :
   - dossier non compressé : fourchette 20-45 Mo
   - installeur compressé : fourchette 5-25 Mo
-- **Durée observée** : 333 secondes.
+- **Durée observée** : 333 secondes (build antérieur).
+- **Build de référence** : build 13, issue #177 du dépôt Rummikub,
+  réussi — worktree `C:\CCW\worktrees\rummikub-ccw-issue177`. Neuf étapes
+  (numérotées 0 à 8) sans erreur ; seuls avertissements : deux
+  avertissements habituels de PyInstaller sur `pycparser.lextab` et
+  `pycparser.yacctab`, sans effet. Tailles de référence : dossier non
+  compressé `dist\Rummikub` 26 251 767 octets, installeur
+  `Rummikub-Setup-v13.exe` 12 800 339 octets, archive `rummikub-v13.zip`
+  12 896 659 octets (2 fichiers à la racine — `Rummikub.exe` et
+  `manifest.json` — et un dossier `_internal` de 87 entrées). Durée réelle
+  de l'agent : 219 secondes (`TIMEOUT` de 1800s).
 
 ### Scrabble
 
@@ -193,12 +212,14 @@ liste de numéros, indépendante des autres.
   `build\rebuild_scrabble.bat --publier <N>`.
 - **Build de référence** : build 13, issue réussie, 283 secondes de durée
   réelle — worktree `C:\CCW\worktrees\scrabble-ccw-issue470`. Taille de
-  référence du build 13 (les dictionnaires ne sont plus embarqués, valeur
-  périmée avant cette correction) : archive 13 275 222 octets, installeur
-  12 843 901 octets, 77 fichiers dans l'archive.
+  référence du build 13 (les dictionnaires ne sont pas embarqués dans
+  l'archive) : archive 13 275 222 octets, installeur 12 843 901 octets,
+  77 fichiers dans l'archive.
 - **`.spec`** : `scrabble.spec`, liste explicite des `datas` (pas de
   `collect_tree` en bloc, suite à l'incident du dump wiktionnaire embarqué
   en bloc).
+- **Vérification propre à ce projet** : s'assurer qu'aucun fichier de
+  dictionnaire n'est présent dans l'archive produite.
 
 ### Actualise
 
@@ -228,9 +249,14 @@ liste de numéros, indépendante des autres.
 ## Modèle d'issue de build
 
 Paramètres à remplacer : `<Projet>`, `<numéro-de-build>`,
-`<numéro-de-l'issue>` (connu seulement une fois l'issue créée, à reporter
-dans le nom du fichier de changelog), `<ligne-de-commande-exacte-du-script>`
-(donnée par la fiche du projet ci-dessus).
+`<commit-a-construire>` (commit à builder, pour la vérification qu'il est
+bien un ancêtre de `HEAD`), `<numéro-de-l'issue>` (numéro attribué par
+GitHub dans le dépôt du projet buildé, connu seulement une fois l'issue
+créée, à reporter dans le nom du fichier de changelog),
+`<ligne-de-commande-exacte-du-script>` (donnée par la fiche du projet
+ci-dessus). La fiche de chaque projet (ci-dessus) peut lister des
+vérifications qui lui sont propres (voir par exemple Scrabble) : les
+recopier dans la section « Vérifications préalables » de l'issue.
 
 ```
 #Titre: Build Windows <Projet> — version v<numéro-de-build>
@@ -244,15 +270,18 @@ dans le nom du fichier de changelog), `<ligne-de-commande-exacte-du-script>`
 ## Contexte
 Build de publication de <Projet>, numéro de build <numéro-de-build>
 (calculé à partir de `version.json` sur master et de la plus haute
-étiquette `v<N>` existante, +1). Durées observées sur les builds déjà
-réalisés : entre 90 et 333 secondes selon le projet — 1800s de TIMEOUT
-laisse une marge confortable.
+étiquette `v<N>` existante, +1). Commit à construire : <commit-a-construire>.
+Durées observées sur les builds déjà réalisés : entre 90 et 333 secondes
+selon le projet — 1800s de TIMEOUT laisse une marge confortable.
 
 ## Vérifications préalables
 - Branche et dossier de travail propres avant toute action.
 - Commit de sauvegarde avant toute modification.
+- Le commit à construire (<commit-a-construire>) est un ancêtre de `HEAD` :
+  `git merge-base --is-ancestor <commit-a-construire> HEAD`.
 - [si installeur] Inno Setup disponible à l'emplacement attendu par le
   script.
+- [vérifications propres au projet, recopiées depuis sa fiche ci-dessus]
 - Si une de ces vérifications échoue, s'arrêter sans rien construire.
 
 ## Construire

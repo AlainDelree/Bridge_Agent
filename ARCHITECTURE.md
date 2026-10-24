@@ -199,6 +199,13 @@ postérieure au début du traitement de l'issue n'est ni annulée ni restaurée
 lecture (`instant_legitime`) : une issue ne peut donc pas s'ajouter elle-même
 à cette trace.
 
+Ce garde-fou technique (`watcher.py`, issue #318) ne distingue pas une
+modification manuelle d'Alain (édition directe d'un `configs/*.conf`
+pendant qu'une issue mode_write tourne) d'une modification faite par
+l'issue elle-même : elle est annulée dans les deux cas, sauf à l'enregistrer
+au préalable via `etat_configs_legitimes.enregistrer("<nom>.conf")`, ou à
+attendre qu'aucune issue en écriture ne soit en cours.
+
 ---
 
 ## 3. Ajouter une nouvelle route — procédure
