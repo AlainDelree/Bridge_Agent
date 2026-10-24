@@ -37,6 +37,7 @@ Claude Chat → crée une issue → GitHub → watcher.py détecte → CCL/CCW e
 | Nom | Dépôt GitHub | Répertoire de travail CCL | Topic ntfy | Couleur |
 |-----|-------------|--------------------------|------------|---------|
 | `actualise` | AlainDelree/Actualise | ~/Actualise | (conf local) | `#009DD6` |
+| `actualise_ccw` | AlainDelree/Actualise | C:\CCW\actualise | (lecture CCW) | `#C9D8FF` |
 | `alchess` | AlainDelree/AlChess | ~/NicLink | (conf local) | `#00D68F` |
 | `annuairetoken` | AlainDelree/Annuairetoken | ~/AnnuaireToken | (conf local) | `#FFE4CC` |
 | `apiselect` | AlainDelree/ApiSelect | ~/ApiSelect | (conf local) | `#FFD429` |
@@ -49,8 +50,9 @@ Claude Chat → crée une issue → GitHub → watcher.py détecte → CCL/CCW e
 | `gestionmail` | AlainDelree/GestionMail | ~/GestionMail | (conf local) | `#3B45A0` |
 | `relecture_bridge` | AlainDelree/Relecture_Bridge | ~/Relecture_Bridge | (conf local) | `#CCFF00` |
 | `rummikub` | AlainDelree/Rummikub | ~/Rummikub | (conf local) | `#ADFF8F` |
-| `rummikub_ccw` | AlainDelree/Rummikub | C:\CCW\rummikub | (lecture CCW) | `#C9D8FF` |
+| `rummikub_ccw` | AlainDelree/Rummikub | C:\CCW\rummikub | (lecture CCW) | `#00FFDD` |
 | `scrabble` | AlainDelree/Scrabble | ~/Scrabble | (conf local) | `#7AFFFF` |
+| `scrabble_ccw` | AlainDelree/Scrabble | C:\CCW\scrabble | (lecture CCW) | `#3DD8FF` |
 <!-- FIN:TABLEAU_PROJETS_ACTIFS -->
 
 Chaque projet a son propre watcher (`watcher.py --config configs/<nom>.conf`)
