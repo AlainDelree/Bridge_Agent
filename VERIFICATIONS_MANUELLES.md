@@ -250,6 +250,24 @@
       erreurs identiques en rafale (ex. couper le réseau puis déclencher
       plusieurs fois la même action en échec) — un seul toast reste affiché,
       avec un compteur « (×N) », au lieu de s'empiler à l'écran.
+- [ ] **Messages de panne de connexion auto-effaçables** (issue #807) :
+      couper le réseau (ou arrêter le point d'accès Wi-Fi) avec l'onglet
+      Résultats ouvert, laisser les rechargements automatiques échouer
+      plusieurs fois de suite, puis reconnecter. Vérifier :
+      - les trois bandeaux (« Résultats — échec de chargement… », « Résultats
+        — décompte non rechargé… », état de GitHub) disparaissent SEULS après
+        ~10s, sans clic sur la croix (pas de bouton « × » visible dessus) ;
+      - ils ne s'empilent jamais, même si le texte change entre deux échecs
+        (liste de projets différente) — un seul bandeau par source, dont le
+        contenu se met à jour ;
+      - survoler un bandeau pendant les 10s gèle son compte à rebours (la
+        pause au survol reste active, comme pour info/succès) ;
+      - toutes les occurrences restent consultables dans le panneau
+        « Messages » (icône de l'en-tête), y compris celles déjà disparues de
+        l'écran ;
+      - une autre erreur/avertissement SANS cette option (ex. échec de copie
+        presse-papier) reste, elle, affichée jusqu'au clic sur sa croix —
+        aucune régression de la persistance par défaut (issue #730).
 
 ## Panneau latéral (Infrastructure)
 

@@ -81,7 +81,12 @@ async function verifierEtAfficher() {
   if (transition) {
     toasts.info(transition);
   } else if (donnees && donnees.message) {
-    toasts[calculerTypeToast(donnees.gravite)](donnees.message);
+    // `duree`/`cle` explicites (issue #807) : une vérification toutes les
+    // 60s pendant une panne prolongée réémet ce message avec un texte parfois
+    // différent (gravité, détail) — sans clé fixe, il s'empilerait à chaque
+    // cycle au lieu de se remplacer lui-même.
+    toasts[calculerTypeToast(donnees.gravite)](donnees.message,
+      true, { duree: 10000, cle: 'panne-github-statut' });
   }
   dernierEtatPanne = estEnPanne;
 

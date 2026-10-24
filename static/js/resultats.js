@@ -683,8 +683,13 @@ async function chargerListe(nomsAFetcher) {
   derniereSyncListeMs = maintenant();
   const echecs = chargements.filter(c => !c.succes).map(c => c.projet);
   if (echecs.length) {
+    // `duree`/`cle` explicites (issue #807) : la liste des projets en échec
+    // change à chaque tentative (le texte n'est donc jamais identique d'un
+    // appel à l'autre) — sans clé fixe, ce message s'empilerait indéfiniment
+    // pendant une coupure réseau prolongée au lieu de se remplacer lui-même.
     toasts.erreur('Résultats — échec de chargement : ' + echecs.join(', ')
-                + ' (données précédentes conservées).');
+                + ' (données précédentes conservées).',
+                true, { duree: 10000, cle: 'resultats-echec-chargement' });
     // Alerte explicite de panne GitHub (issue #732) : signalerEchecPossible
     // ignore elle-même tout JSON sans panne_probable:true (api.get lève une
     // ErreurApi dont .corps est le texte JSON brut de la réponse en échec).
@@ -742,8 +747,11 @@ async function chargerTimingTous() {
     if (liste === null) echecs.push(nom);
   }));
   if (echecs.length) {
+    // `duree`/`cle` explicites (issue #807) : même raison que ci-dessus
+    // (toasts.erreur) — la liste des projets en échec change à chaque appel.
     toasts.avertissement('Résultats — décompte non rechargé : ' + echecs.join(', ')
-                       + ' (badges précédents conservés).');
+                       + ' (badges précédents conservés).',
+                       true, { duree: 10000, cle: 'resultats-decompte-non-recharge' });
   }
   majBadges();
 }

@@ -8,7 +8,10 @@
 //     mouseenter/mouseleave dans `afficher`).
 //   - toasts.erreur / avertissement : restent affichés jusqu'à une fermeture
 //     EXPLICITE (bouton « × » visible) — jamais de disparition automatique
-//     (issue #730, voir `dureeAffichage`).
+//     (issue #730, voir `dureeAffichage`), SAUF si l'appelant fournit
+//     explicitement une durée via `options.duree` (issue #807 : messages de
+//     panne de connexion répétitifs, qui n'ont pas besoin d'une action de
+//     l'utilisateur et sont déjà consultables dans le panneau « Messages »).
 //   - toasts.confirmer(...) : LA seule modale, réservée aux confirmations
 //     d'actions destructives (remplaçant de confirm(...)). Renvoie une Promise
 //     qui se résout à true (confirmé) ou false (annulé).
@@ -22,6 +25,18 @@
 //     toasts ne sont JAMAIS fusionnés par l'anti-empilement (sinon le texte
 //     d'un appel précédent serait effacé par le suivant) : chaque occurrence
 //     reste un toast séparé.
+//   - toasts.erreur/avertissement(texte, comptabilise, {duree, cle}) (issue
+//     #807) : deux options facultatives, SANS EFFET par défaut.
+//     * `duree` (ms) : impose une disparition automatique (la pause au
+//       survol reste active) au lieu de la persistance par défaut — réservé
+//       aux messages qui ne demandent aucune action (ex. pannes de connexion
+//       répétitives), jamais aux erreurs à texteSecours.
+//     * `cle` : remplace la clé anti-empilement calculée à partir du texte
+//       (type + texte exact, voir `cleToast`) — utile quand le texte change à
+//       chaque occurrence (ex. liste de projets en échec) et ne se fusionne
+//       donc jamais naturellement. Un nouveau message avec la même `cle`
+//       REMPLACE le contenu du toast déjà affiché (pas de compteur « ×N »,
+//       contrairement à la fusion par défaut) et relance son compte à rebours.
 //
 //   Tous les messages affichés (quel que soit l'appelant) sont en outre
 //   journalisés (voir `journaliser`) dans un historique borné
@@ -87,6 +102,29 @@ function doc() {
 export function dureeAffichage(type) {
   return Object.prototype.hasOwnProperty.call(DUREES_PAR_TYPE, type)
     ? DUREES_PAR_TYPE[type] : DUREE_DEFAUT_MS;
+}
+
+/** Durée d'affichage EFFECTIVE (ms), compte tenu d'une éventuelle durée
+ * explicite fournie par l'appelant (`options.duree`, issue #807) — celle-ci
+ * prime alors sur `dureeAffichage(type)`, y compris pour imposer une
+ * disparition automatique à une erreur/avertissement normalement persistant.
+ * Sans `dureeDemandee` (undefined/non numérique), comportement inchangé. */
+export function dureeEffective(type, dureeDemandee) {
+  return typeof dureeDemandee === 'number' ? dureeDemandee : dureeAffichage(type);
+}
+
+/** Contenu affiché/compteur après un nouvel appel `afficher` sur un toast déjà
+ * actif (issue #635 par défaut, #807 pour le remplacement) :
+ * - fusion par défaut (`remplacer` faux) : compteur incrémenté, texte suffixé
+ *   « (×N) » — comportement d'avant #807, inchangé.
+ * - remplacement (`remplacer` vrai, `options.cle` fourni par l'appelant) :
+ *   le texte du toast actif est REMPLACÉ par le nouveau, sans compteur — le
+ *   texte change à chaque occurrence (ex. liste de projets en échec), un
+ *   compteur n'aurait ici aucun sens. */
+export function contenuRemplacement(texteNouveau, compteurActuel, remplacer) {
+  return remplacer
+    ? { texte: texteNouveau, compteur: compteurActuel }
+    : { texte: texteNouveau + ' (×' + (compteurActuel + 1) + ')', compteur: compteurActuel + 1 };
 }
 
 /** Ajoute `entree` en fin de `journal`, en retirant les plus anciennes au-delà
@@ -433,21 +471,34 @@ export function cleToast(type, texte, texteSecours, compteurUnique) {
   return texteSecours ? `${type} ${texte} #${compteurUnique}` : `${type} ${texte}`;
 }
 
+/** Clé de regroupement EFFECTIVE, compte tenu d'une éventuelle clé explicite
+ * fournie par l'appelant (`options.cle`, issue #807) — celle-ci prime alors
+ * sur `cleToast(...)`, quel que soit le texte (donc même si celui-ci change
+ * d'un appel à l'autre — ex. liste de projets en échec). Sans `cleDemandee`
+ * (undefined/null), comportement inchangé. */
+export function cleEffective(type, texte, texteSecours, compteurUnique, cleDemandee) {
+  return cleDemandee != null ? cleDemandee : cleToast(type, texte, texteSecours, compteurUnique);
+}
+
 let compteurCleSecours = 0;
 
 function afficher(texte, type, comptabiliseDemande = true, options = {}) {
-  const { texteSecours } = options || {};
+  const { texteSecours, duree: dureeDemandee, cle: cleDemandee } = options || {};
   const d = doc();
   if (!d) { return; }
   injecterStyles();
   journaliser(texte, type, estComptabilise(type, comptabiliseDemande));
 
-  const duree = dureeAffichage(type);
-  const cle = cleToast(type, texte, texteSecours, texteSecours ? ++compteurCleSecours : undefined);
+  // `options.duree`/`options.cle` (issue #807) : voir dureeEffective/
+  // cleEffective ci-dessus — sans effet si absents (comportement inchangé).
+  const duree = dureeEffective(type, dureeDemandee);
+  const remplacer = cleDemandee != null;
+  const cle = cleEffective(type, texte, texteSecours, texteSecours ? ++compteurCleSecours : undefined, cleDemandee);
   const actif = texteSecours ? null : toastsActifs.get(cle);
   if (actif) {
-    actif.compteur += 1;
-    definirContenuToast(actif.element, texte + ' (×' + actif.compteur + ')', duree === null, () => fermerToast(cle));
+    const { texte: texteAffiche, compteur } = contenuRemplacement(texte, actif.compteur, remplacer);
+    actif.compteur = compteur;
+    definirContenuToast(actif.element, texteAffiche, duree === null, () => fermerToast(cle));
     if (duree !== null) {
       clearTimeout(actif.minuteur);
       actif.dureeRestante = duree;
@@ -488,7 +539,8 @@ function afficher(texte, type, comptabiliseDemande = true, options = {}) {
       entree.minuteur = setTimeout(() => fermerToast(cle), entree.dureeRestante);
     });
     // Clic = fermeture immédiate, réservé aux messages déjà auto-effaçables
-    // (info/succes) — erreur/avertissement n'ont que le bouton « × » explicite.
+    // (info/succes, ou erreur/avertissement à durée explicite — issue #807) —
+    // une erreur/avertissement SANS durée explicite n'a que le bouton « × ».
     toast.addEventListener('click', () => { clearTimeout(entree.minuteur); fermerToast(cle); });
   }
   toastsActifs.set(cle, entree);
@@ -547,6 +599,8 @@ export const toasts = {
   // refusé, execCommand en échec…) reste accessible pour un Ctrl+C manuel,
   // au lieu d'être simplement perdu.
   erreur: (texte, comptabilise = true, options) => afficher(texte, 'erreur', comptabilise, options),
-  avertissement: (texte, comptabilise = true) => afficher(texte, 'avertissement', comptabilise),
+  // `options.duree`/`options.cle` (issue #807) : voir le commentaire d'en-tête
+  // du fichier — mêmes options facultatives que `erreur` ci-dessus.
+  avertissement: (texte, comptabilise = true, options) => afficher(texte, 'avertissement', comptabilise, options),
   confirmer,
 };
