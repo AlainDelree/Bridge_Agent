@@ -199,6 +199,81 @@ def test_couleur_ccw_distincte_et_stable():
     return {"couleurs": couleurs_1}
 
 
+def test_couleur_ccw_survit_au_gris_partage_des_projets_inactifs():
+    """Reproduit la situation réelle de l'issue #805 : les 14 couleurs
+    actuellement en usage dans le tableau §2, dont DEUX projets inactifs
+    (`ecole`/`ff_galerie`) partageant le même gris COULEUR_PROJET_INACTIF
+    (#767676) — un jeu qui faisait échouer `generer_palette` par assertion
+    (« couleurs 7 et 8 de teinte trop proche ») avant le filtre de
+    `_couleurs_a_eviter_pour_ccw`. Un des 14 projets (`rummikub`) porte en
+    plus REP_TRAVAIL_CCW, comme dans le scénario réel qui a déclenché le
+    rapport de bug."""
+    couleurs_reelles = {
+        "actualise": "#009DD6", "alchess": "#00D68F", "annuairetoken": "#FFE4CC",
+        "apiselect": "#FFD429", "bloc_score": "#FF8595", "bridge_agent": "#EB0000",
+        "chesscoach": "#BB00FF", "diagnostique_programme": "#FC00A8",
+        "ecole": "#767676", "ff_galerie": "#767676", "gestionmail": "#3B45A0",
+        "relecture_bridge": "#CCFF00", "rummikub": "#ADFF8F", "scrabble": "#7AFFFF",
+    }
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp = Path(tmp)
+        doc = _ecrire_doc(tmp)
+        configs = tmp / "configs"
+        configs.mkdir()
+        for nom, couleur in couleurs_reelles.items():
+            contenu = f"NOM = {nom}\nDEPOT = AlainDelree/{nom}\nREP_TRAVAIL = /home/alain/{nom}\n"
+            contenu += f"COULEUR = {couleur}\n"
+            if nom == "rummikub":
+                contenu += "REP_TRAVAIL_CCW = C:\\CCW\\rummikub\n"
+            (configs / f"{nom}.conf").write_text(contenu, encoding="utf-8")
+
+        res1 = rtp.regenerer(doc_path=doc, dossier_configs=configs)
+        assert res1["erreur"] is None, res1
+        texte1 = doc.read_text(encoding="utf-8")
+        lignes1 = _lignes_actives(texte1)
+        noms1 = [l.split("|")[1].strip().strip("`") for l in lignes1]
+        assert "rummikub_ccw" in noms1, noms1
+        assert noms1.index("rummikub_ccw") == noms1.index("rummikub") + 1, noms1
+
+        couleurs_1 = _couleurs(texte1)
+        couleur_ccw_1 = couleurs_1["rummikub_ccw"]
+        assert re.match(r"^#[0-9A-Fa-f]{6}$", couleur_ccw_1), couleur_ccw_1
+        # ecole/ff_galerie partagent intentionnellement le même gris (projets
+        # inactifs, voir COULEUR_PROJET_INACTIF) : seul doublon toléré.
+        autres = {n: c for n, c in couleurs_1.items() if n != "rummikub_ccw"}
+        for nom, c in autres.items():
+            assert couleur_ccw_1 != c, (nom, couleurs_1)
+        doublons = [c for c in autres.values() if list(autres.values()).count(c) > 1]
+        assert set(doublons) == {"#767676"}, (
+            f"doublon(s) de couleur inattendu(s) : {couleurs_1}")
+
+        # Deuxième régénération, .conf inchangés -> même couleur (stabilité).
+        res2 = rtp.regenerer(doc_path=doc, dossier_configs=configs)
+        assert res2["erreur"] is None, res2
+        couleurs_2 = _couleurs(doc.read_text(encoding="utf-8"))
+        assert couleurs_2["rummikub_ccw"] == couleur_ccw_1, (couleurs_2, couleur_ccw_1)
+    return {"couleur_rummikub_ccw": couleur_ccw_1}
+
+
+def test_couleur_ccw_repli_gris_si_palette_echoue():
+    """Force l'échec du calcul (`generer_palette` monkey-patchée pour lever)
+    et vérifie le repli sur le gris partagé COULEUR_PROJET_INACTIF — jamais
+    une exception qui remonterait jusqu'à `regenerer()`."""
+    original = rtp.generer_palette
+    try:
+        rtp.generer_palette = lambda *a, **k: (_ for _ in ()).throw(
+            AssertionError("échec forcé par le test"))
+        couleur = rtp._couleur_ccw({"rummikub": "#ADFF8F"})
+        assert couleur == rtp.COULEUR_PROJET_INACTIF, couleur
+
+        rtp.generer_palette = lambda *a, **k: []
+        couleur = rtp._couleur_ccw({"rummikub": "#ADFF8F"})
+        assert couleur == rtp.COULEUR_PROJET_INACTIF, couleur
+    finally:
+        rtp.generer_palette = original
+    return {}
+
+
 def main() -> int:
     tests = [
         ("projet avec REP_TRAVAIL_CCW → ligne `<nom>_ccw` juste après la sienne",
@@ -211,6 +286,10 @@ def main() -> int:
          test_ligne_ccw_absente_du_tableau_perimetre),
         ("couleur de la ligne _ccw : distincte de toutes les autres, stable",
          test_couleur_ccw_distincte_et_stable),
+        ("issue #805 : gris partagé ecole/ff_galerie ne fait plus échouer la régénération",
+         test_couleur_ccw_survit_au_gris_partage_des_projets_inactifs),
+        ("issue #805 : repli sur le gris partagé si generer_palette échoue",
+         test_couleur_ccw_repli_gris_si_palette_echoue),
     ]
     echecs = 0
     for nom, fn in tests:

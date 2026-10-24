@@ -133,23 +133,72 @@ def _chemin_windows(rep: str) -> str:
     return rep.replace("/", "\\")
 
 
+def _couleurs_a_eviter_pour_ccw(couleurs_en_usage: dict[str, str]) -> dict[str, str]:
+    """Filtre `couleurs_en_usage` avant de le transmettre à `generer_palette`
+    (issue #805) : retire le gris partagé COULEUR_PROJET_INACTIF (projets à
+    l'arrêt, ex. ecole/ff_galerie) et les doublons de valeur.
+
+    Une couleur grise partagée par plusieurs projets inactifs ne contraint
+    PAS la teinte d'une nouvelle couleur : visuellement elle ne signale que
+    l'absence d'identité propre (voir le commentaire au-dessus de
+    COULEUR_PROJET_INACTIF dans palette.py), et son angle de teinte Lab est
+    dégénéré (saturation nulle → atan2(0, 0) = 0°, qui entre en collision
+    avec l'exclusion de teinte prévue pour les rouges). Avant ce filtre, la
+    seule PRÉSENCE de ce gris dans les couleurs à éviter — à plus forte
+    raison en double, comme ecole ET ff_galerie — pouvait faire échouer
+    l'assertion de `generer_palette` (reproduit avec les 14 couleurs réelles
+    du tableau, voir le rapport de clôture de #805), ce qui arrêtait net
+    `regenerer_tableaux_projets.py` dès qu'un `.conf` portait
+    REP_TRAVAIL_CCW. Les doublons (même valeur hex partagée par deux clés)
+    échoueraient de toute façon l'assertion de distance (deux couleurs
+    identiques ont une distance Lab nulle) : filtrés par la même occasion,
+    gris ou pas."""
+    a_eviter = {}
+    vues = set()
+    for nom, couleur in couleurs_en_usage.items():
+        if couleur == COULEUR_PROJET_INACTIF or couleur in vues:
+            continue
+        vues.add(couleur)
+        a_eviter[nom] = couleur
+    return a_eviter
+
+
 def _couleur_ccw(couleurs_en_usage: dict[str, str]) -> str:
     """Couleur dédiée à UNE ligne de relecture `<nom>_ccw` (issue #804),
     distincte — garantie par construction, pas par estimation — de TOUTES
     les couleurs déjà en usage à cet instant (projets CCL + lignes `_ccw`
-    déjà attribuées dans ce même appel de `_lignes_tableau_actifs`).
+    déjà attribuées dans ce même appel de `_lignes_tableau_actifs`), à
+    l'exception du gris partagé des projets inactifs (voir
+    `_couleurs_a_eviter_pour_ccw`).
 
     Réutilise `generer_palette` (palette.py, issue #539) plutôt qu'un simple
     hash : un hash du nom ne garantit par construction NI la distance Lab ni
     l'écart de teinte minimal vis-à-vis des couleurs déjà prises (c'est
     exactement le trou que #539 a comblé pour les couleurs de projet
-    normales). `generer_palette(1, couleurs_a_eviter=couleurs_en_usage)` est
-    déterministe : à ensemble de couleurs évitées identique, le résultat est
-    toujours le même (stabilité demandée par l'issue). Repli sur le gris
-    partagé COULEUR_PROJET_INACTIF si la palette est épuisée (cas limite,
-    jamais atteint au nombre de projets actuel — voir NB_COULEURS_PALETTE)."""
-    candidats = generer_palette(1, couleurs_a_eviter=couleurs_en_usage)
-    return candidats[0] if candidats else COULEUR_PROJET_INACTIF
+    normales). `generer_palette(1, couleurs_a_eviter=...)` est déterministe :
+    à ensemble de couleurs évitées identique, le résultat est toujours le
+    même (stabilité demandée par l'issue).
+
+    Sûr par construction (issue #805) : si `generer_palette` échoue malgré
+    le filtre ci-dessus — assertion de garde (cas non prévu) ou palette
+    épuisée (cas limite, jamais atteint au nombre de projets actuel, voir
+    NB_COULEURS_PALETTE) — repli sur le gris partagé COULEUR_PROJET_INACTIF,
+    signalé par un avertissement sur stderr, JAMAIS par une exception qui
+    remonterait jusqu'à `regenerer()` : la régénération des tableaux (et la
+    création/suppression de projet qui l'appelle en fin de flux) ne doit
+    jamais échouer pour une couleur d'accent, purement cosmétique."""
+    a_eviter = _couleurs_a_eviter_pour_ccw(couleurs_en_usage)
+    try:
+        candidats = generer_palette(1, couleurs_a_eviter=a_eviter)
+    except AssertionError as exc:
+        print(f"⚠️  _couleur_ccw : generer_palette a échoué ({exc}) — "
+              f"repli sur COULEUR_PROJET_INACTIF.", file=sys.stderr)
+        return COULEUR_PROJET_INACTIF
+    if candidats:
+        return candidats[0]
+    print("⚠️  _couleur_ccw : palette épuisée (aucune couleur valide restante) "
+          "— repli sur COULEUR_PROJET_INACTIF.", file=sys.stderr)
+    return COULEUR_PROJET_INACTIF
 
 
 def _lignes_tableau_actifs(projets: list[dict]) -> list[str]:
