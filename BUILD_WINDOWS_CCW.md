@@ -223,26 +223,7 @@ liste de numéros, indépendante des autres.
 
 ### Actualise
 
-- **Script de build** (ligne de commande exacte) :
-  `build\rebuild_actualise.bat --publier --build <N>` — numéro automatique
-  si `--build` est omis (`version.json` existant + 1).
-- **Dossier de build local** : `C:\Temp\ActualiseBuild`.
-- Pas d'étape Inno Setup — Actualise se distribue en `dist\Actualise\` nu
-  via Release GitHub, pas d'installeur.
-- **`.spec`** : `actualise.spec` — `--onedir --noconsole` (invisible
-  pendant que l'application cible tourne, logging fichier compense) ;
-  `datas=[]` explicite (`config.json` est externe, jamais embarqué).
-- **Mode `--publier`** : après un build réussi, construit `actualise.zip`
-  (manifeste `{"build": N, "supprimer": []}`), calcule le SHA-256, écrit
-  `version.json`, fait un commit local — jamais de `git push` ni de
-  Release GitHub.
-- **Durée de référence** : 90,47 secondes (build réel, marge confortable
-  avec un TIMEOUT de 1800s).
-- **Taille de référence** : `dist\Actualise\` non compressé, 20 970 000
-  octets environ (20,97 Mo, 29 fichiers) — `Actualise.exe` seul :
-  4 388 786 octets, SHA-256
-  `61A3373D6EE2D48A357E34BA9E967236B101F3F580BD98BC20DD667C86772F47`
-  (référence du 3 août 2026).
+La fiche d'Actualise est en cours de révision : son processus de build (trois scripts séparés, publication qui n'écrit pas `version.json`) diffère de celui de Rummikub et de Scrabble et doit être uniformisé. **Ne pas rédiger d'issue de build d'Actualise d'après ce guide avant la mise à jour de cette fiche.**
 
 ---
 
