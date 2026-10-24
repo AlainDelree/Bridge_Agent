@@ -229,6 +229,46 @@ test('case à cocher : commit de sauvegarde vide (aucun fichier) → mention exp
   assert.match(texte, /aucun fichier/);
 });
 
+// ─── Issue #808 : état « windows » — inventaire par construction impossible
+//     depuis le ThinkPad (commits sur le PC fixe) → texte neutre, AUCUNE
+//     requête d'inventaire au serveur.
+
+test('case à cocher : issue Windows (etat « windows », avec hashes) → texte neutre, AUCUNE requête d\'inventaire', async () => {
+  fixerEnvironnement({ etatCommits: { etat: 'windows', hashes: ['aaa1111', 'bbb2222'] } });
+  let requeteInventaire = false;
+  const fetchOriginal = global.fetch;
+  global.fetch = async (url, ...reste) => {
+    if (url.startsWith('/inventaire-commit/')) requeteInventaire = true;
+    return fetchOriginal(url, ...reste);
+  };
+  const copie = attendreProchaineCopie();
+  resultatsCoches.basculer(evenementCase(), PROJET, 109);
+  const texte = await copie;
+  assert.equal(requeteInventaire, false,
+    'aucune requête /inventaire-commit ne doit être faite pour une issue Windows (issue #808)');
+  assert.match(texte, /===== Fichiers modifiés =====/);
+  assert.match(texte, /ThinkPad/);
+  assert.match(texte, /_ccw/);
+  assert.doesNotMatch(texte, /⚠/, 'pas un cas d\'anomalie — aucun symbole d\'alerte');
+});
+
+test('case à cocher : issue Windows (etat « windows », SANS hashes) → même texte neutre, AUCUNE requête d\'inventaire', async () => {
+  fixerEnvironnement({ etatCommits: { etat: 'windows', hashes: [] } });
+  let requeteInventaire = false;
+  const fetchOriginal = global.fetch;
+  global.fetch = async (url, ...reste) => {
+    if (url.startsWith('/inventaire-commit/')) requeteInventaire = true;
+    return fetchOriginal(url, ...reste);
+  };
+  const copie = attendreProchaineCopie();
+  resultatsCoches.basculer(evenementCase(), PROJET, 110);
+  const texte = await copie;
+  assert.equal(requeteInventaire, false,
+    'aucune requête /inventaire-commit ne doit être faite pour une issue Windows (issue #808)');
+  assert.match(texte, /===== Fichiers modifiés =====/);
+  assert.doesNotMatch(texte, /⚠/);
+});
+
 // ─── Diff/All au-delà du seuil de lignes (issue #790) : fichier, pas de copie ──
 const DIFF_VOLUMINEUX = Array(SEUIL_LIGNES_VOLUMINEUX + 10).fill('+ligne').join('\n');
 
