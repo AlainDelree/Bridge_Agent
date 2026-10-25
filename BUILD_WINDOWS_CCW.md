@@ -82,7 +82,12 @@ il contient le modèle à utiliser en bas de page.
   — il le rappelle lui-même à la fin de son exécution.
 - Les fichiers produits restent dans le worktree, sous `installeur\output` :
   l'archive `<projet>-v<N>.zip` et l'installeur `<Projet>-Setup-v<N>.exe`.
-  Alain doit les récupérer avant de supprimer le worktree.
+  Pour les projets dont la fiche indique que le script les copie aussi dans
+  le dossier fixe `C:\CCW_Share\_derniers_builds\<projet>\` (Actualise et
+  Scrabble à ce jour), il suffit de vérifier leur présence dans ce dossier
+  avant de supprimer le worktree ; pour les autres (Rummikub pour
+  l'instant), Alain doit les récupérer dans `installeur\output` du worktree
+  avant de le supprimer.
 - Commits attendus dans le worktree à l'issue d'un build réussi : une
   sauvegarde vide, le commit de `version.json` fait par le script, et
   l'entrée de changelog `CHANGELOG-<numéro-de-l'issue>.md` ajoutée par
@@ -146,8 +151,12 @@ il contient le modèle à utiliser en bas de page.
 
 ## Ce que fait Alain ensuite
 
-1. Récupère les fichiers produits (`installeur\output` du worktree) avant
-   de supprimer le worktree.
+1. Selon la fiche du projet (ci-dessous) : si le script copie aussi les
+   fichiers produits dans le dossier fixe
+   `C:\CCW_Share\_derniers_builds\<projet>\` (Actualise et Scrabble à ce
+   jour), vérifie leur présence dans ce dossier ; sinon (Rummikub pour
+   l'instant), récupère les fichiers produits dans `installeur\output` du
+   worktree. Dans les deux cas, avant de supprimer le worktree.
 2. Fusionne la branche du worktree dans `master`, en passant par l'outil de
    relecture (`relecture_web`) et en y choisissant l'entrée `<projet>_ccw`
    — pas l'entrée du projet lui-même : c'est elle qui montre le clone
@@ -168,8 +177,8 @@ il contient le modèle à utiliser en bas de page.
    introuvable n'a pas été vérifié.
 4. Pousse `master`.
 5. Vérifie qu'Actualise propose bien la mise à jour sur un PC de test.
-6. Supprime le worktree une fois les fichiers récupérés et la Release
-   publiée.
+6. Supprime le worktree une fois les fichiers vérifiés ou récupérés (selon
+   le cas de l'étape 1) et la Release publiée.
 
 ---
 
@@ -232,27 +241,57 @@ liste de numéros, indépendante des autres.
 ### Scrabble
 
 - **Script de build** (ligne de commande exacte) :
-  `build\rebuild_scrabble.bat --publier <N>`.
-- **Build de référence** : build 13, issue réussie, 283 secondes de durée
-  réelle — worktree `C:\CCW\worktrees\scrabble-ccw-issue470`. Taille de
-  référence du build 13 (les dictionnaires ne sont pas embarqués dans
-  l'archive) : archive 13 275 222 octets, installeur 12 843 901 octets,
-  77 fichiers dans l'archive.
+  `build\rebuild_scrabble.bat --publier [--build N]` — l'ancienne forme
+  `--publier <N>` (numéro accolé) n'est plus acceptée. Sans `--build`, le
+  numéro est le build de `version.json` plus 1, dans tous les modes, y
+  compris sans `--publier`.
+- **Dix étapes** numérotées de 0 à 9, depuis la nouvelle syntaxe du script
+  (issue #472 de Scrabble, fusionnée dans master et publiée) — l'ancienne
+  syntaxe n'en annonçait que neuf, de 0 à 8.
+- **Garde-fou** (issue #472 de Scrabble) : le script refuse, avant toute
+  écriture, un numéro qui n'est pas un entier strictement supérieur au
+  build de `version.json`, avec un message clair et un code de sortie non
+  nul ; un argument inconnu, l'ancienne forme `--publier <N>` et `--build`
+  sans valeur sont aussi refusés.
+- **Artefacts et dossier fixe** : `Scrabble-Setup-v<N>.exe` et
+  `scrabble-v<N>.zip` produits dans `installeur\output` du worktree, et
+  copiés en plus dans `C:\CCW_Share\_derniers_builds\scrabble\` **dans
+  tous les modes**, même sans `--publier`. Le script affiche lui-même les
+  noms et les tailles en octets de ces deux fichiers copiés : l'agent ne
+  lit pas ce dossier, il reprend ces valeurs dans son rapport.
 - **`.spec`** : `scrabble.spec`, liste explicite des `datas` (pas de
   `collect_tree` en bloc, suite à l'incident du dump wiktionnaire embarqué
   en bloc).
 - **Vérification propre à ce projet** : s'assurer qu'aucun fichier de
   dictionnaire n'est présent dans l'archive produite.
+- **Référence de la nouvelle syntaxe, essai avec le numéro fictif 99**
+  (fournie par le Chat Scrabble le 2026-10-25, non recoupée dans le script
+  — **à confirmer par le build 14**, premier vrai build avec cette
+  syntaxe) : installeur 12 905 773 octets, archive 13 355 850 octets,
+  durée 113 secondes (1 min 53 s).
+- **Build de référence de l'ancienne syntaxe** : build 13, issue réussie,
+  283 secondes de durée réelle — worktree
+  `C:\CCW\worktrees\scrabble-ccw-issue470`. Taille de référence du build 13
+  (les dictionnaires ne sont pas embarqués dans l'archive) : archive
+  13 275 222 octets, installeur 12 843 901 octets, 77 fichiers dans
+  l'archive.
+- **Release à deux fichiers** : comme pour Rummikub et Actualise, la
+  Release porte l'installeur ET l'archive, créée par Alain avant de
+  pousser `master`.
+- **Essais avec un numéro fictif** : comme pour Actualise, la copie vers le
+  dossier fixe (`C:\CCW_Share\_derniers_builds\scrabble\`) a lieu dans tous
+  les modes, y compris un essai sans `--publier` : Alain supprime à la main
+  les fichiers de l'essai après coup.
 
 ### Actualise
 
 - **Script de build** (ligne de commande exacte) :
   `build\rebuild_actualise.bat --publier [--build N]` — sans `--build`, le
   numéro est le build de `version.json` plus 1.
-- **Dix étapes** numérotées de 0 à 9 (Rummikub et Scrabble n'en ont que
-  neuf, de 0 à 8), parce qu'Actualise produit deux builds PyInstaller
-  distincts (`Actualise.exe` en dossier, `ActualiseUI.exe` en fichier
-  unique) et a une étape d'archive séparée.
+- **Dix étapes** numérotées de 0 à 9 (Rummikub en annonce neuf, de 0 à 8 ;
+  Scrabble en annonce dix, de 0 à 9, comme Actualise), parce qu'Actualise
+  produit deux builds PyInstaller distincts (`Actualise.exe` en dossier,
+  `ActualiseUI.exe` en fichier unique) et a une étape d'archive séparée.
 - **Inno Setup** : trouvé dans `C:\CCW\tools\InnoSetup6\ISCC.exe`.
 - **Artefacts et dossier fixe** : `Actualise-Setup-v<N>.exe` et
   `actualise-v<N>.zip` produits dans `installeur\output` du worktree, et
@@ -374,6 +413,9 @@ Fichiers modifiés limités à `version.json` et à l'entrée de changelog
 
 ## Rapport attendu
 Résultat des vérifications ci-dessus, chemin des fichiers produits dans
-`installeur\output`, et rappel qu'Alain doit les récupérer avant la
+`installeur\output`. Si la fiche du projet indique que le script les copie
+aussi dans le dossier fixe `C:\CCW_Share\_derniers_builds\<Projet>\`,
+reprendre les noms et tailles affichés par le script ; sinon, rappeler
+qu'Alain doit récupérer les fichiers dans `installeur\output` avant la
 suppression du worktree.
 ```
