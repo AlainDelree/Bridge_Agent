@@ -570,10 +570,14 @@ create`, puis surveille sa fermeture avant de livrer sa réponse.
   puis d'attendre sa fermeture, sans orchestration réelle, est du surcoût
   pur (deux issues, deux invocations `claude`, TIMEOUT long, attente
   synchrone bloquante).
-- **⚠️ Contrepartie opérationnelle** : contrairement aux issues `for-linux`,
-  créer une issue `for-windows` ne rallume pas automatiquement son watcher —
-  vérifier dans l'onglet CCW (§16) qu'il est bien démarré avant d'envoyer une
-  issue `for-windows` directe ou un ouvrier.
+- **⚠️ Contrepartie opérationnelle** : depuis les issues #709/#711, créer
+  une issue `for-windows` par le formulaire web ou par un fichier déposé
+  dans `issues_inbox/` démarre automatiquement en arrière-plan le service
+  dédié du projet — mais un échec (SSH par exemple) ne fait pas échouer la
+  création de l'issue et n'affiche aucun message ; de plus, une issue créée
+  par `gh issue create` direct ne bénéficie pas de ce démarrage
+  automatique. Vérifier dans l'onglet CCW (§16) que le service est bien
+  démarré avant d'envoyer une issue `for-windows` directe ou un ouvrier.
 
 **Ce n'est pas déclenché automatiquement par `watcher.py`** : le chef agit
 sur instruction explicite de l'issue qui le mandate (pas de détection auto
@@ -674,8 +678,8 @@ calibration (constantes actuelles du code : `K_VARIABILITE` = 3, issue
 
 ---
 
-*Dernière mise à jour : 24 octobre 2026 — §2 : ligne `<nom>_ccw` automatique
-(clé `REP_TRAVAIL_CCW`) pour les projets ayant un clone Windows, réservée à
-la relecture (issue #804).*
+*Dernière mise à jour : 25 octobre 2026 — §14 : correction de la
+contrepartie opérationnelle sur le démarrage automatique du watcher d'une
+issue `for-windows` (issue #814).*
 
 Historique complet : voir [`CHANGELOG.md`](CHANGELOG.md).
