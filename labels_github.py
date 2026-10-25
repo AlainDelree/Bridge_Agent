@@ -77,20 +77,28 @@ def _gh(*args: str) -> subprocess.CompletedProcess:
         return subprocess.CompletedProcess(args, 1, stdout="", stderr=str(e))
 
 
-def creer_labels(depot: str) -> list[tuple[str, str, str]]:
+def creer_labels(depot: str) -> list[tuple[str | None, str, str]]:
     """Crée les labels manquants sur le dépôt cible (idempotent : les présents
     sont laissés intacts, jamais modifiés ni recolorés). Renvoie une liste
     ordonnée de (label, statut, detail) où statut ∈ {"deja", "cree", "echec"}.
-    Ne lève jamais : une liste illisible (réseau, droits, dépôt inaccessible)
-    laisse `existants` vide, ce qui fait simplement tenter la création de
-    chaque label (chacune échoue proprement avec un statut "echec" si le
-    label existe déjà mais n'a pas pu être listé)."""
+
+    Si la liste des labels existants ne peut pas être lue (code de retour non
+    nul de `gh label list` — réseau, droits, dépôt inaccessible, délai dépassé
+    ou `gh` absent : `_gh` ramène tous ces cas à un simple returncode != 0),
+    AUCUNE création n'est tentée (un label existant mais non listé ne doit
+    jamais être retenté en création). La fonction renvoie alors une liste à
+    un seul élément (None, "illisible", raison) où raison est le message de
+    `gh` (stderr, ou "raison inconnue" si vide) — distinct des statuts
+    "deja"/"cree"/"echec" ci-dessus, qui restent inchangés quand la liste est
+    lue avec succès. Ne lève jamais."""
     res = _gh("label", "list", "--repo", depot, "--limit", "200")
+    if res.returncode != 0:
+        return [(None, "illisible", res.stderr.strip() or "raison inconnue")]
+
     existants = set()
-    if res.returncode == 0:
-        for ligne in res.stdout.splitlines():
-            if ligne.strip():
-                existants.add(ligne.split("\t")[0].strip().lower())
+    for ligne in res.stdout.splitlines():
+        if ligne.strip():
+            existants.add(ligne.split("\t")[0].strip().lower())
 
     resultats = []
     for nom_label, couleur, description in LABELS:

@@ -585,14 +585,19 @@ def creer_projet(nom: str, depot: str = "", rep: str = "", perimetre: str = "",
 
     # 3. Labels GitHub requis (idempotent).
     resultats = creer_labels(depot)
-    nb_crees = sum(1 for _, s, _ in resultats if s == "cree")
-    nb_deja = sum(1 for _, s, _ in resultats if s == "deja")
-    echecs = [(n, e) for n, s, e in resultats if s == "echec"]
-    detail_labels = f"{nb_crees} nouveau(x), {nb_deja} déjà existant(s)"
-    if echecs:
-        detail_labels += " ; échecs : " + ", ".join(f"{n} ({e})" for n, e in echecs)
-    etapes.append({"etape": "Labels GitHub", "ok": not echecs,
-                   "detail": detail_labels})
+    if len(resultats) == 1 and resultats[0][1] == "illisible":
+        etapes.append({"etape": "Labels GitHub", "ok": False,
+                       "detail": f"liste illisible : {resultats[0][2]} — "
+                                 "aucune création tentée."})
+    else:
+        nb_crees = sum(1 for _, s, _ in resultats if s == "cree")
+        nb_deja = sum(1 for _, s, _ in resultats if s == "deja")
+        echecs = [(n, e) for n, s, e in resultats if s == "echec"]
+        detail_labels = f"{nb_crees} nouveau(x), {nb_deja} déjà existant(s)"
+        if echecs:
+            detail_labels += " ; échecs : " + ", ".join(f"{n} ({e})" for n, e in echecs)
+        etapes.append({"etape": "Labels GitHub", "ok": not echecs,
+                       "detail": detail_labels})
 
     # 4. Fichier(s) de contexte (crée le répertoire de travail au besoin).
     ctx = creer_fichiers_contexte(rep, avec_specs)

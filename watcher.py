@@ -778,11 +778,22 @@ def verifier_labels_demarrage(cfg: Config):
     Jamais bloquant : toute exception (réseau, `gh` absent, droits, dépôt
     inaccessible) est rattrapée ici et journalisée en avertissement — le
     watcher démarre normalement dans tous les cas, y compris sur échec
-    total de cette vérification."""
+    total de cette vérification.
+
+    Si la liste des labels du dépôt n'a pas pu être lue (voir
+    labels_github.creer_labels), un seul avertissement est journalisé (pas de
+    ligne par label : un label absent de la liste illisible peut très bien
+    exister, c'est la lecture qui a échoué, et aucune création n'a été
+    tentée)."""
     try:
         resultats = _creer_labels_gh(cfg.depot)
     except Exception as e:
         log.warning(f"Vérification des labels GitHub ignorée pour '{cfg.depot}' : {e}")
+        return
+    if resultats and resultats[0][1] == "illisible":
+        raison = resultats[0][2]
+        log.warning(f"Labels GitHub de '{cfg.depot}' non vérifiés (liste illisible : "
+                    f"{raison}) — rien n'a été créé.")
         return
     deja = [n for n, s, _d in resultats if s == "deja"]
     crees = [n for n, s, _d in resultats if s == "cree"]

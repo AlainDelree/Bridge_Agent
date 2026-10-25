@@ -48,7 +48,11 @@ def lister_projets_a_rattraper(dossier_configs: Path = DOSSIER_CONFIGS) -> list[
     return projets
 
 
-def _afficher_tableau(nom: str, depot: str, resultats: list[tuple[str, str, str]]):
+def _afficher_tableau(nom: str, depot: str, resultats: list[tuple[str | None, str, str]]):
+    if len(resultats) == 1 and resultats[0][1] == "illisible":
+        raison = resultats[0][2]
+        print(f"\n=== {nom} ({depot}) — liste illisible : {raison} ===")
+        return
     deja = sum(1 for _n, s, _d in resultats if s == "deja")
     crees = sum(1 for _n, s, _d in resultats if s == "cree")
     echecs = sum(1 for _n, s, _d in resultats if s == "echec")
@@ -73,14 +77,19 @@ def main() -> int:
 
     total_crees = 0
     total_echecs = 0
+    total_illisibles = 0
     for nom, depot in projets:
         resultats = creer_labels(depot)
         _afficher_tableau(nom, depot, resultats)
+        if len(resultats) == 1 and resultats[0][1] == "illisible":
+            total_illisibles += 1
+            continue
         total_crees += sum(1 for _n, s, _d in resultats if s == "cree")
         total_echecs += sum(1 for _n, s, _d in resultats if s == "echec")
 
+    detail_illisibles = f", {total_illisibles} liste(s) illisible(s)" if total_illisibles else ""
     print(f"\n{len(projets)} projet(s) traité(s) — {total_crees} label(s) créé(s) au total, "
-          f"{total_echecs} échec(s).")
+          f"{total_echecs} échec(s){detail_illisibles}.")
     return 1 if total_echecs else 0
 
 
