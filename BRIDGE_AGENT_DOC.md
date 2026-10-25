@@ -257,9 +257,8 @@ circuit normal.
 > l'issue (`CFG.label_agent`), distinct de `for-linux`/`for-windows` (qui ne
 > désignent que la plateforme visée). Comme `sans-redacteur` et `mode_scratch`,
 > ils sont provisionnés d'office sur tout nouveau projet
-> (`nouveau_projet.LABELS`) mais doivent être créés à la main (`gh label
-> create`) sur un dépôt déjà existant — posés best-effort, un échec de pose
-> (label absent du dépôt) ne bloque jamais la clôture elle-même.
+> (`labels_github.LABELS`) — posés best-effort, un échec de pose (label
+> absent du dépôt) ne bloque jamais la clôture elle-même.
 
 > Sans label `notif_pc` / `notif_gsm` / `notif_tous`, aucune notification
 > sonore ou push n'est déclenchée. Le bip est strictement opt-in.
@@ -272,6 +271,17 @@ circuit normal.
 > signale — voir l'écart MODE déclaré/retenu journalisé et commenté sur
 > l'issue (§5) depuis #785, qui détecte désormais ce cas (et tout autre
 > label de mode manquant) au lancement.
+
+> **Ajouter un label** (issue #816) : il suffit de l'ajouter à
+> `labels_github.LABELS`. Chaque watcher (CCL et CCW, même `watcher.py`) le
+> crée de lui-même sur son dépôt au démarrage du processus — les quatre
+> incidents ci-dessus (`sans-redacteur`, `agent-claude`/`agent-vibe`,
+> `mode_scratch`) venaient tous de labels restés absents de dépôts déjà
+> provisionnés jusqu'à un `gh label create` manuel. Pour ne pas attendre le
+> prochain redémarrage de chaque watcher, `python3 rattraper_labels.py`
+> applique la même vérification tout de suite à tous les projets déclarés
+> (`configs/*.conf`). Dans les deux cas : idempotent, jamais de modification
+> ni de suppression d'un label déjà présent.
 
 ---
 
@@ -678,8 +688,9 @@ calibration (constantes actuelles du code : `K_VARIABILITE` = 3, issue
 
 ---
 
-*Dernière mise à jour : 25 octobre 2026 — §14 : correction de la
-contrepartie opérationnelle sur le démarrage automatique du watcher d'une
-issue `for-windows` (issue #814).*
+*Dernière mise à jour : 25 octobre 2026 — §4 : vérification et création
+automatique des labels GitHub manquants au démarrage de chaque watcher, et
+outil de rattrapage `rattraper_labels.py` pour les dépôts existants (issue
+#816).*
 
 Historique complet : voir [`CHANGELOG.md`](CHANGELOG.md).
