@@ -83,11 +83,11 @@ il contient le modèle à utiliser en bas de page.
 - Les fichiers produits restent dans le worktree, sous `installeur\output` :
   l'archive `<projet>-v<N>.zip` et l'installeur `<Projet>-Setup-v<N>.exe`.
   Pour les projets dont la fiche indique que le script les copie aussi dans
-  le dossier fixe `C:\CCW_Share\_derniers_builds\<projet>\` (Actualise et
-  Scrabble à ce jour), il suffit de vérifier leur présence dans ce dossier
-  avant de supprimer le worktree ; pour les autres (Rummikub pour
-  l'instant), Alain doit les récupérer dans `installeur\output` du worktree
-  avant de le supprimer.
+  le dossier fixe `C:\CCW_Share\_derniers_builds\<projet>\` (Actualise,
+  Scrabble et Rummikub à ce jour), il suffit de vérifier leur présence dans
+  ce dossier avant de supprimer le worktree ; pour un futur projet dont la
+  fiche indiquerait l'absence de cette copie, Alain devrait récupérer les
+  fichiers dans `installeur\output` du worktree avant de le supprimer.
 - Commits attendus dans le worktree à l'issue d'un build réussi : une
   sauvegarde vide, le commit de `version.json` fait par le script, et
   l'entrée de changelog `CHANGELOG-<numéro-de-l'issue>.md` ajoutée par
@@ -153,9 +153,10 @@ il contient le modèle à utiliser en bas de page.
 
 1. Selon la fiche du projet (ci-dessous) : si le script copie aussi les
    fichiers produits dans le dossier fixe
-   `C:\CCW_Share\_derniers_builds\<projet>\` (Actualise et Scrabble à ce
-   jour), vérifie leur présence dans ce dossier ; sinon (Rummikub pour
-   l'instant), récupère les fichiers produits dans `installeur\output` du
+   `C:\CCW_Share\_derniers_builds\<projet>\` (Actualise, Scrabble et
+   Rummikub à ce jour), vérifie leur présence dans ce dossier ; sinon
+   (pour un futur projet dont la fiche indiquerait l'absence de cette
+   copie), récupère les fichiers produits dans `installeur\output` du
    worktree. Dans les deux cas, avant de supprimer le worktree.
 2. Fusionne la branche du worktree dans `master`, en passant par l'outil de
    relecture (`relecture_web`) et en y choisissant l'entrée `<projet>_ccw`
@@ -210,33 +211,80 @@ liste de numéros, indépendante des autres.
 ### Rummikub
 
 - **Script de build** (ligne de commande exacte) :
-  `build\rebuild_rummikub.bat --publier --build <N>` — syntaxe confirmée
-  par le build 13 (issue #177 du dépôt Rummikub, réussi tel quel).
-- **Inno Setup** : confirmé par le build 13 — le script cherche bien Inno
-  Setup d'abord dans `C:\CCW\tools\InnoSetup6` (installé hors des dépôts),
-  puis dans le dossier `.tools\InnoSetup6` du dépôt (ce second chemin
-  n'existe pas dans un worktree, le dossier `.tools/` étant ignoré par
-  git) ; il l'a trouvé au premier emplacement. Cet ordre de recherche n'est
-  vérifié que pour Rummikub — relire le script avant le premier build de
-  tout autre projet avec installeur Inno Setup qui n'aurait pas encore ce
-  point confirmé dans sa propre fiche.
+  `build\rebuild_rummikub.bat --publier [--build N]` — ligne de commande
+  inchangée par le durcissement du script (issue #178 de Rummikub). Sans
+  `--build`, le numéro est le build de `version.json` plus 1, désormais
+  dans tous les modes (auparavant `--build` ne s'appliquait qu'avec
+  `--publier`).
+- **Dix étapes** numérotées de 0 à 9, plus trois sous-étapes non comptées
+  dans la numérotation (`0bis` — garde-fou, `3bis`, `8bis`), depuis le
+  durcissement (issue #178 de Rummikub) ; le script n'en annonçait que
+  neuf (0 à 8) avant cette issue.
+- **Inno Setup** : trouvé d'abord dans `C:\CCW\tools\InnoSetup6\ISCC.exe`
+  (issue #176), confirmé par l'essai du 25 octobre 2026.
 - **`.spec`** : `rummikub.spec` — liste explicite des `datas`
   (`src/rummikub/ui/web/`), aucun `collect_tree` en bloc.
 - **Deux garde-fous de taille distincts** (issue #57 — dist non compressé
   et installeur compressé sont deux grandeurs différentes) :
   - dossier non compressé : fourchette 20-45 Mo
   - installeur compressé : fourchette 5-25 Mo
-- **Durée observée** : 333 secondes (build antérieur).
-- **Build de référence** : build 13, issue #177 du dépôt Rummikub,
-  réussi — worktree `C:\CCW\worktrees\rummikub-ccw-issue177`. Neuf étapes
-  (numérotées 0 à 8) sans erreur ; seuls avertissements : deux
-  avertissements habituels de PyInstaller sur `pycparser.lextab` et
-  `pycparser.yacctab`, sans effet. Tailles de référence : dossier non
-  compressé `dist\Rummikub` 26 251 767 octets, installeur
-  `Rummikub-Setup-v13.exe` 12 800 339 octets, archive `rummikub-v13.zip`
-  12 896 659 octets (2 fichiers à la racine — `Rummikub.exe` et
-  `manifest.json` — et un dossier `_internal` de 87 entrées). Durée réelle
-  de l'agent : 219 secondes (`TIMEOUT` de 1800s).
+- **Artefacts et dossier fixe** : `Rummikub-Setup-v<N>.exe` et
+  `rummikub-v<N>.zip` produits dans `installeur\output` du worktree ; le
+  nom de l'archive porte toujours le numéro, y compris sans `--publier`
+  (l'ancien nom fixe `rummikub.zip` n'existe plus). Copiés en plus dans
+  `C:\CCW_Share\_derniers_builds\rummikub\` **dans tous les modes**, à
+  l'étape `[8/9]`. Le script affiche lui-même, à la fin, l'emplacement
+  d'Inno Setup utilisé et les noms et tailles en octets des fichiers
+  copiés : l'agent ne lit pas ce dossier, il reprend cet affichage dans
+  son rapport.
+- **Garde-fou** (sous-étape `0bis`, issue #178 de Rummikub) : exécuté juste
+  après la recherche d'Inno Setup et avant la copie vers le dossier de
+  build local, il refuse, avec le code de sortie 1 et avant toute copie,
+  construction ou écriture, un numéro qui n'est pas un entier strictement
+  supérieur au build de `version.json` ; il refuse aussi `--build` sans
+  valeur ou suivi d'un autre argument, et tout argument inconnu, en
+  listant les arguments acceptés.
+- **Nettoyage obsolète supprimé** (issue #178 de Rummikub) : la commande
+  `git -C C:\CCW_Share\CCW\rummikub reset --hard origin/master` de l'étape
+  de nettoyage (sans `--publier`) et les commentaires sur un « clone
+  partagé » ont été retirés — le script construit dans un dossier local et
+  écrit dans le worktree. Non établi : si une infrastructure extérieure à
+  Rummikub référence encore ce chemin `C:\CCW_Share\CCW\rummikub`.
+- **Vérification du code de sortie d'un `.bat`** : se fait avec `call` et
+  `%errorlevel%` dans un petit fichier temporaire — `$LASTEXITCODE` de
+  PowerShell est peu fiable pour ce genre de script.
+- **`build/` est ignoré par git** : le script lui-même reste suivi grâce à
+  un ajout forcé ; `git ls-files build` doit continuer à le lister.
+- **Release à deux fichiers** : comme pour Scrabble et Actualise, le
+  rappel final du script avec `--publier` mentionne DEUX fichiers à
+  attacher à la Release — l'installeur ET l'archive.
+- **Essais avec un numéro fictif** : comme pour Actualise et Scrabble, la
+  copie vers le dossier fixe (`C:\CCW_Share\_derniers_builds\rummikub\`) a
+  lieu dans tous les modes, y compris un essai sans `--publier` : Alain
+  supprime à la main les fichiers de l'essai après coup. Le mode
+  `--publier` n'a volontairement pas été exécuté depuis le durcissement
+  (pour ne pas écrire un `version.json` de test) : son comportement
+  (calcul de la somme, écriture de `version.json`, commit local) reste
+  **à confirmer par le build 14**, premier vrai build après le
+  durcissement.
+- **Essai de référence du script durci, numéro fictif 99, sans `--publier`**
+  (25 octobre 2026 — à confirmer par le build 14) : durée 99,69 secondes ;
+  installeur 12 796 415 octets ; archive 12 896 340 octets ; `dist\Rummikub`
+  non compressé 26 251 767 octets. Six refus vérifiés pendant cet essai,
+  tous avec le code de sortie 1 et sans rien écrire : numéro égal au build
+  courant, numéro inférieur, numéro non numérique, `--build` seul,
+  `--publier --build` avec un numéro non supérieur, argument inconnu.
+- **Build de référence (avant le durcissement)** : build 13, issue #177 du
+  dépôt Rummikub, réussi — worktree
+  `C:\CCW\worktrees\rummikub-ccw-issue177`. Neuf étapes (numérotées 0 à 8)
+  sans erreur ; seuls avertissements : deux avertissements habituels de
+  PyInstaller sur `pycparser.lextab` et `pycparser.yacctab`, sans effet.
+  Tailles de référence : dossier non compressé `dist\Rummikub` 26 251 767
+  octets, installeur `Rummikub-Setup-v13.exe` 12 800 339 octets, archive
+  `rummikub-v13.zip` 12 896 659 octets (2 fichiers à la racine —
+  `Rummikub.exe` et `manifest.json` — et un dossier `_internal` de 87
+  entrées). Durée réelle de l'agent : 219 secondes (`TIMEOUT` de 1800s).
+  Durée observée : 333 secondes (build antérieur).
 
 ### Scrabble
 
@@ -288,10 +336,10 @@ liste de numéros, indépendante des autres.
 - **Script de build** (ligne de commande exacte) :
   `build\rebuild_actualise.bat --publier [--build N]` — sans `--build`, le
   numéro est le build de `version.json` plus 1.
-- **Dix étapes** numérotées de 0 à 9 (Rummikub en annonce neuf, de 0 à 8 ;
-  Scrabble en annonce dix, de 0 à 9, comme Actualise), parce qu'Actualise
-  produit deux builds PyInstaller distincts (`Actualise.exe` en dossier,
-  `ActualiseUI.exe` en fichier unique) et a une étape d'archive séparée.
+- **Dix étapes** numérotées de 0 à 9 (Rummikub et Scrabble en annoncent
+  dix, de 0 à 9, comme Actualise), parce qu'Actualise produit deux builds
+  PyInstaller distincts (`Actualise.exe` en dossier, `ActualiseUI.exe` en
+  fichier unique) et a une étape d'archive séparée.
 - **Inno Setup** : trouvé dans `C:\CCW\tools\InnoSetup6\ISCC.exe`.
 - **Artefacts et dossier fixe** : `Actualise-Setup-v<N>.exe` et
   `actualise-v<N>.zip` produits dans `installeur\output` du worktree, et
