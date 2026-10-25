@@ -45,6 +45,11 @@ from datetime import datetime
 # l'import direct fonctionne. Les enveloppes bip()/notifier*() ci-dessous
 # délèguent à ce module en passant les valeurs du CFG courant.
 import notifications
+# Labels GitHub requis par le bridge (LABELS, creer_labels) — module dédié
+# plutôt qu'un import de nouveau_projet.py, qui importe regenerer_tableaux_
+# projets, qui importe lui-même `from watcher import lire_conf` : un cycle
+# (issue #816, voir labels_github.py).
+from labels_github import creer_labels as _creer_labels_gh
 # État partagé du quota GraphQL (issue #615) : rafraîchi après chaque appel gh
 # SIGNIFICATIF (fermer_issue ci-dessous), lu par la route Flask /rate-limit.
 import etat_rate_limit
@@ -758,6 +763,37 @@ def configurer_logs(cfg: Config):
             handler_fichier,
         ],
     )
+
+def verifier_labels_demarrage(cfg: Config):
+    """Vérifie les labels GitHub requis sur le dépôt du projet, une seule
+    fois au démarrage du watcher (issue #816), et crée les seuls manquants
+    via labels_github.creer_labels (idempotent — jamais de modification ni
+    de suppression d'un label existant). Avant cette vérification, un label
+    nouvellement ajouté au code restait absent de tout dépôt déjà provisionné
+    jusqu'à un `gh label create` manuel — quatre incidents (sans-redacteur
+    #647/#648, agent-claude/agent-vibe #768, mode_scratch #785), dont un sans
+    la moindre erreur visible (une issue de lecture active exécutée en
+    lecture seule).
+
+    Jamais bloquant : toute exception (réseau, `gh` absent, droits, dépôt
+    inaccessible) est rattrapée ici et journalisée en avertissement — le
+    watcher démarre normalement dans tous les cas, y compris sur échec
+    total de cette vérification."""
+    try:
+        resultats = _creer_labels_gh(cfg.depot)
+    except Exception as e:
+        log.warning(f"Vérification des labels GitHub ignorée pour '{cfg.depot}' : {e}")
+        return
+    deja = [n for n, s, _d in resultats if s == "deja"]
+    crees = [n for n, s, _d in resultats if s == "cree"]
+    echecs = [(n, d) for n, s, d in resultats if s == "echec"]
+    log.info(f"Labels GitHub ({cfg.depot}) : {len(deja)} présent(s), "
+             f"{len(crees)} créé(s), {len(echecs)} en échec.")
+    for nom in crees:
+        log.info(f"Label GitHub '{nom}' créé sur '{cfg.depot}' (manquant).")
+    for nom, detail in echecs:
+        log.warning(f"Label GitHub '{nom}' absent de '{cfg.depot}' et sa "
+                     f"création a échoué : {detail or 'raison inconnue'}.")
 
 # ─── Utilitaires ──────────────────────────────────────────────────────────────
 
@@ -7212,6 +7248,13 @@ def main():
     log.info(f"Polling toutes les {intervalle}s — dry-run: {args.dry_run}")
     log.info(f"contexte projet: {CFG.fichier_contexte or 'aucun'}")
     log.info("=" * 60)
+
+    # Vérification des labels GitHub requis (issue #816) : une seule fois par
+    # processus, ici plutôt qu'en tête de boucle, APRÈS configurer_logs (pour
+    # que le résultat soit journalisé) et AVANT le premier appel à
+    # lister_issues() (qui filtre déjà sur CFG.label — un label manquant doit
+    # être rattrapé avant que la moindre issue ne soit traitée).
+    verifier_labels_demarrage(CFG)
 
     if not CFG.rep_travail.is_dir():
         log.warning(f"⚠️  Le répertoire de travail '{CFG.rep_travail}' n'existe pas (ou n'est pas un dossier). "

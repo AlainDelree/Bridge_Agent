@@ -28,6 +28,7 @@ from pathlib import Path
 
 import etat_configs_legitimes
 import regenerer_tableaux_projets
+from labels_github import LABELS, creer_labels  # noqa: F401 (ré-exportés, voir plus bas)
 from palette import COULEURS_PROJETS_EXISTANTS, PALETTE_COULEURS
 
 # Racine du dépôt Bridge_Agent : ce script vit à la racine, à côté de watcher.py
@@ -36,46 +37,15 @@ RACINE = Path(__file__).resolve().parent
 DOSSIER_CONFIGS = RACINE / "configs"
 DOC = RACINE / "BRIDGE_AGENT_DOC.md"
 
-# Les 12 labels requis par le watcher (§4 de la doc). color = hex sans '#'.
-# On les recrée à l'identique sur chaque nouveau dépôt cible ; sans eux, le
-# watcher ne voit pas les issues (for-linux) et le mode écriture reste inerte.
-# sans-redacteur (issue #648, régression #647) : oublié de cette liste lors de
-# son introduction — le label n'existait alors sur AUCUN dépôt, faisant
-# échouer `gh issue create` pour toute issue sans REDACTEUR (l'erreur gh
-# « label not found » rejetait le fichier entier). Désormais provisionné
-# d'office sur tout nouveau projet ; les dépôts existants ont été corrigés
-# séparément (gh label create manuel, cf. rapport de clôture #648).
-# agent-claude / agent-vibe (issue #768) : identifient l'AGENT D'EXÉCUTION
-# (CFG.agent du .conf) qui a traité l'issue, posés par watcher.fermer_issue()
-# en même temps que 'done' — distincts de for-linux/for-windows, qui ne
-# désignent que la plateforme visée. Même précédent que sans-redacteur :
-# provisionnés d'office sur tout nouveau projet, les dépôts déjà existants
-# nécessitent un `gh label create` manuel une fois (cf. rapport de clôture
-# #768).
-# mode_scratch (issue #785) : ARME la lecture active (écriture confinée au
-# scratch, issue #327) — oublié de cette liste depuis l'introduction du mode
-# en #327, exactement la même régression que sans-redacteur (#648) : le label
-# n'existant sur AUCUN dépôt déjà provisionné, `creer_issue_gh` (app/issues.py)
-# le retire silencieusement faute d'exister (comportement #648, volontaire
-# pour ne pas rejeter toute la création) — une issue en « lecture active »
-# s'exécutait donc en lecture seule, sans qu'aucune erreur ne le signale.
-# Dépôts déjà existants : même procédure que sans-redacteur/agent-claude/
-# agent-vibe, `gh label create` manuel une fois (cf. rapport de clôture #785).
-LABELS = [
-    ("for-linux",      "0e8a16", "Requis — le watcher ne voit que ces issues"),
-    ("for-windows",    "0e8a16", "Watcher Windows (CCW) — même principe que for-linux"),
-    ("bridge",         "1d76db", "Marque l'issue comme tâche bridge (traçabilité)"),
-    ("mode_write",     "d93f0b", "ARME le mode écriture — CCL peut modifier des fichiers"),
-    ("mode_scratch",   "1a4d8f", "ARME la lecture active — écriture confinée au dossier scratch"),
-    ("needs-human",    "b60205", "Posé après 3 échecs — stoppe le retraitement auto"),
-    ("done",           "0e8a16", "Posé automatiquement au succès"),
-    ("notif_pc",       "fbca04", "Ajoute une notification bureau (notify-send)"),
-    ("notif_gsm",      "fbca04", "Ajoute une notification push (ntfy)"),
-    ("notif_tous",     "fbca04", "notify-send + ntfy"),
-    ("sans-redacteur", "c2b280", "Posé automatiquement — l'issue ne précisait pas REDACTEUR"),
-    ("agent-claude",   "c5def5", "Posé automatiquement — agent d'exécution Claude Code"),
-    ("agent-vibe",     "c5def5", "Posé automatiquement — agent d'exécution Mistral Vibe"),
-]
+# LABELS et creer_labels() vivent désormais dans labels_github.py (issue
+# #816), importés ci-dessus et ré-exportés tels quels (nouveau_projet.LABELS/
+# nouveau_projet.creer_labels restent valables, comportement inchangé) —
+# partagés avec watcher.py (vérification au démarrage de chaque watcher) et
+# rattraper_labels.py (rattrapage des dépôts existants), qui ne peuvent pas
+# importer nouveau_projet directement (cycle via regenerer_tableaux_projets,
+# qui importe watcher). Voir labels_github.py pour l'historique des
+# incidents (#647/#648, #768, #785) et la marche à suivre pour ajouter un
+# label.
 
 # ─── Système de couleur des projets ──────────────────────────────────────────
 # Extrait vers palette.py (issue #620) : algorithmes WCAG/Lab, génération de
@@ -304,31 +274,6 @@ def ecrire_conf(nom: str, depot: str, rep: str, perimetre: str,
     chemin.write_text(contenu, encoding="utf-8")
     etat_configs_legitimes.enregistrer(chemin.name)
     return chemin
-
-
-def creer_labels(depot: str) -> list[tuple[str, str, str]]:
-    """Crée les labels manquants sur le dépôt cible (idempotent : les présents
-    sont laissés intacts). Renvoie une liste ordonnée de (label, statut, detail)
-    où statut ∈ {"deja", "cree", "echec"}."""
-    res = gh("label", "list", "--repo", depot, "--limit", "200")
-    existants = set()
-    if res.returncode == 0:
-        for ligne in res.stdout.splitlines():
-            if ligne.strip():
-                existants.add(ligne.split("\t")[0].strip().lower())
-
-    resultats = []
-    for nom_label, couleur, description in LABELS:
-        if nom_label.lower() in existants:
-            resultats.append((nom_label, "deja", ""))
-            continue
-        r = gh("label", "create", nom_label, "--repo", depot,
-               "--color", couleur, "--description", description)
-        if r.returncode == 0:
-            resultats.append((nom_label, "cree", ""))
-        else:
-            resultats.append((nom_label, "echec", r.stderr.strip()))
-    return resultats
 
 
 def _ecrire_fichiers_contexte(rep_path: Path,
