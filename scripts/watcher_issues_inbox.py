@@ -45,6 +45,19 @@ lancer` (app/issues_inbox.py), qui retire le champ et renvoie le fichier dans
 issues_inbox/ pour un traitement normal. Voir lire_condition_attente()/
 retirer_champ_attente() et §3.16 de BRIDGE_AGENT_DOC.md.
 
+Remplacement d'un élément en attente (issue #820) : AVANT toute autre
+validation, un bloc (mono-issue ou bloc d'un lot) dont le #Titre: ET le
+PROJET correspondent EXACTEMENT à un élément déjà présent dans
+issues_inbox/en_attente/ REMPLACE le contenu de cet élément au lieu de
+suivre son propre circuit — l'élément garde sa place dans l'onglet « En
+attente » (mtime restauré après l'écriture atomique, cf. tri par date de
+dépôt de app.issues_inbox._lire_item_attente). Si le nouveau bloc porte
+lui-même un champ ATTENTE non vide, sa condition devient celle de
+l'élément (toujours en attente) ; sinon il suit le circuit normal de
+création et l'ancien élément n'est supprimé qu'après un succès RÉEL (jamais
+avant un rejet). Voir _identifier_bloc()/_item_en_attente_correspondant()/
+_remplacer_item_en_attente()/_supprimer_item_en_attente_remplace().
+
 Après création réussie de l'issue, le watcher CCL du projet concerné
 (`watcher.py --config configs/<projet>.conf`) est démarré automatiquement
 s'il n'est pas déjà actif (issue #486, mode « dépose et oublie ») — via
@@ -1117,6 +1130,116 @@ def _ecrire_bloc_en_attente(cfg: ConfigInbox, chemin_origine: Path, index: int,
     return cible
 
 
+# ─── Remplacement d'un élément en attente (issue #820) ─────────────────────
+# Correction d'une issue déjà mise de côté : plutôt que de supprimer
+# l'élément dans l'onglet « En attente » puis redéposer le fichier corrigé
+# (qui se retrouvait en bout de file), Alain redépose directement le fichier
+# corrigé — même #Titre: ET même PROJET que l'élément visé. Décision de
+# conception (actée avec Alain, ne pas la rediscuter) : pas de nouveau champ
+# d'en-tête de type MOD, la règle est implicite (même titre + même PROJET).
+# Vérifié EN PREMIER, avant toute autre validation du bloc, et UNIQUEMENT
+# contre en_attente/ (l'anti-doublon contre les issues GitHub ouvertes,
+# _issue_ouverte_meme_titre, reste inchangé — il ne s'applique qu'au circuit
+# de création normal, plus bas).
+
+STATUT_REMPLACE = "REMPLACE"
+
+
+def _identifier_bloc(bloc: str) -> tuple[str, str, str | None]:
+    """(titre, projet, condition_attente) d'un bloc BRUT — même lecture que
+    extraire_champs (titre/projet) et lire_condition_attente (ATTENTE),
+    factorisés ici pour la recherche d'un remplacement sans dupliquer le
+    parsing ni risquer de diverger entre les deux."""
+    champs = extraire_champs(bloc)
+    return champs["titre"], champs["projet"], champs["attente_brut"]
+
+
+def _item_en_attente_correspondant(cfg: ConfigInbox, titre: str, projet: str) -> Path | None:
+    """Premier élément de en_attente/ dont le #Titre: ET le PROJET
+    correspondent EXACTEMENT à ceux du bloc déposé, dans le MÊME ORDRE que
+    l'onglet « En attente » (tri par date de dépôt croissante, cf.
+    app.issues_inbox._lire_item_attente/issues_attente_liste) — « si
+    plusieurs éléments correspondent, le premier de la liste est remplacé ».
+    None si titre/projet vides (jamais de correspondance sur un champ vide)
+    ou si aucun élément ne correspond. Un même titre mais un projet
+    différent (ou l'inverse) ne compte PAS : les deux doivent correspondre à
+    la fois."""
+    if not titre or not projet or not cfg.en_attente_dir.is_dir():
+        return None
+    candidats = []
+    for chemin in cfg.en_attente_dir.iterdir():
+        if not chemin.is_file():
+            continue
+        try:
+            contenu = chemin.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        t, p, _ = _identifier_bloc(contenu)
+        if t == titre and p == projet:
+            try:
+                date = chemin.stat().st_mtime
+            except OSError:
+                date = 0.0
+            candidats.append((date, chemin))
+    if not candidats:
+        return None
+    candidats.sort(key=lambda c: c[0])
+    return candidats[0][1]
+
+
+def _remplacer_item_en_attente(cfg: ConfigInbox, cible: Path, nouveau_contenu: str,
+                                titre: str, projet: str) -> None:
+    """Remplace le CONTENU de l'élément `cible` d'en_attente/ par celui du
+    bloc nouvellement déposé (même titre/projet — nouvelle condition
+    ATTENTE comprise, toujours présente dans `nouveau_contenu`). La PLACE de
+    `cible` dans la liste de l'onglet est préservée en restaurant son mtime
+    d'origine après l'écriture : la position ne dépend ainsi ni de la date
+    du nouveau dépôt ni d'un mécanisme d'ordre précis — seule l'identité du
+    fichier (même nom, jamais recréé/déplacé) compte, quel que soit le tri
+    appliqué par l'onglet. Écriture atomique (tempfile + os.replace, même
+    dossier donc même système de fichiers) : jamais de fichier à moitié
+    écrit, même principe que app.issues_inbox.issues_attente_lancer."""
+    try:
+        mtime_origine = cible.stat().st_mtime
+    except OSError:
+        mtime_origine = None
+
+    fd, tmp_nom = tempfile.mkstemp(dir=str(cible.parent), suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(nouveau_contenu)
+        os.replace(tmp_nom, cible)
+    except OSError:
+        Path(tmp_nom).unlink(missing_ok=True)
+        raise
+
+    if mtime_origine is not None:
+        try:
+            os.utime(cible, (mtime_origine, mtime_origine))
+        except OSError as e:
+            log.warning(f"Position non préservée pour {cible.name} (mtime non restauré) : {e}")
+
+    _ecrire_ligne_log(cfg, projet, STATUT_REMPLACE,
+                       f"{cible.name} — contenu remplacé ({titre})")
+    log.info(f"Remplacement en attente : {cible.name} ({titre} / {projet}) — contenu mis à jour.")
+
+
+def _supprimer_item_en_attente_remplace(cfg: ConfigInbox, cible: Path, titre: str, projet: str) -> None:
+    """Supprime l'élément `cible` d'en_attente/ qu'une création a RÉELLEMENT
+    remplacée — appelé UNIQUEMENT après le succès réel de `gh issue create`
+    (jamais avant : un fichier rejeté laisse l'élément en attente intact,
+    cf. traiter_fichier/_traiter_lot)."""
+    try:
+        cible.unlink()
+    except OSError as e:
+        log.warning(f"Issue créée en remplacement de « {titre} », mais suppression de "
+                    f"l'ancien élément en attente {cible.name} échouée : {e}")
+        return
+    _ecrire_ligne_log(cfg, projet, STATUT_REMPLACE,
+                       f"{cible.name} — supprimé après création de « {titre} »")
+    log.info(f"Remplacement en attente : {cible.name} supprimé après création de « {titre} ».")
+
+
 # ─── Création de l'issue via gh (miroir de app/issues.py::envoyer) ─────────
 
 def _creer_issue(cfg: ConfigInbox, cfg_projet, titre: str, labels: str, body: str):
@@ -1270,7 +1393,7 @@ def _traiter_bloc(cfg: ConfigInbox, contenu_bloc: str):
     return True, champs["titre"], champs["projet"], suffixe, resultat, labels.split(","), donnees_temps
 
 
-def _traiter_lot(cfg: ConfigInbox, chemin: Path, blocs: list) -> None:
+def _traiter_lot(cfg: ConfigInbox, chemin: Path, blocs_a_traiter: list) -> None:
     """Traite un fichier multi-blocs (issue #508) : chaque bloc est traité
     séquentiellement par `_traiter_bloc` — JAMAIS en parallèle, cohérent avec
     `envoyerLot` côté formulaire web (pas de conflit `gh`). Chaque résultat
@@ -1278,13 +1401,21 @@ def _traiter_lot(cfg: ConfigInbox, chemin: Path, blocs: list) -> None:
     fichier n'est supprimé qu'une fois tous les blocs traités : normalement si
     au moins un bloc a réussi (un échec partiel ne doit pas re-proposer
     indéfiniment les blocs déjà réussis au prochain cycle) ; déplacé vers
-    `rejected/` seulement si TOUS ont échoué."""
-    nb_total = len(blocs)
+    `rejected/` seulement si TOUS ont échoué.
+
+    `blocs_a_traiter` : liste de `(bloc, item_a_remplacer)` — `item_a_remplacer`
+    (issue #820) est le `Path` d'un élément d'en_attente/ à supprimer UNIQUEMENT
+    si CE bloc crée réellement une issue (resultat_gh non vide — jamais pour
+    une RELANCE, qui réussit sans rien créer), ou None si ce bloc n'a aucun
+    élément correspondant à remplacer."""
+    nb_total = len(blocs_a_traiter)
     nb_ok = 0
-    for i, bloc in enumerate(blocs, start=1):
+    for i, (bloc, item_a_remplacer) in enumerate(blocs_a_traiter, start=1):
         succes, titre, projet, texte, resultat_gh, labels_creation, donnees_temps = _traiter_bloc(cfg, bloc)
         if succes:
             nb_ok += 1
+            if item_a_remplacer is not None and resultat_gh:
+                _supprimer_item_en_attente_remplace(cfg, item_a_remplacer, titre, projet)
             _ecrire_ligne_log(cfg, projet, "OK", titre + texte)
             log.info(f"Lot {chemin.name} [{i}/{nb_total}] créée : {titre} → {resultat_gh}")
             # SSE creation_issue (issue #631) : jamais pour un bloc RELANCE
@@ -1357,10 +1488,27 @@ def traiter_fichier(cfg: ConfigInbox, chemin: Path) -> None:
         # traitement normal plutôt que d'être perdu silencieusement.
         blocs_a_traiter = []
         for i, bloc in enumerate(blocs, start=1):
-            condition = lire_condition_attente(bloc)
-            if condition and _ecrire_bloc_en_attente(cfg, chemin, i, bloc, condition) is not None:
+            titre_bloc, projet_bloc, condition = _identifier_bloc(bloc)
+            item_correspondant = _item_en_attente_correspondant(cfg, titre_bloc, projet_bloc)
+
+            # Remplacement d'un élément en attente (issue #820) : vérifié EN
+            # PREMIER, avant la mise en attente habituelle ci-dessous — même
+            # titre ET même projet qu'un élément déjà présent dans en_attente/.
+            if item_correspondant is not None and condition:
+                _remplacer_item_en_attente(cfg, item_correspondant, bloc, titre_bloc, projet_bloc)
                 continue
-            blocs_a_traiter.append(bloc)
+
+            if item_correspondant is None and condition:
+                if _ecrire_bloc_en_attente(cfg, chemin, i, bloc, condition) is not None:
+                    continue
+                # échec d'écriture (disque plein...) : retombe sur le
+                # traitement normal ci-dessous plutôt que d'être perdu.
+
+            # Bloc normal, ou bloc correspondant à un élément en attente mais
+            # SANS ATTENTE (Alain veut le lancer maintenant) : circuit normal
+            # de création — l'ancien élément n'est supprimé qu'après un succès
+            # RÉEL (voir _traiter_lot, issue #820), jamais avant.
+            blocs_a_traiter.append((bloc, item_correspondant))
 
         if not blocs_a_traiter:
             # Lot ENTIÈREMENT mis en attente (issue #716) : aucune ligne
@@ -1383,7 +1531,7 @@ def traiter_fichier(cfg: ConfigInbox, chemin: Path) -> None:
         # que #716 ci-dessus, via relance_demandee) — la ligne est sautée ;
         # un bloc RELANCE refusé garde sa propre ligne fichier_refuse (émise
         # par _traiter_lot plus bas), inchangé.
-        if not all(relance_demandee(bloc) for bloc in blocs_a_traiter):
+        if not all(relance_demandee(bloc) for bloc, _ in blocs_a_traiter):
             _notifier_fichier_recu(chemin.name)
 
         # Cas limite : si TOUS les blocs restants (non mis en attente)
@@ -1396,14 +1544,37 @@ def traiter_fichier(cfg: ConfigInbox, chemin: Path) -> None:
         _traiter_lot(cfg, chemin, blocs_a_traiter)
         return
 
+    # Remplacement d'un élément en attente (issue #820) : vérifié EN PREMIER,
+    # avant toute autre validation (y compris la mise en attente habituelle
+    # ci-dessous) — même #Titre: ET même PROJET qu'un élément déjà présent
+    # dans en_attente/ (anti-doublon GitHub inchangé, il reste réservé au
+    # circuit de création normal, plus bas).
+    titre_mono, projet_mono, condition = _identifier_bloc(contenu)
+    item_correspondant = _item_en_attente_correspondant(cfg, titre_mono, projet_mono)
+
+    if item_correspondant is not None and condition:
+        # Le nouveau fichier porte lui-même une condition ATTENTE : elle
+        # devient celle de l'élément, qui reste en attente (contenu remplacé,
+        # place conservée).
+        _remplacer_item_en_attente(cfg, item_correspondant, contenu, titre_mono, projet_mono)
+        try:
+            chemin.unlink()
+        except OSError as e:
+            log.warning(f"Remplacement effectué mais suppression de {chemin.name} échouée : {e}")
+        return
+
     # Champ ATTENTE (issue #713) : fichier mono-issue entier mis de côté tel
     # quel, sans validation ni création — voir _mettre_fichier_en_attente.
     # Aucune ligne « fichier reçu » dans ce cas (issue #716) : _notifier_
     # fichier_recu n'est appelé que plus bas, sur le seul circuit normal.
-    condition = lire_condition_attente(contenu)
-    if condition:
+    if item_correspondant is None and condition:
         _mettre_fichier_en_attente(cfg, chemin, contenu, condition)
         return
+
+    # Bloc normal, ou correspondant à un élément en attente mais SANS
+    # ATTENTE : Alain veut le lancer maintenant — circuit normal de création
+    # ci-dessous ; l'ancien élément n'est supprimé qu'après un succès RÉEL
+    # (jamais avant un rejet, issue #820).
 
     # Champ RELANCE (issue #719) : un bloc RELANCE ne crée jamais d'issue
     # (donc jamais de creation_issue, cf. _traiter_relance) — en cas de
@@ -1422,6 +1593,9 @@ def traiter_fichier(cfg: ConfigInbox, chemin: Path) -> None:
         chemin.unlink()
     except OSError as e:
         log.warning(f"Issue créée ({resultat_gh}) mais suppression de {chemin.name} échouée : {e}")
+
+    if item_correspondant is not None and resultat_gh:
+        _supprimer_item_en_attente_remplace(cfg, item_correspondant, titre, projet)
 
     _ecrire_ligne_log(cfg, projet, "OK", titre + texte)
     log.info(f"Créée : {chemin.name} → {resultat_gh}")

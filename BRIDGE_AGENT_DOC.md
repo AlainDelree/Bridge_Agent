@@ -233,6 +233,24 @@ juge, en relisant le texte, puis déclenche l'envoi depuis l'interface
 champ est mis de côté individuellement ; les autres blocs suivent le
 circuit normal.
 
+**Corriger une issue encore en attente (issue #820).** Pas de nouveau champ
+— la règle est implicite : redéposer un fichier avec **exactement le même
+`#Titre:` ET le même `PROJET`** qu'un élément déjà présent dans « En
+attente » REMPLACE cet élément (il garde sa place dans la liste) au lieu
+d'en créer un second. Si le fichier corrigé porte toujours un `ATTENTE` non
+vide, sa nouvelle condition devient celle de l'élément (toujours en
+attente) ; sinon il suit le circuit normal de création, et l'ancien élément
+n'est supprimé qu'une fois l'issue réellement créée (jamais avant — un
+fichier rejeté laisse l'ancien élément intact).
+
+> ⚠️ **Le titre doit être recopié à l'identique, au caractère près**, même
+> si la correction porte sur le sujet de l'issue : un titre modifié, même
+> légèrement, crée un **second** élément en attente à côté de l'ancien,
+> **sans aucun avertissement**. Si le titre doit vraiment changer, le Chat
+> prévient Alain qu'il devra supprimer l'ancien élément à la main dans
+> l'onglet « En attente ». Dans sa réponse, le Chat signale aussi à Alain
+> qu'il produit un fichier de remplacement d'une issue en attente.
+
 ---
 
 ## 4. Labels disponibles
