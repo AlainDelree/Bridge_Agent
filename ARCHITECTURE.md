@@ -435,6 +435,7 @@ variable/DOM ancien), retiré avec le reste.
 | Onglet Configuration | `onglet_config.html` |
 | Onglet Journal | `onglet_journal.html` |
 | Onglet CCW | `onglet_ccw.html` |
+| Onglet En attente (champ `ATTENTE`, #713/#714) | `onglet_attente.html` |
 | Modales | `modale_confirmation.html`, `modale_nouveau_projet.html`, `modale_supprimer_projet.html`, `modale_recherche_titre.html`, `modale_interrompre.html`, `overlay_arret.html` |
 | Scripts (importmap + Jinja + app.js + module) | `scripts.html` |
 
@@ -449,6 +450,7 @@ concaténation byte-identique à l'ancien `style.css`, vérifiée) :
 | 4 | `modales.css` | overlay/carte de modale, boutons destructifs, overlay d'arrêt |
 | 5 | `recherche-interruption.css` | recherche par titre + interruption (zone Résultats) — **DOIT rester après `modales.css`** (`.modal-recherche-titre` surcharge `.modal-carte` à specificité égale) |
 | 6 | `inbox.css` | reliquat de l'ancien onglet « Résultats inbox » (supprimé, issue #639) : badge d'alerte (onglet Résultats) + historique du watcher spool (panneau latéral) |
+| 7 | `attente.css` | onglet En attente (champ `ATTENTE`, #713/#714 ; boutons monter/descendre, #819) |
 
 **Modules JS par fonctionnalité** : un module par zone, dans `static/js/`,
 importé par `index.js` (voir §6.7). Chaque module utilise les briques du socle.
@@ -460,8 +462,9 @@ Déjà sortis : `onglets.js` (bascule entre onglets, issue #626, étape 2),
 issue ouverte + son par issue, issue #641, étape 6), `ccw.js` (onglet CCW,
 pilotage du PC fixe Windows, issue #649), `journal.js` (onglet Journal
 watcher, issue #650), `config.js` (onglet Configuration + zone dangereuse
-de suppression de projet, issue #651, étape 12) et `creation.js` (formulaire
-« Nouvelle issue » complet, issue #652). Futurs modules (ex.
+de suppression de projet, issue #651, étape 12), `creation.js` (formulaire
+« Nouvelle issue » complet, issue #652) et `attente.js` (onglet En attente,
+champ `ATTENTE` #713/#714, ordre manuel #819). Futurs modules (ex.
 `nouveau_projet.js`) suivent le même patron,
 `nouveau_projet.js`) suivent le même patron.
 
@@ -712,6 +715,38 @@ le panneau) reste en place — simplement plus utilisé par l'interface,
 > `projetEffectifBloc`, `modeEffectifBloc` (`tests/creation.test.js`) ;
 > `pont_globales.test.js` gagne un garde-fou du **pont inverse** (globales
 > `window.*` qu'`app.js` appelle encore par leur nom).
+
+> **Onglet En attente — ordre manuel (issue #819, suite #713/#714)** : l'onglet
+> (`static/js/attente.js`, `app/issues_inbox.py`) liste les éléments de
+> `issues_inbox/en_attente/` (champ d'en-tête `ATTENTE`, mis de côté par
+> `scripts/watcher_issues_inbox.py` AVANT toute création). Jusqu'à l'issue
+> #819, l'ordre était figé par la date de dépôt (mtime, plus ancien d'abord) —
+> désormais chaque ligne porte deux boutons **↑/↓** (`POST
+> /issues-attente/deplacer`, `{id, sens: "haut"|"bas"}`, échange avec le
+> voisin direct dans l'ordre courant ; la première ligne n'a pas de ↑ actif,
+> la dernière pas de ↓, cf. `decisionDeplacementAttente`). L'ordre choisi est
+> persisté dans `issues_inbox/en_attente/.ordre/ordre.json` — **jamais** un
+> fichier directement dans `en_attente/` : un sous-dossier n'est jamais un
+> `chemin.is_file()`, donc `_nb_en_attente()`/la liste l'ignorent déjà
+> naturellement (même principe que `rejected/.motifs`, issue #631) — rien
+> dans ce mécanisme n'est donc jamais compté, affiché, lancé ou supprimé
+> comme une issue en attente, et un déplacement ne touche jamais au CONTENU
+> d'un fichier d'`en_attente/`. La fonction PURE
+> `app/issues_inbox.py::fusionner_ordre_attente` recalcule l'ordre affiché à
+> chaque lecture (`GET /issues-attente` et `POST .../deplacer`) à partir de
+> ce fichier + de l'état réel du dossier : un identifiant mémorisé disparu
+> du dossier (élément lancé ou supprimé) est abandonné sans laisser de trace
+> ; un fichier présent mais absent de l'ordre mémorisé (dépôt manuel,
+> ancienne installation) est ajouté en fin de liste, du plus ancien au plus
+> récent — repli identique au comportement #713 pour tout élément jamais
+> encore déplacé. Le résultat fusionné est réécrit sur disque à chaque
+> lecture (auto-guérison), ce qui garantit la survie de l'ordre au
+> rechargement de la page ET au redémarrage de `new_issue.py`. Côté JS,
+> succès d'un déplacement → rechargement complet de la liste
+> (`chargerListeAttente`), le serveur restant la seule source de vérité de
+> l'ordre (pas de réorganisation DOM locale). Tests :
+> `tests/test_ordre_attente_819.py` (fusion pure + routes Flask) et
+> `static/js/tests/attente.test.js` (`decisionDeplacementAttente`).
 
 > **Note parallélisme** : HTML et JS se découpent proprement par zone. Le CSS
 > est plus contraint : la cascade impose de garder l'ordre source, donc quelques

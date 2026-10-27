@@ -1,9 +1,10 @@
 /* attente.css : onglet « En attente » (issue #714 — interface du champ
-   d'en-tête ATTENTE d'issues_inbox/, issue #713). Une carte par élément :
-   pastille NOMINATIVE de projet + titre + date, condition mise en évidence,
-   actions Lancer/Supprimer. Disposition en colonne unique (flex-wrap sur
-   l'en-tête de chaque ligne), sans tableau ni défilement horizontal —
-   contrainte 1360×768 (voir issue #714, § contraintes connues). */
+   d'en-tête ATTENTE d'issues_inbox/, issue #713 ; boutons monter/descendre
+   d'ordre manuel, issue #819). Une carte par élément : pastille NOMINATIVE
+   de projet + titre + date, condition mise en évidence, actions
+   monter/descendre/Lancer/Supprimer. Disposition en colonne unique
+   (flex-wrap sur l'en-tête de chaque ligne), sans tableau ni défilement
+   horizontal — contrainte 1360×768 (voir issue #714, § contraintes connues). */
 .liste-attente{display:flex;flex-direction:column;gap:10px}
 .ligne-attente{border:1px solid #e0dfda;border-radius:8px;padding:12px 14px;background:#fff}
 .attente-entete{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
@@ -23,6 +24,12 @@
   border-left:4px solid #f0ad4e;color:#5a4a00;font-size:13px;line-height:1.4;
   word-break:break-word}
 .attente-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:10px}
+/* Boutons monter/descendre (issue #819, ordre manuel) — compacts, avant
+   Lancer/Supprimer dans le même groupe d'actions ; désactivés en bord de
+   liste (cf. decisionDeplacementAttente), même esprit que les boutons mini
+   du panneau latéral (.pl-btn-mini:disabled, resultats.css). */
+.attente-actions .deplacer{padding:6px 10px;line-height:1}
+.attente-actions .deplacer:disabled{opacity:.35;cursor:not-allowed}
 /* Badge compteur sur l'onglet (issue #714) : visible seulement si > 0 (voir
    decisionBadgeAttente, static/js/attente.js), même gabarit que
    .pastille-notif (resultats.css) mais posé inline après le libellé plutôt

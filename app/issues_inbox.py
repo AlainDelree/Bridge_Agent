@@ -20,15 +20,34 @@ Issues en attente (issue #713) : un fichier déposé dans issues_inbox/ avec le
 champ d'en-tête ATTENTE rempli est mis de côté par le watcher dans
 issues_inbox/en_attente/ (scripts/watcher_issues_inbox.py::traiter_fichier),
 AVANT toute validation/création — AUCUNE vérification automatique de la
-condition, c'est Alain qui décide. Trois routes ici : `GET /issues-attente`
+condition, c'est Alain qui décide. Quatre routes ici : `GET /issues-attente`
 (liste), `POST /issues-attente/lancer` (retire le champ ATTENTE et renvoie le
-fichier dans issues_inbox/ pour un traitement normal, écriture atomique) et
-`POST /issues-attente/supprimer`. `GET /issues-inbox/etat` expose en plus le
-compteur `nb_en_attente` (durable, relu du disque à chaque appel — le panneau
-« Watcher spool » l'interroge déjà en continu, cf. #705). Dossier résolu par
-la même config que le watcher (_config() ci-dessous).
+fichier dans issues_inbox/ pour un traitement normal, écriture atomique),
+`POST /issues-attente/supprimer` et `POST /issues-attente/deplacer` (ordre
+manuel, issue #819, voir plus bas). `GET /issues-inbox/etat` expose en plus
+le compteur `nb_en_attente` (durable, relu du disque à chaque appel — le
+panneau « Watcher spool » l'interroge déjà en continu, cf. #705). Dossier
+résolu par la même config que le watcher (_config() ci-dessous).
+
+Ordre manuel de la liste (issue #819) : par défaut (aucun déplacement jamais
+fait), la liste reste triée du plus ancien au plus récent (mtime du fichier,
+comportement #713 inchangé). Un déplacement (boutons monter/descendre de
+l'onglet) fige un ordre explicite, persisté dans en_attente/.ordre/ordre.json
+— JAMAIS un fichier directement dans en_attente/ : un SOUS-DOSSIER (même
+principe que rejected/.motifs, #631) n'est jamais un `chemin.is_file()`,
+donc ignoré de façon déjà naturelle par `_nb_en_attente`/
+`issues_attente_liste` (jamais compté, affiché, lancé ou supprimé comme une
+issue). `fusionner_ordre_attente` (logique pure) recalcule à chaque lecture
+l'ordre affiché à partir de ce fichier + de l'état réel du dossier : un
+identifiant de l'ordre mémorisé disparu du dossier (lancé, supprimé) est
+abandonné sans laisser de trace ; un fichier présent mais absent de l'ordre
+mémorisé (dépôt manuel, ancienne installation) est ajouté en fin de liste,
+du plus ancien au plus récent — le résultat fusionné est réécrit sur disque
+à chaque lecture, pour que l'ordre reste toujours « propre » (auto-guérison)
+sans jamais toucher au CONTENU des fichiers d'en_attente/.
 """
 
+import json
 import logging
 import os
 import signal
@@ -298,10 +317,70 @@ def _lire_item_attente(chemin: Path) -> dict | None:
     }
 
 
-def issues_attente_liste():
-    """GET /issues-attente — éléments mis de côté par le champ ATTENTE, du
-    plus ancien au plus récent (pour ne pas oublier les plus vieux)."""
-    cfg = _config()
+# ─── Ordre manuel (issue #819) ──────────────────────────────────────────────
+# Persisté à part du CONTENU des fichiers d'en_attente/ (jamais modifié par un
+# déplacement) et rangé dans un SOUS-DOSSIER caché d'en_attente/ (même
+# principe que rejected/.motifs, issue #631) : un sous-dossier n'est jamais
+# un `chemin.is_file()`, donc _nb_en_attente()/la boucle ci-dessus (qui ne
+# retiennent que les fichiers) l'ignorent déjà naturellement — aucun risque
+# qu'il soit un jour compté, affiché, lancé ou supprimé comme une issue.
+DOSSIER_ORDRE_ATTENTE = ".ordre"
+FICHIER_ORDRE_ATTENTE = "ordre.json"
+
+
+def _chemin_ordre_attente(cfg) -> Path:
+    return cfg.en_attente_dir / DOSSIER_ORDRE_ATTENTE / FICHIER_ORDRE_ATTENTE
+
+
+def _lire_ordre_attente_persiste(cfg) -> list[str]:
+    """Liste d'identifiants dans l'ordre choisi par Alain (le plus récent
+    déplacement gagnant), ou [] si jamais encore mémorisé ou fichier
+    corrompu — ne doit jamais empêcher l'affichage de la liste."""
+    try:
+        brut = json.loads(_chemin_ordre_attente(cfg).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    return [nom for nom in brut if isinstance(nom, str)]
+
+
+def _ecrire_ordre_attente(cfg, ordre: list[str]) -> None:
+    """Écriture atomique (fichier temporaire + renommage, même dossier donc
+    même système de fichiers) — même précaution que issues_attente_lancer()
+    pour ne jamais laisser un ordre à moitié écrit sur disque."""
+    chemin = _chemin_ordre_attente(cfg)
+    chemin.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_nom = tempfile.mkstemp(dir=str(chemin.parent), suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(ordre, f)
+        os.replace(tmp_nom, chemin)
+    except OSError:
+        Path(tmp_nom).unlink(missing_ok=True)
+        raise
+
+
+def fusionner_ordre_attente(ordre_persiste: list[str], items: list[dict]) -> list[str]:
+    """Logique PURE (aucun accès disque) — calcule l'ordre final d'affichage :
+    les identifiants d'`ordre_persiste` encore présents dans `items` (ordre
+    choisi par Alain, survit tel quel), suivis des éléments d'`items` absents
+    de l'ordre mémorisé (dépôt manuel, ancienne installation, ou tout
+    nouveau fichier jamais encore vu), eux-mêmes triés du plus ancien au plus
+    récent (`date`) — comportement historique de issues_attente_liste()
+    avant l'issue #819, conservé comme repli pour ces seuls nouveaux venus.
+    Un identifiant d'`ordre_persiste` disparu d'`items` (élément lancé,
+    supprimé ou disparu du dossier) est simplement abandonné : aucune trace
+    dans le résultat. `items` = [{"id": ..., "date": ...}, ...]."""
+    presents = {it["id"] for it in items}
+    ordre_filtre = [nom for nom in ordre_persiste if nom in presents]
+    connus = set(ordre_filtre)
+    nouveaux = sorted((it for it in items if it["id"] not in connus), key=lambda it: it["date"])
+    return ordre_filtre + [it["id"] for it in nouveaux]
+
+
+def _items_attente(cfg) -> list[dict]:
+    """{id, titre, projet, date, condition} de chaque fichier d'en_attente/
+    — jamais le sous-dossier DOSSIER_ORDRE_ATTENTE ci-dessus (exclu par
+    `chemin.is_file()`, comme DOSSIER_MOTIFS pour rejected/)."""
     items = []
     if cfg.en_attente_dir.is_dir():
         for chemin in cfg.en_attente_dir.iterdir():
@@ -310,8 +389,53 @@ def issues_attente_liste():
             item = _lire_item_attente(chemin)
             if item is not None:
                 items.append(item)
-    items.sort(key=lambda it: it["date"])
-    return jsonify(items=items)
+    return items
+
+
+def issues_attente_liste():
+    """GET /issues-attente — éléments mis de côté par le champ ATTENTE, dans
+    l'ordre choisi par Alain (issue #819 — voir fusionner_ordre_attente),
+    repli sur le plus ancien au plus récent pour tout élément jamais encore
+    déplacé. Le résultat fusionné est réécrit sur disque à chaque appel
+    (auto-guérison : incorpore les nouveaux venus, purge les disparus)."""
+    cfg = _config()
+    items = _items_attente(cfg)
+    items_par_id = {it["id"]: it for it in items}
+    ordre = fusionner_ordre_attente(_lire_ordre_attente_persiste(cfg), items)
+    if cfg.en_attente_dir.is_dir():
+        _ecrire_ordre_attente(cfg, ordre)
+    return jsonify(items=[items_par_id[nom] for nom in ordre])
+
+
+def issues_attente_deplacer():
+    """POST /issues-attente/deplacer — JSON {id, sens: "haut"|"bas"}. Échange
+    la position de l'identifiant avec son voisin direct dans l'ordre courant
+    (recalculé/auto-guéri comme ci-dessus, jamais une simple lecture brute du
+    fichier d'ordre). Monter le premier élément (ou descendre le dernier) est
+    un succès sans effet (`deplace: false`) — la ligne ne devrait de toute
+    façon déjà plus avoir de bouton actif dans ce sens côté interface."""
+    data = request.json or {}
+    nom = (data.get("id") or "").strip()
+    sens = data.get("sens")
+    if not _identifiant_attente_valide(nom):
+        return jsonify(succes=False, erreur="identifiant invalide."), 400
+    if sens not in ("haut", "bas"):
+        return jsonify(succes=False, erreur="sens invalide (haut/bas attendu)."), 400
+
+    cfg = _config()
+    items = _items_attente(cfg)
+    ordre = fusionner_ordre_attente(_lire_ordre_attente_persiste(cfg), items)
+    if nom not in ordre:
+        return jsonify(succes=False, erreur="élément introuvable."), 404
+
+    i = ordre.index(nom)
+    j = i - 1 if sens == "haut" else i + 1
+    deplace = False
+    if 0 <= j < len(ordre):
+        ordre[i], ordre[j] = ordre[j], ordre[i]
+        deplace = True
+    _ecrire_ordre_attente(cfg, ordre)
+    return jsonify(succes=True, deplace=deplace)
 
 
 def issues_attente_lancer():

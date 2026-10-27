@@ -1,6 +1,6 @@
-// Tests de logique pure de l'onglet « En attente » (issue #714, suite #713).
-// Aucune dépendance au DOM ni au réseau — voir static/js/tests/README.md
-// pour lancer ces tests (node --test).
+// Tests de logique pure de l'onglet « En attente » (issue #714, suite #713 ;
+// ordre manuel, issue #819). Aucune dépendance au DOM ni au réseau — voir
+// static/js/tests/README.md pour lancer ces tests (node --test).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
@@ -13,6 +13,7 @@ window.couleurProjet = (nom) => (nom === 'bridge_agent' ? '#EB0000' : undefined)
 import {
   formaterDateAttente,
   decisionBadgeAttente,
+  decisionDeplacementAttente,
   descriptionLigneAttente,
   couleurFondPastilleProjet,
   couleurTexteSurFond,
@@ -45,6 +46,24 @@ test('decisionBadgeAttente : 0/absent/null → masqué (rien d\'affiché)', () =
   assert.deepEqual(decisionBadgeAttente(0), { afficher: false, texte: '' });
   assert.deepEqual(decisionBadgeAttente(undefined), { afficher: false, texte: '' });
   assert.deepEqual(decisionBadgeAttente(null), { afficher: false, texte: '' });
+});
+
+// ─── decisionDeplacementAttente (issue #819) ───────────────────────────────
+
+test('decisionDeplacementAttente : premier élément → ne peut pas monter', () => {
+  assert.deepEqual(decisionDeplacementAttente(0, 3), { peutMonter: false, peutDescendre: true });
+});
+
+test('decisionDeplacementAttente : dernier élément → ne peut pas descendre', () => {
+  assert.deepEqual(decisionDeplacementAttente(2, 3), { peutMonter: true, peutDescendre: false });
+});
+
+test('decisionDeplacementAttente : élément du milieu → les deux sens possibles', () => {
+  assert.deepEqual(decisionDeplacementAttente(1, 3), { peutMonter: true, peutDescendre: true });
+});
+
+test('decisionDeplacementAttente : seul élément de la liste → ni l\'un ni l\'autre', () => {
+  assert.deepEqual(decisionDeplacementAttente(0, 1), { peutMonter: false, peutDescendre: false });
 });
 
 // ─── descriptionLigneAttente ────────────────────────────────────────────────

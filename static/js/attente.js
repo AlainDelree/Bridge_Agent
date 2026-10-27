@@ -11,6 +11,13 @@
 //   apparaît dans Résultats par le chemin habituel (création, événement SSE
 //   creation_issue) — pas de changement d'onglet automatique ici.
 //
+//   Ordre manuel (issue #819) : boutons ↑/↓ par ligne (POST
+//   /issues-attente/deplacer, {id, sens}) — l'ordre choisi est persisté
+//   côté serveur (app/issues_inbox.py::fusionner_ordre_attente), survit au
+//   rechargement et au redémarrage de new_issue.py. Succès → rechargement
+//   complet de la liste (chargerListeAttente), le serveur restant la seule
+//   source de vérité de l'ordre.
+//
 // BADGE — compteur suivant le sondage déjà en place (issue #705 : une mise à
 // jour uniquement par événements peut être manquée). static/js/resultats.js
 // pousse déjà nb_en_attente (issue #713, GET /issues-inbox/etat) dans
@@ -53,6 +60,14 @@ export function formaterDateAttente(dateObj) {
 export function decisionBadgeAttente(nb) {
   const n = Number(nb) || 0;
   return n > 0 ? { afficher: true, texte: String(n) } : { afficher: false, texte: '' };
+}
+
+// Les boutons monter/descendre d'une ligne (issue #819) — la première ligne
+// ne peut pas monter, la dernière ne peut pas descendre. Logique pure,
+// testée sous Node : `index`/`total` sont la position de l'élément et le
+// nombre total d'éléments affichés (fournis par rendreListe ci-dessous).
+export function decisionDeplacementAttente(index, total) {
+  return { peutMonter: index > 0, peutDescendre: index < total - 1 };
 }
 
 // Descriptif d'affichage d'une ligne (titre/projet/date/condition), avec les
@@ -181,10 +196,11 @@ function zoneListe() {
   return document.getElementById('attente-liste');
 }
 
-function construireLigneDOM(item) {
+function construireLigneDOM(item, index, total) {
   const desc = descriptionLigneAttente(item);
   const fond = couleurFondPastilleProjet(desc.projet);
   const texte = couleurTexteSurFond(fond);
+  const { peutMonter, peutDescendre } = decisionDeplacementAttente(index, total);
   const div = document.createElement('div');
   div.className = 'ligne-attente';
   div.dataset.id = item.id;
@@ -196,6 +212,8 @@ function construireLigneDOM(item) {
     + '</div>'
     + '<div class="attente-condition"></div>'
     + '<div class="attente-actions">'
+    + '<button class="deplacer" data-action="attente-monter" title="Monter">↑</button>'
+    + '<button class="deplacer" data-action="attente-descendre" title="Descendre">↓</button>'
     + '<button class="primaire" data-action="attente-lancer">Lancer</button>'
     + '<button class="danger" data-action="attente-supprimer">Supprimer</button>'
     + '</div>';
@@ -209,6 +227,8 @@ function construireLigneDOM(item) {
   div.querySelector('.attente-titre').textContent = desc.titre;
   div.querySelector('.attente-date').textContent = desc.date;
   div.querySelector('.attente-condition').textContent = '⏳ Condition : ' + desc.condition;
+  div.querySelector('[data-action="attente-monter"]').disabled = !peutMonter;
+  div.querySelector('[data-action="attente-descendre"]').disabled = !peutDescendre;
   return div;
 }
 
@@ -223,7 +243,7 @@ function rendreListe(items) {
     zone.appendChild(vide);
     return;
   }
-  for (const item of items) zone.appendChild(construireLigneDOM(item));
+  items.forEach((item, index) => zone.appendChild(construireLigneDOM(item, index, items.length)));
 }
 
 // ─── Chargement de la liste (ouverture d'onglet / après chaque action / ─────
@@ -279,6 +299,21 @@ async function supprimer(id, ligneEl) {
   }
 }
 
+// Déplacement manuel (issue #819) : succès → liste entièrement rechargée
+// depuis le serveur (ordre déjà réécrit côté route) plutôt qu'une
+// réorganisation DOM locale — solution la plus simple, cohérente avec le
+// fait que /issues-attente est déjà la source unique de vérité de l'ordre.
+async function deplacer(id, sens, ligneEl) {
+  basculerBoutons(ligneEl, true);
+  try {
+    await api.post('/issues-attente/deplacer', { id, sens }, { silencieux: true });
+    await chargerListeAttente();
+  } catch (e) {
+    toasts.erreur(messageEchecAttente(e, 'Échec du déplacement.'));
+    basculerBoutons(ligneEl, false);
+  }
+}
+
 function installerDelegation() {
   dom.surAction('[data-action="attente-lancer"]', 'click', (evenement, element) => {
     const ligne = element.closest('.ligne-attente');
@@ -287,6 +322,14 @@ function installerDelegation() {
   dom.surAction('[data-action="attente-supprimer"]', 'click', (evenement, element) => {
     const ligne = element.closest('.ligne-attente');
     if (ligne) supprimer(ligne.dataset.id, ligne);
+  });
+  dom.surAction('[data-action="attente-monter"]', 'click', (evenement, element) => {
+    const ligne = element.closest('.ligne-attente');
+    if (ligne) deplacer(ligne.dataset.id, 'haut', ligne);
+  });
+  dom.surAction('[data-action="attente-descendre"]', 'click', (evenement, element) => {
+    const ligne = element.closest('.ligne-attente');
+    if (ligne) deplacer(ligne.dataset.id, 'bas', ligne);
   });
 }
 
