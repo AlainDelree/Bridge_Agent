@@ -98,6 +98,50 @@ export function decisionModeCopie(contexteSecurise, clipboard, clipboardItemDisp
   return moderne ? 'moderne' : 'repli';
 }
 
+// Famille + version du navigateur, à partir de `navigator.userAgent` (issue
+// #824 : diagnostic d'un échec de copie, hypothèse non confirmée d'un lien
+// avec l'activation utilisateur sous Firefox — ne tranche rien, donne juste
+// le contexte). Best-effort, ni exhaustif ni garanti exact (chaînes d'UA
+// multiples/trompeuses par nature) : Edge et Safari doivent être testés avant
+// Chrome, dont la chaîne contient aussi « Chrome/ » et « Safari/ ».
+export function detecterNavigateur(userAgent) {
+  if (!userAgent) return 'navigateur inconnu';
+  const motifs = [
+    { nom: 'Edge', re: /Edg\/([\d.]+)/ },
+    { nom: 'Firefox', re: /Firefox\/([\d.]+)/ },
+    { nom: 'Chrome', re: /Chrome\/([\d.]+)/ },
+    { nom: 'Safari', re: /Version\/([\d.]+).*Safari/ },
+  ];
+  for (const { nom, re } of motifs) {
+    const m = userAgent.match(re);
+    if (m) return `${nom} ${m[1]}`;
+  }
+  return 'navigateur inconnu';
+}
+
+// Ligne de détail technique d'un échec de copie (issue #824) — pure, sans
+// accès DOM/navigateur (ceux-ci sont lus par l'appelant, voir
+// `construireDetailEchecCopie` ci-dessous), pour rester testable sous Node.
+// Ne reçoit et n'affiche JAMAIS le texte copié lui-même, seulement sa
+// longueur (`longueurTexte`) — le rapport peut contenir des informations
+// qu'on ne veut pas voir recopiées ailleurs (console, journal des messages).
+// Chaque champ de contexte est omis (pas affiché « =undefined ») quand sa
+// valeur n'est pas disponible plutôt que de mentir par une valeur par défaut.
+export function formaterDetailEchecCopie(contexte) {
+  const { erreur, mode, delaiMs, focus, contexteSecurise, navigateur, longueurTexte } = contexte || {};
+  const cause = erreur
+    ? `${erreur.name || 'Erreur'}: ${erreur.message || String(erreur)}`
+    : '(aucune exception)';
+  const champs = [];
+  if (mode) champs.push(`mode=${mode}`);
+  if (typeof delaiMs === 'number' && Number.isFinite(delaiMs)) champs.push(`délai=${delaiMs} ms`);
+  if (typeof focus === 'boolean') champs.push(`focus=${focus ? 'oui' : 'non'}`);
+  if (typeof contexteSecurise === 'boolean') champs.push(`contexteSécurisé=${contexteSecurise ? 'oui' : 'non'}`);
+  if (navigateur) champs.push(`navigateur=${navigateur}`);
+  if (typeof longueurTexte === 'number' && Number.isFinite(longueurTexte)) champs.push(`longueur=${longueurTexte} car.`);
+  return champs.length ? `Détail copie — ${cause} · ${champs.join(' · ')}` : `Détail copie — ${cause}`;
+}
+
 // Extrait les cases héritées du localStorage (clé `resultat-coche:<projet>:<numero>`
 // = '1', issue #154) à migrer vers le serveur (issue #636). `entrees` =
 // [{cle, valeur}, ...]. Renvoie { cases: [{projet, numero}], cles: [<clé>, ...] }
@@ -697,6 +741,42 @@ function copierExecCommand(texte) {
 // textes deviennent prêts au même instant.
 let chaineCopieModerne = Promise.resolve();
 
+// Construit la ligne de détail technique d'un échec (issue #824) : lit le
+// contexte navigateur/fenêtre au moment de l'échec (pas avant) — notamment
+// `focus`, pour vérifier l'hypothèse non confirmée d'un lien avec l'activation
+// utilisateur. `debut` = Date.now() au tout début de la copie (voir chaque
+// appelant ci-dessous) ; `texte` = celui qui a échoué à être copié, dont SEULE
+// la longueur est transmise (jamais le contenu).
+function construireDetailEchecCopie(e, mode, debut, texte) {
+  return formaterDetailEchecCopie({
+    erreur: e,
+    mode,
+    delaiMs: typeof debut === 'number' ? Date.now() - debut : undefined,
+    focus: (typeof document !== 'undefined' && typeof document.hasFocus === 'function')
+      ? document.hasFocus() : undefined,
+    contexteSecurise: (typeof window !== 'undefined' && typeof window.isSecureContext === 'boolean')
+      ? window.isSecureContext : undefined,
+    navigateur: (typeof navigator !== 'undefined' && navigator.userAgent)
+      ? detecterNavigateur(navigator.userAgent) : undefined,
+    longueurTexte: texte != null ? String(texte).length : undefined,
+  });
+}
+
+// Enveloppe le `feedback` reçu pour que son `echec(e, texte)` reçoive un 3e
+// argument (la ligne de détail ci-dessus), sans toucher aux autres callbacks
+// ni au contrat existant (issue #824 : les appelants de signalerEchecCopie
+// ignoraient jusqu'ici l'exception `e`). Posée une fois par point d'entrée
+// (copierModerne/lancerCopie/copierTexteConnu) pour que tous les appels
+// internes à `feedback.echec` (y compris depuis telechargerOuSignalerVolumineux)
+// portent `mode`/`debut` sans avoir à les faire transiter partout.
+function envelopperFeedbackEchec(feedback, mode, debut) {
+  if (!feedback || typeof feedback.echec !== 'function') return feedback;
+  return {
+    ...feedback,
+    echec: (e, texte) => feedback.echec(e, texte, construireDetailEchecCopie(e, mode, debut, texte)),
+  };
+}
+
 // Variante associée à un producteur de texte — un seul endroit (issue #790,
 // réutilisé par copierModerne ET lancerCopie en mode repli, qui dupliquaient
 // ce test).
@@ -726,22 +806,24 @@ function telechargerOuSignalerVolumineux(projet, numero, variante, t, feedback) 
 
 function copierModerne(projet, numero, producteur, feedback) {
   const variante = variantDuProducteur(producteur);
+  const debut = Date.now();   // début de la copie (issue #824) : référence du délai de la ligne de détail
+  const feedbackAvecDetail = envelopperFeedbackEchec(feedback, 'moderne', debut);
   const tache = chaineCopieModerne.then(async () => {
     let t;
     try {
       t = await producteur(projet, numero);
     } catch (e) {
       if (e && e.aucun) { feedback.aucun ? feedback.aucun() : feedback.vide(); }
-      else feedback.echec(e);
+      else feedbackAvecDetail.echec(e);
       return;
     }
     if (texteVide(t)) { feedback.vide(); return; }
-    if (telechargerOuSignalerVolumineux(projet, numero, variante, t, feedback)) return;
+    if (telechargerOuSignalerVolumineux(projet, numero, variante, t, feedbackAvecDetail)) return;
     try {
       await navigator.clipboard.write([new ClipboardItem({ 'text/plain': new Blob([t], { type: 'text/plain' }) })]);
       feedback.succes();
     } catch (e) {
-      feedback.echec(e, t);   // texte transmis : reste accessible malgré l'échec (issue #782)
+      feedbackAvecDetail.echec(e, t);   // texte transmis : reste accessible malgré l'échec (issue #782)
     }
   });
   // La chaîne continue même après un échec : un copierModerne en erreur ne doit
@@ -759,6 +841,8 @@ function lancerCopie(projet, numero, producteur, feedback) {
     copierModerne(projet, numero, producteur, feedback);
     return;
   }
+  const debut = Date.now();   // début de la copie (issue #824) : référence du délai de la ligne de détail
+  const feedbackAvecDetail = envelopperFeedbackEchec(feedback, 'repli', debut);
   // Mode repli (--lan) : texte requis AVANT le clic.
   const cle = cleIC(projet, numero);
   const variante = variantDuProducteur(producteur);
@@ -771,9 +855,9 @@ function lancerCopie(projet, numero, producteur, feedback) {
   }
   if (t && t.aucun) { feedback.aucun ? feedback.aucun() : feedback.vide(); return; }
   if (texteVide(t)) { feedback.vide(); return; }
-  if (telechargerOuSignalerVolumineux(projet, numero, variante, t, feedback)) return;
+  if (telechargerOuSignalerVolumineux(projet, numero, variante, t, feedbackAvecDetail)) return;
   if (copierExecCommand(t)) feedback.succes();
-  else feedback.echec(undefined, t);   // texte transmis : reste accessible malgré l'échec (issue #782)
+  else feedbackAvecDetail.echec(undefined, t);   // texte transmis : reste accessible malgré l'échec (issue #782)
 }
 
 // ─── Copie d'un texte déjà connu, sans fetch (issue #823 : bouton « copier »
@@ -785,21 +869,24 @@ function lancerCopie(projet, numero, producteur, feedback) {
 // `feedback` = { succes, echec } — succes() n'est appelé QUE si l'écriture a
 // réellement abouti (jamais de faux succès, même contrat que lancerCopie).
 export function copierTexteConnu(texte, feedback) {
+  const debut = Date.now();   // début de la copie (issue #824) : référence du délai de la ligne de détail
   if (modeCopie() === 'moderne') {
+    const feedbackAvecDetail = envelopperFeedbackEchec(feedback, 'moderne', debut);
     const tache = chaineCopieModerne.then(async () => {
       try {
         await navigator.clipboard.write(
           [new ClipboardItem({ 'text/plain': new Blob([texte], { type: 'text/plain' }) })]);
         feedback.succes();
       } catch (e) {
-        feedback.echec(e, texte);   // texte transmis : reste accessible malgré l'échec (issue #782)
+        feedbackAvecDetail.echec(e, texte);   // texte transmis : reste accessible malgré l'échec (issue #782)
       }
     });
     chaineCopieModerne = tache.catch(() => {});
     return;
   }
+  const feedbackAvecDetail = envelopperFeedbackEchec(feedback, 'repli', debut);
   if (copierExecCommand(texte)) feedback.succes();
-  else feedback.echec(undefined, texte);
+  else feedbackAvecDetail.echec(undefined, texte);
 }
 
 // Précharge (mode repli) le texte d'une variante pour (projet, numero).
@@ -845,8 +932,16 @@ const MESSAGE_ECHEC_COPIE = 'Copie impossible — le presse-papier n\'a pas pu �
 // (`texteSecours`, voir toasts.js) pour un Ctrl+C manuel. Ce filet vaut quelle
 // que soit la cause de l'échec (API presse-papier refusée, execCommand en
 // échec, etc.), pas seulement celle corrigée ci-dessus.
-export function signalerEchecCopie(texte) {
-  toasts.erreur(MESSAGE_ECHEC_COPIE, true, texte ? { texteSecours: texte } : undefined);
+// `detail` (issue #824) : ligne de détail technique (voir construireDetailEchecCopie)
+// — journalisée par console.warn ET jointe au toast (ligne discrète + entrée
+// du panneau « Messages »), sans jamais changer le message principal
+// (MESSAGE_ECHEC_COPIE) ni `texteSecours` ci-dessus.
+export function signalerEchecCopie(texte, detail) {
+  if (detail) console.warn(detail);
+  toasts.erreur(MESSAGE_ECHEC_COPIE, true, {
+    texteSecours: texte || undefined,
+    detailTechnique: detail || undefined,
+  });
 }
 
 // Cochage d'une case : feedback par TOAST (pas de badge sur la case). `fichier`
@@ -857,7 +952,7 @@ function feedbackToast() {
   return {
     succes: () => toasts.succes('Rapport copié dans le presse-papier.', false),
     fichier: (message) => toasts.avertissement(message),
-    echec: (e, texte) => signalerEchecCopie(texte),
+    echec: (e, texte, detail) => signalerEchecCopie(texte, detail),
     vide: () => toasts.avertissement(TITRE_COPIE_VIDE),
     nonPret: () => toasts.info('Préparation de la copie en cours — recoche dans un instant.', false),
   };
@@ -874,7 +969,7 @@ function feedbackBadge(badge) {
   return {
     succes: () => flash('✓'),
     fichier: (message) => { flash('⬇'); toasts.avertissement(message); },
-    echec: (e, texte) => signalerEchecCopie(texte),
+    echec: (e, texte, detail) => signalerEchecCopie(texte, detail),
     vide: () => { if (badge) { badge.textContent = '⚠'; badge.title = TITRE_COPIE_VIDE; setTimeout(restaurer, 2000); } },
     aucun: () => flash('∅'),
     nonPret: () => { toasts.info('Contenu en préparation — reclique dans un instant.', false); },

@@ -313,6 +313,12 @@ async function attendreZoneSecours(tentativesMax = 50) {
   return zoneSecoursToast();
 }
 
+// Ligne de détail technique (detailTechnique, issue #824) du dernier toast
+// d'échec affiché — voir definirContenuToast dans toasts.js.
+function detailToast() {
+  return elementsCrees.find((e) => e.className === 'socle-toast-detail');
+}
+
 test('badge Diff, diff volumineux (> seuil) : fichier téléchargé, pas de copie', async () => {
   const telechargements = fixerEnvironnement((hash) => (hash === 'aaa1111' ? DIFF_VOLUMINEUX : 'DIFF-' + hash));
   interdireCopiePressePapier();
@@ -391,4 +397,55 @@ test('badge Diff, diff volumineux (> seuil) ET téléchargement en SUCCÈS : le 
   }
   assert.ok(messages.some((m) => /téléchargé/.test(m)), 'le succès du téléchargement doit toujours être annoncé');
   assert.ok(!zoneSecoursToast(), 'aucune zone de secours ne doit apparaître en cas de succès');
+});
+
+// ─── Issue #824 : la cause réelle de l'échec de copie atteint l'affichage ────
+
+test('badge ✅, échec RÉEL de navigator.clipboard.write (NotAllowedError) : le toast ET la console reçoivent la cause, le message principal et la zone de secours restent inchangés', async () => {
+  fixerEnvironnement();
+  const avertissements = [];
+  const warnOriginal = console.warn;
+  console.warn = (...args) => avertissements.push(args.join(' '));
+  global.navigator = {
+    clipboard: {
+      write: async () => {
+        throw Object.assign(new Error('The request is not allowed.'), { name: 'NotAllowedError' });
+      },
+    },
+  };
+  try {
+    resultatsCoches.copierReponseBadge(evenementBadge(), PROJET, 401);
+    const zone = await attendreZoneSecours();
+    assert.ok(zone, 'le texte complet doit rester accessible (texteSecours, issue #782, inchangé)');
+    assert.match(zone.value, /Corps du rapport pour #787/);
+    const detail = detailToast();
+    assert.ok(detail, 'une ligne de détail technique doit être ajoutée au toast (issue #824)');
+    assert.match(detail.textContent, /NotAllowedError/);
+    assert.match(detail.textContent, /The request is not allowed\./);
+    assert.match(detail.textContent, /mode=moderne/);
+    assert.match(detail.textContent, /délai=\d+ ms/);
+    assert.ok(
+      avertissements.some((a) => a.includes('NotAllowedError') && a.includes('The request is not allowed.')),
+      'la cause doit être journalisée par console.warn (jusqu\'ici ignorée, issue #824)',
+    );
+    const messages = texteDesToasts();
+    assert.ok(messages.some((m) => m === 'Copie impossible — le presse-papier n\'a pas pu être écrit.'),
+      'le message principal ne doit pas changer');
+  } finally {
+    console.warn = warnOriginal;
+  }
+});
+
+test('badge Diff, téléchargement en échec (echec(undefined, t), sans exception) : détail « (aucune exception) », pas de confusion avec une vraie erreur', async () => {
+  const telechargements = fixerEnvironnement((hash) => (hash === 'aaa1111' ? DIFF_VOLUMINEUX : 'DIFF-' + hash));
+  interdireCopiePressePapier();
+  global.URL.createObjectURL = () => { throw new Error('échec simulé de URL.createObjectURL'); };
+  resultatsCoches.copierDiffBadge(evenementBadge(), PROJET, 402);
+  await attendreZoneSecours();
+  assert.equal(telechargements.length, 0);
+  const detail = detailToast();
+  assert.ok(detail, 'une ligne de détail doit être ajoutée même sans exception (issue #824)');
+  assert.match(detail.textContent, /\(aucune exception\)/);
+  assert.doesNotMatch(detail.textContent, /undefined/);
+  assert.match(detail.textContent, /mode=moderne/);
 });
