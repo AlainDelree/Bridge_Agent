@@ -25,6 +25,8 @@ import {
   doitTelecharger,
   nomFichierCopie,
   messageFichierVolumineux,
+  detecterNavigateur,
+  formaterDetailEchecCopie,
 } from '../resultats_coches.js';
 
 // ─── normaliserNumero ─────────────────────────────────────────────────────────
@@ -129,6 +131,97 @@ test('decisionModeCopie : clipboard absent ou sans write → repli', () => {
 
 test('decisionModeCopie : ClipboardItem indisponible → repli', () => {
   assert.equal(decisionModeCopie(true, { write: () => {} }, false), 'repli');
+});
+
+// ─── detecterNavigateur (issue #824) ───────────────────────────────────────────
+test('detecterNavigateur : Firefox', () => {
+  const ua = 'Mozilla/5.0 (X11; Linux x86_64; rv:133.0) Gecko/20100101 Firefox/133.0';
+  assert.equal(detecterNavigateur(ua), 'Firefox 133.0');
+});
+
+test('detecterNavigateur : Chrome (ne doit pas être confondu avec Safari malgré "Safari/" dans l\'UA)', () => {
+  const ua = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) '
+    + 'Chrome/129.0.0.0 Safari/537.36';
+  assert.equal(detecterNavigateur(ua), 'Chrome 129.0.0.0');
+});
+
+test('detecterNavigateur : Edge (ne doit pas être confondu avec Chrome malgré "Chrome/" dans l\'UA)', () => {
+  const ua = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) '
+    + 'Chrome/129.0.0.0 Safari/537.36 Edg/129.0.0.0';
+  assert.equal(detecterNavigateur(ua), 'Edge 129.0.0.0');
+});
+
+test('detecterNavigateur : userAgent absent → « navigateur inconnu », jamais d\'exception', () => {
+  assert.equal(detecterNavigateur(undefined), 'navigateur inconnu');
+  assert.equal(detecterNavigateur(''), 'navigateur inconnu');
+});
+
+// ─── formaterDetailEchecCopie (issue #824, ligne de détail d'un échec de copie) ─
+test('formaterDetailEchecCopie : exception avec nom et message → tous deux repris dans la ligne', () => {
+  const ligne = formaterDetailEchecCopie({
+    erreur: { name: 'NotAllowedError', message: 'The request is not allowed.' },
+    mode: 'moderne',
+    delaiMs: 842,
+    focus: true,
+    contexteSecurise: true,
+    navigateur: 'Firefox 133.0',
+    longueurTexte: 2345,
+  });
+  assert.match(ligne, /NotAllowedError/);
+  assert.match(ligne, /The request is not allowed\./);
+  assert.match(ligne, /mode=moderne/);
+  assert.match(ligne, /délai=842 ms/);
+  assert.match(ligne, /focus=oui/);
+  assert.match(ligne, /contexteSécurisé=oui/);
+  assert.match(ligne, /navigateur=Firefox 133\.0/);
+  assert.match(ligne, /longueur=2345 car\./);
+});
+
+test('formaterDetailEchecCopie : sans exception (téléchargement en échec, echec(undefined, t)) → cause neutre, pas de "undefined"', () => {
+  const ligne = formaterDetailEchecCopie({
+    erreur: undefined,
+    mode: 'moderne',
+    delaiMs: 12,
+    focus: true,
+    contexteSecurise: true,
+    navigateur: 'Chrome 129.0.0.0',
+    longueurTexte: 10,
+  });
+  assert.match(ligne, /\(aucune exception\)/);
+  assert.doesNotMatch(ligne, /undefined/);
+});
+
+test('formaterDetailEchecCopie : sans valeur de délai → champ délai absent, pas de "délai=undefined"', () => {
+  const ligne = formaterDetailEchecCopie({
+    erreur: { name: 'Erreur', message: 'x' },
+    mode: 'repli',
+    delaiMs: undefined,
+    focus: false,
+    contexteSecurise: false,
+    navigateur: 'Firefox 133.0',
+    longueurTexte: 5,
+  });
+  assert.doesNotMatch(ligne, /délai/);
+});
+
+test('formaterDetailEchecCopie : n\'inclut JAMAIS le contenu du texte copié, seulement sa longueur', () => {
+  const texteSensible = 'CONTENU-CONFIDENTIEL-DU-RAPPORT-12345';
+  const ligne = formaterDetailEchecCopie({
+    erreur: { name: 'NotAllowedError', message: 'x' },
+    mode: 'moderne',
+    delaiMs: 5,
+    focus: true,
+    contexteSecurise: true,
+    navigateur: 'Firefox 133.0',
+    longueurTexte: texteSensible.length,
+  });
+  assert.doesNotMatch(ligne, /CONTENU-CONFIDENTIEL/);
+  assert.match(ligne, new RegExp('longueur=' + texteSensible.length + ' car\\.'));
+});
+
+test('formaterDetailEchecCopie : aucun contexte connu → ne lève pas, cause neutre seule', () => {
+  assert.equal(formaterDetailEchecCopie(), 'Détail copie — (aucune exception)');
+  assert.equal(formaterDetailEchecCopie({}), 'Détail copie — (aucune exception)');
 });
 
 // ─── extraireCasesLegacy (migration idempotente du localStorage) ──────────────

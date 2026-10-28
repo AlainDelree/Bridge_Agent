@@ -351,7 +351,7 @@ async function deplacer(id, sens, ligneEl) {
 function feedbackCopieTitre() {
   return {
     succes: () => toasts.succes('Titre copié dans le presse-papier.', false),
-    echec: (e, texte) => signalerEchecCopie(texte),
+    echec: (e, texte, detail) => signalerEchecCopie(texte, detail),
   };
 }
 

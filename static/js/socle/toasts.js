@@ -37,6 +37,12 @@
 //       donc jamais naturellement. Un nouveau message avec la même `cle`
 //       REMPLACE le contenu du toast déjà affiché (pas de compteur « ×N »,
 //       contrairement à la fusion par défaut) et relance son compte à rebours.
+//   - toasts.erreur/avertissement(texte, comptabilise, {detailTechnique}) (issue
+//     #824) : ligne de détail technique discrète, affichée sous le message
+//     principal (jamais le contenu d'un texte, voir l'appelant), écrite aussi
+//     dans le panneau « Messages » (journal) sous l'entrée correspondante —
+//     ne change ni le message principal ni `texteSecours`. Comme `texteSecours`,
+//     rend la clé anti-empilement unique (jamais fusionnée/effacée).
 //
 //   Tous les messages affichés (quel que soit l'appelant) sont en outre
 //   journalisés (voir `journaliser`) dans un historique borné
@@ -227,9 +233,14 @@ function majBadgeJournal() {
 // les messages, sans exception ni action requise des appelants existants.
 // `comptabilise` (issue #747) : entre dans le journal dans tous les cas,
 // mais n'incrémente la pastille que si vrai.
-function journaliser(texte, type, comptabilise) {
+// `detail` (issue #824) : ligne de détail technique facultative (ex. cause
+// réelle d'un échec de copie) — consignée à part dans l'entrée pour être
+// affichée comme une ligne discrète sous le message principal, sans altérer
+// celui-ci (voir rafraichirListeJournal).
+function journaliser(texte, type, comptabilise, detail) {
   compteurIdJournal += 1;
   const entree = { id: compteurIdJournal, type, texte, horodatage: Date.now(), comptabilise };
+  if (detail) entree.detail = detail;
   journal = ajouterEntreeJournal(journal, entree, JOURNAL_TAILLE_MAX);
   nonLus = majNonLusApresAjout(nonLus, panneauJournalOuvert, comptabilise);
   sauvegarderJournalSession();
@@ -281,14 +292,23 @@ function rafraichirListeJournal() {
   for (const entree of journal.slice().reverse()) {
     const ligne = d.createElement('div');
     ligne.className = 'socle-journal-ligne ' + entree.type;
+    const corps = d.createElement('div');
+    corps.className = 'socle-journal-corps';
     const heure = d.createElement('span');
     heure.className = 'socle-journal-heure';
     heure.textContent = formaterHeureJournal(new Date(entree.horodatage));
     const texte = d.createElement('span');
     texte.className = 'socle-journal-texte';
     texte.textContent = entree.texte;
-    ligne.appendChild(heure);
-    ligne.appendChild(texte);
+    corps.appendChild(heure);
+    corps.appendChild(texte);
+    ligne.appendChild(corps);
+    if (entree.detail) {
+      const detail = d.createElement('div');
+      detail.className = 'socle-journal-detail';
+      detail.textContent = entree.detail;
+      ligne.appendChild(detail);
+    }
     liste.appendChild(ligne);
   }
 }
@@ -385,6 +405,8 @@ function injecterStyles() {
   max-height:160px;font-family:monospace;font-size:11px;line-height:1.4;
   padding:6px 8px;border:none;border-radius:6px;resize:vertical;
   color:#1a1a18;background:#fff}
+.socle-toast-detail{display:block;margin-top:6px;font-size:10px;line-height:1.35;
+  color:rgba(255,255,255,.75);word-break:break-word}
 .socle-toast-fermer{pointer-events:auto;flex:0 0 auto;background:none;border:none;
   color:#fff;opacity:.8;cursor:pointer;font-size:15px;line-height:1;padding:0}
 .socle-toast-fermer:hover{opacity:1}
@@ -403,9 +425,10 @@ function injecterStyles() {
   color:#666;padding:0 4px}
 .socle-journal-liste{padding:4px 0}
 .socle-journal-vide{padding:16px 14px;font-size:12px;color:#888}
-.socle-journal-ligne{display:flex;gap:8px;padding:7px 14px;font-size:12px;
-  border-bottom:1px solid #f3f3f1;align-items:baseline}
+.socle-journal-ligne{padding:7px 14px;font-size:12px;border-bottom:1px solid #f3f3f1}
 .socle-journal-ligne:last-child{border-bottom:none}
+.socle-journal-corps{display:flex;gap:8px;align-items:baseline}
+.socle-journal-detail{margin-top:3px;font-size:10px;color:#999;word-break:break-word}
 .socle-journal-heure{flex:0 0 auto;color:#999;font-variant-numeric:tabular-nums}
 .socle-journal-texte{flex:1 1 auto;word-break:break-word}
 .socle-journal-ligne.erreur .socle-journal-texte{color:#a32d2d}
@@ -428,9 +451,11 @@ function fermerToast(cle) {
 }
 
 // (Re)construit le contenu d'un toast : texte + bouton « × » si `avecFermeture`
-// (erreur/avertissement, issue #730 — fermeture manuelle uniquement), + zone
-// sélectionnable optionnelle (`texteSecours`, issue #782 — voir `afficher`).
-function definirContenuToast(toast, texte, avecFermeture, onFermer, texteSecours) {
+// (erreur/avertissement, issue #730 — fermeture manuelle uniquement), + ligne
+// de détail technique discrète optionnelle (`detailTechnique`, issue #824),
+// + zone sélectionnable optionnelle (`texteSecours`, issue #782 — voir
+// `afficher`).
+function definirContenuToast(toast, texte, avecFermeture, onFermer, texteSecours, detailTechnique) {
   toast.textContent = '';
   const conteneur = doc().createElement('span');
   conteneur.className = 'socle-toast-contenu';
@@ -447,6 +472,12 @@ function definirContenuToast(toast, texte, avecFermeture, onFermer, texteSecours
     conteneur.appendChild(bouton);
   }
   toast.appendChild(conteneur);
+  if (detailTechnique) {
+    const detail = doc().createElement('div');
+    detail.className = 'socle-toast-detail';
+    detail.textContent = detailTechnique;
+    toast.appendChild(detail);
+  }
   if (texteSecours) {
     const zone = doc().createElement('textarea');
     zone.className = 'socle-toast-secours';
@@ -483,18 +514,23 @@ export function cleEffective(type, texte, texteSecours, compteurUnique, cleDeman
 let compteurCleSecours = 0;
 
 function afficher(texte, type, comptabiliseDemande = true, options = {}) {
-  const { texteSecours, duree: dureeDemandee, cle: cleDemandee } = options || {};
+  const { texteSecours, duree: dureeDemandee, cle: cleDemandee, detailTechnique } = options || {};
   const d = doc();
   if (!d) { return; }
   injecterStyles();
-  journaliser(texte, type, estComptabilise(type, comptabiliseDemande));
+  journaliser(texte, type, estComptabilise(type, comptabiliseDemande), detailTechnique);
 
   // `options.duree`/`options.cle` (issue #807) : voir dureeEffective/
   // cleEffective ci-dessus — sans effet si absents (comportement inchangé).
+  // `detailTechnique` (issue #824) rend aussi la clé UNIQUE, au même titre que
+  // `texteSecours` (voir le commentaire de cleToast) : un détail technique
+  // change à chaque occurrence (délai, focus...), il ne doit jamais être
+  // silencieusement effacé par la fusion anti-empilement.
   const duree = dureeEffective(type, dureeDemandee);
   const remplacer = cleDemandee != null;
-  const cle = cleEffective(type, texte, texteSecours, texteSecours ? ++compteurCleSecours : undefined, cleDemandee);
-  const actif = texteSecours ? null : toastsActifs.get(cle);
+  const payloadUnique = texteSecours || detailTechnique;
+  const cle = cleEffective(type, texte, payloadUnique, payloadUnique ? ++compteurCleSecours : undefined, cleDemandee);
+  const actif = payloadUnique ? null : toastsActifs.get(cle);
   if (actif) {
     const { texte: texteAffiche, compteur } = contenuRemplacement(texte, actif.compteur, remplacer);
     actif.compteur = compteur;
@@ -516,7 +552,7 @@ function afficher(texte, type, comptabiliseDemande = true, options = {}) {
   }
   const toast = d.createElement('div');
   toast.className = `socle-toast ${type}`;
-  definirContenuToast(toast, texte, duree === null, () => fermerToast(cle), texteSecours);
+  definirContenuToast(toast, texte, duree === null, () => fermerToast(cle), texteSecours, detailTechnique);
   conteneur.appendChild(toast);
   // Forcer un reflow puis lancer la transition d'apparition.
   requestAnimationFrame(() => toast.classList.add('visible'));
@@ -598,6 +634,10 @@ export const toasts = {
   // sélectionnable — pour qu'un texte qui a échoué à être copié (presse-papier
   // refusé, execCommand en échec…) reste accessible pour un Ctrl+C manuel,
   // au lieu d'être simplement perdu.
+  // `options.detailTechnique` (issue #824) : ligne discrète ajoutée sous le
+  // message principal (jamais le contenu d'un texte, seulement sa longueur et
+  // le contexte de l'échec) — journalisée dans le panneau « Messages » comme
+  // les autres messages, en plus du message principal inchangé.
   erreur: (texte, comptabilise = true, options) => afficher(texte, 'erreur', comptabilise, options),
   // `options.duree`/`options.cle` (issue #807) : voir le commentaire d'en-tête
   // du fichier — mêmes options facultatives que `erreur` ci-dessus.
