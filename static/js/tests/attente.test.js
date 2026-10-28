@@ -18,6 +18,7 @@ import {
   couleurFondPastilleProjet,
   couleurTexteSurFond,
   messageEchecAttente,
+  texteACopierAttente,
 } from '../attente.js';
 
 // ─── formaterDateAttente ────────────────────────────────────────────────────
@@ -103,6 +104,27 @@ test('descriptionLigneAttente : projetAffiche reprend le nom du projet', () => {
 test('descriptionLigneAttente : projetAffiche → « projet inconnu » si projet vide', () => {
   assert.equal(descriptionLigneAttente({ id: 'a.txt', projet: '' }).projetAffiche, 'projet inconnu');
   assert.equal(descriptionLigneAttente({ id: 'a.txt' }).projetAffiche, 'projet inconnu');
+});
+
+// ─── texteACopierAttente (bouton « copier » du titre, issue #823) ─────────
+
+test('texteACopierAttente : reprend le titre exact tel qu\'écrit dans le fichier', () => {
+  assert.equal(texteACopierAttente({ titre: 'Mon titre' }), 'Mon titre');
+});
+
+test('texteACopierAttente : titre absent/vide → null, jamais le repli « (sans titre) »', () => {
+  assert.equal(texteACopierAttente({ id: 'a.txt' }), null);
+  assert.equal(texteACopierAttente({ titre: '' }), null);
+  assert.equal(texteACopierAttente({ titre: '   ' }), null);
+});
+
+test('texteACopierAttente : item absent ne lève pas d\'exception', () => {
+  assert.equal(texteACopierAttente(null), null);
+  assert.equal(texteACopierAttente(undefined), null);
+});
+
+test('texteACopierAttente : ne modifie pas le titre (espaces internes préservés)', () => {
+  assert.equal(texteACopierAttente({ titre: '  Titre avec espaces  ' }), '  Titre avec espaces  ');
 });
 
 // ─── couleurFondPastilleProjet ──────────────────────────────────────────────

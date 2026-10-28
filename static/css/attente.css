@@ -17,6 +17,12 @@
 .attente-entete .pastille-projet{font-size:12px;font-weight:600;padding:3px 10px;
   border-radius:12px;flex-shrink:0;white-space:nowrap}
 .attente-titre{font-weight:600;font-size:14px}
+/* Bouton « copier » du titre (issue #823) : discret, posé juste après le
+   titre — même esprit compact que .deplacer (boutons ↑/↓ ci-dessous), sans
+   fond ni bordure tant qu'il n'est pas survolé pour rester en retrait. */
+.attente-copier-titre{padding:2px 6px;line-height:1;font-size:12px;
+  border:1px solid transparent;background:none;flex-shrink:0}
+.attente-copier-titre:hover{background:#f0efe9;border-color:#e0dfda}
 .attente-date{margin-left:auto;font-size:11px;color:#9a978f;white-space:nowrap}
 /* Condition bien lisible (§ décision : « c'est elle qui dit à Alain quand
    lancer ») : même traitement visuel que .np-rappel-git (encart ambré). */
