@@ -953,6 +953,11 @@ async function rafraichirInbox() {
     // static/js/attente.js via un abonnement à cette même tranche — pas de
     // second polling dédié (même sondage que l'alarme ci-dessus).
     nbEnAttente: data.nb_en_attente || 0,
+    // Signature du contenu de en_attente/ (issue #825) : change si un
+    // fichier est remplacé sous le même nom, ce que nbEnAttente seul ne
+    // détecte pas — consommée par attente.js pour déclencher un
+    // rechargement même à nombre d'éléments inchangé.
+    signatureAttente: data.signature_attente || '',
   });
   majBadgeAlarme(!!data.alarme);
   lignesFichier = reconcilierRejetes(lignesFichier, data.rejetes || []);

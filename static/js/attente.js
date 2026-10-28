@@ -20,11 +20,14 @@
 //
 // BADGE — compteur suivant le sondage déjà en place (issue #705 : une mise à
 // jour uniquement par événements peut être manquée). static/js/resultats.js
-// pousse déjà nb_en_attente (issue #713, GET /issues-inbox/etat) dans
-// store.issuesInbox.nbEnAttente à chaque cycle de rafraichirInbox() ; ce
-// module s'y abonne pour mettre à jour le badge et, si l'onglet « En attente »
-// est actuellement ouvert, recharger la liste dès que ce compteur change —
-// aucun polling dédié supplémentaire.
+// pousse déjà nb_en_attente ET signature_attente (issue #713, puis #825 pour
+// la signature ; GET /issues-inbox/etat) dans store.issuesInbox.nbEnAttente/
+// .signatureAttente à chaque cycle de rafraichirInbox() ; ce module s'y
+// abonne pour mettre à jour le badge et, si l'onglet « En attente » est
+// actuellement ouvert, recharger la liste dès que l'UN OU L'AUTRE change
+// (fautRechargerAttente ci-dessous) — la signature couvre le remplacement
+// d'un fichier sous le même nom, que le seul compteur ne détecte pas.
+// Aucun polling dédié supplémentaire.
 //
 // INITIALISATION : initAttente() est appelée une fois par index.js (import
 // direct, comme initJournal()/initialiserCcw()) ; elle installe la
@@ -391,14 +394,33 @@ function majBadge(nb) {
   badge.textContent = decision.texte;
 }
 
+// Faut-il recharger la liste à la réception d'un nouvel état issuesInbox,
+// pendant que l'onglet est ouvert : sur changement du NOMBRE d'éléments
+// (issue #713, ex. un élément lancé/supprimé depuis un autre onglet/
+// appareil) ou de la SIGNATURE de leur contenu (issue #825, ex. un fichier
+// remplacé par une version modifiée sous le même nom — même nombre
+// d'éléments avant/après, donc invisible au seul compteur). Logique pure,
+// testée sous Node : `precedent`/`nouveau` = {nb, signature}.
+export function fautRechargerAttente(precedent, nouveau) {
+  const p = precedent || {};
+  const n = nouveau || {};
+  return n.nb !== p.nb || n.signature !== p.signature;
+}
+
 let ongletActifAttente = false;
 let dernierNbConnu = null;
+let derniereSignatureConnue = null;
 
 function surChangementInbox(val) {
   const nb = val && val.nbEnAttente;
+  const signature = val && val.signatureAttente;
   majBadge(nb);
-  if (ongletActifAttente && nb !== dernierNbConnu) chargerListeAttente();
+  if (ongletActifAttente
+      && fautRechargerAttente({ nb: dernierNbConnu, signature: derniereSignatureConnue },
+                               { nb, signature }))
+    chargerListeAttente();
   dernierNbConnu = nb;
+  derniereSignatureConnue = signature;
 }
 
 function surChangementOnglet(nom) {

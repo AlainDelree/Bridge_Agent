@@ -25,9 +25,12 @@ condition, c'est Alain qui décide. Quatre routes ici : `GET /issues-attente`
 fichier dans issues_inbox/ pour un traitement normal, écriture atomique),
 `POST /issues-attente/supprimer` et `POST /issues-attente/deplacer` (ordre
 manuel, issue #819, voir plus bas). `GET /issues-inbox/etat` expose en plus
-le compteur `nb_en_attente` (durable, relu du disque à chaque appel — le
-panneau « Watcher spool » l'interroge déjà en continu, cf. #705). Dossier
-résolu par la même config que le watcher (_config() ci-dessous).
+le compteur `nb_en_attente` et la `signature_attente` (durables, relus du
+disque à chaque appel — le panneau « Watcher spool » l'interroge déjà en
+continu, cf. #705 ; la signature, issue #825, permet à l'onglet « En
+attente » de détecter le remplacement d'un fichier sous son nom d'origine,
+que nb_en_attente seul ne voit pas). Dossier résolu par la même config que
+le watcher (_config() ci-dessous).
 
 Ordre manuel de la liste (issue #819) : par défaut (aucun déplacement jamais
 fait), la liste reste triée du plus ancien au plus récent (mtime du fichier,
@@ -203,6 +206,31 @@ def _nb_en_attente(cfg) -> int:
     return sum(1 for chemin in cfg.en_attente_dir.iterdir() if chemin.is_file())
 
 
+def _signature_attente(cfg) -> str:
+    """Signature du CONTENU de en_attente/ (issue #825) : change si un
+    fichier est ajouté, retiré, ou remplacé sous le même nom par une version
+    de contenu/date différente — contrairement à `_nb_en_attente` ci-dessus,
+    qui ne voit pas ce dernier cas (même nombre d'éléments avant/après).
+    Construite à partir du nom, de la date de modification et de la taille
+    de chaque fichier (jamais du sous-dossier DOSSIER_ORDRE_ATTENTE, exclu
+    par le même `chemin.is_file()` que _nb_en_attente — un déplacement
+    manuel ne doit pas, à lui seul, déclencher de rechargement ici). Coût
+    négligeable : même parcours que _nb_en_attente, avec un stat() de plus
+    par fichier (déjà fait par ailleurs, cf. _lire_item_attente)."""
+    if not cfg.en_attente_dir.is_dir():
+        return ""
+    parties = []
+    for chemin in cfg.en_attente_dir.iterdir():
+        if not chemin.is_file():
+            continue
+        try:
+            info = chemin.stat()
+        except OSError:
+            continue
+        parties.append(f"{chemin.name}:{info.st_mtime}:{info.st_size}")
+    return "|".join(sorted(parties))
+
+
 def etat_inbox():
     """Retourne :
       - alarme     : True si issues_inbox/rejected/ contient au moins un fichier
@@ -213,6 +241,9 @@ def etat_inbox():
                      en premier), purement informatif
       - nb_en_attente : nombre d'éléments mis de côté par le champ ATTENTE
         (issue #713), jamais comptés comme des fichiers à traiter
+      - signature_attente : signature du contenu de en_attente/ (issue #825)
+        — change si un fichier est remplacé sous le même nom, ce que
+        nb_en_attente seul ne détecte pas (voir _signature_attente)
       - watcher_actif, watcher_pid, watcher_restant_s : état du processus
         watcher spool (issue #485) — restant_s = None si actif sans durée
         fixée (indéfini) ou si inactif.
@@ -255,6 +286,7 @@ def etat_inbox():
         rejected_dir=str(cfg.rejected_dir),
         en_attente_dir=str(cfg.en_attente_dir),
         nb_en_attente=_nb_en_attente(cfg),
+        signature_attente=_signature_attente(cfg),
         watcher_actif=actif,
         watcher_pid=pid,
         watcher_restant_s=_temps_restant_s() if actif else None,

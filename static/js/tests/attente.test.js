@@ -19,6 +19,7 @@ import {
   couleurTexteSurFond,
   messageEchecAttente,
   texteACopierAttente,
+  fautRechargerAttente,
 } from '../attente.js';
 
 // ─── formaterDateAttente ────────────────────────────────────────────────────
@@ -181,4 +182,42 @@ test('messageEchecAttente : corps JSON sans champ erreur → repli', () => {
 test('messageEchecAttente : erreur absente/sans corps → repli', () => {
   assert.equal(messageEchecAttente(null, 'repli'), 'repli');
   assert.equal(messageEchecAttente({}, 'repli'), 'repli');
+});
+
+// ─── fautRechargerAttente (issue #825) ─────────────────────────────────────
+// Déclenchement du rechargement pendant que l'onglet est ouvert : sur
+// changement du nombre (#713, inchangé par cette issue) OU de la signature
+// de contenu (#825 — un fichier remplacé sous le même nom, même nombre).
+
+test('fautRechargerAttente : nombre et signature identiques → pas de rechargement', () => {
+  assert.equal(
+    fautRechargerAttente({ nb: 2, signature: 'a.txt:1:10|b.txt:2:20' },
+                          { nb: 2, signature: 'a.txt:1:10|b.txt:2:20' }),
+    false);
+});
+
+test('fautRechargerAttente : signature changée à nombre égal → rechargement '
+   + '(fichier remplacé sous le même nom, issue #825)', () => {
+  assert.equal(
+    fautRechargerAttente({ nb: 1, signature: 'mono.txt:1000:50' },
+                          { nb: 1, signature: 'mono.txt:2000:63' }),
+    true);
+});
+
+test('fautRechargerAttente : nombre changé, signature inchangée (cas théorique) '
+   + '→ rechargement', () => {
+  assert.equal(
+    fautRechargerAttente({ nb: 1, signature: 'x' }, { nb: 2, signature: 'x' }),
+    true);
+});
+
+test('fautRechargerAttente : nombre changé → rechargement (comportement #713 inchangé)', () => {
+  assert.equal(
+    fautRechargerAttente({ nb: 1, signature: 'a.txt:1:10' },
+                          { nb: 2, signature: 'a.txt:1:10|b.txt:2:20' }),
+    true);
+});
+
+test('fautRechargerAttente : état précédent absent (premier appel) → rechargement', () => {
+  assert.equal(fautRechargerAttente(null, { nb: 1, signature: 'a.txt:1:10' }), true);
 });
