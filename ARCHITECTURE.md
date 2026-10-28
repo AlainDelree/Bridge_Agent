@@ -450,7 +450,7 @@ concaténation byte-identique à l'ancien `style.css`, vérifiée) :
 | 4 | `modales.css` | overlay/carte de modale, boutons destructifs, overlay d'arrêt |
 | 5 | `recherche-interruption.css` | recherche par titre + interruption (zone Résultats) — **DOIT rester après `modales.css`** (`.modal-recherche-titre` surcharge `.modal-carte` à specificité égale) |
 | 6 | `inbox.css` | reliquat de l'ancien onglet « Résultats inbox » (supprimé, issue #639) : badge d'alerte (onglet Résultats) + historique du watcher spool (panneau latéral) |
-| 7 | `attente.css` | onglet En attente (champ `ATTENTE`, #713/#714 ; boutons monter/descendre, #819) |
+| 7 | `attente.css` | onglet En attente (champ `ATTENTE`, #713/#714 ; boutons monter/descendre, #819 ; bouton copier le titre, #823) |
 
 **Modules JS par fonctionnalité** : un module par zone, dans `static/js/`,
 importé par `index.js` (voir §6.7). Chaque module utilise les briques du socle.
@@ -464,7 +464,8 @@ pilotage du PC fixe Windows, issue #649), `journal.js` (onglet Journal
 watcher, issue #650), `config.js` (onglet Configuration + zone dangereuse
 de suppression de projet, issue #651, étape 12), `creation.js` (formulaire
 « Nouvelle issue » complet, issue #652) et `attente.js` (onglet En attente,
-champ `ATTENTE` #713/#714, ordre manuel #819). Futurs modules (ex.
+champ `ATTENTE` #713/#714, ordre manuel #819, bouton copier le titre #823).
+Futurs modules (ex.
 `nouveau_projet.js`) suivent le même patron,
 `nouveau_projet.js`) suivent le même patron.
 
@@ -747,6 +748,34 @@ le panneau) reste en place — simplement plus utilisé par l'interface,
 > l'ordre (pas de réorganisation DOM locale). Tests :
 > `tests/test_ordre_attente_819.py` (fusion pure + routes Flask) et
 > `static/js/tests/attente.test.js` (`decisionDeplacementAttente`).
+
+> **Onglet En attente — bouton « copier » du titre (issue #823)** : pour
+> recopier le titre exact d'une issue en attente vers le Chat de projet (ex.
+> relancer une issue déjà traitée, #820) sans le sélectionner à la main,
+> chaque ligne pose un bouton 📋 juste après `.attente-titre`
+> (`data-action="attente-copier-titre"`, voir `construireLigneDOM`). AUCUN
+> nouveau mécanisme de copie : le bouton réutilise `copierTexteConnu` et
+> `signalerEchecCopie`, **exportés** depuis `static/js/resultats_coches.js`
+> (import direct, même pattern que `resultats.js` important `resultatsCoches`
+> depuis ce même fichier). `copierTexteConnu` applique exactement le même
+> choix de mode que les copies de l'onglet Résultats (`modeCopie`/
+> `decisionModeCopie`, #636/#782) — ClipboardItem chaîné (`chaineCopieModerne`)
+> en contexte sécurisé, `execCommand('copy')` en repli HTTP non-localhost
+> (`--lan`) — mais SANS la couche fetch/cache de `lancerCopie`
+> (`textesPrepares`/`precharger`) : inutile ici, le titre est déjà connu
+> AVANT le clic (lu dans le fichier d'`issues_inbox/en_attente/`, aucune
+> requête serveur). Jamais de faux succès : `succes()` n'est appelé que si
+> l'écriture a réellement eu lieu ; un échec réutilise `signalerEchecCopie`,
+> qui joint le titre dans une zone sélectionnable pour un Ctrl+C manuel
+> (même filet que Résultats). Logique pure : `texteACopierAttente(item)`
+> renvoie le titre EXACT du fichier, jamais le repli `(sans titre)` de
+> `descriptionLigneAttente` — `null` si l'élément n'a pas de titre, et dans
+> ce cas `construireLigneDOM` ne pose AUCUN bouton (pas seulement masqué).
+> Le titre est transmis au clic via `element.dataset.titreCopie` (propriété
+> DOM, jamais concaténé dans le `innerHTML` de la ligne) ; le gestionnaire
+> délégué (`dom.surAction`) appelle `evenement.stopPropagation()` pour qu'un
+> clic ne puisse jamais être réinterprété comme Lancer/Supprimer/↑/↓. Tests :
+> `static/js/tests/attente.test.js` (`texteACopierAttente`).
 
 > **Note parallélisme** : HTML et JS se découpent proprement par zone. Le CSS
 > est plus contraint : la cascade impose de garder l'ordre source, donc quelques

@@ -38,6 +38,7 @@ import { api } from './socle/api.js';
 import { toasts } from './socle/toasts.js';
 import * as dom from './socle/dom.js';
 import { appelerAncien } from './socle/pont.js';
+import { copierTexteConnu, signalerEchecCopie } from './resultats_coches.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // LOGIQUE PURE (testée sous Node — voir static/js/tests/attente.test.js)
@@ -88,6 +89,18 @@ export function descriptionLigneAttente(item) {
     date: formaterDateAttente(it.date ? new Date(it.date * 1000) : null),
     condition: it.condition || '(condition non précisée)',
   };
+}
+
+// Texte à copier par le bouton « copier » posé à côté du titre (issue #823,
+// pour recopier exactement le titre d'une issue en attente vers le Chat de
+// projet — ex. relance #820). Le titre EXACT tel qu'écrit dans le fichier,
+// JAMAIS le repli « (sans titre) » de descriptionLigneAttente ci-dessus (le
+// copier coller littéralement « (sans titre) » n'aiderait personne) : absent
+// (null) si l'élément n'a pas de titre — l'appelant ne doit alors poser aucun
+// bouton. Logique pure, testée sous Node.
+export function texteACopierAttente(item) {
+  const titre = item && item.titre;
+  return (titre && String(titre).trim()) ? titre : null;
 }
 
 // Fond neutre de la pastille nominative quand le projet est vide/inconnu
@@ -201,6 +214,7 @@ function construireLigneDOM(item, index, total) {
   const fond = couleurFondPastilleProjet(desc.projet);
   const texte = couleurTexteSurFond(fond);
   const { peutMonter, peutDescendre } = decisionDeplacementAttente(index, total);
+  const titreACopier = texteACopierAttente(item);
   const div = document.createElement('div');
   div.className = 'ligne-attente';
   div.dataset.id = item.id;
@@ -208,6 +222,14 @@ function construireLigneDOM(item, index, total) {
     '<div class="attente-entete">'
     + '<span class="pastille-projet"></span>'
     + '<span class="attente-titre"></span>'
+    // Bouton « copier » (issue #823) : jamais posé si l'élément n'a pas de
+    // titre (titreACopier null) — rien à copier, pas de bouton. Le texte du
+    // titre lui-même n'est JAMAIS concaténé ici (voir dataset.titreCopie
+    // plus bas, posé en propriété — jamais en innerHTML).
+    + (titreACopier
+        ? '<button type="button" class="attente-copier-titre" data-action="attente-copier-titre"'
+          + ' title="Copier le titre">📋</button>'
+        : '')
     + '<span class="attente-date"></span>'
     + '</div>'
     + '<div class="attente-condition"></div>'
@@ -229,6 +251,10 @@ function construireLigneDOM(item, index, total) {
   div.querySelector('.attente-condition').textContent = '⏳ Condition : ' + desc.condition;
   div.querySelector('[data-action="attente-monter"]').disabled = !peutMonter;
   div.querySelector('[data-action="attente-descendre"]').disabled = !peutDescendre;
+  const boutonCopier = div.querySelector('[data-action="attente-copier-titre"]');
+  // dataset = propriété DOM (comme textContent plus haut), pas une injection
+  // dans le HTML : le navigateur échappe lui-même la valeur de l'attribut.
+  if (boutonCopier) boutonCopier.dataset.titreCopie = titreACopier;
   return div;
 }
 
@@ -314,7 +340,30 @@ async function deplacer(id, sens, ligneEl) {
   }
 }
 
+// Feedback du bouton « copier » (issue #823) : toast discret, jamais de faux
+// succès (copierTexteConnu n'appelle succes() que si l'écriture a réellement
+// eu lieu) ; un échec réutilise signalerEchecCopie (resultats_coches.js), qui
+// joint le titre dans une zone sélectionnable pour un Ctrl+C manuel — même
+// filet que les copies de l'onglet Résultats.
+function feedbackCopieTitre() {
+  return {
+    succes: () => toasts.succes('Titre copié dans le presse-papier.', false),
+    echec: (e, texte) => signalerEchecCopie(texte),
+  };
+}
+
 function installerDelegation() {
+  dom.surAction('[data-action="attente-copier-titre"]', 'click', (evenement, element) => {
+    // stopPropagation : ce bouton vit dans l'en-tête de la ligne, jamais dans
+    // la zone d'actions Lancer/Supprimer/↑/↓ — mais un clic ne doit JAMAIS
+    // déclencher l'une de ces actions ni rien d'autre (exigence explicite de
+    // l'issue #823), d'où cette garde même si aucun gestionnaire ambiant sur
+    // la ligne n'existe aujourd'hui.
+    evenement.stopPropagation();
+    const titreCopie = element.dataset.titreCopie;
+    if (!titreCopie) return;
+    copierTexteConnu(titreCopie, feedbackCopieTitre());
+  });
   dom.surAction('[data-action="attente-lancer"]', 'click', (evenement, element) => {
     const ligne = element.closest('.ligne-attente');
     if (ligne) lancer(ligne.dataset.id, ligne);

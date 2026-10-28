@@ -776,6 +776,32 @@ function lancerCopie(projet, numero, producteur, feedback) {
   else feedback.echec(undefined, t);   // texte transmis : reste accessible malgré l'échec (issue #782)
 }
 
+// ─── Copie d'un texte déjà connu, sans fetch (issue #823 : bouton « copier »
+// du titre dans l'onglet En attente) — réutilise EXACTEMENT le même choix de
+// mode (modeCopie/decisionModeCopie) et les deux chemins d'écriture
+// (ClipboardItem chaîné / execCommand) que lancerCopie ci-dessus, mais SANS sa
+// couche de préparation/cache (textesPrepares, precharger) : inutile ici, le
+// texte est déjà disponible AVANT le clic (pas de requête serveur à attendre).
+// `feedback` = { succes, echec } — succes() n'est appelé QUE si l'écriture a
+// réellement abouti (jamais de faux succès, même contrat que lancerCopie).
+export function copierTexteConnu(texte, feedback) {
+  if (modeCopie() === 'moderne') {
+    const tache = chaineCopieModerne.then(async () => {
+      try {
+        await navigator.clipboard.write(
+          [new ClipboardItem({ 'text/plain': new Blob([texte], { type: 'text/plain' }) })]);
+        feedback.succes();
+      } catch (e) {
+        feedback.echec(e, texte);   // texte transmis : reste accessible malgré l'échec (issue #782)
+      }
+    });
+    chaineCopieModerne = tache.catch(() => {});
+    return;
+  }
+  if (copierExecCommand(texte)) feedback.succes();
+  else feedback.echec(undefined, texte);
+}
+
 // Précharge (mode repli) le texte d'une variante pour (projet, numero).
 async function precharger(projet, numero, variante) {
   const cle = cleIC(projet, numero);
@@ -819,7 +845,7 @@ const MESSAGE_ECHEC_COPIE = 'Copie impossible — le presse-papier n\'a pas pu �
 // (`texteSecours`, voir toasts.js) pour un Ctrl+C manuel. Ce filet vaut quelle
 // que soit la cause de l'échec (API presse-papier refusée, execCommand en
 // échec, etc.), pas seulement celle corrigée ci-dessus.
-function signalerEchecCopie(texte) {
+export function signalerEchecCopie(texte) {
   toasts.erreur(MESSAGE_ECHEC_COPIE, true, texte ? { texteSecours: texte } : undefined);
 }
 
