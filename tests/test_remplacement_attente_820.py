@@ -21,9 +21,12 @@ Couvre :
 - lot mixte : un bloc remplace (avec ATTENTE), un bloc remplace puis
   supprime après création (sans ATTENTE), les autres blocs suivent leur
   circuit habituel ;
-- position conservée dans `GET /issues-attente` (tri par date de dépôt,
-  app/issues_inbox.py) après un remplacement, quel que soit le nombre
-  d'éléments déjà présents ;
+- position conservée dans `GET /issues-attente` après un remplacement, quel
+  que soit le nombre d'éléments déjà présents — depuis l'issue #822, via
+  l'ordre manuel persisté (#819, figé par `_figer_place_avant_remplacement`
+  AVANT l'écriture), PLUS la date affichée elle-même qui doit changer pour
+  refléter ce dernier dépôt (place et date ne dépendent plus du même
+  mécanisme, contrairement à la version #820 d'origine) ;
 - écriture atomique (aucun fichier `.tmp` résiduel après un remplacement).
 
 Aucun appel réseau ni `gh` réel (`_creer_issue`/`_issue_ouverte_meme_titre`
@@ -192,14 +195,23 @@ def test_remplacement_avec_attente_contenu_remplace_place_conservee(_tmp_dir_fac
     w.traiter_fichier(cfg, chemin)
 
     assert not chemin.exists(), "le fichier déposé est consommé par le remplacement"
-    en_attente = list(cfg.en_attente_dir.iterdir())
+    en_attente = [p for p in cfg.en_attente_dir.iterdir() if p.is_file()]
     assert len(en_attente) == 1, en_attente
     assert en_attente[0].name == "mono.txt", "même fichier, pas de duplication"
     contenu = en_attente[0].read_text(encoding="utf-8")
     assert "nouvelle condition" in contenu, contenu
     assert "ancienne condition" not in contenu, contenu
     assert "Corps corrigé." in contenu, contenu
-    assert abs(en_attente[0].stat().st_mtime - mtime_avant) < 0.5, "la place (mtime) doit être conservée"
+    # Issue #822 : la date affichée suit désormais le DERNIER dépôt (plus de
+    # restauration du mtime d'origine) — elle doit donc avoir AVANCÉ, jusqu'à
+    # coller à « maintenant » (heure du remplacement).
+    mtime_apres = en_attente[0].stat().st_mtime
+    assert mtime_apres > mtime_avant, "la date affichée doit refléter le DERNIER dépôt, pas le premier"
+    assert abs(mtime_apres - time.time()) < 5, "la nouvelle date doit être celle du remplacement"
+    # La PLACE, elle, reste garantie par l'ordre manuel #819 — figé AVANT
+    # l'écriture (voir w._figer_place_avant_remplacement) même pour cet
+    # élément jamais encore affiché/déplacé dans l'onglet.
+    assert w._lire_ordre_attente_persiste(cfg) == ["mono.txt"], "la place doit être figée dans l'ordre persisté"
 
     lignes = cfg.fichier_log.read_text(encoding="utf-8").splitlines()
     assert lignes and " REMPLACE " in lignes[-1], lignes
@@ -310,7 +322,7 @@ def test_lot_mixte_remplacement_avec_et_sans_attente(_tmp_dir_factory):
     assert not cible_b.exists(), "b.txt doit avoir disparu après création réussie du bloc B"
 
     # Bloc C : normal, aucune correspondance -> créé, rien d'autre en_attente.
-    restants = sorted(p.name for p in cfg.en_attente_dir.iterdir())
+    restants = sorted(p.name for p in cfg.en_attente_dir.iterdir() if p.is_file())
     assert restants == ["a.txt"], restants
 
     lignes = cfg.fichier_log.read_text(encoding="utf-8").splitlines()
@@ -342,8 +354,9 @@ def test_position_conservee_dans_la_liste_apres_remplacement(_tmp_dir_factory):
 
     _en_attente(cfg, "premier.txt",
                 "| PROJET | bridge_agent |\n| ATTENTE | x |\n\n#Titre: Premier.\nC.\n", 60)
-    _en_attente(cfg, "milieu.txt",
+    milieu_avant = _en_attente(cfg, "milieu.txt",
                 "| PROJET | bridge_agent |\n| ATTENTE | y |\n\n#Titre: À corriger.\nAncien.\n", 40)
+    date_avant = milieu_avant.stat().st_mtime
     _en_attente(cfg, "dernier.txt",
                 "| PROJET | bridge_agent |\n| ATTENTE | z |\n\n#Titre: Dernier.\nC.\n", 20)
 
@@ -355,9 +368,15 @@ def test_position_conservee_dans_la_liste_apres_remplacement(_tmp_dir_factory):
     with APP_FLASK.test_request_context("/issues-attente"):
         rep = ii.issues_attente_liste()
     items = rep.get_json()["items"]
+    # La PLACE ne doit pas bouger — y compris pour ces éléments jamais
+    # encore affichés/déplacés avant ce remplacement (aucun ordre.json
+    # préexistant dans ce test) : issue #822, le cas explicitement visé.
     assert [it["id"] for it in items] == ["premier.txt", "milieu.txt", "dernier.txt"], items
     milieu = next(it for it in items if it["id"] == "milieu.txt")
     assert milieu["condition"] == "y corrigé", milieu
+    # ... mais la DATE affichée, elle, doit changer pour refléter ce
+    # dernier dépôt (issue #822) — plus de restauration de la date d'origine.
+    assert milieu["date"] > date_avant, milieu
 
 
 # ─── 6. Écriture atomique ───────────────────────────────────────────────────
@@ -376,5 +395,5 @@ def test_remplacement_ecriture_atomique_pas_de_fichier_tmp_residuel(_tmp_dir_fac
 
     w.traiter_fichier(cfg, chemin)
 
-    noms = sorted(p.name for p in cfg.en_attente_dir.iterdir())
+    noms = sorted(p.name for p in cfg.en_attente_dir.iterdir() if p.is_file())
     assert noms == ["mono.txt"], noms

@@ -47,7 +47,6 @@ du plus ancien au plus récent — le résultat fusionné est réécrit sur disq
 sans jamais toucher au CONTENU des fichiers d'en_attente/.
 """
 
-import json
 import logging
 import os
 import signal
@@ -66,7 +65,10 @@ sys.path.insert(0, str(DOSSIER_SCRIPT / "scripts"))
 from watcher_issues_inbox import (charger_config_inbox, DEFAUT_CHEMIN_CONFIG,  # noqa: E402
                                   DOSSIER_MOTIFS, SUFFIXE_MOTIF,
                                   lire_condition_attente, retirer_champ_attente,  # (issue #713)
-                                  extraire_champs, _chemin_disponible)
+                                  extraire_champs, _chemin_disponible,
+                                  DOSSIER_ORDRE_ATTENTE, FICHIER_ORDRE_ATTENTE,  # (issue #819,
+                                  _chemin_ordre_attente, _lire_ordre_attente_persiste,  # relogés
+                                  _ecrire_ordre_attente, fusionner_ordre_attente)  # côté #822 — voir plus bas)
 from watcher import _pid_vivant  # noqa: E402
 
 log = logging.getLogger("app.issues_inbox")
@@ -324,57 +326,16 @@ def _lire_item_attente(chemin: Path) -> dict | None:
 # un `chemin.is_file()`, donc _nb_en_attente()/la boucle ci-dessus (qui ne
 # retiennent que les fichiers) l'ignorent déjà naturellement — aucun risque
 # qu'il soit un jour compté, affiché, lancé ou supprimé comme une issue.
-DOSSIER_ORDRE_ATTENTE = ".ordre"
-FICHIER_ORDRE_ATTENTE = "ordre.json"
-
-
-def _chemin_ordre_attente(cfg) -> Path:
-    return cfg.en_attente_dir / DOSSIER_ORDRE_ATTENTE / FICHIER_ORDRE_ATTENTE
-
-
-def _lire_ordre_attente_persiste(cfg) -> list[str]:
-    """Liste d'identifiants dans l'ordre choisi par Alain (le plus récent
-    déplacement gagnant), ou [] si jamais encore mémorisé ou fichier
-    corrompu — ne doit jamais empêcher l'affichage de la liste."""
-    try:
-        brut = json.loads(_chemin_ordre_attente(cfg).read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return []
-    return [nom for nom in brut if isinstance(nom, str)]
-
-
-def _ecrire_ordre_attente(cfg, ordre: list[str]) -> None:
-    """Écriture atomique (fichier temporaire + renommage, même dossier donc
-    même système de fichiers) — même précaution que issues_attente_lancer()
-    pour ne jamais laisser un ordre à moitié écrit sur disque."""
-    chemin = _chemin_ordre_attente(cfg)
-    chemin.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp_nom = tempfile.mkstemp(dir=str(chemin.parent), suffix=".tmp")
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            json.dump(ordre, f)
-        os.replace(tmp_nom, chemin)
-    except OSError:
-        Path(tmp_nom).unlink(missing_ok=True)
-        raise
-
-
-def fusionner_ordre_attente(ordre_persiste: list[str], items: list[dict]) -> list[str]:
-    """Logique PURE (aucun accès disque) — calcule l'ordre final d'affichage :
-    les identifiants d'`ordre_persiste` encore présents dans `items` (ordre
-    choisi par Alain, survit tel quel), suivis des éléments d'`items` absents
-    de l'ordre mémorisé (dépôt manuel, ancienne installation, ou tout
-    nouveau fichier jamais encore vu), eux-mêmes triés du plus ancien au plus
-    récent (`date`) — comportement historique de issues_attente_liste()
-    avant l'issue #819, conservé comme repli pour ces seuls nouveaux venus.
-    Un identifiant d'`ordre_persiste` disparu d'`items` (élément lancé,
-    supprimé ou disparu du dossier) est simplement abandonné : aucune trace
-    dans le résultat. `items` = [{"id": ..., "date": ...}, ...]."""
-    presents = {it["id"] for it in items}
-    ordre_filtre = [nom for nom in ordre_persiste if nom in presents]
-    connus = set(ordre_filtre)
-    nouveaux = sorted((it for it in items if it["id"] not in connus), key=lambda it: it["date"])
-    return ordre_filtre + [it["id"] for it in nouveaux]
+#
+# DOSSIER_ORDRE_ATTENTE/FICHIER_ORDRE_ATTENTE/_chemin_ordre_attente/
+# _lire_ordre_attente_persiste/_ecrire_ordre_attente/fusionner_ordre_attente
+# vivent maintenant dans scripts/watcher_issues_inbox.py (importés ci-dessus)
+# : depuis l'issue #822, le watcher lui-même doit pouvoir figer l'ordre
+# AVANT de remplacer le contenu d'un élément (voir sa section « Remplacement
+# d'un élément en attente »), ce qui aurait créé un import circulaire si
+# cette logique était restée ici (app.issues_inbox importe déjà, en sens
+# inverse, plusieurs noms depuis watcher_issues_inbox — voir l'import plus
+# haut dans ce fichier).
 
 
 def _items_attente(cfg) -> list[dict]:

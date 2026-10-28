@@ -49,14 +49,19 @@ Remplacement d'un élément en attente (issue #820) : AVANT toute autre
 validation, un bloc (mono-issue ou bloc d'un lot) dont le #Titre: ET le
 PROJET correspondent EXACTEMENT à un élément déjà présent dans
 issues_inbox/en_attente/ REMPLACE le contenu de cet élément au lieu de
-suivre son propre circuit — l'élément garde sa place dans l'onglet « En
-attente » (mtime restauré après l'écriture atomique, cf. tri par date de
-dépôt de app.issues_inbox._lire_item_attente). Si le nouveau bloc porte
-lui-même un champ ATTENTE non vide, sa condition devient celle de
-l'élément (toujours en attente) ; sinon il suit le circuit normal de
-création et l'ancien élément n'est supprimé qu'après un succès RÉEL (jamais
-avant un rejet). Voir _identifier_bloc()/_item_en_attente_correspondant()/
+suivre son propre circuit. Si le nouveau bloc porte lui-même un champ
+ATTENTE non vide, sa condition devient celle de l'élément (toujours en
+attente) ; sinon il suit le circuit normal de création et l'ancien élément
+n'est supprimé qu'après un succès RÉEL (jamais avant un rejet). Voir
+_identifier_bloc()/_item_en_attente_correspondant()/
 _remplacer_item_en_attente()/_supprimer_item_en_attente_remplace().
+Depuis l'issue #822, la date affichée dans l'onglet « En attente » suit ce
+DERNIER dépôt (mtime laissé tel que l'écriture l'a posé, plus de
+restauration de la date d'origine) — seule la PLACE de l'élément reste
+garantie inchangée, désormais via l'ordre manuel persisté de l'issue #819
+(figé juste avant l'écriture, cf. _figer_place_avant_remplacement), plus
+robuste qu'un mtime restauré à la main et valable même pour un élément
+jamais encore affiché/déplacé dans l'onglet.
 
 Après création réussie de l'issue, le watcher CCL du projet concerné
 (`watcher.py --config configs/<projet>.conf`) est démarré automatiquement
@@ -1130,6 +1135,108 @@ def _ecrire_bloc_en_attente(cfg: ConfigInbox, chemin_origine: Path, index: int,
     return cible
 
 
+# ─── Ordre manuel de l'onglet « En attente » (issue #819) ──────────────────
+# Logique PURE + persistance disque déplacées ici depuis app/issues_inbox.py
+# à l'occasion de l'issue #822 : le watcher doit pouvoir figer l'ordre
+# affiché AVANT un remplacement de contenu (voir _remplacer_item_en_attente
+# plus bas), ce qui aurait exigé d'importer app.issues_inbox depuis ce
+# module — impossible, app.issues_inbox importe déjà plusieurs noms d'ICI
+# (import circulaire). app/issues_inbox.py réimporte ces noms depuis ce
+# module, exactement comme pour lire_condition_attente/retirer_champ_attente
+# ci-dessus ; son comportement/API ne change pas. Persisté à part du CONTENU
+# des fichiers d'en_attente/ (jamais modifié par un déplacement ni par un
+# remplacement) et rangé dans un SOUS-DOSSIER caché (même principe que
+# rejected/.motifs, issue #631) : un sous-dossier n'est jamais un
+# `chemin.is_file()`, donc jamais compté/affiché/lancé/supprimé comme une
+# issue.
+DOSSIER_ORDRE_ATTENTE = ".ordre"
+FICHIER_ORDRE_ATTENTE = "ordre.json"
+
+
+def _chemin_ordre_attente(cfg: ConfigInbox) -> Path:
+    return cfg.en_attente_dir / DOSSIER_ORDRE_ATTENTE / FICHIER_ORDRE_ATTENTE
+
+
+def _lire_ordre_attente_persiste(cfg: ConfigInbox) -> list[str]:
+    """Liste d'identifiants dans l'ordre choisi par Alain (le plus récent
+    déplacement gagnant), ou [] si jamais encore mémorisé ou fichier
+    corrompu — ne doit jamais empêcher l'affichage de la liste."""
+    try:
+        brut = json.loads(_chemin_ordre_attente(cfg).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    return [nom for nom in brut if isinstance(nom, str)]
+
+
+def _ecrire_ordre_attente(cfg: ConfigInbox, ordre: list[str]) -> None:
+    """Écriture atomique (fichier temporaire + renommage, même dossier donc
+    même système de fichiers) — même précaution que issues_attente_lancer()
+    (app/issues_inbox.py) pour ne jamais laisser un ordre à moitié écrit sur
+    disque."""
+    chemin = _chemin_ordre_attente(cfg)
+    chemin.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_nom = tempfile.mkstemp(dir=str(chemin.parent), suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(ordre, f)
+        os.replace(tmp_nom, chemin)
+    except OSError:
+        Path(tmp_nom).unlink(missing_ok=True)
+        raise
+
+
+def fusionner_ordre_attente(ordre_persiste: list[str], items: list[dict]) -> list[str]:
+    """Logique PURE (aucun accès disque) — calcule l'ordre final d'affichage :
+    les identifiants d'`ordre_persiste` encore présents dans `items` (ordre
+    choisi par Alain, survit tel quel), suivis des éléments d'`items` absents
+    de l'ordre mémorisé (dépôt manuel, ancienne installation, ou tout
+    nouveau fichier jamais encore vu), eux-mêmes triés du plus ancien au plus
+    récent (`date`) — comportement historique de issues_attente_liste()
+    avant l'issue #819, conservé comme repli pour ces seuls nouveaux venus.
+    Un identifiant d'`ordre_persiste` disparu d'`items` (élément lancé,
+    supprimé ou disparu du dossier) est simplement abandonné : aucune trace
+    dans le résultat. `items` = [{"id": ..., "date": ...}, ...]."""
+    presents = {it["id"] for it in items}
+    ordre_filtre = [nom for nom in ordre_persiste if nom in presents]
+    connus = set(ordre_filtre)
+    nouveaux = sorted((it for it in items if it["id"] not in connus), key=lambda it: it["date"])
+    return ordre_filtre + [it["id"] for it in nouveaux]
+
+
+def _dates_items_en_attente(cfg: ConfigInbox) -> list[dict]:
+    """[{"id": ..., "date": ...}] de chaque fichier d'en_attente/ (jamais le
+    sous-dossier DOSSIER_ORDRE_ATTENTE) — version allégée de
+    app.issues_inbox._items_attente (titre/projet/condition inutiles ici),
+    suffisante pour fusionner_ordre_attente. Utilisée par
+    _remplacer_item_en_attente (issue #822) pour figer la place d'un élément
+    AVANT de toucher à sa date de dépôt."""
+    items = []
+    if cfg.en_attente_dir.is_dir():
+        for chemin in cfg.en_attente_dir.iterdir():
+            if not chemin.is_file():
+                continue
+            try:
+                date = chemin.stat().st_mtime
+            except OSError:
+                continue
+            items.append({"id": chemin.name, "date": date})
+    return items
+
+
+def _figer_place_avant_remplacement(cfg: ConfigInbox) -> None:
+    """Persiste l'ordre d'affichage COURANT (ordre mémorisé #819 fusionné
+    avec l'état réel du dossier, dates actuelles comprises) avant qu'un
+    remplacement ne change la date de dépôt de l'élément ciblé (issue #822).
+    Une fois cet ordre écrit, la place de CHAQUE élément d'en_attente/ —
+    y compris celui jamais encore affiché/déplacé, donc absent de l'ordre
+    mémorisé jusqu'ici — ne dépend plus de sa date : _remplacer_item_en_attente
+    peut ensuite laisser la nouvelle date s'appliquer normalement sans
+    perturber aucune position."""
+    items = _dates_items_en_attente(cfg)
+    ordre = fusionner_ordre_attente(_lire_ordre_attente_persiste(cfg), items)
+    _ecrire_ordre_attente(cfg, ordre)
+
+
 # ─── Remplacement d'un élément en attente (issue #820) ─────────────────────
 # Correction d'une issue déjà mise de côté : plutôt que de supprimer
 # l'élément dans l'onglet « En attente » puis redéposer le fichier corrigé
@@ -1191,18 +1298,22 @@ def _remplacer_item_en_attente(cfg: ConfigInbox, cible: Path, nouveau_contenu: s
                                 titre: str, projet: str) -> None:
     """Remplace le CONTENU de l'élément `cible` d'en_attente/ par celui du
     bloc nouvellement déposé (même titre/projet — nouvelle condition
-    ATTENTE comprise, toujours présente dans `nouveau_contenu`). La PLACE de
-    `cible` dans la liste de l'onglet est préservée en restaurant son mtime
-    d'origine après l'écriture : la position ne dépend ainsi ni de la date
-    du nouveau dépôt ni d'un mécanisme d'ordre précis — seule l'identité du
-    fichier (même nom, jamais recréé/déplacé) compte, quel que soit le tri
-    appliqué par l'onglet. Écriture atomique (tempfile + os.replace, même
-    dossier donc même système de fichiers) : jamais de fichier à moitié
-    écrit, même principe que app.issues_inbox.issues_attente_lancer."""
-    try:
-        mtime_origine = cible.stat().st_mtime
-    except OSError:
-        mtime_origine = None
+    ATTENTE comprise, toujours présente dans `nouveau_contenu`).
+
+    Depuis l'issue #822, la date affichée dans l'onglet suit le DERNIER
+    dépôt (celui-ci) : le mtime de `cible`, auparavant restauré à sa valeur
+    d'origine, est désormais laissé tel que l'écriture l'a naturellement
+    posé — c'est à dire « maintenant ». La PLACE de `cible` dans la liste
+    de l'onglet reste pourtant inchangée : _figer_place_avant_remplacement
+    (issue #819) persiste l'ordre d'affichage courant AVANT cette écriture,
+    y compris pour un élément jamais encore affiché/déplacé (donc absent de
+    l'ordre mémorisé) — sa place, calculée une dernière fois à partir de
+    son ANCIENNE date, devient alors un fait acquis, indépendant de toute
+    date future. Écriture atomique (tempfile + os.replace, même dossier
+    donc même système de fichiers) : jamais de fichier à moitié écrit, même
+    principe que app.issues_inbox.issues_attente_lancer."""
+    if cfg.en_attente_dir.is_dir():
+        _figer_place_avant_remplacement(cfg)
 
     fd, tmp_nom = tempfile.mkstemp(dir=str(cible.parent), suffix=".tmp")
     try:
@@ -1212,12 +1323,6 @@ def _remplacer_item_en_attente(cfg: ConfigInbox, cible: Path, nouveau_contenu: s
     except OSError:
         Path(tmp_nom).unlink(missing_ok=True)
         raise
-
-    if mtime_origine is not None:
-        try:
-            os.utime(cible, (mtime_origine, mtime_origine))
-        except OSError as e:
-            log.warning(f"Position non préservée pour {cible.name} (mtime non restauré) : {e}")
 
     _ecrire_ligne_log(cfg, projet, STATUT_REMPLACE,
                        f"{cible.name} — contenu remplacé ({titre})")
