@@ -68,6 +68,14 @@ Bridge_Agent/
 └── ssl/                    Certificat auto-signé (cert.pem/key.pem) pour --externe.
 ```
 
+> `tests/` (Python) : chaque fichier a sa propre fonction `main()`, exécutable
+> en direct (`python3 tests/test_xxx.py`) et qui affiche le détail de chaque
+> scénario via la petite valeur (dict/texte) renvoyée par chaque test — d'où
+> le `return` en fin de test. Sous pytest, ce retour déclenche
+> `PytestReturnNotNoneWarning` ; comme il est voulu et ne doit pas être
+> retiré, `pytest.ini` (racine du dépôt) l'ignore spécifiquement sans
+> masquer les autres avertissements (issue #821).
+
 ---
 
 ## 2. Décisions d'architecture
