@@ -27,6 +27,13 @@ import {
   messageFichierVolumineux,
   detecterNavigateur,
   formaterDetailEchecCopie,
+  cleValiditeIssue,
+  texteEstValide,
+  AGE_MAX_TEXTE_PREPARE_MS,
+  candidatsPrechargement,
+  gesteExpireOuPreparationLente,
+  SEUIL_PREPARATION_LENTE_MS,
+  MESSAGE_PREPARATION_TROP_LONGUE,
 } from '../resultats_coches.js';
 
 // ─── normaliserNumero ─────────────────────────────────────────────────────────
@@ -395,13 +402,12 @@ test('texteSectionFichiers : etat « absente » → anomalie signalée, jamais e
   assert.match(texte, /⚠/);
 });
 
-test('texteSectionFichiers : etat « echec » → texte neutre, sans symbole d\'alerte, pas une anomalie de CCL (issue #830)', () => {
+test('texteSectionFichiers : etat « echec » → texte neutre, sans symbole d\'alerte, n\'affirme ni le moment de l\'échec ni l\'absence d\'anomalie (issue #830, phrase corrigée par #832)', () => {
   const texte = texteSectionFichiers('echec', []);
   assert.equal(texte,
     '===== Fichiers modifiés =====\n\n'
-    + 'Cette issue a échoué avant l\'exécution : son commentaire de clôture ne contient pas de '
-    + 'ligne « Commits », donc aucun inventaire des fichiers n\'est possible (ce n\'est pas une '
-    + 'anomalie de CCL).');
+    + 'Cette issue est en échec (needs-human) : son commentaire de clôture ne contient pas de '
+    + 'ligne « Commits », donc aucun inventaire des fichiers n\'est possible.');
   assert.doesNotMatch(texte, /⚠/, 'pas un cas d\'anomalie — aucun symbole d\'alerte');
 });
 
@@ -488,4 +494,115 @@ test('messageFichierVolumineux : distingue « diff » (diff seul) et « all » (
   const msgAll = messageFichierVolumineux('all', 1234, 'f.txt');
   assert.match(msgDiff, /diff/i);
   assert.match(msgAll, /résultat/i);
+});
+
+// ─── cleValiditeIssue / texteEstValide (issue #832 point 3 : validité des
+//     textes préparés, tirée de ce que /issues-liste expose — state + labels,
+//     PAS le nombre de commentaires ni la date de mise à jour, absents de
+//     cette route côté serveur) ──────────────────────────────────────────────
+test('cleValiditeIssue : combine state et labels triés', () => {
+  const a = cleValiditeIssue({ state: 'OPEN', labels: [{ name: 'for-linux' }, { name: 'needs-human' }] });
+  const b = cleValiditeIssue({ state: 'OPEN', labels: [{ name: 'needs-human' }, { name: 'for-linux' }] });
+  assert.equal(a, b);   // ordre des labels sans effet
+});
+
+test('cleValiditeIssue : labels en chaînes simples ou objets {name} tolérés', () => {
+  assert.equal(cleValiditeIssue({ state: 'OPEN', labels: ['for-linux'] }),
+    cleValiditeIssue({ state: 'OPEN', labels: [{ name: 'for-linux' }] }));
+});
+
+test('cleValiditeIssue : un changement de state ou de labels change la clé (relance, needs-human posé/retiré)', () => {
+  const ouverte = cleValiditeIssue({ state: 'OPEN', labels: [] });
+  const fermee = cleValiditeIssue({ state: 'CLOSED', labels: [] });
+  const needsHuman = cleValiditeIssue({ state: 'OPEN', labels: [{ name: 'needs-human' }] });
+  assert.notEqual(ouverte, fermee);
+  assert.notEqual(ouverte, needsHuman);
+});
+
+test('cleValiditeIssue : issue absente/null → null', () => {
+  assert.equal(cleValiditeIssue(null), null);
+  assert.equal(cleValiditeIssue(undefined), null);
+});
+
+test('texteEstValide : clé de validité inchangée et dans l\'âge maximum → valide', () => {
+  const entree = { valeur: 'x', ts: 1000, cleValidite: 'OPEN|' };
+  assert.equal(texteEstValide(entree, 'OPEN|', 1000 + AGE_MAX_TEXTE_PREPARE_MS, AGE_MAX_TEXTE_PREPARE_MS), true);
+});
+
+test('texteEstValide : clé de validité différente (issue changée) → jeté, même très récent', () => {
+  const entree = { valeur: 'x', ts: 1000, cleValidite: 'OPEN|' };
+  assert.equal(texteEstValide(entree, 'CLOSED|needs-human', 1001, AGE_MAX_TEXTE_PREPARE_MS), false);
+});
+
+test('texteEstValide : au-delà de l\'âge maximum → périmé, même clé de validité inchangée', () => {
+  const entree = { valeur: 'x', ts: 1000, cleValidite: 'OPEN|' };
+  assert.equal(texteEstValide(entree, 'OPEN|', 1000 + AGE_MAX_TEXTE_PREPARE_MS + 1, AGE_MAX_TEXTE_PREPARE_MS), false);
+});
+
+test('texteEstValide : entrée absente → jamais valide', () => {
+  assert.equal(texteEstValide(undefined, 'OPEN|', 1000, AGE_MAX_TEXTE_PREPARE_MS), false);
+  assert.equal(texteEstValide(null, 'OPEN|', 1000, AGE_MAX_TEXTE_PREPARE_MS), false);
+});
+
+// ─── candidatsPrechargement (issue #832 point 1 : préparation à l'avance
+//     étendue aux deux modes) ───────────────────────────────────────────────
+test('candidatsPrechargement : ignore les issues cochées', () => {
+  const issues = [{ projet: 'p', number: 1 }, { projet: 'p', number: 2 }];
+  const r = candidatsPrechargement(issues, 10, 'moderne', (p, n) => n === 1, () => false);
+  assert.deepEqual(r, [{ projet: 'p', numero: 2, variante: 'reponse' }]);
+});
+
+test('candidatsPrechargement : bornée aux N premières de chaque projet (même périmètre que les pastilles)', () => {
+  const issues = [
+    { projet: 'a', number: 5 }, { projet: 'a', number: 4 }, { projet: 'a', number: 3 },
+    { projet: 'b', number: 9 },
+  ];
+  const r = candidatsPrechargement(issues, 2, 'moderne', () => false, () => false);
+  assert.deepEqual(r.map((c) => c.numero), [5, 4, 9]);   // le 3 de "a" est hors limite
+});
+
+test('candidatsPrechargement : une seule fois par (issue, variante) — dejaPresentFn filtre', () => {
+  const issues = [{ projet: 'p', number: 1 }];
+  const r = candidatsPrechargement(issues, 10, 'moderne', () => false, (p, n, v) => v === 'reponse');
+  assert.deepEqual(r, []);   // 'reponse' déjà présent/en cours, 'all' non demandé en mode moderne
+});
+
+test('candidatsPrechargement : mode moderne → seulement la variante « reponse » (celle que la case copie)', () => {
+  const issues = [{ projet: 'p', number: 1 }];
+  const r = candidatsPrechargement(issues, 10, 'moderne', () => false, () => false);
+  assert.deepEqual(r, [{ projet: 'p', numero: 1, variante: 'reponse' }]);
+});
+
+test('candidatsPrechargement : mode repli → « reponse » ET « all » (comble l\'écart : la case copie « reponse » depuis #787, pas « all »)', () => {
+  const issues = [{ projet: 'p', number: 1 }];
+  const r = candidatsPrechargement(issues, 10, 'repli', () => false, () => false);
+  assert.deepEqual(r, [
+    { projet: 'p', numero: 1, variante: 'reponse' },
+    { projet: 'p', numero: 1, variante: 'all' },
+  ]);
+});
+
+// ─── gesteExpireOuPreparationLente (issue #832 point 4 : geste expiré OU
+//     préparation trop longue → texte conservé + message actionnable) ──────
+test('gesteExpireOuPreparationLente : NotAllowedError → vrai, quelle que soit la durée', () => {
+  const e = Object.assign(new Error('x'), { name: 'NotAllowedError' });
+  assert.equal(gesteExpireOuPreparationLente(e, 10), true);
+  assert.equal(gesteExpireOuPreparationLente(e, 0), true);
+});
+
+test('gesteExpireOuPreparationLente : préparation > seuil → vrai, même sans NotAllowedError', () => {
+  const e = new Error('réseau');
+  assert.equal(gesteExpireOuPreparationLente(e, SEUIL_PREPARATION_LENTE_MS + 1), true);
+});
+
+test('gesteExpireOuPreparationLente : autre erreur ET préparation sous le seuil → faux', () => {
+  const e = new Error('autre chose');
+  assert.equal(gesteExpireOuPreparationLente(e, SEUIL_PREPARATION_LENTE_MS - 1), false);
+  assert.equal(gesteExpireOuPreparationLente(e, 0), false);
+});
+
+test('MESSAGE_PREPARATION_TROP_LONGUE : texte exact (issue #832 point 4b)', () => {
+  assert.equal(MESSAGE_PREPARATION_TROP_LONGUE,
+    'Préparation trop longue pour le presse-papier : copie manuelle ci-dessous (Ctrl+C) ; '
+    + 'le texte est maintenant prêt, décoche puis recoche la case.');
 });

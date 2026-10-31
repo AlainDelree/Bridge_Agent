@@ -165,6 +165,24 @@
       (repli `execCommand`, texte préchargé) ; au tout premier clic sur une issue
       dont le texte n'est pas encore préchargé, un toast « préparation en cours »
       peut apparaître — un second clic aboutit. **Jamais de faux succès.**
+- [ ] **Copie dans Firefox, préparation à l'avance en mode moderne (issue
+      #832)** : ouvrir l'onglet Résultats dans **Firefox** sur `http://localhost`
+      (mode moderne, pas `--lan`), attendre la fin du chargement de la liste
+      (laisser passer quelques secondes pour le préchargement en tâche de fond),
+      puis cocher la case d'une issue **dont le rapport compte plusieurs
+      commits** : la copie doit être **immédiate**, **sans la fenêtre rouge**
+      d'échec (le texte était déjà préparé avant le clic — plus de dépendance au
+      délai d'activation du geste d'environ 5 s de Firefox).
+- [ ] **Fenêtre rouge du point précédent, provoquée délibérément (issue
+      #832 point 4)** : juste après avoir **rechargé la page** (cache de
+      l'onglet vidé, rien n'a encore eu le temps d'être préchargé), cocher
+      immédiatement la case d'une issue dont le rapport est volumineux
+      (plusieurs commits) : si le geste expire avant la fin de la préparation,
+      la fenêtre rouge affiche désormais « Préparation trop longue pour le
+      presse-papier : copie manuelle ci-dessous (Ctrl+C) ; le texte est
+      maintenant prêt, décoche puis recoche la case. » — décocher puis recocher
+      doit alors copier **immédiatement** (texte conservé en cache), sans
+      refaire la préparation.
 - [ ] **Pastilles ↔ « Cocher tout »** (issue #636) : avec plusieurs projets
       chargés, cliquer **« ✓ Cocher tout »** → **aucune pastille des projets
       actifs (filtrés) ne reste** (même après une longue coupure). Le périmètre

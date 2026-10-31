@@ -240,9 +240,10 @@ export function texteCopieAvecIdentite(variante, it, projet, texte) {
 //   - ligne « Commits » explicitement « aucun » (lecture seule) → aucune
 //     section, aucune alerte : c'est le cas normal.
 //   - ligne absente/non reconnue SUR UNE ISSUE EN ÉCHEC (needs-human, etat
-//     'echec') → l'issue a échoué AVANT que CCL ne soit lancé (ex. abandon de
-//     configuration) : texte neutre, sans symbole d'alerte — ce n'est pas une
-//     anomalie de CCL (issue #830).
+//     'echec') → texte neutre, sans symbole d'alerte (issue #830). N'affirme
+//     ni le moment de l'échec ni l'absence d'anomalie de CCL : seul le label
+//     needs-human et l'absence de ligne « Commits » sont établis (issue
+//     #832, correctif de la phrase trop affirmative de #830).
 //   - ligne absente/non reconnue SUR UNE ISSUE RÉUSSIE (etat 'absente'), OU un
 //     commit en échec (introuvable, git en panne…) → le dire CLAIREMENT dans
 //     la section, jamais en silence (contrairement au bouton Diff, qui ignore
@@ -320,9 +321,8 @@ export function texteSectionFichiers(etatCommits, resultatsParCommit) {
     return lignes.join('\n');
   }
   if (etatCommits === 'echec') {
-    lignes.push('', 'Cette issue a échoué avant l\'exécution : son commentaire de clôture ne '
-      + 'contient pas de ligne « Commits », donc aucun inventaire des fichiers n\'est possible '
-      + '(ce n\'est pas une anomalie de CCL).');
+    lignes.push('', 'Cette issue est en échec (needs-human) : son commentaire de clôture ne '
+      + 'contient pas de ligne « Commits », donc aucun inventaire des fichiers n\'est possible.');
     return lignes.join('\n');
   }
   if (etatCommits === 'absente') {
@@ -540,13 +540,48 @@ function modeCopie() {
     (typeof ClipboardItem !== 'undefined'));
 }
 
-// Cache de détail (économie de fetch) et textes préchargés pour le mode repli.
+// Cache de détail (économie de fetch) et textes préchargés (issue #636, étendu
+// aux deux modes par #832 — voir precharderVisibles). Chaque entrée de
+// `textesPrepares` est { valeur, ts, cleValidite } : `valeur` est le texte
+// produit (ou {aucun:true}, cf. precharger), `ts` l'horodatage de préparation
+// et `cleValidite` la signature de l'issue au moment de la préparation (voir
+// cleValiditeIssue) — les deux servent à texteEstValide ci-dessous à écarter
+// un texte périmé plutôt que de l'écrire tel quel (issue #832 point 3).
 const DETAIL_TTL_MS = 60000;
 const detailCache = new Map();          // cle → { ts, it }
-const textesPrepares = new Map();       // cle → { all?, diff?, reponse? }
-const prechargementEnCours = new Set(); // clés dont un préchargement 'all' est lancé
+const textesPrepares = new Map();       // cle → { all?, diff?, reponse?: {valeur, ts, cleValidite} }
+const prechargementEnCours = new Set(); // "cle|variante" dont un préchargement est en file
 
 function cleIC(projet, numero) { return projet + '#' + normaliserNumero(numero); }
+
+// Signature de l'issue utilisée comme clé de validité d'un texte préparé
+// (issue #832 point 3) : state + labels, dans cet ordre, triés — c'est tout
+// ce que la liste /issues-liste expose (voir _enrichir_modele côté serveur :
+// ni nombre de commentaires, ni date de mise à jour ne sont renvoyés). Un
+// nouveau commentaire sans changement d'état ni de label n'est donc PAS
+// détecté ici : c'est l'âge maximum (AGE_MAX_TEXTE_PREPARE_MS) qui couvre ce
+// cas, en filet de sécurité. `it` vient de store.lireIssue (reflet de la
+// liste, pas du détail complet).
+export function cleValiditeIssue(it) {
+  if (!it) return null;
+  const noms = (it.labels || []).map((l) => (l && l.name) || l || '').filter(Boolean).sort();
+  return (it.state || '') + '|' + noms.join(',');
+}
+
+// Âge maximum d'un texte préparé, filet de sécurité pour les changements que
+// cleValiditeIssue ne peut pas voir (ex. nouveau commentaire sans changement
+// d'état/label) — quelques minutes (issue #832 point 3).
+export const AGE_MAX_TEXTE_PREPARE_MS = 3 * 60 * 1000;
+
+// Vrai si `entree` ({valeur, ts, cleValidite} | undefined) est encore
+// utilisable tel quel : clé de validité inchangée ET pas plus vieille que
+// `ageMaxMs`. Un texte périmé n'est JAMAIS renvoyé valide (issue #832 point
+// 3) — l'appelant retombe alors sur le chemin lent (préparer puis écrire).
+export function texteEstValide(entree, cleValiditeActuelle, maintenant, ageMaxMs) {
+  return !!entree
+    && entree.cleValidite === cleValiditeActuelle
+    && (maintenant - entree.ts) <= ageMaxMs;
+}
 
 async function detailIssue(projet, numero) {
   const cle = cleIC(projet, numero);
@@ -773,18 +808,22 @@ function construireDetailEchecCopie(e, mode, debut, texte) {
   });
 }
 
-// Enveloppe le `feedback` reçu pour que son `echec(e, texte)` reçoive un 3e
-// argument (la ligne de détail ci-dessus), sans toucher aux autres callbacks
-// ni au contrat existant (issue #824 : les appelants de signalerEchecCopie
-// ignoraient jusqu'ici l'exception `e`). Posée une fois par point d'entrée
-// (copierModerne/lancerCopie/copierTexteConnu) pour que tous les appels
-// internes à `feedback.echec` (y compris depuis telechargerOuSignalerVolumineux)
-// portent `mode`/`debut` sans avoir à les faire transiter partout.
+// Enveloppe le `feedback` reçu pour que son `echec(e, texte, messagePrincipal?)`
+// reçoive la ligne de détail ci-dessus en 3e argument, sans toucher aux autres
+// callbacks ni au contrat existant (issue #824 : les appelants de
+// signalerEchecCopie ignoraient jusqu'ici l'exception `e`). Posée une fois par
+// point d'entrée (copierModerne/lancerCopie/copierTexteConnu) pour que tous
+// les appels internes à `feedback.echec` (y compris depuis
+// telechargerOuSignalerVolumineux) portent `mode`/`debut` sans avoir à les
+// faire transiter partout. `messagePrincipal` (issue #832 point 4b) transite
+// tel quel jusqu'à signalerEchecCopie, pour le cas précis où la préparation a
+// dépassé la fenêtre d'activation du geste.
 function envelopperFeedbackEchec(feedback, mode, debut) {
   if (!feedback || typeof feedback.echec !== 'function') return feedback;
   return {
     ...feedback,
-    echec: (e, texte) => feedback.echec(e, texte, construireDetailEchecCopie(e, mode, debut, texte)),
+    echec: (e, texte, messagePrincipal) =>
+      feedback.echec(e, texte, construireDetailEchecCopie(e, mode, debut, texte), messagePrincipal),
   };
 }
 
@@ -815,11 +854,90 @@ function telechargerOuSignalerVolumineux(projet, numero, variante, t, feedback) 
   return false;
 }
 
+// Seuil de durée de préparation (issue #832 point 4a) au-delà duquel une
+// écriture refusée est traitée comme « geste expiré » même sans
+// NotAllowedError explicite (certains navigateurs/contextes peuvent refuser
+// pour une autre raison une fois la fenêtre d'activation dépassée).
+export const SEUIL_PREPARATION_LENTE_MS = 4000;
+
+// Vrai si l'échec de l'écriture doit être traité comme une expiration du
+// geste (issue #832 point 4) : soit l'exception est explicitement
+// NotAllowedError (Firefox, diagnostic de l'issue #824), soit la préparation
+// (fetch du texte, PAS l'attente dans la file des écritures) a dépassé
+// SEUIL_PREPARATION_LENTE_MS — pure, testée sous Node.
+export function gesteExpireOuPreparationLente(e, dureePreparationMs, seuilMs = SEUIL_PREPARATION_LENTE_MS) {
+  return !!(e && e.name === 'NotAllowedError')
+    || (typeof dureePreparationMs === 'number' && dureePreparationMs > seuilMs);
+}
+
+// Enregistre/remplace le texte préparé de (projet, numero, variante) — utilisé
+// par precharger() (préchargement en tâche de fond) ET par le chemin lent de
+// copierModerne quand l'écriture est refusée pour geste expiré (issue #832
+// point 4a : le texte déjà obtenu n'est pas perdu, le clic suivant est
+// immédiat). `cleValiditeIssue` lit l'issue telle que connue de la liste
+// (store.lireIssue) — pas le détail complet, voir le commentaire de
+// cleValiditeIssue plus haut.
+function memoriserTextePrepare(projet, numero, variante, valeur) {
+  const cle = cleIC(projet, numero);
+  const prep = textesPrepares.get(cle) || {};
+  prep[variante] = { valeur, ts: Date.now(), cleValidite: cleValiditeIssue(store.lireIssue(projet, numero)) };
+  textesPrepares.set(cle, prep);
+}
+
+// Écrit `t` dans le presse-papier (mode moderne), une fois le texte en main —
+// qu'il vienne du cache (chemin rapide) ou d'une préparation qui vient de se
+// terminer (chemin lent). SEUL l'appel au presse-papier est inséré dans la
+// chaîne `chaineCopieModerne` (issue #832 point 2) : la préparation
+// elle-même (producteur, hors de cette fonction) ne bloque jamais la file —
+// une préparation lente en cours ne retarde plus une copie dont le texte est
+// déjà prêt. `dureePreparationMs` (0 pour le chemin rapide, sans préparation)
+// sert uniquement à gesteExpireOuPreparationLente (issue #832 point 4a).
+function ecrireApresPreparation(projet, numero, variante, t, feedback, feedbackAvecDetail, dureePreparationMs) {
+  if (texteVide(t)) { feedback.vide(); return; }
+  if (telechargerOuSignalerVolumineux(projet, numero, variante, t, feedbackAvecDetail)) return;
+  const tache = chaineCopieModerne.then(async () => {
+    try {
+      await navigator.clipboard.write([new ClipboardItem({ 'text/plain': new Blob([t], { type: 'text/plain' }) })]);
+      feedback.succes();
+    } catch (e) {
+      if (gesteExpireOuPreparationLente(e, dureePreparationMs)) {
+        // Issue #832 point 4 : le texte obtenu n'est pas perdu (clic suivant
+        // immédiat) et le message principal du toast devient actionnable —
+        // le détail technique (issue #824) et la zone de secours (#782)
+        // restent, eux, inchangés.
+        memoriserTextePrepare(projet, numero, variante, t);
+        feedbackAvecDetail.echec(e, t, MESSAGE_PREPARATION_TROP_LONGUE);
+      } else {
+        feedbackAvecDetail.echec(e, t);   // texte transmis : reste accessible malgré l'échec (issue #782)
+      }
+    }
+  });
+  // La chaîne continue même après un échec : une écriture en erreur ne doit
+  // jamais bloquer les suivantes.
+  chaineCopieModerne = tache.catch(() => {});
+}
+
 function copierModerne(projet, numero, producteur, feedback) {
   const variante = variantDuProducteur(producteur);
   const debut = Date.now();   // début de la copie (issue #824) : référence du délai de la ligne de détail
   const feedbackAvecDetail = envelopperFeedbackEchec(feedback, 'moderne', debut);
-  const tache = chaineCopieModerne.then(async () => {
+
+  // Chemin rapide (issue #832 point 2) : le texte de cette variante est déjà
+  // préparé et encore valide → écrire SANS attendre aucune préparation (ni
+  // la sienne, ni celle d'une autre copie en cours) — seules les écritures
+  // restent sérialisées entre elles, via ecrireApresPreparation.
+  const cle = cleIC(projet, numero);
+  const prep = textesPrepares.get(cle);
+  const entree = prep && prep[variante];
+  if (texteEstValide(entree, cleValiditeIssue(store.lireIssue(projet, numero)), Date.now(), AGE_MAX_TEXTE_PREPARE_MS)) {
+    ecrireApresPreparation(projet, numero, variante, entree.valeur, feedback, feedbackAvecDetail, 0);
+    return;
+  }
+
+  // Chemin lent (inchangé en esprit, issue #782) : préparer PUIS écrire — la
+  // préparation (fetch) n'est plus elle-même chaînée (issue #832 point 2) :
+  // seule l'écriture finale est enfilée dans chaineCopieModerne.
+  (async () => {
     let t;
     try {
       t = await producteur(projet, numero);
@@ -828,24 +946,17 @@ function copierModerne(projet, numero, producteur, feedback) {
       else feedbackAvecDetail.echec(e);
       return;
     }
-    if (texteVide(t)) { feedback.vide(); return; }
-    if (telechargerOuSignalerVolumineux(projet, numero, variante, t, feedbackAvecDetail)) return;
-    try {
-      await navigator.clipboard.write([new ClipboardItem({ 'text/plain': new Blob([t], { type: 'text/plain' }) })]);
-      feedback.succes();
-    } catch (e) {
-      feedbackAvecDetail.echec(e, t);   // texte transmis : reste accessible malgré l'échec (issue #782)
-    }
-  });
-  // La chaîne continue même après un échec : un copierModerne en erreur ne doit
-  // jamais bloquer les suivants.
-  chaineCopieModerne = tache.catch(() => {});
+    const dureePreparationMs = Date.now() - debut;
+    ecrireApresPreparation(projet, numero, variante, t, feedback, feedbackAvecDetail, dureePreparationMs);
+  })();
 }
 
 // ─── Point d'entrée unique (issue #636, mode repli revu #782) ────────────────
 //   - moderne : voir copierModerne ci-dessus.
-//   - repli   : le texte doit déjà être préchargé (textesPrepares) → copie
-//     synchrone execCommand ; sinon feedback « en préparation » + préchargement.
+//   - repli   : le texte doit déjà être préchargé et valide (textesPrepares,
+//     texteEstValide) → copie synchrone execCommand ; sinon feedback « en
+//     préparation » + préchargement (texte absent OU périmé, issue #832
+//     point 3 : un texte périmé n'est jamais écrit tel quel).
 // `variante` ∈ {all, diff, reponse}. `feedback` = { succes, echec, vide, aucun, nonPret }.
 function lancerCopie(projet, numero, producteur, feedback) {
   if (modeCopie() === 'moderne') {
@@ -858,12 +969,13 @@ function lancerCopie(projet, numero, producteur, feedback) {
   const cle = cleIC(projet, numero);
   const variante = variantDuProducteur(producteur);
   const prep = textesPrepares.get(cle);
-  const t = prep ? prep[variante] : undefined;
-  if (t === undefined) {
+  const entree = prep && prep[variante];
+  if (!texteEstValide(entree, cleValiditeIssue(store.lireIssue(projet, numero)), Date.now(), AGE_MAX_TEXTE_PREPARE_MS)) {
     feedback.nonPret();
     precharger(projet, numero, variante);   // pour que le prochain clic aboutisse
     return;
   }
+  const t = entree.valeur;
   if (t && t.aucun) { feedback.aucun ? feedback.aucun() : feedback.vide(); return; }
   if (texteVide(t)) { feedback.vide(); return; }
   if (telechargerOuSignalerVolumineux(projet, numero, variante, t, feedbackAvecDetail)) return;
@@ -900,9 +1012,10 @@ export function copierTexteConnu(texte, feedback) {
   else feedbackAvecDetail.echec(undefined, texte);
 }
 
-// Précharge (mode repli) le texte d'une variante pour (projet, numero).
+// Précharge le texte d'une variante pour (projet, numero) — appelée pour le
+// préchargement en tâche de fond ET par lancerCopie/copierModerne quand le
+// texte demandé n'est pas encore prêt (pour que le prochain clic aboutisse).
 async function precharger(projet, numero, variante) {
-  const cle = cleIC(projet, numero);
   const producteur = variante === 'diff' ? texteDiff : variante === 'reponse' ? texteReponse : texteAll;
   let valeur = '';
   try {
@@ -910,32 +1023,77 @@ async function precharger(projet, numero, variante) {
   } catch (e) {
     valeur = (e && e.aucun) ? { aucun: true } : '';
   }
-  const prep = textesPrepares.get(cle) || {};
-  prep[variante] = valeur;
-  textesPrepares.set(cle, prep);
+  memoriserTextePrepare(projet, numero, variante, valeur);
 }
 
-// Précharge en tâche de fond, en mode repli seulement, le texte 'all' des issues
-// visibles NON cochées (pour que cocher une case copie fiablement au 1er clic).
-// Économe : borné aux premières issues par projet (périmètre des pastilles),
-// uniquement les décochées, une seule fois par clé.
-function precharderVisiblesRepli() {
-  if (modeCopie() !== 'repli') return;
-  const parProjet = premieresParProjet(issuesTriees(), limiteParProjet());
+// Sélection PURE des (projet, numero, variante) à précharger (issue #832
+// point 1) : issues visibles NON cochées, bornées aux `limite` premières de
+// chaque projet (périmètre des pastilles, même borne que premieresParProjet),
+// une seule fois par (issue, variante). La variante 'reponse' (celle que la
+// case copie, issue #787) est préchargée dans LES DEUX MODES ; la variante
+// 'all' ne l'est qu'en mode repli (inchangé depuis #636 — Diff/All restent
+// sur leur chemin existant, jamais préchargés). `estCocheFn`/`dejaPresentFn`
+// injectées pour rester testable sous Node sans store ni réseau.
+export function candidatsPrechargement(issuesTriees, limite, mode, estCocheFn, dejaPresentFn) {
+  const parProjet = premieresParProjet(issuesTriees, limite);
+  const candidats = [];
   for (const [projet, numeros] of Object.entries(parProjet)) {
     for (const n of numeros) {
-      if (estCoche(projet, n)) continue;
-      const cle = cleIC(projet, n);
-      const prep = textesPrepares.get(cle);
-      if ((prep && prep.all !== undefined) || prechargementEnCours.has(cle)) continue;
-      prechargementEnCours.add(cle);
-      precharger(projet, n, 'all').finally(() => prechargementEnCours.delete(cle));
+      if (estCocheFn(projet, n)) continue;
+      if (!dejaPresentFn(projet, n, 'reponse')) candidats.push({ projet, numero: n, variante: 'reponse' });
+      if (mode === 'repli' && !dejaPresentFn(projet, n, 'all')) candidats.push({ projet, numero: n, variante: 'all' });
     }
   }
+  return candidats;
+}
+
+// File d'exécution des préchargements : UNE préparation à la fois (issue
+// #832 point 1 — « ne rien changer à la préparation de all en mode repli »
+// mis à part, qui tournait jusqu'ici en parallèle ; étendue aux deux modes,
+// une préparation lente ne doit pas en multiplier d'autres en même temps).
+let chainePrechargement = Promise.resolve();
+
+function enqueuePrechargementUn(projet, numero, variante) {
+  const cle = cleIC(projet, numero) + '|' + variante;
+  prechargementEnCours.add(cle);
+  chainePrechargement = chainePrechargement
+    .then(() => precharger(projet, numero, variante))
+    .catch(() => {})
+    .finally(() => prechargementEnCours.delete(cle));
+}
+
+// Précharge en tâche de fond, dans les DEUX modes de copie, le texte copié
+// par la case (variante 'reponse') des issues visibles NON cochées — pour
+// qu'en mode moderne (Firefox notamment), le texte soit déjà prêt AVANT le
+// clic plutôt que préparé après (fenêtre d'activation du geste, issue #832).
+// En mode repli, précharge EN PLUS la variante 'all' (inchangé depuis #636).
+// Jamais lancée quand la page est cachée (document.hidden) : pas de fetch
+// inutile sur un onglet en arrière-plan. Renommée depuis
+// precharderVisiblesRepli (issue #832 : son nom ne disait plus la vérité une
+// fois étendue au mode moderne).
+function precharderVisibles() {
+  if (typeof document !== 'undefined' && document.hidden) return;
+  const mode = modeCopie();
+  const candidats = candidatsPrechargement(
+    issuesTriees(), limiteParProjet(), mode, estCoche,
+    (projet, numero, variante) => {
+      const cle = cleIC(projet, numero);
+      const prep = textesPrepares.get(cle);
+      return (prep && prep[variante] !== undefined) || prechargementEnCours.has(cle + '|' + variante);
+    });
+  for (const c of candidats) enqueuePrechargementUn(c.projet, c.numero, c.variante);
 }
 
 // ─── Feedbacks ────────────────────────────────────────────────────────────────
 const MESSAGE_ECHEC_COPIE = 'Copie impossible — le presse-papier n\'a pas pu être écrit.';
+
+// Message principal du toast quand l'écriture a été refusée pour geste
+// expiré/préparation trop longue (issue #832 point 4b) — remplace
+// MESSAGE_ECHEC_COPIE dans ce seul cas (voir gesteExpireOuPreparationLente et
+// ecrireApresPreparation) : le texte est désormais en cache, un second clic
+// suffit.
+export const MESSAGE_PREPARATION_TROP_LONGUE = 'Préparation trop longue pour le presse-papier : '
+  + 'copie manuelle ci-dessous (Ctrl+C) ; le texte est maintenant prêt, décoche puis recoche la case.';
 
 // Échec de copie (issue #782) : le texte n'est JAMAIS simplement perdu — quand
 // il est disponible (toute cause d'échec SAUF un texte vide, déjà couvert par
@@ -946,10 +1104,14 @@ const MESSAGE_ECHEC_COPIE = 'Copie impossible — le presse-papier n\'a pas pu �
 // `detail` (issue #824) : ligne de détail technique (voir construireDetailEchecCopie)
 // — journalisée par console.warn ET jointe au toast (ligne discrète + entrée
 // du panneau « Messages »), sans jamais changer le message principal
-// (MESSAGE_ECHEC_COPIE) ni `texteSecours` ci-dessus.
-export function signalerEchecCopie(texte, detail) {
+// (MESSAGE_ECHEC_COPIE) ni `texteSecours` ci-dessus. `messagePrincipal` (issue
+// #832 point 4b) remplace MESSAGE_ECHEC_COPIE dans le SEUL cas où l'écriture a
+// été refusée pour geste expiré/préparation trop longue (voir
+// gesteExpireOuPreparationLente) — absent, le message par défaut s'applique,
+// inchangé pour toute autre cause d'échec.
+export function signalerEchecCopie(texte, detail, messagePrincipal) {
   if (detail) console.warn(detail);
-  toasts.erreur(MESSAGE_ECHEC_COPIE, true, {
+  toasts.erreur(messagePrincipal || MESSAGE_ECHEC_COPIE, true, {
     texteSecours: texte || undefined,
     detailTechnique: detail || undefined,
   });
@@ -963,7 +1125,7 @@ function feedbackToast() {
   return {
     succes: () => toasts.succes('Rapport copié dans le presse-papier.', false),
     fichier: (message) => toasts.avertissement(message),
-    echec: (e, texte, detail) => signalerEchecCopie(texte, detail),
+    echec: (e, texte, detail, messagePrincipal) => signalerEchecCopie(texte, detail, messagePrincipal),
     vide: () => toasts.avertissement(TITRE_COPIE_VIDE),
     nonPret: () => toasts.info('Préparation de la copie en cours — recoche dans un instant.', false),
   };
@@ -980,7 +1142,7 @@ function feedbackBadge(badge) {
   return {
     succes: () => flash('✓'),
     fichier: (message) => { flash('⬇'); toasts.avertissement(message); },
-    echec: (e, texte, detail) => signalerEchecCopie(texte, detail),
+    echec: (e, texte, detail, messagePrincipal) => signalerEchecCopie(texte, detail, messagePrincipal),
     vide: () => { if (badge) { badge.textContent = '⚠'; badge.title = TITRE_COPIE_VIDE; setTimeout(restaurer, 2000); } },
     aucun: () => flash('∅'),
     nonPret: () => { toasts.info('Contenu en préparation — reclique dans un instant.', false); },
@@ -1011,10 +1173,11 @@ async function initialiser() {
   // 2) Charger l'état serveur de tous les projets connus (un GET par projet),
   //    puis resynchroniser le DOM déjà rendu (liste chargée à l'activation).
   await rechargerCases();
-  // 3) En mode repli (--lan), précharger le texte des issues visibles décochées
-  //    à chaque changement de liste, pour une copie fiable au 1er clic.
-  store.abonnerCle('issues', () => setTimeout(precharderVisiblesRepli, 0));
-  setTimeout(precharderVisiblesRepli, 0);
+  // 3) Précharger le texte des issues visibles décochées à chaque changement
+  //    de liste, pour une copie fiable au 1er clic — dans les DEUX modes
+  //    depuis l'issue #832 (auparavant mode repli seul).
+  store.abonnerCle('issues', () => setTimeout(precharderVisibles, 0));
+  setTimeout(precharderVisibles, 0);
   // 4) Événement /stream `case_decochee` (issue #720, déposé dans le store par
   //    sse.js) — décoche instantanée d'un onglet Résultats déjà ouvert.
   store.abonnerCle('derniereNotifCase', (notif) => surCaseDecochee(notif));
@@ -1024,10 +1187,11 @@ async function initialiser() {
 // estCoche/basculer/cocherTout/remettreAZero/copierReponseBadge/copierAllBadge/
 // copierDiffBadge sont l'API consommée par l'ancien app.js pendant la
 // transition (case à cocher, badges de copie, boutons « Cocher tout » et
-// remise à zéro). initialiser et rechargerCases ne passent jamais par le pont
-// (initialiser est appelée directement par index.js via import ES ;
-// rechargerCases n'est utilisée qu'en interne à ce module) — exposées ici
-// uniquement pour rester testables directement.
+// remise à zéro). initialiser/rechargerCases/precharderVisibles ne passent
+// jamais par le pont (initialiser est appelée directement par index.js via
+// import ES ; les deux autres ne sont utilisées qu'en interne à ce module) —
+// exposées ici uniquement pour rester testables directement (même principe
+// que rechargerCases depuis #636).
 export const resultatsCoches = {
   initialiser,
   estCoche,
@@ -1038,4 +1202,5 @@ export const resultatsCoches = {
   copierAllBadge,
   copierDiffBadge,
   rechargerCases,
+  precharderVisibles,
 };
