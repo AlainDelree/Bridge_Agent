@@ -9,6 +9,10 @@ milliers de caractères sur une seule ligne logique, coûteux à relire et
 
 Convention d'ajout : voir §10 de `BRIDGE_AGENT_DOC.md`.
 
+## 31 octobre 2026 — issue #834
+
+`app/tunnel.py` lit désormais l'adresse du tunnel dans la configuration de cloudflared (issue #834) au lieu de l'écrire en dur — suppression de la constante `URL_TUNNEL` (ancien domaine désactivé), ajout de `lire_url_tunnel()` qui relève, sans bibliothèque YAML (absente des dépendances du projet), la première clé `hostname` de `~/.cloudflared/config.yml` ligne par ligne et renvoie `https://<hostname>` (ou `None` sans exception si le fichier est absent, vide, mal formé ou sans `hostname` — aucune autre clé du fichier n'est lue ni affichée). `demarrer_tunnel()` affiche cette adresse au démarrage, ou un message neutre renvoyant au fichier de configuration sinon, sans jamais empêcher le démarrage du tunnel. `CONTEXTE.md` ne cite plus l'ancien nom de domaine.
+
 ## Issue #833 — Périmètre dynamique : ajout du dossier du projet (REP_TRAVAIL) en lecture et exécution seules, avec contrôle d'écriture
 
 Pour un projet à périmètre dynamique (`PERIMETRE_DYNAMIQUE = true`, issue
