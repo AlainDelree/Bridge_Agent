@@ -61,6 +61,17 @@
   garde-fou technique dans `watcher.py` détecte et annule automatiquement
   toute modification de `configs/*.conf` survenue malgré tout au cours du
   traitement.
+- **Arrêt de processus : pour arrêter un serveur, un navigateur de test ou
+  tout autre processus lancé pendant l'issue, relève son numéro (PID) au
+  moment du lancement et ne tue que ce PID précis.** Ne JAMAIS utiliser
+  `pkill`, `killall`, ni `pgrep` suivi d'un arrêt, ni aucune commande qui
+  désigne un processus par un motif de nom : un tel arrêt peut viser
+  d'autres tâches de la machine ou le processus de l'agent lui-même. Sous
+  Windows, la même interdiction s'applique à `taskkill /IM`, à
+  `Stop-Process -Name` et à tout `Get-Process` filtré par nom suivi d'un
+  arrêt : démarre le processus de façon à récupérer son identifiant, puis
+  arrête uniquement cet identifiant. À la fin de l'issue, aucun processus
+  lancé par l'agent ne doit rester actif.
 - **Champ COMPLEXITE dans les issues que tu crées toi-même (chef/ouvrier) :**
   inclus systématiquement une ligne `| COMPLEXITE | <niveau> |` dans l'en-tête
   de toute issue que tu ouvres (que ce soit une issue chef vers un ouvrier, ou
