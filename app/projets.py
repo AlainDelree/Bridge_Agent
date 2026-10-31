@@ -191,6 +191,11 @@ def get_config(nom_projet):
         couleur        = cfg.couleur,
         delai_inactivite_min = cfg.delai_inactivite_min,
         max_write_parallele = cfg.max_write_parallele,
+        # Périmètre dynamique (issue #125, exposé ici pour le formulaire web
+        # issue #829) : pilote l'affichage du champ obligatoire « Dépôt
+        # cible » de l'onglet Nouvelle issue — cfg.perimetre_dynamique est lu
+        # tel quel depuis le .conf (PERIMETRE_DYNAMIQUE), jamais recalculé ici.
+        perimetre_dynamique = cfg.perimetre_dynamique,
     )
 
 

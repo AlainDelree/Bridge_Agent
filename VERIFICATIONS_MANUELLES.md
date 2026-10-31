@@ -72,6 +72,13 @@
 - [ ] Bouton « Vider » réinitialise le formulaire (titre, corps, priorité,
       timeout du projet, mode lecture, notifs, modèle, image, template
       désélectionné).
+- [ ] **Dépôt cible** (`REPO_CIBLE`, issue #829) : sélectionner un projet à
+      `PERIMETRE_DYNAMIQUE=true` affiche le champ obligatoire ; le sélectionner
+      vers un projet à périmètre fixe le masque ET vide sa valeur. Envoyer sans
+      le remplir (projet dynamique) → message clair, rien n'est créé. Envoyer
+      avec un chemin invalide (relatif, inexistant) → même chose, avec la
+      raison. Envoyer avec un chemin valide → l'issue créée porte bien la ligne
+      `| REPO_CIBLE | <chemin> |` dans son en-tête sur GitHub.
 
 ## Onglet « Résultats » (piloté par le store + SSE depuis l'issue #627)
 

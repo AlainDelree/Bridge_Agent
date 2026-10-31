@@ -339,9 +339,13 @@ TITRE_RE = re.compile(r"^#Titre:\s*(.*)$", re.IGNORECASE | re.MULTILINE)
 # DOC) — présent, il détourne tout le bloc du chemin de création habituel
 # vers le chemin de relance d'une issue EXISTANTE (voir _traiter_relance).
 # SOUS_DOSSIER/REPO_CIBLE (issue #567) : extraits ici comme TIMEOUT/MODELE
-# pour rester disponibles au chemin RELANCE (_fusionner_entete) — inutilisés
-# côté création (construire_body ne les réinsère pas, ce champ n'étant pas un
-# format supporté par issues_inbox pour créer une issue, §3.3 du DOC).
+# pour rester disponibles au chemin RELANCE (_fusionner_entete). SOUS_DOSSIER
+# reste inutilisé côté création (construire_body ne le réinsère pas, ce champ
+# n'étant pas un format supporté par issues_inbox pour créer une issue, §3.3
+# du DOC) — non traité par l'issue #829 ci-dessous. REPO_CIBLE, lui, est
+# désormais VALIDÉ puis réinséré à la création (issue #829, voir valider() et
+# construire_body plus bas) : un projet à PERIMETRE_DYNAMIQUE=true sans ce
+# champ est rejeté plutôt que de produire une issue inexécutable à coup sûr.
 # REDACTEUR (issue #599) : champ optionnel — nom du projet depuis le contexte
 # duquel Claude Chat a rédigé l'issue. Comparé à PROJET par valider_redacteur()
 # (filet de sécurité anti-incohérence, §3.4 du DOC) ; comme SOUS_DOSSIER/
@@ -543,6 +547,28 @@ def valider(champs: dict):
         valeur = champs["timeout_brut"].strip().lower().rstrip("s")
         if not valeur.isdigit():
             return False, f"TIMEOUT invalide : « {champs['timeout_brut']} » (doit être un nombre).", None
+
+    # REPO_CIBLE (issue #829, étend #125/#567) : MÊMES fonctions que le
+    # chemin RELANCE (valider_relance ci-dessus) — perimetre_dynamique du
+    # projet + valider_repo_cible — mais avec en PLUS le caractère OBLIGATOIRE
+    # du champ pour un projet à périmètre dynamique : sans lui, watcher.py
+    # abandonnerait de toute façon l'issue à l'exécution (« PERIMETRE_DYNAMIQUE
+    # actif mais champ REPO_CIBLE absent »), sans aucun repli — mieux vaut
+    # refuser la création que produire une issue inexécutable à coup sûr.
+    perimetre_dynamique = getattr(cfg_projet, "perimetre_dynamique", False)
+    if perimetre_dynamique and not champs.get("repo_cible_brut"):
+        return False, (f"projet « {champs['projet']} » en périmètre dynamique "
+                        f"(PERIMETRE_DYNAMIQUE=true) mais aucun champ REPO_CIBLE — "
+                        f"ajouter la ligne « | REPO_CIBLE | <chemin absolu> | » à "
+                        f"l'en-tête (issue #125)."), None
+    if champs.get("repo_cible_brut"):
+        if not perimetre_dynamique:
+            return False, (f"REPO_CIBLE fourni mais le projet « {champs['projet']} » n'a pas "
+                            f"PERIMETRE_DYNAMIQUE=true dans son .conf — ce champ n'a d'effet que "
+                            f"pour un projet à périmètre dynamique (issue #125)."), None
+        ok_rc, raison_rc = valider_repo_cible(champs["repo_cible_brut"])
+        if not ok_rc:
+            return False, f"REPO_CIBLE invalide : « {champs['repo_cible_brut']} » ({raison_rc}).", None
 
     return True, "", cfg_projet
 
@@ -955,7 +981,8 @@ def construire_body(champs: dict, cfg_projet) -> tuple[str, str | None]:
         info_timeout = f"TIMEOUT absent : défaut de {timeout}s appliqué"
 
     entete = formater_entete(mode_label, "normale", timeout, cfg_projet.nom,
-                              modele=champs["modele"])
+                              modele=champs["modele"],
+                              repo_cible=champs.get("repo_cible_brut") or None)
     parties = [p for p in (entete, champs["corps"]) if p]
     return "\n\n".join(parties), info_timeout
 
