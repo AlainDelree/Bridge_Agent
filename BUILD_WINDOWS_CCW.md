@@ -236,10 +236,29 @@ liste de numéros, indépendante des autres.
   (issue #176), confirmé par l'essai du 25 octobre 2026.
 - **`.spec`** : `rummikub.spec` — liste explicite des `datas`
   (`src/rummikub/ui/web/`), aucun `collect_tree` en bloc.
+- **Solveur exact** (issues #206 et #208 de Rummikub) : `highspy` 1.15.1 et
+  `numpy` 2.5.4 sont installés depuis `requirements.txt` et collectés par
+  PyInstaller.
+- **Vérification propre à ce projet** : l'option `--autotest` de
+  l'exécutable (issue #208 de Rummikub) vérifie que `highspy` fonctionne
+  — à recopier dans la section « Vérifier le résultat » du modèle d'issue
+  (pas dans « Vérifications préalables »), car elle porte sur l'exécutable
+  produit. Vérifiée lors de l'essai de l'issue #218 : code de sortie 0,
+  message « backend HIGHS, 6 tuiles posées en 0 ms (optimum prouvé) ».
+  Non établi : la manière exacte dont `--autotest` est lancée (ligne de
+  commande, étape du script).
 - **Deux garde-fous de taille distincts** (issue #57 — dist non compressé
-  et installeur compressé sont deux grandeurs différentes) :
-  - dossier non compressé : fourchette 20-45 Mo
-  - installeur compressé : fourchette 5-25 Mo
+  et installeur compressé sont deux grandeurs différentes), élargis par
+  l'ajout du solveur exact (issues #206 et #208 de Rummikub) ; le script
+  qualifie lui-même ces nouvelles valeurs de provisoires :
+  - dossier non compressé : fourchette 20-120 Mo (20 971 520 à
+    125 829 120 octets), le script annonçant ~80 Mo attendus
+  - installeur compressé : fourchette 5-50 Mo (5 242 880 à 52 428 800
+    octets), le script annonçant ~30 Mo attendus
+  - archive zip : mêmes bornes que l'installeur (5-50 Mo)
+  - ici « Mo » vaut 1 048 576 octets (c'est ce que fait le script)
+  - ces gardes affichent seulement un message `[ATTENTION]` (dossier ou
+    fichier inhabituellement petit ou grand) et n'arrêtent pas le build
 - **Artefacts et dossier fixe** : `Rummikub-Setup-v<N>.exe` et
   `rummikub-v<N>.zip` produits dans `installeur\output` du worktree ; le
   nom de l'archive porte toujours le numéro, y compris sans `--publier`
@@ -249,13 +268,21 @@ liste de numéros, indépendante des autres.
   d'Inno Setup utilisé et les noms et tailles en octets des fichiers
   copiés : l'agent ne lit pas ce dossier, il reprend cet affichage dans
   son rapport.
-- **Garde-fou** (sous-étape `0bis`, issue #178 de Rummikub) : exécuté juste
-  après la recherche d'Inno Setup et avant la copie vers le dossier de
-  build local, il refuse, avec le code de sortie 1 et avant toute copie,
-  construction ou écriture, un numéro qui n'est pas un entier strictement
-  supérieur au build de `version.json` ; il refuse aussi `--build` sans
-  valeur ou suivi d'un autre argument, et tout argument inconnu, en
-  listant les arguments acceptés.
+- **Garde-fou** (sous-étape `0bis`, issue #178 de Rummikub, durci par
+  l'issue #218) : exécuté juste après la recherche d'Inno Setup et avant
+  la copie vers le dossier de build local, il refuse, avec le code de
+  sortie 1 et avant toute copie, construction ou écriture, un numéro qui
+  n'est pas un entier strictement supérieur au build de `version.json` ;
+  il refuse aussi `--build` sans valeur ou suivi d'un autre argument, et
+  tout argument inconnu, en listant les arguments acceptés. Depuis
+  l'issue #218, il refuse en plus un numéro avec un zéro initial ou nul
+  (`--build 0`, `--build 014`, `--build 05`), toujours avec le code de
+  sortie 1 et sans rien écrire.
+- **Détection d'instance en cours remplace `taskkill`** (issue #218 de
+  Rummikub) : l'ancienne étape `taskkill`, qui fermait toute instance de
+  `Rummikub.exe` présente sur la machine, est remplacée par une simple
+  détection qui signale une instance en cours sans la fermer ni arrêter
+  le build.
 - **Nettoyage obsolète supprimé** (issue #178 de Rummikub) : la commande
   `git -C C:\CCW_Share\CCW\rummikub reset --hard origin/master` de l'étape
   de nettoyage (sans `--publier`) et les commentaires sur un « clone
@@ -269,9 +296,24 @@ liste de numéros, indépendante des autres.
   un ajout forcé ; `git ls-files build` doit continuer à le lister.
 - **Release à deux fichiers** : comme pour Scrabble et Actualise, le
   rappel final du script avec `--publier` mentionne DEUX fichiers à
-  attacher à la Release — l'installeur ET l'archive.
-- **Build de référence du script durci** (build 14, issue #179 du dépôt
-  Rummikub, 25 octobre 2026) : commande
+  attacher à la Release — l'installeur ET l'archive. Depuis l'issue #218,
+  ce rappel suit en plus l'ordre du guide (fusionner sans pousser, créer
+  la Release avec les deux fichiers, pousser `master`). Non établi : ce
+  nouveau rappel n'a pas encore été vu à l'exécution — il n'apparaît
+  qu'avec `--publier`, non lancé pendant l'essai de l'issue #218.
+- **Build de référence avec solveur** (essai `--build 99`, sans
+  `--publier`, issue #218 de Rummikub, commit d7611d2, octobre 2026) :
+  premier build avec le solveur exact, essai non publié. Dossier
+  `dist\Rummikub` non compressé 62 571 296 octets ; installeur
+  `Rummikub-Setup-v99.exe` 21 077 072 octets ; archive
+  `rummikub-v99.zip` 25 962 601 octets ; aucun garde-fou de taille
+  déclenché.
+- **Durée de l'issue #218** : l'issue complète (un build avec solveur et
+  trois refus — `--build 0`, `--build 014`, `--build 05`) a pris 697
+  secondes, pour un `TIMEOUT` de 1800s ; ce n'est pas la durée du script
+  seul.
+- **Build de référence du script durci, avant solveur** (build 14, issue
+  #179 du dépôt Rummikub, 25 octobre 2026) : commande
   `build\rebuild_rummikub.bat --publier --build 14`, code de sortie 0. Le
   mode `--publier` est validé : le script a écrit `version.json` (numéro et
   somme SHA-256 de l'archive) et fait lui-même le commit local ; la somme
@@ -287,24 +329,25 @@ liste de numéros, indépendante des autres.
   Release `v14` porte l'installeur et l'archive (sommes vérifiées),
   `version.json` de `master` annonce le build 14, et la mise à jour par
   Actualise de la v13 à la v14 a été vérifiée par Alain sur un PC.
-- **Essai antérieur avec le numéro fictif 99, sans `--publier`** (25 octobre
-  2026) : mêmes tailles à peu de chose près (installeur 12 796 415 octets,
-  archive 12 896 340 octets, durée 99,69 secondes) et six refus vérifiés,
-  tous avec le code de sortie 1 et sans rien écrire (numéro égal au build
-  courant, numéro inférieur, numéro non numérique, `--build` seul,
-  `--publier --build` avec un numéro non supérieur, argument inconnu).
-- **Build de référence de l'ancien script (avant le durcissement)** : build
-  13, issue #177 du
-  dépôt Rummikub, réussi — worktree
-  `C:\CCW\worktrees\rummikub-ccw-issue177`. Neuf étapes (numérotées 0 à 8)
-  sans erreur ; seuls avertissements : deux avertissements habituels de
-  PyInstaller sur `pycparser.lextab` et `pycparser.yacctab`, sans effet.
-  Tailles de référence : dossier non compressé `dist\Rummikub` 26 251 767
-  octets, installeur `Rummikub-Setup-v13.exe` 12 800 339 octets, archive
-  `rummikub-v13.zip` 12 896 659 octets (2 fichiers à la racine —
-  `Rummikub.exe` et `manifest.json` — et un dossier `_internal` de 87
-  entrées). Durée réelle de l'agent : 219 secondes (`TIMEOUT` de 1800s).
-  Durée observée : 333 secondes (build antérieur).
+- **Essai antérieur avec le numéro fictif 99, avant solveur, sans
+  `--publier`** (25 octobre 2026) : mêmes tailles à peu de chose près
+  (installeur 12 796 415 octets, archive 12 896 340 octets, durée 99,69
+  secondes) et six refus vérifiés, tous avec le code de sortie 1 et sans
+  rien écrire (numéro égal au build courant, numéro inférieur, numéro non
+  numérique, `--build` seul, `--publier --build` avec un numéro non
+  supérieur, argument inconnu).
+- **Build de référence de l'ancien script, avant solveur (avant le
+  durcissement)** : build 13, issue #177 du dépôt Rummikub, réussi —
+  worktree `C:\CCW\worktrees\rummikub-ccw-issue177`. Neuf étapes
+  (numérotées 0 à 8) sans erreur ; seuls avertissements : deux
+  avertissements habituels de PyInstaller sur `pycparser.lextab` et
+  `pycparser.yacctab`, sans effet. Tailles de référence : dossier non
+  compressé `dist\Rummikub` 26 251 767 octets, installeur
+  `Rummikub-Setup-v13.exe` 12 800 339 octets, archive `rummikub-v13.zip`
+  12 896 659 octets (2 fichiers à la racine — `Rummikub.exe` et
+  `manifest.json` — et un dossier `_internal` de 87 entrées). Durée
+  réelle de l'agent : 219 secondes (`TIMEOUT` de 1800s). Durée observée :
+  333 secondes (build antérieur).
 
 ### Scrabble
 
