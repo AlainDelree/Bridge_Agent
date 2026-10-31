@@ -17,7 +17,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { resultatsCoches, SEUIL_LIGNES_VOLUMINEUX } from '../resultats_coches.js';
+import { resultatsCoches, SEUIL_LIGNES_VOLUMINEUX, MESSAGE_PREPARATION_TROP_LONGUE } from '../resultats_coches.js';
+import { store } from '../socle/store.js';
 
 const PROJET = 'projet_test_787';
 
@@ -401,7 +402,7 @@ test('badge Diff, diff volumineux (> seuil) ET téléchargement en SUCCÈS : le 
 
 // ─── Issue #824 : la cause réelle de l'échec de copie atteint l'affichage ────
 
-test('badge ✅, échec RÉEL de navigator.clipboard.write (NotAllowedError) : le toast ET la console reçoivent la cause, le message principal et la zone de secours restent inchangés', async () => {
+test('badge ✅, échec RÉEL de navigator.clipboard.write (NotAllowedError) : le toast ET la console reçoivent la cause, la zone de secours reste inchangée, le message principal devient celui du geste expiré (issue #832 point 4b, remplace le message générique de #824)', async () => {
   fixerEnvironnement();
   const avertissements = [];
   const warnOriginal = console.warn;
@@ -429,8 +430,10 @@ test('badge ✅, échec RÉEL de navigator.clipboard.write (NotAllowedError) : l
       'la cause doit être journalisée par console.warn (jusqu\'ici ignorée, issue #824)',
     );
     const messages = texteDesToasts();
-    assert.ok(messages.some((m) => m === 'Copie impossible — le presse-papier n\'a pas pu être écrit.'),
-      'le message principal ne doit pas changer');
+    assert.ok(
+      messages.some((m) => m === 'Préparation trop longue pour le presse-papier : copie manuelle ci-dessous '
+        + '(Ctrl+C) ; le texte est maintenant prêt, décoche puis recoche la case.'),
+      'NotAllowedError est un geste expiré (issue #832 point 4) : le message principal devient actionnable');
   } finally {
     console.warn = warnOriginal;
   }
@@ -448,4 +451,153 @@ test('badge Diff, téléchargement en échec (echec(undefined, t), sans exceptio
   assert.match(detail.textContent, /\(aucune exception\)/);
   assert.doesNotMatch(detail.textContent, /undefined/);
   assert.match(detail.textContent, /mode=moderne/);
+});
+
+// ─── Issue #832 : préparation à l'avance en mode moderne ─────────────────────
+// (expiration du geste dans Firefox — voir le rapport de l'issue). Intercepte
+// /issue pour contrôler, par numéro, le moment où le fetch de préparation
+// résout — permet de simuler une préparation LENTE encore en vol.
+function intercepterFetchIssue(numeroLent) {
+  const fetchOriginal = global.fetch;
+  const comptes = {};
+  let resolveur;
+  global.fetch = async (url, ...reste) => {
+    if (url.startsWith('/issue/')) {
+      const numero = Number(decodeURIComponent(url.slice(url.lastIndexOf('/') + 1)));
+      comptes[numero] = (comptes[numero] || 0) + 1;
+      if (numero === numeroLent) {
+        return new Promise((resolve) => { resolveur = () => resolve(fetchOriginal(url, ...reste)); });
+      }
+    }
+    return fetchOriginal(url, ...reste);
+  };
+  return { comptes, debloquer: () => resolveur() };
+}
+
+async function attendreQue(predicat, tentativesMax = 100) {
+  for (let i = 0; i < tentativesMax && !predicat(); i++) {
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  return predicat();
+}
+
+test('chemin rapide (issue #832 pt.2) : un texte déjà préparé et valide est écrit sans attendre la préparation lente d\'une AUTRE copie en cours', async () => {
+  fixerEnvironnement({ etatCommits: { etat: 'aucun', hashes: [] } });
+  const NUMERO_LENT = 501001;
+  const NUMERO_RAPIDE = 501002;
+  const { comptes, debloquer } = intercepterFetchIssue(NUMERO_LENT);
+
+  const ecritures = [];
+  global.navigator = {
+    clipboard: {
+      write: async (items) => { ecritures.push(await items[0].data['text/plain'].text()); },
+    },
+  };
+
+  // Préchargement en tâche de fond de NUMERO_RAPIDE (variante 'reponse').
+  store.remplacerIssues([
+    { projet: PROJET, number: NUMERO_RAPIDE, title: 'Rapide', createdAt: '2026-01-01T00:00:00Z', state: 'OPEN', labels: [] },
+  ]);
+  resultatsCoches.precharderVisibles();
+  assert.ok(await attendreQue(() => comptes[NUMERO_RAPIDE] === 1), 'le préchargement de NUMERO_RAPIDE doit avoir fetché /issue');
+  await new Promise((resolve) => setTimeout(resolve, 20));   // laisse memoriserTextePrepare s'exécuter
+
+  // Lance une copie LENTE (préparation en vol, fetch bloqué), PUIS une copie
+  // RAPIDE (texte déjà préparé) : la seconde ne doit pas attendre la première.
+  resultatsCoches.copierReponseBadge(evenementBadge(), PROJET, NUMERO_LENT);
+  resultatsCoches.copierReponseBadge(evenementBadge(), PROJET, NUMERO_RAPIDE);
+
+  assert.ok(await attendreQue(() => ecritures.length >= 1), 'la copie du texte déjà prêt ne doit pas attendre');
+  assert.equal(ecritures.length, 1, 'une seule écriture à ce stade : NUMERO_LENT est toujours en préparation');
+
+  debloquer();
+  assert.ok(await attendreQue(() => ecritures.length >= 2), 'la copie lente doit finir par aboutir une fois débloquée');
+});
+
+test('chemin lent, écriture refusée pour geste expiré (NotAllowedError) : texte conservé dans le cache (point 4a), message du point 4b, détail technique conservé — le clic suivant aboutit sans nouvelle requête', async () => {
+  fixerEnvironnement({ etatCommits: { etat: 'aucun', hashes: [] } });
+  const NUMERO = 502001;
+  const { comptes } = intercepterFetchIssue(-1);   // aucun numéro bloqué : tout résout immédiatement
+
+  let premierAppel = true;
+  global.navigator = {
+    clipboard: {
+      write: async (items) => {
+        if (premierAppel) {
+          premierAppel = false;
+          throw Object.assign(new Error('The request is not allowed.'), { name: 'NotAllowedError' });
+        }
+        return items[0].data['text/plain'].text();
+      },
+    },
+  };
+
+  resultatsCoches.copierReponseBadge(evenementBadge(), PROJET, NUMERO);
+  const zone = await attendreZoneSecours();
+  assert.ok(zone, 'le texte complet doit rester accessible (texteSecours, issue #782, inchangé)');
+  const detail = detailToast();
+  assert.ok(detail, 'la ligne de détail technique (issue #824) doit rester présente');
+  assert.match(detail.textContent, /NotAllowedError/);
+  const messages = texteDesToasts();
+  assert.ok(messages.some((m) => m === MESSAGE_PREPARATION_TROP_LONGUE),
+    'le message principal doit devenir celui du point 4b');
+
+  const comptesAvant = comptes[NUMERO];
+  const copieSuivante = attendreProchaineCopie();
+  resultatsCoches.copierReponseBadge(evenementBadge(), PROJET, NUMERO);
+  const texteEcrit = await copieSuivante;
+  assert.match(texteEcrit, /Corps du rapport pour #787/);
+  assert.equal(comptes[NUMERO], comptesAvant,
+    'le second clic doit utiliser le texte mis en cache (point 4a), sans nouvelle requête /issue');
+});
+
+test('autre erreur (ni NotAllowedError, ni préparation lente) : le message principal reste inchangé', async () => {
+  fixerEnvironnement({ etatCommits: { etat: 'aucun', hashes: [] } });
+  global.navigator = {
+    clipboard: { write: async () => { throw new Error('Erreur inattendue du presse-papier.'); } },
+  };
+  resultatsCoches.copierReponseBadge(evenementBadge(), PROJET, 503001);
+  await attendreZoneSecours();
+  const messages = texteDesToasts();
+  assert.ok(messages.some((m) => m === 'Copie impossible — le presse-papier n\'a pas pu être écrit.'));
+  assert.ok(!messages.some((m) => m === MESSAGE_PREPARATION_TROP_LONGUE),
+    'une erreur générique ne doit jamais prendre le message du point 4b');
+});
+
+test('mode repli : la variante « reponse » (celle que la case copie, #787) est préchargée dès le début — écart comblé, auparavant seul « all » l\'était', async () => {
+  fixerEnvironnement({ etatCommits: { etat: 'aucun', hashes: [] } });
+  window.isSecureContext = false;
+  global.navigator = {};
+  global.ClipboardItem = undefined;
+  const NUMERO = 504001;
+  const { comptes } = intercepterFetchIssue(-1);
+
+  store.remplacerIssues([
+    { projet: PROJET, number: NUMERO, title: 'Repli', createdAt: '2026-01-01T00:00:00Z', state: 'OPEN', labels: [] },
+  ]);
+  resultatsCoches.precharderVisibles();
+  assert.ok(await attendreQue(() => comptes[NUMERO] === 1), 'le préchargement doit avoir fetché /issue');
+  await new Promise((resolve) => setTimeout(resolve, 20));   // laisse memoriserTextePrepare s'exécuter ('reponse' puis 'all')
+
+  resultatsCoches.basculer(evenementCase(), PROJET, NUMERO);
+  const messages = texteDesToasts();
+  assert.ok(
+    !messages.some((m) => /en préparation|en cours/.test(m)),
+    'la case ne doit plus répondre « en préparation » au premier clic : « reponse » est déjà préchargée');
+});
+
+test('precharderVisibles : ne lance rien quand la page est cachée (document.hidden)', async () => {
+  fixerEnvironnement({ etatCommits: { etat: 'aucun', hashes: [] } });
+  const { comptes } = intercepterFetchIssue(-1);
+  document.hidden = true;
+  try {
+    store.remplacerIssues([
+      { projet: PROJET, number: 505001, title: 'Caché', createdAt: '2026-01-01T00:00:00Z', state: 'OPEN', labels: [] },
+    ]);
+    resultatsCoches.precharderVisibles();
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    assert.equal(comptes[505001], undefined, 'aucune préparation ne doit démarrer quand document.hidden est vrai');
+  } finally {
+    document.hidden = false;
+  }
 });
