@@ -169,3 +169,47 @@ test('etatCommitsDeclares : label for-windows absent → comportement inchangé 
   assert.deepEqual(etatCommitsDeclares(itAucun), { etat: 'aucun', hashes: [] });
   assert.deepEqual(etatCommitsDeclares({ comments: [] }), { etat: 'absente', hashes: [] });
 });
+
+// ─── etatCommitsDeclares : état "echec" (issue #830) — une issue en échec
+//     AVANT exécution (label needs-human) n'a pas de ligne « Commits » parce
+//     qu'aucune exécution n'a eu lieu (le watcher poste son propre commentaire
+//     de refus) : ce n'est pas une anomalie de CCL, donc un état distinct de
+//     "absente" (réservé aux issues réussies, où l'absence EST une anomalie).
+
+test('etatCommitsDeclares : issue needs-human sans ligne « Commits » du tout → etat "echec" (pas "absente")', () => {
+  const it = {
+    labels: ['needs-human'],
+    comments: [{ body: '❌ périmètre dynamique sans REPO_CIBLE — abandon avant exécution' }],
+  };
+  assert.deepEqual(etatCommitsDeclares(it), { etat: 'echec', hashes: [] });
+});
+
+test('etatCommitsDeclares : issue needs-human, ligne « Commits » présente mais non reconnue → etat "echec"', () => {
+  const it = {
+    labels: [{ name: 'needs-human' }],
+    comments: [{ body: '❌ Tâche en échec\nCommits (dans /chemin) : ???\npy_compile : OK' }],
+  };
+  assert.deepEqual(etatCommitsDeclares(it), { etat: 'echec', hashes: [] });
+});
+
+test('etatCommitsDeclares : issue needs-human SANS commentaire du tout → etat "echec" aussi', () => {
+  assert.deepEqual(etatCommitsDeclares({ labels: ['needs-human'], comments: [] }), { etat: 'echec', hashes: [] });
+});
+
+test('etatCommitsDeclares : issue needs-human avec une ligne « Commits » reconnue (échec APRÈS des commits) → inchangé ("hashes"/"aucun")', () => {
+  const itHashes = {
+    labels: ['needs-human'],
+    comments: [{ body: `❌ Tâche en échec après des commits\n${ecriture}\npy_compile : OK` }],
+  };
+  assert.deepEqual(etatCommitsDeclares(itHashes), { etat: 'hashes', hashes: ['abc1234', 'def5678'] });
+  const itAucun = {
+    labels: ['needs-human'],
+    comments: [{ body: `❌ Tâche en échec\n${lectureSeule}\npy_compile : N/A` }],
+  };
+  assert.deepEqual(etatCommitsDeclares(itAucun), { etat: 'aucun', hashes: [] });
+});
+
+test('etatCommitsDeclares : issue needs-human ET for-windows → "windows" reste prioritaire sur "echec"', () => {
+  const it = { labels: ['needs-human', 'for-windows'], comments: [{ body: '❌ Tâche en échec' }] };
+  assert.deepEqual(etatCommitsDeclares(it), { etat: 'windows', hashes: [] });
+});

@@ -231,18 +231,23 @@ export function texteCopieAvecIdentite(variante, it, projet, texte) {
 // Construite à partir de l'inventaire SERVEUR (statut + lignes +/- par
 // fichier, JAMAIS le contenu du patch — route /inventaire-commit) des commits
 // de l'issue, pour qu'un rapport d'agent inexact (ex. accents perdus dans un
-// fichier réécrit) soit détectable sans dérouler le diff complet. Quatre règles
-// (constats de l'issue, complétées par l'issue #808) :
+// fichier réécrit) soit détectable sans dérouler le diff complet. Règles
+// (constats de l'issue, complétées par les issues #808 et #830) :
 //   - issue for-windows (etat 'windows') → l'inventaire n'est PAS DEMANDÉ au
 //     serveur (ses commits sont sur le PC fixe, le dépôt du ThinkPad ne les
 //     connaît pas) : texte neutre expliquant pourquoi et où regarder à la
 //     place, sans symbole d'alerte — ce n'est pas une anomalie.
 //   - ligne « Commits » explicitement « aucun » (lecture seule) → aucune
 //     section, aucune alerte : c'est le cas normal.
-//   - ligne absente/non reconnue, OU un commit en échec (introuvable, git en
-//     panne…) → le dire CLAIREMENT dans la section, jamais en silence
-//     (contrairement au bouton Diff, qui ignore un diff en échec) — un bug de
-//     reconnaissance des commits est déjà resté invisible deux mois (#784).
+//   - ligne absente/non reconnue SUR UNE ISSUE EN ÉCHEC (needs-human, etat
+//     'echec') → l'issue a échoué AVANT que CCL ne soit lancé (ex. abandon de
+//     configuration) : texte neutre, sans symbole d'alerte — ce n'est pas une
+//     anomalie de CCL (issue #830).
+//   - ligne absente/non reconnue SUR UNE ISSUE RÉUSSIE (etat 'absente'), OU un
+//     commit en échec (introuvable, git en panne…) → le dire CLAIREMENT dans
+//     la section, jamais en silence (contrairement au bouton Diff, qui ignore
+//     un diff en échec) — un bug de reconnaissance des commits est déjà resté
+//     invisible deux mois (#784).
 //   - inventaire CUMULÉ (pas commit par commit) : un fichier touché par
 //     plusieurs commits de l'issue n'apparaît qu'une fois, lignes +/- sommées,
 //     statut du commit le plus RÉCENT à l'avoir touché (l'appelant fournit
@@ -305,13 +310,19 @@ function libelleCompteurs(f) {
 
 // Construit le texte de la section, ou '' si aucune section ne doit être
 // ajoutée (`etatCommits` === 'aucun'). `etatCommits` ∈ {'windows','hashes',
-// 'aucun','absente'} (voir etatCommitsDeclares, app.js) ; `resultatsParCommit`
-// est ignoré si `etatCommits` !== 'hashes'.
+// 'aucun','echec','absente'} (voir etatCommitsDeclares, app.js) ;
+// `resultatsParCommit` est ignoré si `etatCommits` !== 'hashes'.
 export function texteSectionFichiers(etatCommits, resultatsParCommit) {
   if (etatCommits === 'aucun') return '';
   const lignes = ['===== ' + TITRE_SECTION_FICHIERS + ' ====='];
   if (etatCommits === 'windows') {
     lignes.push('', TEXTE_INVENTAIRE_WINDOWS);
+    return lignes.join('\n');
+  }
+  if (etatCommits === 'echec') {
+    lignes.push('', 'Cette issue a échoué avant l\'exécution : son commentaire de clôture ne '
+      + 'contient pas de ligne « Commits », donc aucun inventaire des fichiers n\'est possible '
+      + '(ce n\'est pas une anomalie de CCL).');
     return lignes.join('\n');
   }
   if (etatCommits === 'absente') {
@@ -595,7 +606,7 @@ function messageErreurInventaire(e) {
 // seule). L'inventaire n'est demandé au serveur QUE pour l'etat 'hashes' —
 // une issue for-windows (etat 'windows', issue #808) ne déclenche donc aucune
 // requête /inventaire-commit, le dépôt du ThinkPad ne connaissant pas ses
-// commits. Voir texteSectionFichiers pour le détail des quatre cas.
+// commits. Voir texteSectionFichiers pour le détail de ces cas.
 async function sectionFichiersModifies(projet, it) {
   const etatCommits = appelerAncien('etatCommitsDeclares', it) || { etat: 'absente', hashes: [] };
   const resultats = etatCommits.etat === 'hashes'

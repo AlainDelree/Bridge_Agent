@@ -312,6 +312,17 @@ function estIssuePourWindows(it) {
   return noms.includes('for-windows');
 }
 
+// Vrai si l'issue porte le label needs-human (échec définitif) — détection
+// PARTAGÉE avec les autres lecteurs de ce label (ex. retirerNeedsHuman),
+// utilisée par etatCommitsDeclares (issue #830) pour distinguer une ligne
+// « Commits » absente par échec AVANT exécution (pas une anomalie de CCL)
+// d'une ligne absente sur une issue réussie (vraie anomalie).
+function estIssueEnEchec(it) {
+  const noms = ((it && it.labels) || [])
+    .map(l => ((l && l.name) || l || '').toLowerCase());
+  return noms.includes('needs-human');
+}
+
 // Préfixe emoji de l'OS CIBLE d'une issue : 🪟 for-windows (CCW), rien sinon.
 // Dimension DISTINCTE du type (chef/ouvrier) : les deux se cumulent (ex. un
 // ouvrier for-windows affiche 👷🪟). On ne pose pas d'icône pour for-linux :
@@ -2007,7 +2018,7 @@ function hashesDeCommit(it) {
 }
 
 // Classifie la ligne « Commits … » pour l'inventaire de fichiers de la case à
-// cocher (issue #788) — quatre cas à ne JAMAIS confondre :
+// cocher (issue #788) — cinq cas à ne JAMAIS confondre :
 //   - 'windows' : l'issue porte le label for-windows (estIssuePourWindows) →
 //                 PRIORITAIRE sur tous les autres cas, quels que soient les
 //                 commits indiqués (hashes, "aucun" ou ligne absente) : ses
@@ -2019,18 +2030,27 @@ function hashesDeCommit(it) {
 //   - 'aucun'   : la ligne le dit explicitement (issue en lecture seule,
 //                 gabarit watcher.py::ligne_commits "… : aucun (lecture seule)")
 //                 → cas normal, aucune section ni alerte à ajouter.
+//   - 'echec'   : ligne absente/non reconnue ET l'issue porte le label
+//                 needs-human → elle a échoué AVANT que CCL ne soit lancé (ex.
+//                 abandon de configuration), le watcher a posté son propre
+//                 commentaire de refus sans ligne « Commits » : pas une
+//                 anomalie de CCL, rien à inventorier (issue #830).
 //   - 'absente' : ligne absente du commentaire, OU présente mais ni "aucun" ni
-//                 un hash reconnu (gabarit changé, reconnaissance cassée…) →
-//                 une anomalie à signaler dans le texte copié, jamais en
-//                 silence (un bug de reconnaissance des commits est déjà resté
+//                 un hash reconnu (gabarit changé, reconnaissance cassée…),
+//                 pour une issue SANS needs-human (donc réussie) → une vraie
+//                 anomalie à signaler dans le texte copié, jamais en silence
+//                 (un bug de reconnaissance des commits est déjà resté
 //                 invisible deux mois, issue #784, cf. hashesDeCommit).
 function etatCommitsDeclares(it) {
   if (estIssuePourWindows(it)) return { etat: 'windows', hashes: hashesDeCommit(it) };
   const ligneCommits = ligneCommitsDeclares(it);
-  if (!ligneCommits) return { etat: 'absente', hashes: [] };
+  if (!ligneCommits) {
+    return { etat: estIssueEnEchec(it) ? 'echec' : 'absente', hashes: [] };
+  }
   const hashes = hashesDeCommit(it);
   if (hashes.length) return { etat: 'hashes', hashes };
-  return { etat: /\baucun\b/i.test(ligneCommits) ? 'aucun' : 'absente', hashes: [] };
+  if (/\baucun\b/i.test(ligneCommits)) return { etat: 'aucun', hashes: [] };
+  return { etat: estIssueEnEchec(it) ? 'echec' : 'absente', hashes: [] };
 }
 
 // Colore un texte de diff (sortie de `git show`) ligne par ligne : ajouts en

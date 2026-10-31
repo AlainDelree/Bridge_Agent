@@ -392,6 +392,17 @@ test('texteSectionFichiers : etat « absente » → anomalie signalée, jamais e
   const texte = texteSectionFichiers('absente', []);
   assert.match(texte, /===== Fichiers modifiés =====/);
   assert.match(texte, /absente ou non reconnue/);
+  assert.match(texte, /⚠/);
+});
+
+test('texteSectionFichiers : etat « echec » → texte neutre, sans symbole d\'alerte, pas une anomalie de CCL (issue #830)', () => {
+  const texte = texteSectionFichiers('echec', []);
+  assert.equal(texte,
+    '===== Fichiers modifiés =====\n\n'
+    + 'Cette issue a échoué avant l\'exécution : son commentaire de clôture ne contient pas de '
+    + 'ligne « Commits », donc aucun inventaire des fichiers n\'est possible (ce n\'est pas une '
+    + 'anomalie de CCL).');
+  assert.doesNotMatch(texte, /⚠/, 'pas un cas d\'anomalie — aucun symbole d\'alerte');
 });
 
 test('texteSectionFichiers : etat « hashes » avec renommage → ancien → nouveau explicite', () => {
