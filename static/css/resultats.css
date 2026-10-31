@@ -101,6 +101,16 @@
    logique métier. Petite case tout à gauche de la ligne, curseur pointeur, ne
    rétrécit pas. L'état est persisté côté navigateur (localStorage). */
 .ligne-issue .coche-resultat{flex-shrink:0;margin:0;cursor:pointer}
+/* Repère « prêt à copier » (issue #835 point 2) : discret, pas seulement par
+   la couleur — petit symbole à contour, accompagné d'un texte d'aide (title).
+   Toujours présent dans le DOM (masqué par défaut), mis à jour sans
+   reconstruire la ligne (voir majReperesVisibles, resultats_coches.js). Vert
+   de la palette déjà en usage pour un état « prêt »/« ok » (tr-ok, est-sur) ;
+   placé juste après la case, sans gêner les autres icônes de la ligne. */
+.ligne-issue .repere-pret-copie{flex-shrink:0;display:inline-flex;align-items:center;
+  justify-content:center;width:13px;height:13px;border-radius:50%;
+  border:1.5px solid #3B8C2F;color:#3B8C2F;font-size:9px;line-height:1;
+  font-weight:700;cursor:default}
 /* Résultat marqué comme traité/lu (issue #154, révisé #155, contraste renforcé
    #156) : l'ancienne règle opacity:.5 délavait TOUTE la ligne, badges colorés
    compris (projet turquoise, Diff/All, pastille), les rendant illisibles. On

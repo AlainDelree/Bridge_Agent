@@ -184,6 +184,18 @@
       maintenant prêt, décoche puis recoche la case. » — décocher puis recocher
       doit alors copier **immédiatement** (texte conservé en cache), sans
       refaire la préparation.
+- [ ] **Repère « prêt à copier » et périmètre/ordre de la précharge (issue
+      #835)** : sur une issue non cochée dont le texte est déjà préparé et
+      valide, un petit repère (pastille à contour vert `✓`) apparaît juste
+      après la case (info-bulle « Rapport prêt : la copie sera immédiate ») ;
+      cocher la case fait **disparaître le repère immédiatement**. Désélectionner
+      la pastille d'un projet (filtre) : les issues de ce projet **ne sont plus
+      préparées** (aucun nouveau repère n'y apparaît) ; les re-sélectionner
+      relance leur préparation. Avec plusieurs projets sélectionnés et
+      plusieurs issues en attente de préparation, **les plus anciennes doivent
+      obtenir leur repère avant les plus récentes** (observable en rechargeant
+      la page avec le réseau ralenti dans les DevTools, pour voir les repères
+      apparaître un par un dans cet ordre).
 - [ ] **Pastilles ↔ « Cocher tout »** (issue #636) : avec plusieurs projets
       chargés, cliquer **« ✓ Cocher tout »** → **aucune pastille des projets
       actifs (filtrés) ne reste** (même après une longue coupure). Le périmètre

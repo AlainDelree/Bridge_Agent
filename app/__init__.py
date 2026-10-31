@@ -78,6 +78,13 @@ def create_app() -> Flask:
     from app.statique import enregistrer_aides_statiques
     enregistrer_aides_statiques(app)
 
+    # Mesure continue de la charge de l'interface (issue #835 point 3) :
+    # crochets before_request/after_request légers, compteurs protégés par un
+    # verrou. Le thread d'échantillonnage lui-même N'EST PAS démarré ici
+    # (voir app/charge_interface.py) — explicitement par new_issue.py.
+    from app.charge_interface import enregistrer_hooks as _enregistrer_hooks_charge
+    _enregistrer_hooks_charge(app)
+
     _enregistrer_routes(app)
     return app
 
@@ -125,6 +132,7 @@ def _enregistrer_routes(app: Flask) -> None:
     from app.github_status import route_statut_github
     from app.vibe_modele import (etat_vibe_modele, activer_vibe_modele,
                                  ajouter_vibe_modele, retirer_vibe_modele)
+    from app.charge_interface import route_resume_precharge
     from app.vues import index
 
     app.add_url_rule("/login", "login", login, methods=["GET"])
@@ -242,3 +250,7 @@ def _enregistrer_routes(app: Flask) -> None:
     app.add_url_rule("/vibe-modele/activer", "activer_vibe_modele", login_requis(activer_vibe_modele), methods=["POST"])
     app.add_url_rule("/vibe-modele/ajouter", "ajouter_vibe_modele", login_requis(ajouter_vibe_modele), methods=["POST"])
     app.add_url_rule("/vibe-modele/retirer", "retirer_vibe_modele", login_requis(retirer_vibe_modele), methods=["POST"])
+    # ─── Mesure de charge de l'interface, résumé envoyé par la page (issue
+    # #835 point 4) : à la fin de chaque série de préparations de la précharge
+    # (file vide) — mêmes règles de connexion que le reste de l'interface.
+    app.add_url_rule("/mesure-precharge", "route_resume_precharge", login_requis(route_resume_precharge), methods=["POST"])

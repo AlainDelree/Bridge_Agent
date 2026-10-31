@@ -701,6 +701,13 @@ function basculerFiltreProjet(nom) {
   appliquerFiltresListe();
   const sel = document.querySelector('#liste-issues .ligne-issue.selectionnee');
   if (!sel || sel.style.display === 'none') selectionnerPremiereVisible();
+  // La précharge du rapport est restreinte aux pastilles sélectionnées (issue
+  // #835 point 1) : la relancer ici fait préparer les nouveaux projets
+  // affichés, et abandonne au passage les préparations en file d'un projet
+  // qui vient d'être masqué (celles déjà prêtes sont conservées).
+  if (window.Bridge && window.Bridge.resultatsCoches) {
+    window.Bridge.resultatsCoches.precharderVisibles();
+  }
 }
 
 // Bascule « Tous » entre deux états (issue #262) : un vrai toggle, pas une
@@ -736,6 +743,10 @@ function basculerTousLesFiltres() {
   appliquerFiltresListe();
   const sel = document.querySelector('#liste-issues .ligne-issue.selectionnee');
   if (!sel || sel.style.display === 'none') selectionnerPremiereVisible();
+  // Voir basculerFiltreProjet ci-dessus (issue #835 point 1).
+  if (window.Bridge && window.Bridge.resultatsCoches) {
+    window.Bridge.resultatsCoches.precharderVisibles();
+  }
 }
 
 // Projets actifs dans le filtre de l'onglet Résultats (issue #428) : le
@@ -845,6 +856,12 @@ function restaurerCasesCocheesResultats() {
     cb.checked = coche;
     ligne.classList.toggle('resultat-traite', coche);
   });
+  // Repère « prêt à copier » (issue #835 point 2) : relu ici aussi, pour
+  // qu'un redessin partiel (lignes reconstruites) reflète immédiatement l'état
+  // déjà connu du module dédié, sans attendre son prochain cycle de 30s.
+  if (window.Bridge && window.Bridge.resultatsCoches && window.Bridge.resultatsCoches.majReperesVisibles) {
+    window.Bridge.resultatsCoches.majReperesVisibles();
+  }
 }
 
 // Construit l'élément DOM d'UNE ligne d'issue (case à cocher, pastille,
@@ -989,6 +1006,13 @@ function construireLigneIssueDOM(it) {
     + ' onclick="event.stopPropagation()"'
     + ' onchange="basculerCocheResultat(event, \''
     + escapeHtml(it.projet) + '\', ' + Number(numero) + ')">'
+    // Repère « prêt à copier » (issue #835 point 2) : span TOUJOURS présent
+    // (masqué par défaut), même patron que badge-modele/badge-sans-redacteur
+    // ci-dessous — mis à jour sans reconstruire la ligne par
+    // window.Bridge.resultatsCoches.majReperesVisibles (module dédié, seul à
+    // connaître l'état des textes préparés).
+    + '<span class="repere-pret-copie" style="display:none"'
+    + ' title="Rapport prêt : la copie sera immédiate">✓</span>'
     + '<span class="ligne-date" title="' + escapeHtml(dateCreation) + '"'
     + ' style="font-size:11px;color:#999;'
     + 'min-width:66px;font-family:monospace">' + escapeHtml(heureCreation) + '</span>'

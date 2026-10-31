@@ -32,8 +32,14 @@ export class ErreurApi extends Error {
   }
 }
 
+// Compteur de requêtes réseau (issue #835 point 4) : incrémenté pour CHAQUE
+// appel (succès ou échec) — sert au résumé de la précharge, envoyé par
+// resultats_coches.js à la fin de chaque série de préparations.
+let nbRequetes = 0;
+
 async function requete(url, options = {}) {
   const { silencieux = false, ...optionsFetch } = options;
+  nbRequetes += 1;
   let reponse;
   try {
     reponse = await fetch(url, optionsFetch);
@@ -83,4 +89,8 @@ export const api = {
   supprimer: (url, opts) => lireJson(url, { ...opts, method: 'DELETE' }),
   requete,
   lireJson,
+  // Nombre total de requêtes faites depuis le chargement de la page (issue
+  // #835 point 4) — un compteur simple, pas un historique : l'appelant
+  // mesure une série en comparant deux lectures (avant/après).
+  nombreRequetes: () => nbRequetes,
 };

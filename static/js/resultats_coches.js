@@ -455,6 +455,7 @@ function basculer(event, projet, numero) {
     ? ajouterDansEtat(avant, projet, numero)
     : retirerDansEtat(avant, projet, numero));
   if (ligne) ligne.classList.toggle('resultat-traite', coche);
+  if (ligne) majRepereLigne(ligne);   // disparaît dès la coche (issue #835 point 2)
   appelerAncien('majPastillesFiltres');
 
   // 3) Persistance serveur (asynchrone) ; en cas d'échec, resync depuis la vérité
@@ -1026,22 +1027,59 @@ async function precharger(projet, numero, variante) {
   memoriserTextePrepare(projet, numero, variante, valeur);
 }
 
+// Borne totale de préparations en attente OU prêtes à la fois (issue #835
+// point 1) — nommée et exportée pour rester facile à changer. Fait foi tant
+// qu'aucune mesure (voir journal de charge) ne justifie une autre valeur.
+export const BORNE_TOTALE_PRECHARGEMENT = 6;
+
 // Sélection PURE des (projet, numero, variante) à précharger (issue #832
-// point 1) : issues visibles NON cochées, bornées aux `limite` premières de
-// chaque projet (périmètre des pastilles, même borne que premieresParProjet),
-// une seule fois par (issue, variante). La variante 'reponse' (celle que la
-// case copie, issue #787) est préchargée dans LES DEUX MODES ; la variante
-// 'all' ne l'est qu'en mode repli (inchangé depuis #636 — Diff/All restent
-// sur leur chemin existant, jamais préchargés). `estCocheFn`/`dejaPresentFn`
-// injectées pour rester testable sous Node sans store ni réseau.
-export function candidatsPrechargement(issuesTriees, limite, mode, estCocheFn, dejaPresentFn) {
-  const parProjet = premieresParProjet(issuesTriees, limite);
-  const candidats = [];
+// point 1, restreinte et ordonnée par l'issue #835 point 1) : issues des
+// SEULS projets dont la pastille est sélectionnée (`projetsSelectionnes`),
+// bornées aux `limite` premières de chaque projet — même fenêtre que
+// premieresParProjet, donc que les pastilles —, NON cochées, pas déjà
+// préparées/en file. Triées de la plus ANCIENNE à la plus RÉCENTE (date de
+// création croissante, à égalité le numéro), tous projets sélectionnés
+// confondus — pas projet par projet, puisqu'Alain traite les issues
+// affichées dans cet ordre. `borneTotale` plafonne le nombre total de
+// préparations en attente ou prêtes à la fois : `dejaEnAttenteOuPretes`
+// (déjà en file ou déjà préparées et valides, compté par l'appelant) réduit
+// d'autant la place restante pour CET appel. `projetsSelectionnes` vide →
+// aucun candidat. La variante 'reponse' (celle que la case copie, issue
+// #787) est préchargée dans LES DEUX MODES ; la variante 'all' ne l'est
+// qu'en mode repli (inchangé depuis #636 — Diff/All restent sur leur chemin
+// existant, jamais préchargés). `estCocheFn`/`dejaPresentFn` injectées pour
+// rester testable sous Node sans store ni réseau.
+export function candidatsPrechargement(
+  issuesTriees, limite, mode, estCocheFn, dejaPresentFn,
+  projetsSelectionnes, borneTotale, dejaEnAttenteOuPretes = 0,
+) {
+  const selection = projetsSelectionnes instanceof Set
+    ? projetsSelectionnes : new Set(projetsSelectionnes || []);
+  if (!selection.size) return [];
+  const visibles = (issuesTriees || []).filter((it) => selection.has(it.projet));
+  const parProjet = premieresParProjet(visibles, limite);
+  const clesFenetre = new Set();
   for (const [projet, numeros] of Object.entries(parProjet)) {
-    for (const n of numeros) {
-      if (estCocheFn(projet, n)) continue;
-      if (!dejaPresentFn(projet, n, 'reponse')) candidats.push({ projet, numero: n, variante: 'reponse' });
-      if (mode === 'repli' && !dejaPresentFn(projet, n, 'all')) candidats.push({ projet, numero: n, variante: 'all' });
+    for (const n of numeros) clesFenetre.add(projet + '|' + n);
+  }
+  const fenetre = visibles
+    .filter((it) => clesFenetre.has(it.projet + '|' + normaliserNumero(it.number)))
+    .sort((a, b) => {
+      const diff = new Date(a.createdAt) - new Date(b.createdAt);
+      return diff !== 0 ? diff : normaliserNumero(a.number) - normaliserNumero(b.number);
+    });
+  const candidats = [];
+  const placeRestante = () => borneTotale - dejaEnAttenteOuPretes - candidats.length;
+  for (const it of fenetre) {
+    if (placeRestante() <= 0) break;
+    const projet = it.projet;
+    const n = normaliserNumero(it.number);
+    if (estCocheFn(projet, n)) continue;
+    if (placeRestante() > 0 && !dejaPresentFn(projet, n, 'reponse')) {
+      candidats.push({ projet, numero: n, variante: 'reponse' });
+    }
+    if (placeRestante() > 0 && mode === 'repli' && !dejaPresentFn(projet, n, 'all')) {
+      candidats.push({ projet, numero: n, variante: 'all' });
     }
   }
   return candidats;
@@ -1051,37 +1089,162 @@ export function candidatsPrechargement(issuesTriees, limite, mode, estCocheFn, d
 // #832 point 1 — « ne rien changer à la préparation de all en mode repli »
 // mis à part, qui tournait jusqu'ici en parallèle ; étendue aux deux modes,
 // une préparation lente ne doit pas en multiplier d'autres en même temps).
-let chainePrechargement = Promise.resolve();
+// Remplace l'ancienne chaîne de promesses (issue #835 point 1) par un
+// tableau explicite : la sélection des pastilles est relue à CHAQUE défilée
+// d'un élément (pas seulement à son ajout), pour abandonner sans la préparer
+// une entrée dont le projet a été désélectionné pendant qu'elle attendait en
+// file — les préparations déjà PRÊTES (dans textesPrepares) ne sont, elles,
+// jamais retirées.
+let filePrechargement = [];
+let prechargementActif = false;
+
+// Mesure d'UNE série de préparations (issue #835 point 4), du premier ajout
+// à la file vide : nombre d'issues réellement préparées (pas celles
+// abandonnées, voir traiterFilePrechargement), durée totale et max de
+// chacune, requêtes réseau faites (api.nombreRequetes(), avant/après — seul
+// moyen de compter sans dupliquer un compteur dans chaque producteur de
+// texte). null tant qu'aucune série n'est en cours.
+let lotPrechargement = null;
 
 function enqueuePrechargementUn(projet, numero, variante) {
   const cle = cleIC(projet, numero) + '|' + variante;
+  if (prechargementEnCours.has(cle)) return;
   prechargementEnCours.add(cle);
-  chainePrechargement = chainePrechargement
-    .then(() => precharger(projet, numero, variante))
+  filePrechargement.push({ projet, numero, variante, cle });
+  if (!lotPrechargement) {
+    lotPrechargement = { nbIssues: 0, dureeTotaleMs: 0, dureeMaxMs: 0, requetesDebut: api.nombreRequetes() };
+  }
+  if (!prechargementActif) {
+    prechargementActif = true;
+    traiterFilePrechargement();
+  }
+}
+
+function traiterFilePrechargement() {
+  const item = filePrechargement.shift();
+  if (!item) {
+    prechargementActif = false;
+    terminerLotPrechargement();
+    return;
+  }
+  const selection = new Set(appelerAncien('projetsActifsDansFiltreResultats') || nomsProjets());
+  if (!selection.has(item.projet)) {
+    prechargementEnCours.delete(item.cle);
+    traiterFilePrechargement();
+    return;
+  }
+  const debutItem = Date.now();
+  precharger(item.projet, item.numero, item.variante)
     .catch(() => {})
-    .finally(() => prechargementEnCours.delete(cle));
+    .finally(() => {
+      const dureeMs = Date.now() - debutItem;
+      if (lotPrechargement) {
+        lotPrechargement.nbIssues += 1;
+        lotPrechargement.dureeTotaleMs += dureeMs;
+        if (dureeMs > lotPrechargement.dureeMaxMs) lotPrechargement.dureeMaxMs = dureeMs;
+      }
+      prechargementEnCours.delete(item.cle);
+      majReperesVisibles();   // repère « prêt à copier » (issue #835 point 2)
+      traiterFilePrechargement();
+    });
+}
+
+// Fin de série (file vide, issue #835 point 4) : envoie au serveur un résumé
+// court — nombre d'issues préparées, requêtes réseau faites, durée totale et
+// max, mode de copie. Échoue en silence (silencieux:true + catch), sans
+// aucune incidence sur l'interface : ce n'est qu'une mesure, jamais un
+// chemin critique.
+function terminerLotPrechargement() {
+  if (!lotPrechargement) return;
+  const lot = lotPrechargement;
+  lotPrechargement = null;
+  api.post('/mesure-precharge', {
+    nb_issues_preparees: lot.nbIssues,
+    nb_requetes: api.nombreRequetes() - lot.requetesDebut,
+    duree_totale_ms: lot.dureeTotaleMs,
+    duree_max_ms: lot.dureeMaxMs,
+    mode: modeCopie(),
+  }, { silencieux: true }).catch(() => {});
+}
+
+// Nombre de préparations actuellement en attente (en file ou en cours) ou
+// déjà prêtes et valides (issue #835 point 1) — réduit la place disponible
+// dans candidatsPrechargement pour que la borne totale porte sur l'ensemble,
+// pas sur le seul appel courant.
+function compterEnAttenteOuPretes(mode) {
+  let total = prechargementEnCours.size;
+  const maintenant = Date.now();
+  for (const [cle, prep] of textesPrepares) {
+    const sep = cle.lastIndexOf('#');
+    const projet = cle.slice(0, sep);
+    const numero = Number(cle.slice(sep + 1));
+    const cv = cleValiditeIssue(store.lireIssue(projet, numero));
+    if (texteEstValide(prep.reponse, cv, maintenant, AGE_MAX_TEXTE_PREPARE_MS)) total += 1;
+    if (mode === 'repli' && texteEstValide(prep.all, cv, maintenant, AGE_MAX_TEXTE_PREPARE_MS)) total += 1;
+  }
+  return total;
 }
 
 // Précharge en tâche de fond, dans les DEUX modes de copie, le texte copié
-// par la case (variante 'reponse') des issues visibles NON cochées — pour
+// par la case (variante 'reponse') des issues VISIBLES (projets dont la
+// pastille est sélectionnée, fenêtre « par projet : N ») NON cochées — pour
 // qu'en mode moderne (Firefox notamment), le texte soit déjà prêt AVANT le
 // clic plutôt que préparé après (fenêtre d'activation du geste, issue #832).
 // En mode repli, précharge EN PLUS la variante 'all' (inchangé depuis #636).
-// Jamais lancée quand la page est cachée (document.hidden) : pas de fetch
-// inutile sur un onglet en arrière-plan. Renommée depuis
-// precharderVisiblesRepli (issue #832 : son nom ne disait plus la vérité une
-// fois étendue au mode moderne).
+// Restreinte aux pastilles sélectionnées, ordonnée par ancienneté et bornée
+// au total (issue #835 point 1). Jamais lancée quand la page est cachée
+// (document.hidden) : pas de fetch inutile sur un onglet en arrière-plan.
+// Renommée depuis precharderVisiblesRepli (issue #832 : son nom ne disait
+// plus la vérité une fois étendue au mode moderne).
 function precharderVisibles() {
   if (typeof document !== 'undefined' && document.hidden) return;
   const mode = modeCopie();
+  const selection = new Set(appelerAncien('projetsActifsDansFiltreResultats') || nomsProjets());
   const candidats = candidatsPrechargement(
     issuesTriees(), limiteParProjet(), mode, estCoche,
     (projet, numero, variante) => {
       const cle = cleIC(projet, numero);
       const prep = textesPrepares.get(cle);
       return (prep && prep[variante] !== undefined) || prechargementEnCours.has(cle + '|' + variante);
-    });
+    },
+    selection, BORNE_TOTALE_PRECHARGEMENT, compterEnAttenteOuPretes(mode));
   for (const c of candidats) enqueuePrechargementUn(c.projet, c.numero, c.variante);
+}
+
+// ─── Repère « prêt à copier » sur la ligne (issue #835 point 2) ─────────────
+// Avant même le clic : un petit repère discret près de la case signale que le
+// texte qu'elle copie (variante 'reponse', la SEULE que la case copie, issue
+// #787) est déjà préparé et valide (texteEstValide) — le prochain clic sera
+// alors immédiat. Disparaît à la coche, à la péremption (âge max ou clé de
+// validité qui change) ou si la ligne est retirée du DOM (rien à mettre à
+// jour, elle n'existe plus). Mis à jour à la fin de chaque préparation (voir
+// traiterFilePrechargement) et au plus toutes les 30s tant que la page est
+// visible (voir initialiser ci-dessous).
+// Vrai si le repère doit être affiché pour une issue — PURE (reçoit tout en
+// argument, aucun accès store/DOM), pour rester testable sous Node comme le
+// reste de la section 1 : la coche ET la validité du texte sont décidées ICI,
+// un seul endroit, plutôt que dispatchées entre l'appelant et texteEstValide.
+export function reperePretACopier(coche, entreeTexte, cleValiditeActuelle, maintenant, ageMaxMs) {
+  return !coche && texteEstValide(entreeTexte, cleValiditeActuelle, maintenant, ageMaxMs);
+}
+
+function majRepereLigne(ligne) {
+  const span = ligne && ligne.querySelector ? ligne.querySelector('.repere-pret-copie') : null;
+  if (!span) return;
+  const projet = ligne.dataset.projet;
+  const numero = ligne.dataset.numero;
+  const cle = cleIC(projet, numero);
+  const prep = textesPrepares.get(cle);
+  const entree = prep && prep.reponse;
+  const pret = reperePretACopier(
+    estCoche(projet, numero), entree, cleValiditeIssue(store.lireIssue(projet, numero)),
+    Date.now(), AGE_MAX_TEXTE_PREPARE_MS);
+  span.style.display = pret ? '' : 'none';
+}
+
+function majReperesVisibles() {
+  if (typeof document === 'undefined') return;
+  document.querySelectorAll('.ligne-issue').forEach((ligne) => majRepereLigne(ligne));
 }
 
 // ─── Feedbacks ────────────────────────────────────────────────────────────────
@@ -1181,17 +1344,28 @@ async function initialiser() {
   // 4) Événement /stream `case_decochee` (issue #720, déposé dans le store par
   //    sse.js) — décoche instantanée d'un onglet Résultats déjà ouvert.
   store.abonnerCle('derniereNotifCase', (notif) => surCaseDecochee(notif));
+  // 5) Repère « prêt à copier » (issue #835 point 2) : au plus toutes les 30s
+  //    tant que la page est visible — en plus de la mise à jour à la fin de
+  //    chaque préparation (voir traiterFilePrechargement).
+  setInterval(() => {
+    if (typeof document === 'undefined' || !document.hidden) majReperesVisibles();
+  }, 30000);
 }
 
 // Objet publié sous window.Bridge.resultatsCoches (via installerPont dans index.js) :
 // estCoche/basculer/cocherTout/remettreAZero/copierReponseBadge/copierAllBadge/
 // copierDiffBadge sont l'API consommée par l'ancien app.js pendant la
 // transition (case à cocher, badges de copie, boutons « Cocher tout » et
-// remise à zéro). initialiser/rechargerCases/precharderVisibles ne passent
-// jamais par le pont (initialiser est appelée directement par index.js via
-// import ES ; les deux autres ne sont utilisées qu'en interne à ce module) —
-// exposées ici uniquement pour rester testables directement (même principe
-// que rechargerCases depuis #636).
+// remise à zéro). majReperesVisibles s'y ajoute (issue #835 point 2) : appelée
+// par app.js (restaurerCasesCocheesResultats) après tout redessin/resync du
+// DOM, pour que le repère reflète l'état déjà connu de ce module sur des
+// lignes fraîchement reconstruites. precharderVisibles est aussi appelée
+// directement par app.js (basculerFiltreProjet/basculerTousLesFiltres, issue
+// #835 point 1) quand la sélection des pastilles change. initialiser/
+// rechargerCases ne passent jamais par le pont (initialiser est appelée
+// directement par index.js via import ES ; rechargerCases n'est utilisée
+// qu'en interne à ce module) — exposées ici uniquement pour rester testables
+// directement (même principe que depuis #636).
 export const resultatsCoches = {
   initialiser,
   estCoche,
@@ -1203,4 +1377,5 @@ export const resultatsCoches = {
   copierDiffBadge,
   rechargerCases,
   precharderVisibles,
+  majReperesVisibles,
 };

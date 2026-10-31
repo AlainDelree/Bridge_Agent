@@ -785,6 +785,51 @@ le panneau) reste en place — simplement plus utilisé par l'interface,
 > clic ne puisse jamais être réinterprété comme Lancer/Supprimer/↑/↓. Tests :
 > `static/js/tests/attente.test.js` (`texteACopierAttente`).
 
+> **Précharge du rapport — périmètre, ordre et borne (issue #835 point 1,
+> suite #832)** : jusqu'ici, `precharderVisibles` (`static/js/resultats_coches.js`)
+> préparait les premières issues non cochées de TOUS les projets connus,
+> affichés ou non — sans tenir compte des pastilles sélectionnées
+> (`projetsFiltresActifs`/`projetsActifsDansFiltreResultats`, `app.js`) ni
+> d'un ordre précis. `candidatsPrechargement` (pure, testée sous Node) reçoit
+> désormais en paramètres la liste des projets sélectionnés et une **borne
+> totale** (`BORNE_TOTALE_PRECHARGEMENT = 6`, constante exportée) : elle ne
+> retient que les issues des projets sélectionnés, dans la fenêtre « par
+> projet : N premières » (même périmètre que `premieresParProjet`, donc que
+> les pastilles), non cochées, pas déjà préparées — triées de la plus
+> ANCIENNE à la plus RÉCENTE (date de création croissante, à égalité le
+> numéro), tous projets sélectionnés confondus, puisqu'Alain traite les
+> résultats affichés dans cet ordre. La file d'exécution
+> (`filePrechargement`, un tableau explicite remplaçant l'ancienne chaîne de
+> promesses) relit la sélection courante à CHAQUE défilée : une entrée dont
+> le projet a été désélectionné pendant qu'elle attendait son tour est
+> abandonnée SANS être préparée ; les préparations déjà PRÊTES
+> (`textesPrepares`) ne sont, elles, jamais retirées. Toujours une
+> préparation à la fois, rien quand `document.hidden`, comme avant.
+
+> **Repère « prêt à copier » (issue #835 point 2)** : sur la ligne d'une
+> issue non cochée, un petit repère (pastille à contour vert `✓`, classe CSS
+> `.repere-pret-copie`, toujours présente dans le DOM — masquée par défaut,
+> même patron que `.badge-modele`) apparaît juste après la case quand le
+> texte que celle-ci copie (variante `reponse`, la SEULE copiée par la case
+> depuis #787) est préparé et encore valide (`texteEstValide`). Décision pure
+> `reperePretACopier(coche, entreeTexte, cleValiditeActuelle, maintenant,
+> ageMaxMs)` : caché si cochée, si périmé (âge maximum ou clé de validité qui
+> change) ou si rien n'est préparé. Mis à jour par `majReperesVisibles` (non
+> exportée vers le pont, mais publiée dans l'objet `resultatsCoches` pour
+> qu'`app.js` l'appelle après un redessin) : à la fin de chaque préparation,
+> et au plus toutes les 30s tant que la page est visible
+> (`setInterval`/`document.hidden`, posé dans `initialiser`). Un texte d'aide
+> (`title`) porte le message complet — le repère n'est donc pas qu'une
+> question de couleur.
+
+> **Mesure côté page de la précharge (issue #835 point 4)** : à la fin de
+> chaque série de préparations (file vide), un résumé court — nombre
+> d'issues préparées, requêtes réseau faites (compteur `api.nombreRequetes()`
+> de `static/js/socle/api.js`, avant/après la série), durée totale et
+> maximale d'une préparation, mode de copie — est envoyé en `POST
+> /mesure-precharge` (`silencieux:true`, échec sans incidence sur
+> l'interface). Voir §14 pour le format de ligne et le rapport.
+
 > **Note parallélisme** : HTML et JS se découpent proprement par zone. Le CSS
 > est plus contraint : la cascade impose de garder l'ordre source, donc quelques
 > règles partagées (`button`, `.message`, primitives) vivent dans `base.css` /
@@ -1451,6 +1496,85 @@ un redémarrage interromprait la tâche en cours. Logique pure, testée sans DOM
 Les deux boutons existants sont inchangés dans leur fonctionnement — seule
 une info-bulle a été ajoutée sur « ↺ Relancer tous les CCL » rappelant qu'il
 allume aussi les watchers éteints.
+
+## 14. Mesure continue de charge de l'interface web (issue #835)
+
+### 14.1 Pourquoi
+
+La précharge du rapport (#832, étendue #835 — voir §6.5) coûte du processeur
+serveur (fetch + reconstruction du texte, appels `git` sous-jacents) et des
+requêtes réseau supplémentaires, sans qu'aucun chiffre n'existe pour juger si
+un frein est nécessaire. Plutôt qu'une mesure ponctuelle, un échantillonneur
+tourne en continu pendant l'usage normal ; un script agrège ensuite le
+journal produit. Cette issue ne limite PAS la précharge elle-même — le frein
+éventuel se décidera sur ces chiffres, dans une issue ultérieure.
+
+### 14.2 Échantillonneur serveur — `mesure_charge_interface.py`
+
+Module racine, **indépendant de Flask** (même répartition que
+`etat_cases_cochees.py` / `app/cases_cochees.py`) : `app/charge_interface.py`
+est la seule couche qui importe `flask`.
+
+- **Compteurs de requêtes** (`enregistrer_requete`/`relever_et_remettre_a_zero`) :
+  protégés par un verrou (`threading.Lock`) — le serveur de développement
+  Flask tourne avec `threaded=True` (`new_issue.py`), plusieurs requêtes
+  peuvent appeler `enregistrer_requete` en même temps. Posés par les
+  crochets `before_request`/`after_request` (`app/charge_interface.py`,
+  `enregistrer_hooks(app)`, appelée depuis `create_app()`) — volontairement
+  légers : une lecture d'horloge (`time.monotonic`) et une addition, jamais
+  d'E/S disque par requête. La **route enregistrée est le GABARIT Flask**
+  (`request.url_rule.rule`, ex. `/issue/<nom_projet>/<numero>`), **jamais
+  l'URL résolue** : substituer le vrai nom de projet/numéro d'issue violerait
+  l'exigence « aucun numéro d'issue, aucun titre, aucun secret » de cette
+  mesure.
+- **CPU serveur + fils** (`differences_cpu(avant, apres)`, pure) : différence
+  de deux appels `os.times()` (`user+system`, propres ET enfants — couvre les
+  sous-processus `git` lancés par le serveur), jamais une valeur absolue
+  isolée.
+- **Boucle d'échantillonnage** (`_boucle_echantillonnage`, thread daemon
+  démarré par `demarrer_echantillonnage()`) : une ligne JSON par minute
+  (`INTERVALLE_ECHANTILLON_S = 60`) dans `logs/charge_interface.log`, rotation
+  par taille réutilisant `JournalRotatifDate` de `watcher.py` (5 Mo,
+  5 archives — `TAILLE_MAX_OCTETS`/`NB_ARCHIVES`). Une exception sur UN
+  échantillon est rattrapée et journalisée sur stderr, jamais propagée : la
+  boucle continue indéfiniment, le serveur n'est jamais affecté. Démarré
+  **explicitement par `new_issue.py`** (comme `surveiller_heartbeat`/
+  `surveiller_transitions`), pas depuis `create_app()` — sinon chaque
+  application Flask créée par un test en démarrerait un.
+
+Exemple de ligne d'échantillon :
+```json
+{"type": "echantillon", "horodatage": "2026-11-01T10:00:00+00:00", "cpu_s": 0.42, "nb_requetes": 7, "duree_totale_s": 1.23, "duree_max_s": 0.5, "route_plus_lente": "/issue/<nom_projet>/<numero>"}
+```
+
+### 14.3 Résumé côté page — `POST /mesure-precharge`
+
+À la fin de chaque série de préparations (file vide, voir §6.5), la page
+envoie un résumé court : `nb_issues_preparees`, `nb_requetes`,
+`duree_totale_ms`, `duree_max_ms` (nombres ≥ 0) et `mode`
+(`'moderne'|'repli'`). La route (`app/charge_interface.py::route_resume_precharge`,
+`login_requis` comme toute route utilisateur) rejette un corps au-delà de
+`TAILLE_MAX_CORPS_RESUME` (1 Ko), tout champ inconnu ou manquant, toute
+valeur non conforme — rien d'autre n'est jamais journalisé. Écrit un second
+type de ligne (`"type": "resume_precharge"`) dans le MÊME journal. L'envoi
+échoue en silence côté page (`silencieux:true` + `.catch`) : ce n'est qu'une
+mesure, jamais un chemin critique.
+
+### 14.4 Rapport — `scripts/rapport_charge_interface.py`
+
+Lecture seule, ne modifie jamais rien. Lit le journal actif ET ses archives
+de rotation (`lire_journal_et_archives`, glob `charge_interface.log.*`),
+regroupe par jour (date UTC de l'horodatage) et affiche, par jour : nombre
+d'échantillons, processeur moyen/pic/95e centile **par minute, en
+pourcentage d'un cœur** (`cpu_s` de l'échantillon ÷ 60s — un dépassement de
+100% signale plusieurs cœurs sollicités en parallèle, pas une anomalie),
+requêtes totales et route la plus lente du jour, puis pour les séries de
+précharge : leur nombre, durée médiane et maximale, nombre moyen de
+requêtes. `--jours N` (défaut 7) limite le rapport aux N journées les plus
+**RÉCENTES PRÉSENTES DANS LE JOURNAL** — pas aux N derniers jours
+calendaires à l'instant où le rapport tourne (un serveur resté éteint une
+semaine produirait sinon un rapport vide alors que les données existent).
+Sans journal : message clair, code de sortie 0.
 
 ---
 

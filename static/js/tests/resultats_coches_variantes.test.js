@@ -49,6 +49,11 @@ const INVENTAIRE_DEFAUT = {
 // afin de pouvoir inspecter son contenu (zoneSecoursToast/texteDesToasts).
 let elementsCrees = [];
 
+// Résumés de précharge capturés (issue #835 point 4) : un élément par appel
+// POST /mesure-precharge intercepté par le mock fetch ci-dessous. Réinitialisé
+// à chaque fixerEnvironnement comme elementsCrees/telechargements.
+let resumesPrecharge = [];
+
 function fixerEnvironnement(options = {}) {
   const {
     etatCommits = { etat: 'hashes', hashes: ['aaa1111', 'bbb2222'] },
@@ -58,6 +63,7 @@ function fixerEnvironnement(options = {}) {
   } = typeof options === 'function' ? { diffParHash: options } : options;
   const telechargements = [];
   elementsCrees = [];
+  resumesPrecharge = [];
   global.document = {
     getElementById: () => null,
     querySelectorAll: () => [],
@@ -92,8 +98,17 @@ function fixerEnvironnement(options = {}) {
   window.hashesDeCommit = () => etatCommits.hashes;
   window.etatCommitsDeclares = () => etatCommits;
   window.majPastillesFiltres = () => {};
+  // Pastille du seul projet de ce fichier toujours sélectionnée (issue #835
+  // point 1) : sans ce mock, candidatsPrechargement ne verrait aucun projet
+  // sélectionné (repli sur nomsProjets(), vide ici — document.getElementById
+  // mocké à null) et precharderVisibles ne préparerait jamais rien.
+  window.projetsActifsDansFiltreResultats = () => [PROJET];
   global.ClipboardItem = class { constructor(data) { this.data = data; } };
-  global.fetch = async (url) => {
+  global.fetch = async (url, options) => {
+    if (url === '/mesure-precharge') {
+      resumesPrecharge.push(JSON.parse((options && options.body) || '{}'));
+      return { ok: true, text: async () => '{}' };
+    }
     if (url.startsWith('/issue/')) {
       return { ok: true, text: async () => JSON.stringify({ number: 787, title: 'Titre', labels: [] }) };
     }
@@ -600,4 +615,54 @@ test('precharderVisibles : ne lance rien quand la page est cachée (document.hid
   } finally {
     document.hidden = false;
   }
+});
+
+// ─── Issue #835 point 1 : abandon d'une préparation en file d'un projet désélectionné ─
+test('précharge : un projet désélectionné pendant l\'attente en file n\'est jamais préparé', async () => {
+  fixerEnvironnement({ etatCommits: { etat: 'aucun', hashes: [] } });
+  global.navigator = { clipboard: { write: async () => {} } };
+  const AUTRE_PROJET = PROJET + '_autre';
+  let selectionActuelle = [PROJET, AUTRE_PROJET];
+  window.projetsActifsDansFiltreResultats = () => selectionActuelle;
+  const NUMERO_LENT = 506001;        // PROJET, le plus ancien : traité en premier
+  const NUMERO_ABANDONNE = 506002;   // AUTRE_PROJET, en file derrière
+
+  const { comptes, debloquer } = intercepterFetchIssue(NUMERO_LENT);
+  store.remplacerIssues([
+    { projet: PROJET, number: NUMERO_LENT, title: 'Lent', createdAt: '2026-01-01T00:00:00Z', state: 'OPEN', labels: [] },
+    { projet: AUTRE_PROJET, number: NUMERO_ABANDONNE, title: 'Abandonné', createdAt: '2026-01-02T00:00:00Z', state: 'OPEN', labels: [] },
+  ]);
+  resultatsCoches.precharderVisibles();
+  assert.ok(await attendreQue(() => comptes[NUMERO_LENT] === 1),
+    'la préparation du plus ancien doit démarrer avant celle du plus récent');
+
+  // Le projet du second élément (encore en file, son tour n'est pas arrivé)
+  // est désélectionné AVANT que son tour n'arrive.
+  selectionActuelle = [PROJET];
+  debloquer();
+
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  assert.equal(comptes[NUMERO_ABANDONNE], undefined,
+    'un projet désélectionné pendant que son tour attendait ne doit jamais être préparé (aucun fetch /issue)');
+});
+
+// ─── Issue #835 point 4 : résumé de série envoyé au serveur ──────────────────
+test('précharge : résumé envoyé au serveur à la fin de la série (file vide)', async () => {
+  fixerEnvironnement({ etatCommits: { etat: 'aucun', hashes: [] } });
+  global.navigator = { clipboard: { write: async () => {} } };
+  const NUMERO_A = 507001;
+  const NUMERO_B = 507002;
+  store.remplacerIssues([
+    { projet: PROJET, number: NUMERO_A, title: 'A', createdAt: '2026-01-01T00:00:00Z', state: 'OPEN', labels: [] },
+    { projet: PROJET, number: NUMERO_B, title: 'B', createdAt: '2026-01-02T00:00:00Z', state: 'OPEN', labels: [] },
+  ]);
+  resultatsCoches.precharderVisibles();
+  assert.ok(await attendreQue(() => resumesPrecharge.length === 1),
+    'un résumé doit être envoyé une fois la série de préparations terminée');
+  const resume = resumesPrecharge[0];
+  assert.equal(resume.nb_issues_preparees, 2);
+  assert.equal(resume.mode, 'moderne');
+  assert.ok(resume.nb_requetes >= 2, 'au moins une requête /issue par issue préparée');
+  assert.ok(typeof resume.duree_totale_ms === 'number' && resume.duree_totale_ms >= 0);
+  assert.ok(typeof resume.duree_max_ms === 'number' && resume.duree_max_ms >= 0);
 });

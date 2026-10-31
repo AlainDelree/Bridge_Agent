@@ -38,6 +38,7 @@ from app.issues_inbox import (watcher_inbox_actif, demarrer_watcher_inbox,
                               arreter_watcher_inbox)
 from etat_cases_cochees import nettoyer_anciennes as nettoyer_cases_cochees
 from watcher import nettoyer_verrous_perimes
+from mesure_charge_interface import demarrer_echantillonnage
 
 DOSSIER_SCRIPT = Path(__file__).resolve().parent
 
@@ -228,6 +229,13 @@ def main():
     # sonde périodiquement et l'exécute dès la fin de la tâche. Daemon →
     # n'empêche jamais l'arrêt du processus.
     Thread(target=surveiller_redemarrages_differes, daemon=True).start()
+
+    # Échantillonneur continu de charge de l'interface (issue #835 point 3) :
+    # une ligne JSON par minute dans logs/charge_interface.log (CPU serveur +
+    # fils, requêtes/minute). Daemon → s'arrête avec le serveur ; ne doit
+    # jamais retarder le démarrage (démarrage du thread lui-même instantané,
+    # la boucle ne fait rien avant sa première minute écoulée).
+    demarrer_echantillonnage()
 
     if not args.no_browser:
         Timer(1.2, lambda: webbrowser.open(f"{schema}://localhost:{args.port}")).start()
