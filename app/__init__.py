@@ -62,7 +62,7 @@ def create_app() -> Flask:
     app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(days=30)
 
     # État partagé (anciennes variables globales de new_issue.py).
-    app.config["MODE_EXTERNE"]   = False   # login exigé uniquement en --externe
+    app.config["ACCES_RESEAU"]   = False   # login exigé dès que l'écoute dépasse 127.0.0.1 (--lan/--externe, issue #831)
     app.config["MOT_DE_PASSE"]   = ""      # hash sha256 chargé au démarrage
     app.config["ARRET_DEMANDE"]  = False   # positionné par un signal / le bouton Quitter
     app.config["LAST_HEARTBEAT"] = 0.0     # horodatage du dernier heartbeat reçu

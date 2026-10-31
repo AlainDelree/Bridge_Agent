@@ -160,7 +160,8 @@
       cliquer ✅/Diff/All copie bien le contenu attendu, **sans échec
       intermittent** (la copie est engagée au clic, pas après le fetch réseau).
 - [ ] **Copie en `--lan`** (HTTP non-localhost, API presse-papier moderne
-      absente) : lancer `python3 new_issue.py --lan`, ouvrir depuis une autre
+      absente, mot de passe obligatoire depuis #831) : lancer `python3
+      new_issue.py --lan`, ouvrir depuis une autre
       machine via `http://<ip>:5100`. Cocher une case copie quand même le rapport
       (repli `execCommand`, texte préchargé) ; au tout premier clic sur une issue
       dont le texte n'est pas encore préchargé, un toast « préparation en cours »
@@ -498,9 +499,11 @@ plus d'`onclick=`/`onchange=`/`oninput=` inline.)*
 ## Modes de lancement
 
 - [ ] **Local** (`python3 new_issue.py`) : tout ce qui précède OK.
-- [ ] **`--lan`** (`python3 new_issue.py --lan`) : accès depuis un autre appareil
-      du réseau local ; interface identique ; modules servis (statut 200,
-      `text/javascript`).
+- [ ] **`--lan`** (`python3 new_issue.py --lan`) : refuse de démarrer sans
+      `MOT_DE_PASSE` configuré (issue #831) ; une fois configuré, accès depuis
+      un autre appareil du réseau local nécessite une connexion (login en
+      HTTP, même page que `--externe`) ; interface identique après connexion ;
+      modules servis (statut 200, `text/javascript`), y compris avant connexion.
 - [ ] **`--externe`** (HTTPS + login) : après connexion, interface identique ;
       modules et CSS chargés en HTTPS ; **session expirée** → la page redirige
       vers le login mais les fichiers statiques restent servis (pas d'erreur MIME

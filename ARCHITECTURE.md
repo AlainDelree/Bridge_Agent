@@ -810,6 +810,9 @@ Les fichiers statiques ne sont **pas** derrière `login_requis` : les modules et
 CSS sont donc servis (statut 200, `text/javascript` / `text/css`) en local,
 `--lan` et `--externe`, **même session expirée** (la page protégée redirige vers
 `/login`, mais pas ses ressources statiques). Vérifié par un test serveur.
+`--lan` exige désormais un mot de passe comme `--externe` (issue #831,
+`ACCES_RESEAU`) — ce point précis n'en change rien : seules les PAGES sont
+protégées, jamais les fichiers statiques, quel que soit le mode.
 
 ### 6.7 Procédure type — sortir une fonctionnalité de l'ancien code
 

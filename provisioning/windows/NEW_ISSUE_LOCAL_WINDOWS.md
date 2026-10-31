@@ -9,6 +9,11 @@ Ce document couvre l'usage **interactif** de l'interface web
 **distinct** du service `CCW-Watcher` (headless, provisionné par
 `provisionner.ps1`) : les deux peuvent coexister sur le même PC.
 
+Depuis l'issue #831, `--lan` exige un mot de passe configuré (refus de
+démarrer sinon, cf. `python3 new_issue.py --set-password`) et impose une
+connexion (même page de login qu'en `--externe`) à toute machine qui ouvre
+l'interface sur ce PC via le réseau local.
+
 ## 1. Provisioning (script)
 
 `provisionner_new_issue_local.ps1` (même dossier) installe les dépendances

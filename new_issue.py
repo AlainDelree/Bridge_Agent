@@ -5,7 +5,7 @@ Lit les configs configs/*.conf, propose un formulaire pour chaque projet.
 
 Usage :
     python3 new_issue.py                  # mode local (127.0.0.1, HTTP, sans SSL)
-    python3 new_issue.py --lan            # accès réseau local (0.0.0.0, HTTP, sans mdp)
+    python3 new_issue.py --lan            # accès réseau local (0.0.0.0, HTTP, mdp obligatoire)
     python3 new_issue.py --externe        # exposition réseau (0.0.0.0, HTTPS + mdp)
     python3 new_issue.py --port 5100
     python3 new_issue.py --no-browser
@@ -42,6 +42,27 @@ from watcher import nettoyer_verrous_perimes
 DOSSIER_SCRIPT = Path(__file__).resolve().parent
 
 
+def _mode_reseau(args) -> tuple[str, str, bool]:
+    """Détermine (host, schema, acces_reseau) à partir des arguments CLI,
+    sans aucun effet de bord (testable sans démarrer de serveur). --lan et
+    --externe écoutent tous deux au-delà de 127.0.0.1 (issue #831)."""
+    if args.lan:
+        return "0.0.0.0", "http", True
+    if args.externe:
+        return "0.0.0.0", "https", True
+    return "127.0.0.1", "http", False
+
+
+def _erreur_mot_de_passe_manquant(acces_reseau: bool, mot_de_passe: str) -> str | None:
+    """None si le démarrage peut continuer, sinon le message d'erreur à
+    afficher avant sys.exit(1) : --lan et --externe exigent tous deux un mot
+    de passe configuré dès que l'écoute dépasse 127.0.0.1 (issue #831)."""
+    if acces_reseau and not mot_de_passe:
+        return ("Erreur : MOT_DE_PASSE non configuré.\n"
+                "Lancez d'abord : python3 new_issue.py --set-password")
+    return None
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Interface web de création d'issues — Bridge Agent"
@@ -60,10 +81,11 @@ def main():
                              "sans SSL)")
     parser.add_argument("--lan", action="store_true",
                         help="Accès réseau local uniquement : host 0.0.0.0, "
-                             "HTTP, sans mot de passe, sans tunnel Cloudflare. "
-                             "Destiné à un LAN de confiance (ex. PC fixe "
-                             "Windows sur le même réseau). Incompatible avec "
-                             "--externe.")
+                             "HTTP, mot de passe OBLIGATOIRE (circule en "
+                             "clair sur le réseau local, HTTP non chiffré), "
+                             "sans tunnel Cloudflare. Destiné à un LAN de "
+                             "confiance (ex. PC fixe Windows sur le même "
+                             "réseau). Incompatible avec --externe.")
     args = parser.parse_args()
 
     if args.lan and args.externe:
@@ -119,29 +141,23 @@ def main():
     #     un usage sur place (devant le ThinkPad) — pas d'exposition réseau. Le
     #     mot de passe n'est PAS requis (mais reste appliqué s'il est configuré,
     #     via le décorateur @login_requis : aucune régression en mode local).
-    #   • LAN (--lan)         : host 0.0.0.0, HTTP simple, sans SSL, sans
-    #     tunnel Cloudflare et sans mot de passe (MODE_EXTERNE reste False,
-    #     donc @login_requis ne l'exige pas — cf. app/auth.py). Accès confiné
+    #   • LAN (--lan)         : host 0.0.0.0, HTTP simple, sans SSL, sans tunnel
+    #     Cloudflare, mot de passe OBLIGATOIRE (ACCES_RESEAU=True, donc
+    #     @login_requis l'exige — cf. app/auth.py, issue #831). Accès confiné
     #     au réseau local (ex. PC fixe Windows) ; rien n'est exposé vers
-    #     l'extérieur.
+    #     l'extérieur. Le mot de passe circule néanmoins EN CLAIR sur ce réseau
+    #     local (HTTP non chiffré) — risque connu, non résolu par cette issue.
     #   • externe (--externe) : host 0.0.0.0, HTTPS + mot de passe OBLIGATOIRES.
     #     Destiné à l'accès distant (téléphone via tunnel).
-    if args.lan:
-        host        = "0.0.0.0"
-        schema      = "http"
-        ssl_context = None
-    elif args.externe:
-        app.config["MODE_EXTERNE"] = True
-        host   = "0.0.0.0"
-        schema = "https"
+    host, schema, acces_reseau = _mode_reseau(args)
+    app.config["ACCES_RESEAU"] = acces_reseau
 
-        # En mode externe, refuser de démarrer si aucun mot de passe n'est
-        # configuré : l'interface serait exposée au réseau sans authentification.
-        if not app.config["MOT_DE_PASSE"]:
-            print("Erreur : MOT_DE_PASSE non configuré.")
-            print("Lancez d'abord : python3 new_issue.py --set-password")
-            sys.exit(1)
+    erreur_mdp = _erreur_mot_de_passe_manquant(acces_reseau, app.config["MOT_DE_PASSE"])
+    if erreur_mdp:
+        print(erreur_mdp)
+        sys.exit(1)
 
+    if args.externe:
         # Emplacement du certificat auto-signé (HTTPS). Généré une fois via :
         #   openssl req -x509 -newkey rsa:4096 -keyout ssl/key.pem \
         #     -out ssl/cert.pem -days 3650 -nodes -subj "/CN=bridge-agent-local"
@@ -154,8 +170,6 @@ def main():
             sys.exit(1)
         ssl_context = (str(cert), str(cle))
     else:
-        host        = "127.0.0.1"
-        schema      = "http"
         ssl_context = None
 
     # Ctrl+C (SIGINT) ou SIGTERM : on prévient d'abord l'onglet via /events en
@@ -223,7 +237,7 @@ def main():
           f" ({mode_label})")
     if args.lan:
         print(f"Accessible depuis le réseau local sur {schema}://<IP-de-cette-machine>:{args.port}"
-              " (sans mot de passe — LAN de confiance uniquement).")
+              " — mot de passe obligatoire (circule en clair, HTTP non chiffré).")
     print("Ctrl-C pour arrêter.")
     app.run(
         host=host,
