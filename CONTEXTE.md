@@ -17,7 +17,7 @@ lui-même par ses propres issues (dogfooding).
   (`REP_TRAVAIL`), sinon poursuit sur le code local sans rien écraser.
 - **`new_issue.py`** — point d'entrée mince de l'interface web Flask (port
   5100), tourne en permanence sur le ThinkPad. `--externe` → tunnel
-  cloudflared (`app/tunnel.py`, https://bridge.frederiqueferette.be) + login.
+  cloudflared (`app/tunnel.py`, configuré par l'utilisateur) + login.
 - **`app/`** — package Flask. `create_app()` (`__init__.py`) : état partagé
   dans `app.config`, routes via `add_url_rule`. Modules : `auth`, `projets`
   (`.conf`), `watchers`, `issues`, `journal`, `cycle_vie` (heartbeat/SSE),

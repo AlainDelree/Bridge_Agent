@@ -17,13 +17,35 @@ from pathlib import Path
 # Racine du projet (dossier parent du package app/).
 DOSSIER_SCRIPT = Path(__file__).resolve().parent.parent
 
-URL_TUNNEL = "https://bridge.frederiqueferette.be"
-
 # Instance Flask détentrice de app.config['PROC_TUNNEL']. Mémorisée par
 # demarrer_tunnel() pour qu'arreter_tunnel() retrouve le processus hors
 # contexte de requête (gestionnaire de signal). Reste None en mode local
 # (le tunnel n'est jamais démarré) : arreter_tunnel() y est alors sans effet.
 _app = None
+
+
+def lire_url_tunnel(chemin_config=None):
+    """Lit ~/.cloudflared/config.yml ligne par ligne (sans bibliothèque YAML,
+    absente des dépendances du projet) et renvoie l'adresse `https://<hostname>`
+    de la première règle d'ingress rencontrée, ou None si le fichier est
+    absent, vide, mal formé ou sans clé `hostname`. Ne lit ni ne renvoie
+    aucune autre clé du fichier (il peut contenir des chemins d'identifiants)."""
+    if chemin_config is None:
+        chemin_config = Path.home() / ".cloudflared" / "config.yml"
+    try:
+        with open(chemin_config, "r", encoding="utf-8") as f:
+            for ligne in f:
+                ligne = ligne.strip()
+                if ligne.startswith("-"):
+                    ligne = ligne[1:].strip()
+                if not ligne.startswith("hostname:"):
+                    continue
+                valeur = ligne.split(":", 1)[1].strip().strip("'\"")
+                if valeur:
+                    return f"https://{valeur}"
+    except Exception:
+        pass
+    return None
 
 
 def demarrer_tunnel(app_instance):
@@ -69,7 +91,11 @@ def demarrer_tunnel(app_instance):
 
     app_instance.config["PROC_TUNNEL"] = proc_tunnel
     print(f"Tunnel cloudflared démarré (pid {proc_tunnel.pid})")
-    print(f"URL : {URL_TUNNEL}")
+    url_tunnel = lire_url_tunnel(config_tunnel)
+    if url_tunnel:
+        print(f"URL : {url_tunnel}")
+    else:
+        print(f"URL : impossible de la lire, consultez {config_tunnel}")
 
 
 def arreter_tunnel():
