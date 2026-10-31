@@ -49,6 +49,11 @@ const escapeHtml = dom.echapperHtml;
 
 function collecterFormulaire() {
   const notifs = [...document.querySelectorAll('input[name=notifs]:checked')].map(c => c.value);
+  // Dépôt cible (REPO_CIBLE, issue #829) : champ masqué/vidé par
+  // mettreAJourInfoProjet (app.js) pour un projet à périmètre fixe — lu tel
+  // quel ici, la validation (obligatoire pour un projet dynamique, chemin
+  // refusé) se fait côté serveur dans app/issues.py::envoyer().
+  const champRepoCible = document.getElementById('repo-cible');
   return {
     projet:          document.getElementById('projet').value,
     titre:           document.getElementById('titre').value.trim(),
@@ -58,6 +63,7 @@ function collecterFormulaire() {
     notifs:          notifs,
     corps:           document.getElementById('corps').value.trim(),
     modele_ponctuel: document.getElementById('modele-ponctuel').value,
+    repo_cible:      champRepoCible ? champRepoCible.value.trim() : '',
   };
 }
 
@@ -559,6 +565,18 @@ async function envoyerIssue() {
     if (!data.titre) {
       await afficherModalErreur('Titre manquant',
         'Le titre est obligatoire pour envoyer cette issue.');
+      return;
+    }
+
+    // Dépôt cible (REPO_CIBLE, issue #829) : vérification précoce côté
+    // client, en MIROIR de la validation serveur (app/issues.py::envoyer(),
+    // seule réellement autoritaire) — évite un aller-retour réseau pour
+    // l'oubli le plus courant. Le champ n'est visible que pour un projet à
+    // périmètre dynamique (voir mettreAJourInfoProjet, app.js).
+    const champRepoCible = document.getElementById('champ-repo-cible');
+    if (champRepoCible && champRepoCible.style.display !== 'none' && !data.repo_cible) {
+      await afficherModalErreur('Dépôt cible manquant',
+        'Ce projet est à périmètre dynamique : le champ « Dépôt cible » est obligatoire.');
       return;
     }
 
@@ -1271,6 +1289,12 @@ function viderFormulaire(cacherMsg=true) {
   // notif_pc revient à l'état mémorisé (coché par défaut), pas à décoché.
   appliquerNotifPc();
   document.getElementById('modele-ponctuel').value = '';
+  // Dépôt cible (REPO_CIBLE, issue #829) : vidé même si le projet reste
+  // dynamique (mettreAJourInfoProjet ci-dessus ne le vide QUE sur bascule
+  // vers un projet à périmètre fixe) — une issue n'en réutilise pas le
+  // chemin de la précédente par défaut.
+  const champRepoCible = document.getElementById('repo-cible');
+  if (champRepoCible) champRepoCible.value = '';
   // Réinitialise le champ de pièce jointe image (issue #191) : fichier choisi,
   // bouton (redésactivé) et message d'état.
   const inputImage = document.getElementById('image-jointe');

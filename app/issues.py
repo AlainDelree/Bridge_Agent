@@ -28,7 +28,8 @@ from watcher import (est_titre_chef, deduire_type_issue, PAUSE_ENTRE_TENTATIVES,
                      _est_depot_git, LABEL_ECRITURE, LABEL_SCRATCH,
                      LABEL_NOTIF_PC, LABEL_NOTIF_GSM, LABEL_NOTIF_TOUS,
                      LABEL_ECHEC, extraire_complexite,
-                     PLANCHER_TIMEOUT_ECRITURE)  # (issue #752)
+                     PLANCHER_TIMEOUT_ECRITURE,  # (issue #752)
+                     valider_repo_cible)  # (issue #829, étend #125/#567)
 # État partagé du quota GraphQL (issue #615) : rafraîchi après chaque appel gh
 # SIGNIFICATIF de ce module (création/fermeture d'issue).
 from etat_rate_limit import maj_rate_limit
@@ -197,7 +198,7 @@ MODES = {
 
 def formater_entete(mode, priorite, timeout, projet, *,
                      source="CC", dest="CCL", retour="CC",
-                     modele=None, complexite=None) -> str:
+                     modele=None, complexite=None, repo_cible=None) -> str:
     """Construit le tableau markdown "## En-tête" commun aux issues Bridge_Agent.
 
     Factorisation (diagnostic #579 §3.2, issue #601) du tableau auparavant
@@ -208,9 +209,13 @@ def formater_entete(mode, priorite, timeout, projet, *,
     en parallèle watcher.py (parsing des champs, extraire_complexite).
 
     `timeout` est le nombre de secondes SANS le suffixe "s" (ajouté ici).
-    `modele` et `complexite` sont optionnels : absents par défaut, chacun
-    n'ajoute sa ligne que s'il est fourni (COMPLEXITE sur une ligne séparée,
-    hors tableau principal, comme dans app/projet_ccw.py)."""
+    `modele`, `complexite` et `repo_cible` sont optionnels : absents par
+    défaut, chacun n'ajoute sa ligne que s'il est fourni (COMPLEXITE sur une
+    ligne séparée, hors tableau principal, comme dans app/projet_ccw.py).
+    `repo_cible` (issue #829, étend #125/#567) : chemin absolu réservé aux
+    projets à PERIMETRE_DYNAMIQUE=true, relu ensuite par
+    watcher.extraire_repo_cible(). Sans lui, la sortie de cette fonction
+    reste identique à l'existante pour tout appelant qui ne le fournit pas."""
     lignes = [
         "## En-tête\n",
         "| Champ    | Valeur |",
@@ -225,6 +230,8 @@ def formater_entete(mode, priorite, timeout, projet, *,
     ]
     if modele:
         lignes.append(f"| MODELE   | {modele} |")
+    if repo_cible:
+        lignes.append(f"| REPO_CIBLE | {repo_cible} |")
     if complexite:
         lignes.append("")
         lignes.append(f"| COMPLEXITE | {complexite} |")
@@ -248,9 +255,14 @@ def construire_body(data: dict) -> str:
     modele_ponctuel = data.get("modele_ponctuel", "").strip()
     corps           = data.get("corps", "").strip()
     nom_projet      = data.get("projet", "").strip()
+    # REPO_CIBLE (issue #829) : chemin absolu saisi dans le champ web « Dépôt
+    # cible », visible seulement pour un projet à PERIMETRE_DYNAMIQUE=true
+    # (voir envoyer() pour la validation, appliquée AVANT cet appel).
+    repo_cible      = (data.get("repo_cible") or "").strip()
 
     entete = formater_entete(mode, priorite, timeout, nom_projet,
-                              modele=modele_ponctuel or None)
+                              modele=modele_ponctuel or None,
+                              repo_cible=repo_cible or None)
     # Ordre final : en-tête → corps. Les consignes ne sont plus empilées ici
     # (déplacées dans le prompt CCL, issue #211). Corps vide omis pour ne pas
     # laisser de ligne blanche superflue.
@@ -476,6 +488,32 @@ def envoyer():
     titre  = data.get("titre", "").strip()
     if not titre:
         return jsonify(succes=False, erreur="Le titre est obligatoire.")
+
+    # REPO_CIBLE (issue #829, étend #125/#567) : même validation que le fichier
+    # déposé dans issues_inbox/ (scripts/watcher_issues_inbox.py::valider) et
+    # que le chemin RELANCE (valider_relance) — un projet à
+    # PERIMETRE_DYNAMIQUE=true SANS ce champ échouerait de toute façon à
+    # l'exécution (watcher.py), on refuse donc la création plutôt que de
+    # produire une issue inexécutable ; à l'inverse, le champ fourni pour un
+    # projet qui n'est PAS à périmètre dynamique est refusé plutôt qu'ignoré
+    # en silence.
+    repo_cible = (data.get("repo_cible") or "").strip()
+    # getattr avec défaut (comme scripts/watcher_issues_inbox.py::valider) :
+    # watcher.Config porte TOUJOURS ce champ (dataclass, défaut False), mais
+    # un faux projet de test (SimpleNamespace, cf. tests/*) peut ne pas
+    # l'avoir — ne doit jamais faire planter la création pour autant.
+    if getattr(cfg, "perimetre_dynamique", False):
+        if not repo_cible:
+            return jsonify(succes=False, erreur=(
+                f"Projet « {cfg.nom} » en périmètre dynamique (PERIMETRE_DYNAMIQUE=true) : "
+                f"le champ « Dépôt cible » est obligatoire."))
+        ok_rc, raison_rc = valider_repo_cible(repo_cible)
+        if not ok_rc:
+            return jsonify(succes=False, erreur=f"Dépôt cible invalide : « {repo_cible} » ({raison_rc}).")
+    elif repo_cible:
+        return jsonify(succes=False, erreur=(
+            f"Dépôt cible fourni mais le projet « {cfg.nom} » n'a pas PERIMETRE_DYNAMIQUE=true "
+            f"— ce champ n'a d'effet que pour un projet à périmètre dynamique (issue #125)."))
 
     # Anti-doublon (issue #189) : refuser la création si une issue OUVERTE du même
     # dépôt porte déjà exactement ce titre, plutôt que d'empiler un doublon

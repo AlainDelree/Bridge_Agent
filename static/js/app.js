@@ -220,6 +220,22 @@ async function mettreAJourInfoProjet(reinitialiserTimeout = true) {
     } else {
       perEl.textContent = '';
     }
+    // Dépôt cible (REPO_CIBLE, issue #829, étend #125/#567) : champ
+    // obligatoire affiché UNIQUEMENT pour un projet à PERIMETRE_DYNAMIQUE=true
+    // (cfg.perimetre_dynamique, app/projets.py::get_config). Vidé à la
+    // bascule vers un projet à périmètre fixe pour qu'une valeur saisie ne
+    // reste pas invisiblement dans le formulaire (collecterFormulaire() la
+    // lirait quand même et le backend la refuserait — issue #786, même
+    // principe de « rien de silencieux »).
+    const champRepoCible = document.getElementById('champ-repo-cible');
+    if (champRepoCible) {
+      const dynamique = !!cfg.perimetre_dynamique;
+      champRepoCible.style.display = dynamique ? '' : 'none';
+      if (!dynamique) {
+        const champ = document.getElementById('repo-cible');
+        if (champ) champ.value = '';
+      }
+    }
     // Le timeout par défaut suit la valeur TIMEOUT_CLAUDE du projet sélectionné,
     // relevée à au moins PLANCHER_TIMEOUT_ECRITURE si le mode écriture est
     // choisi (issue #752, voir creation.js::appliquerTimeoutDefaut). On ne

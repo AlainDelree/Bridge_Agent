@@ -107,6 +107,7 @@ Champs d'en-tête reconnus, tous optionnels sauf `PROJET` :
 | `LABELS`    | Labels GitHub additionnels, séparés par des virgules                 |
 | `ATTENTE`   | Optionnel — condition en une phrase qui retarde la création de l'issue jusqu'à levée manuelle (§3.16) ; à poser par Claude Chat lui-même dès qu'une tâche est « à lancer après... ». |
 | `RELANCE`   | Optionnel — `#N` d'une issue `needs-human` déjà ouverte à corriger/relancer plutôt que d'en créer une nouvelle (voir §3.14). |
+| `REPO_CIBLE` | Chemin ABSOLU — **obligatoire** pour un projet à `PERIMETRE_DYNAMIQUE=true` (issue #125), **refusé** pour tout autre projet (issue #829). Réservé à ces projets : leur `REP_TRAVAIL` n'est qu'un placeholder, remplacé à l'exécution par ce chemin. Supporté à la création (fichier déposé **et** formulaire web, qui affiche alors un champ obligatoire « Dépôt cible ») — pas seulement corrigeable par `RELANCE` (§3.14). |
 
 > ⚠️ **Choix du MODE quand la tâche exécute un script (issue #722).** Si la
 > « Tâche demandée » contient un mot déclencheur (**exécuter, lancer,
@@ -147,7 +148,14 @@ Un fichier est rejeté (déplacé vers `rejected/`, jamais créé sur GitHub) si
 `#Titre:` absent/vide, `MODELE` fourni mais non reconnu, `TIMEOUT` fourni
 mais non numérique, ou si le titre est déjà porté par une issue **ouverte**
 du même dépôt (anti-doublon — utiliser `RELANCE`, §3.14, pour corriger une
-issue déjà ouverte plutôt que de la redéposer).
+issue déjà ouverte plutôt que de la redéposer). `REPO_CIBLE` (issue #829) :
+rejet si le projet est à `PERIMETRE_DYNAMIQUE=true` et que ce champ est
+absent (il serait de toute façon abandonné à l'exécution par le watcher,
+sans aucun repli) ; rejet aussi si ce champ est fourni pour un projet qui
+n'est **pas** à périmètre dynamique (ignoré sinon en silence), ou si le
+chemin fourni est refusé par la même validation qu'à l'exécution (absolu,
+existant, dossier, appartenant à l'utilisateur du watcher). Un lot (§3.13)
+applique cette règle à **chaque bloc** séparément.
 
 **Règle `REDACTEUR` (cas normal).** `REDACTEUR` doit être égal à `PROJET` —
 y compris pour les projets qui ont leur propre service CCW dédié (Scrabble,
@@ -646,10 +654,11 @@ ce service central travaillant dans un dossier partagé entre projets.
 (chemin RELATIF sous le dossier partagé, pour cibler un sous-projet précis
 sans que `claude` démarre avec un cwd divergent du dossier visé par une
 commande git) ; `REPO_CIBLE` (chemin ABSOLU, réservé aux projets à
-périmètre dynamique, issue #125) ; `CREATION` (déclenche le bootstrap
-automatique d'un nouveau service CCW dédié de bout en bout — généré
-uniquement par le formulaire web, case « Projet CCW », jamais à produire à
-la main).
+périmètre dynamique, issue #125 — **obligatoire** pour ces projets,
+**refusé** pour les autres, voir §3.3/§3.4) ; `CREATION` (déclenche le
+bootstrap automatique d'un nouveau service CCW dédié de bout en bout —
+généré uniquement par le formulaire web, case « Projet CCW », jamais à
+produire à la main).
 
 **Build : copie locale avant partage.** Un build lancé directement sur le
 dossier réseau partagé peut produire des fichiers corrompus — copier
@@ -699,6 +708,9 @@ telle quelle.
 (`TIMEOUT`, `MODELE`, `SOUS_DOSSIER`, `REPO_CIBLE`) mais n'en ajoute
 jamais : si l'issue d'origine n'avait pas de ligne `TIMEOUT`, la relance ne
 change rien — fermer l'issue et en déposer une nouvelle avec un `TIMEOUT`.
+`REPO_CIBLE` fait exception depuis l'issue #829 : il est désormais fourni
+dès la création (fichier déposé ou formulaire web, §3.3), `RELANCE` ne
+servant plus qu'à le CORRIGER après coup, comme avant.
 
 Voir §6 pour les champs `COMPLEXITE` et `RESEAU`, qui affinent cette
 calibration (constantes actuelles du code : `K_VARIABILITE` = 3, issue
@@ -706,9 +718,8 @@ calibration (constantes actuelles du code : `K_VARIABILITE` = 3, issue
 
 ---
 
-*Dernière mise à jour : 25 octobre 2026 — §4 : vérification et création
-automatique des labels GitHub manquants au démarrage de chaque watcher, et
-outil de rattrapage `rattraper_labels.py` pour les dépôts existants (issue
-#816).*
+*Dernière mise à jour : 31 octobre 2026 — §3.3/§3.4/§16/§19 : `REPO_CIBLE`
+transmis à la création (fichier déposé et formulaire web), obligatoire pour
+un projet à périmètre dynamique et refusé pour les autres (issue #829).*
 
 Historique complet : voir [`CHANGELOG.md`](CHANGELOG.md).
