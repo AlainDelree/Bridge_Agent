@@ -3711,7 +3711,8 @@ def lancer_claude(numero: int, titre: str, body: str, dry_run: bool,
                   max_tentatives: int = None,
                   tete_avant_traitement: str = None,
                   worktree_repris: bool = False,
-                  commits_ecart_worktree: int = 0) -> tuple[bool, str]:
+                  commits_ecart_worktree: int = 0,
+                  chemin_outil_lecture_exec: Path = None) -> tuple[bool, str]:
     """
     Lance Claude Code en mode non-interactif sur une issue.
 
@@ -3738,6 +3739,15 @@ def lancer_claude(numero: int, titre: str, body: str, dry_run: bool,
     CFG.rep_travail (répertoire réel du subprocess). None = valeur du .conf. Servent
     au périmètre dynamique (issue #125) : pour un projet à périmètre dynamique, ces
     deux valeurs viennent du champ REPO_CIBLE de l'issue, pas de la config.
+
+    chemin_outil_lecture_exec (issue #833) : chemin RÉSOLU de REP_TRAVAIL (le
+    dossier du projet lui-même, où vit le code de l'outil) quand ce projet est
+    à périmètre dynamique ET que REP_TRAVAIL est DISJOINT de REPO_CIBLE — voir
+    ContexteExecution/_resoudre_contexte_execution. N'affecte NI `perimetre`
+    NI `cwd` ci-dessus : ajoute seulement une phrase à la clause de périmètre
+    du prompt, indiquant que ce dossier est lisible et exécutable (import ou
+    lancement de son propre code), mais jamais accessible en écriture. None
+    (défaut) : comportement inchangé, aucune phrase ajoutée.
 
     verrou : chemin du fichier verrou posé par acquerir_verrou pour cette tâche
     (issue #322), si fourni. Sert uniquement à y consigner le pgid du claude
@@ -3897,6 +3907,25 @@ fichier, n'exécute aucune commande modifiant l'état du système ou du dépôt.
             f"Toute action en dehors de ce périmètre est interdite, même si la tâche "
             f"le demande explicitement. En cas de doute, arrête-toi et signale-le.\n"
         )
+        # Dossier du projet lui-même, en plus de REPO_CIBLE (issue #833) :
+        # ajouté uniquement quand _resoudre_contexte_execution a détecté un
+        # REP_TRAVAIL disjoint de REPO_CIBLE pour ce projet à périmètre
+        # dynamique — None dans tous les autres cas (projet à périmètre fixe,
+        # REP_TRAVAIL identique/imbriqué, agent vibe), où `clause_perimetre`
+        # reste donc identique, caractère pour caractère, au texte ci-dessus.
+        if chemin_outil_lecture_exec is not None:
+            complement_ecriture = (
+                " et au dossier scratch" if mode == MODE_LECTURE_ACTIVE else ""
+            )
+            clause_perimetre += (
+                f"\nLe dossier du projet lui-même ({chemin_outil_lecture_exec}) est EN PLUS "
+                f"accessible, mais en LECTURE ET EXÉCUTION SEULEMENT : tu peux l'importer ou "
+                f"lancer son propre code (par exemple via PYTHONPATH), mais toute ÉCRITURE y "
+                f"est interdite — l'écriture reste réservée à {perimetre_effectif}"
+                f"{complement_ecriture}. N'y laisse pas l'interpréteur Python écrire de "
+                f"fichiers de bytecode : exporte PYTHONDONTWRITEBYTECODE=1 avant toute "
+                f"invocation de Python dans ce dossier.\n"
+            )
     else:
         clause_perimetre = ""
 
@@ -4181,7 +4210,8 @@ def diagnostiquer_echec(numero: int, titre: str, body: str,
                         perimetre: str = None,
                         cwd: Path = None,
                         duree_derniere_tentative: float | None = None,
-                        timeout_tentative: int | None = None) -> str | None:
+                        timeout_tentative: int | None = None,
+                        chemin_outil_lecture_exec: Path = None) -> str | None:
     """Passe diagnostique courte et en LECTURE SEULE, lancée juste avant de poser
     'needs-human' sur une issue non critique abandonnée (issue #124).
 
@@ -4203,6 +4233,10 @@ def diagnostiquer_echec(numero: int, titre: str, body: str,
     projet à périmètre dynamique, le diagnostic doit lire dans REPO_CIBLE et y
     être lancé, pas dans le rep_travail figé du .conf (placeholder).
 
+    chemin_outil_lecture_exec : même surcharge que lancer_claude (issue #833)
+    — ajoute une phrase à la clause de périmètre quand REP_TRAVAIL est
+    disjoint de REPO_CIBLE. None (défaut) : comportement inchangé.
+
     duree_derniere_tentative / timeout_tentative (issue #777, incident
     chesscoach #123) : la version précédente de ce prompt se contentait de
     citer « tâche simplement trop volumineuse pour le timeout configuré »
@@ -4217,6 +4251,18 @@ def diagnostiquer_echec(numero: int, titre: str, body: str,
             f"\nPÉRIMÈTRE STRICT — tu ne dois lire que dans les répertoires "
             f"suivants : {perimetre_effectif}\n"
         )
+        # Même phrase complémentaire que lancer_claude (issue #833) —
+        # identique, caractère pour caractère, à ce qui précède quand
+        # chemin_outil_lecture_exec vaut None (cas de tout projet qui n'est
+        # pas à périmètre dynamique avec REP_TRAVAIL disjoint de REPO_CIBLE).
+        if chemin_outil_lecture_exec is not None:
+            clause_perimetre += (
+                f"\nLe dossier du projet lui-même ({chemin_outil_lecture_exec}) est "
+                f"également accessible, en LECTURE ET EXÉCUTION SEULEMENT (import ou "
+                f"lancement de son propre code, par exemple via PYTHONPATH) — exporte "
+                f"PYTHONDONTWRITEBYTECODE=1 avant toute invocation de Python dans ce "
+                f"dossier ; cette passe diagnostique n'écrit de toute façon nulle part.\n"
+            )
     else:
         clause_perimetre = ""
 
@@ -5631,11 +5677,29 @@ def _deduire_mode_et_logguer(numero: int, titre: str, body: str, labels: list[st
 class ContexteExecution:
     """Périmètre et cwd effectifs résolus pour une exécution de
     `_traiter_issue_synchrone` (issue #619), avec les avertissements à
-    reporter dans le compte-rendu de clôture."""
+    reporter dans le compte-rendu de clôture.
+
+    `chemin_outil_lecture_exec` (issue #833) : chemin RÉSOLU de REP_TRAVAIL
+    quand ce projet est à périmètre dynamique ET que REP_TRAVAIL (le dossier
+    du projet lui-même, où vit le code de l'outil) est DISJOINT de
+    REPO_CIBLE — ajouté au contexte en LECTURE et EXÉCUTION SEULEMENT, sans
+    toucher à `perimetre_effectif` (qui reste le seul REPO_CIBLE) ni à
+    `cwd_effectif` (qui reste REPO_CIBLE). None dans tous les autres cas
+    (projet à périmètre fixe, REP_TRAVAIL identique ou imbriqué avec
+    REPO_CIBLE, ou agent `vibe` — voir _resoudre_contexte_execution)."""
     perimetre_effectif: str
     cwd_effectif: Path
     avertissement_conflit: str
     avertissement_worktree_deja_pris: str
+    chemin_outil_lecture_exec: Path | None = None
+
+
+def _chemins_disjoints(a: Path, b: Path) -> bool:
+    """Vrai si les deux chemins RÉSOLUS `a` et `b` ne sont ni identiques, ni
+    l'un contenu dans l'autre (issue #833 — relation entre REP_TRAVAIL et
+    REPO_CIBLE d'un projet à périmètre dynamique, qu'aucun code existant ne
+    traitait avant cette issue)."""
+    return a != b and not a.is_relative_to(b) and not b.is_relative_to(a)
 
 
 def _resoudre_contexte_execution(numero: int, body: str, mode: str,
@@ -5648,10 +5712,15 @@ def _resoudre_contexte_execution(numero: int, body: str, mode: str,
     de SOUS_DOSSIER (#550), même ordre de priorité qu'historiquement. Toute
     erreur de config/issue ici est définitive (pas de retry) : commentaire
     explicite + label 'needs-human' pour stopper la reprise, DÉJÀ posés avant
-    de retourner None — l'appelant n'a plus qu'à retourner immédiatement."""
+    de retourner None — l'appelant n'a plus qu'à retourner immédiatement.
+
+    `chemin_outil_lecture_exec` (issue #833) : voir ContexteExecution — ajouté
+    au contexte SANS modifier `perimetre_effectif` ni `cwd_effectif` ci-dessus,
+    qui restent exactement ceux d'aujourd'hui."""
     perimetre_effectif = CFG.perimetre
     cwd_effectif       = CFG.rep_travail
     avertissement_conflit = ""
+    chemin_outil_lecture_exec: Path | None = None
 
     # Repli silencieux sur REP_TRAVAIL (issue #589) : rendu visible dans le
     # compte-rendu de clôture, sur le même modèle qu'avertissement_conflit
@@ -5716,6 +5785,37 @@ def _resoudre_contexte_execution(numero: int, body: str, mode: str,
         cwd_effectif       = repo_cible_resolu
         log.info(f"  Périmètre dynamique : REPO_CIBLE = {repo_cible_resolu} (périmètre + cwd de cette exécution).")
 
+        # Dossier du projet lui-même en plus du périmètre (issue #833) : un
+        # projet à périmètre dynamique (ex. diagnostique_programme, outil
+        # d'audit multi-dépôts) a son propre code dans REP_TRAVAIL, hors de
+        # REPO_CIBLE dès que l'issue vise un AUTRE dépôt — sans repli, CCL
+        # refuse de lire/exécuter son propre outil (clause de périmètre).
+        # Ajouté SEULEMENT si REP_TRAVAIL est DISJOINT de REPO_CIBLE (ni
+        # identique, ni l'un contenu dans l'autre) : dans tous les autres cas,
+        # REPO_CIBLE couvre déjà REP_TRAVAIL, rien à ajouter. Jamais pour
+        # l'agent `vibe` (issue #760/#833) : son `--workdir` n'offre aucune
+        # option d'ouverture en lecture seule d'un second répertoire — cette
+        # issue ne tente pas de contourner cette limite technique.
+        rep_travail_resolu = CFG.rep_travail.resolve()
+        if CFG.agent == "vibe":
+            log.info(
+                f"  Périmètre dynamique : REP_TRAVAIL ({rep_travail_resolu}) non ajouté "
+                f"au contexte — l'agent 'vibe' n'a aucune option de lecture seule par "
+                f"répertoire (issue #833), REP_TRAVAIL reste hors périmètre pour cet agent."
+            )
+        elif _chemins_disjoints(rep_travail_resolu, repo_cible_resolu):
+            chemin_outil_lecture_exec = rep_travail_resolu
+            log.info(
+                f"  Périmètre dynamique : REP_TRAVAIL ({rep_travail_resolu}) disjoint de "
+                f"REPO_CIBLE — ajouté au contexte en LECTURE et EXÉCUTION SEULEMENT "
+                f"(issue #833)."
+            )
+        else:
+            log.info(
+                f"  Périmètre dynamique : REP_TRAVAIL ({rep_travail_resolu}) identique ou "
+                f"imbriqué avec REPO_CIBLE — rien ajouté au périmètre (issue #833)."
+            )
+
         # Transparence (issue #125) : si un autre watcher actif partage ce dossier,
         # on ne bloque pas mais on signale le risque en tête du résultat.
         conflit = detecter_conflit_watcher(repo_cible_resolu, CFG.nom)
@@ -5764,7 +5864,8 @@ def _resoudre_contexte_execution(numero: int, body: str, mode: str,
             perimetre_effectif = str(chemin_resolu)
             log.info(f"  SOUS_DOSSIER : cwd de cette exécution = {chemin_resolu} (issue #550).")
 
-    return ContexteExecution(perimetre_effectif, cwd_effectif, avertissement_conflit, avertissement_worktree_deja_pris)
+    return ContexteExecution(perimetre_effectif, cwd_effectif, avertissement_conflit,
+                              avertissement_worktree_deja_pris, chemin_outil_lecture_exec)
 
 
 def _acquerir_verrou_pour_issue(numero: int, cwd_effectif: Path, timeout: int, mode: str):
@@ -5818,6 +5919,30 @@ def _preparer_lecture_active(numero: int, mode: str, dry_run: bool,
             return (chemin_scratch, statut_rep_travail_avant, False)
         statut_rep_travail_avant = _statut_git_rep_travail(cwd_effectif)
     return (chemin_scratch, statut_rep_travail_avant, True)
+
+
+def _preparer_controle_outil(chemin_outil_lecture_exec: Path | None, dry_run: bool) -> dict | None:
+    """Empreinte git AVANT la première tentative du dossier du projet ajouté
+    au contexte en lecture et exécution seulement (REP_TRAVAIL disjoint de
+    REPO_CIBLE pour un projet à périmètre dynamique, issue #833) —
+    réutilise `_statut_git_rep_travail` (#327), dans les TROIS modes
+    (contrairement au garde-fou scratch ci-dessus, réservé à la lecture
+    active) : ce dossier n'est jamais censé être modifié, quel que soit le
+    mode de l'issue. None si `chemin_outil_lecture_exec` est None (cas
+    courant — projet à périmètre fixe, ou REP_TRAVAIL identique/imbriqué
+    avec REPO_CIBLE), si `dry_run` (rien n'est réellement exécuté), ou si ce
+    dossier n'est pas un dépôt git exploitable — best-effort, jamais
+    bloquant, signalé une seule fois par traitement dans ce dernier cas."""
+    if chemin_outil_lecture_exec is None or dry_run:
+        return None
+    statut = _statut_git_rep_travail(chemin_outil_lecture_exec)
+    if statut is None:
+        log.info(
+            f"  Contrôle d'écriture impossible sur le dossier du projet "
+            f"{chemin_outil_lecture_exec} (pas un dépôt git exploitable) — "
+            f"aucun contrôle, best-effort (issue #833)."
+        )
+    return statut
 
 
 def _demarrer_traitement(numero: int, mode: str, mode_txt: str, dry_run: bool,
@@ -6090,9 +6215,15 @@ def _executer_une_tentative(numero: int, titre: str, body: str, dry_run: bool, m
                              tentative: int, max_tentatives: int | None = None,
                              tete_avant_traitement: str | None = None,
                              worktree_repris: bool = False,
-                             commits_ecart_worktree: int = 0) -> tuple[bool, str, str | None, float, bool]:
+                             commits_ecart_worktree: int = 0,
+                             chemin_outil_lecture_exec: Path | None = None) -> tuple[bool, str, str | None, float, bool]:
     """Une tentative `lancer_claude`, garde-fou de format de clôture (#581) et
     restauration best-effort des configs/*.conf modifiés (#318/#327).
+
+    chemin_outil_lecture_exec (issue #833) : simplement transmis à
+    `lancer_claude` — voir sa docstring (phrase complémentaire de la clause
+    de périmètre pour le dossier du projet ajouté en lecture et exécution
+    seulement).
 
     max_tentatives / tete_avant_traitement (issue #689) : simplement transmis
     à `lancer_claude` — voir sa docstring pour le rôle de ces deux valeurs
@@ -6129,7 +6260,8 @@ def _executer_une_tentative(numero: int, titre: str, body: str, dry_run: bool, m
                                    tentative=tentative, max_tentatives=max_tentatives,
                                    tete_avant_traitement=tete_avant_traitement,
                                    worktree_repris=worktree_repris,
-                                   commits_ecart_worktree=commits_ecart_worktree)
+                                   commits_ecart_worktree=commits_ecart_worktree,
+                                   chemin_outil_lecture_exec=chemin_outil_lecture_exec)
     duree_tentative = time.monotonic() - debut_tentative
 
     # `stderr_brut` (issue #761) : capturé ICI, AVANT les deux reclassifications
@@ -6265,6 +6397,64 @@ def _verifier_violation_scratch(numero: int, titre: str, labels: list[str],
     # retiré. Mode lecture active (jamais MODE_ECRITURE ici,
     # cf. `statut_rep_travail_avant` posé uniquement pour ce
     # mode) : n'occupe donc jamais de place MAX_WRITE_PARALLELE.
+    return True
+
+
+def _verifier_violation_outil(numero: int, titre: str, labels: list[str], mode: str,
+                               chemin_outil_lecture_exec: Path | None,
+                               statut_outil_avant: dict | None) -> bool:
+    """Garde-fou technique (issue #833, même esprit que `_verifier_violation_scratch`
+    #327 ci-dessus, dont il réutilise la restauration) : après CHAQUE tentative,
+    dans les TROIS modes, vérifie qu'aucune écriture n'a eu lieu dans le dossier
+    du projet ajouté au contexte en lecture et exécution seulement (REP_TRAVAIL
+    disjoint de REPO_CIBLE). Détecté ⇒ échec DÉFINITIF immédiat (pas de nouvelle
+    tentative), needs-human, commentaire et notification dédiés. Retourne True
+    si une violation a été détectée et traitée (l'appelant doit alors retourner
+    immédiatement), False sinon — y compris quand `chemin_outil_lecture_exec`
+    ou `statut_outil_avant` vaut None (rien à contrôler : projet à périmètre
+    fixe, REP_TRAVAIL identique/imbriqué, dossier non-git, ou dry-run)."""
+    if chemin_outil_lecture_exec is None or statut_outil_avant is None:
+        return False
+
+    chemins_restaures = _restaurer_rep_travail_modifie(numero, chemin_outil_lecture_exec, statut_outil_avant)
+    if not chemins_restaures:
+        return False
+
+    log.error(
+        f"  ✗ Issue #{numero} : écriture détectée dans le code de l'outil "
+        f"({chemin_outil_lecture_exec}, dossier en lecture seule) : "
+        f"{', '.join(chemins_restaures)} — restaurée, échec définitif "
+        f"(garde-fou issue #833)."
+    )
+    commenter_issue(
+        numero,
+        f"❌ Écriture détectée dans le code de l'outil — dossier en lecture seule.\n\n"
+        f"Le dossier du projet lui-même (`{chemin_outil_lecture_exec}`) est ajouté au "
+        f"périmètre dynamique de cette issue en LECTURE et EXÉCUTION SEULEMENT "
+        f"(REP_TRAVAIL disjoint de `REPO_CIBLE`, issue #833) — toute écriture y est "
+        f"interdite.\n\n"
+        f"Fichier(s) concerné(s) : `{', '.join(chemins_restaures)}`\n\n"
+        f"Restauré à son état d'avant traitement. Intervention humaine requise. "
+        f"Label `{LABEL_ECHEC}` posé : cette issue ne sera plus retraitée "
+        f"automatiquement tant que le label n'est pas retiré manuellement."
+    )
+    ajouter_label(numero, LABEL_ECHEC)
+    notifier(
+        labels,
+        titre=f"❌ {CFG.nom} #{numero} — écriture dans le code de l'outil (lecture seule)",
+        message=f"'{titre}' : écriture détectée dans le dossier du projet (lecture seule), restauré.",
+        urgence_bureau="critical",
+        priorite_ntfy="high",
+        numero=numero,
+    )
+    notifier_fin_sse(numero)
+    # PAS de retrait de issues_en_cours (issue #576) : `needs-human` posé,
+    # l'issue reste suivie tant que le label n'est pas retiré. Contrairement
+    # à `_verifier_violation_scratch` (jamais MODE_ECRITURE), ce garde-fou
+    # s'applique aussi en mode écriture : une place MAX_WRITE_PARALLELE doit
+    # alors rester occupée, même traitement que _gerer_abandon_max_essais.
+    if mode == MODE_ECRITURE:
+        _issue_write_bloquee_ajouter(numero)
     return True
 
 
@@ -6718,7 +6908,8 @@ def _gerer_abandon_max_essais(numero: int, titre: str, body: str, labels: list[s
                                avertissement_worktree_repris: str,
                                perimetre_effectif: str, cwd_effectif: Path,
                                debut_traitement: float,
-                               duree_derniere_tentative: float | None = None) -> None:
+                               duree_derniere_tentative: float | None = None,
+                               chemin_outil_lecture_exec: Path | None = None) -> None:
     """Nombre maximal de tentatives atteint (`CFG.max_essais`) : issue
     critique ⇒ nouvelle tentative au prochain cycle (retry infini, jamais de
     needs-human) ; sinon abandon définitif (passe diagnostique, label
@@ -6735,7 +6926,10 @@ def _gerer_abandon_max_essais(numero: int, titre: str, body: str, labels: list[s
     pour qu'il ne puisse jamais suggérer un dépassement de délai contredit
     par ce fait — incident chesscoach #123 (diagnostic ayant inventé un
     dépassement alors que la tentative avait duré 337s pour un délai de
-    1800s)."""
+    1800s).
+
+    `chemin_outil_lecture_exec` (issue #833) : simplement transmis à
+    `diagnostiquer_echec` (phrase complémentaire de la clause de périmètre)."""
     if critique:
         alerte_critique(numero, titre, tentative, labels)
         log.warning(f"  Issue critique #{numero} — nouvelle tentative au prochain cycle.")
@@ -6752,7 +6946,8 @@ def _gerer_abandon_max_essais(numero: int, titre: str, body: str, labels: list[s
                                      perimetre=perimetre_effectif,
                                      cwd=cwd_effectif,
                                      duree_derniere_tentative=duree_derniere_tentative,
-                                     timeout_tentative=timeout)
+                                     timeout_tentative=timeout,
+                                     chemin_outil_lecture_exec=chemin_outil_lecture_exec)
     message_echec = (
         f"❌ Échec après {CFG.max_essais} tentatives.\n\n"
         f"{avertissement_worktree_deja_pris}"
@@ -6871,6 +7066,7 @@ def _traiter_issue_synchrone(issue: dict, dry_run: bool, chemin_worktree: Path |
         return
     perimetre_effectif = contexte.perimetre_effectif
     cwd_effectif        = contexte.cwd_effectif
+    chemin_outil_lecture_exec = contexte.chemin_outil_lecture_exec
     # avertissement_mode (issue #785, écart MODE déclaré/retenu) concaténé ICI
     # plutôt que filé comme paramètre séparé à travers les ~8 fonctions
     # _poster_resultat_*/_traiter_echec_* : avertissement_conflit est déjà
@@ -6892,6 +7088,7 @@ def _traiter_issue_synchrone(issue: dict, dry_run: bool, chemin_worktree: Path |
         chemin_scratch, statut_rep_travail_avant, ok = _preparer_lecture_active(numero, mode, dry_run, cwd_effectif)
         if not ok:
             return
+        statut_outil_avant = _preparer_controle_outil(chemin_outil_lecture_exec, dry_run)
 
         est_relance, debut_traitement, nb_projets_actifs_debut, empreinte_configs_avant, \
             tete_avant_traitement = \
@@ -6912,9 +7109,13 @@ def _traiter_issue_synchrone(issue: dict, dry_run: bool, chemin_worktree: Path |
                 perimetre_effectif, cwd_effectif, verrou, chemin_scratch,
                 chemin_worktree, empreinte_configs_avant, tentative,
                 max_tentatives, tete_avant_traitement,
-                worktree_repris, commits_ecart_worktree)
+                worktree_repris, commits_ecart_worktree, chemin_outil_lecture_exec)
 
             if _verifier_violation_scratch(numero, titre, labels, cwd_effectif, statut_rep_travail_avant):
+                return
+
+            if _verifier_violation_outil(numero, titre, labels, mode,
+                                         chemin_outil_lecture_exec, statut_outil_avant):
                 return
 
             if succes:
@@ -6978,7 +7179,7 @@ def _traiter_issue_synchrone(issue: dict, dry_run: bool, chemin_worktree: Path |
                                            sortie, timeout, avertissement_worktree_deja_pris,
                                            avertissement_worktree_repris,
                                            perimetre_effectif, cwd_effectif, debut_traitement,
-                                           duree_tentative)
+                                           duree_tentative, chemin_outil_lecture_exec)
                 return
 
             time.sleep(PAUSE_ENTRE_TENTATIVES)  # backoff entre tentatives

@@ -107,7 +107,7 @@ Champs d'en-tête reconnus, tous optionnels sauf `PROJET` :
 | `LABELS`    | Labels GitHub additionnels, séparés par des virgules                 |
 | `ATTENTE`   | Optionnel — condition en une phrase qui retarde la création de l'issue jusqu'à levée manuelle (§3.16) ; à poser par Claude Chat lui-même dès qu'une tâche est « à lancer après... ». |
 | `RELANCE`   | Optionnel — `#N` d'une issue `needs-human` déjà ouverte à corriger/relancer plutôt que d'en créer une nouvelle (voir §3.14). |
-| `REPO_CIBLE` | Chemin ABSOLU — **obligatoire** pour un projet à `PERIMETRE_DYNAMIQUE=true` (issue #125), **refusé** pour tout autre projet (issue #829). Réservé à ces projets : leur `REP_TRAVAIL` n'est qu'un placeholder, remplacé à l'exécution par ce chemin. Supporté à la création (fichier déposé **et** formulaire web, qui affiche alors un champ obligatoire « Dépôt cible ») — pas seulement corrigeable par `RELANCE` (§3.14). |
+| `REPO_CIBLE` | Chemin ABSOLU — **obligatoire** pour un projet à `PERIMETRE_DYNAMIQUE=true` (issue #125), **refusé** pour tout autre projet (issue #829). Réservé à ces projets : leur `REP_TRAVAIL` devient le `cwd` réel et le périmètre d'écriture de cette exécution, remplaçant celui du `.conf`. Si `REP_TRAVAIL` (où vit le code de l'outil) est DISJOINT de `REPO_CIBLE`, il reste quand même accessible en LECTURE et EXÉCUTION SEULEMENT, jamais en écriture (issue #833, détail §7). Supporté à la création (fichier déposé **et** formulaire web, qui affiche alors un champ obligatoire « Dépôt cible ») — pas seulement corrigeable par `RELANCE` (§3.14). |
 
 > ⚠️ **Choix du MODE quand la tâche exécute un script (issue #722).** Si la
 > « Tâche demandée » contient un mot déclencheur (**exécuter, lancer,
@@ -398,6 +398,25 @@ Format dans le corps :
 CCL est contraint à un répertoire précis par projet — il refuse de travailler
 hors périmètre même si l'issue le demande explicitement :
 
+> ℹ️ **Projet à périmètre dynamique (`PERIMETRE_DYNAMIQUE=true`) et dossier
+> propre à l'outil (issue #833).** Pour ce type de projet (ex.
+> `diagnostique_programme`, un outil d'audit qui analyse d'AUTRES dépôts, son
+> code vivant dans son propre `REP_TRAVAIL`), le périmètre d'écriture et le
+> `cwd` restent le seul `REPO_CIBLE` de l'issue. Mais quand `REP_TRAVAIL` est
+> DISJOINT de `REPO_CIBLE` (ni identique, ni l'un contenu dans l'autre), il
+> reste accessible en LECTURE et EXÉCUTION SEULEMENT — notamment pour
+> importer ou lancer le code de l'outil lui-même (`PYTHONPATH`) — jamais en
+> écriture. Ce confinement reste, comme pour le scratch de la lecture active
+> (#327, §5), une CONVENTION DE PROMPT complétée par une détection technique
+> après coup (empreinte `git status --porcelain -uall` avant/après la
+> tentative) : une écriture détectée dans ce dossier est restaurée, l'échec
+> est DÉFINITIF (pas de nouvelle tentative) et le label `needs-human` est
+> posé. Comme pour ce même garde-fou #327, **les fichiers ignorés par git ne
+> sont PAS détectés** (`git status` ne les voit pas sans `--ignored`).
+> Agent `vibe` : jamais ouvert (aucune option de lecture seule par
+> répertoire côté `vibe`) — un projet dynamique réglé sur cet agent reste
+> incapable de lire/exécuter son propre code quand il est hors `REPO_CIBLE`.
+
 <!-- DEBUT:TABLEAU_PERIMETRE_PROJETS (généré automatiquement par regenerer_tableaux_projets.py
      depuis configs/*.conf — issue #571 ; ne pas éditer cette zone à la main,
      lancer `python3 regenerer_tableaux_projets.py` après toute création/suppression
@@ -655,7 +674,9 @@ ce service central travaillant dans un dossier partagé entre projets.
 sans que `claude` démarre avec un cwd divergent du dossier visé par une
 commande git) ; `REPO_CIBLE` (chemin ABSOLU, réservé aux projets à
 périmètre dynamique, issue #125 — **obligatoire** pour ces projets,
-**refusé** pour les autres, voir §3.3/§3.4) ; `CREATION` (déclenche le
+**refusé** pour les autres, voir §3.3/§3.4 ; leur `REP_TRAVAIL`, s'il est
+disjoint de `REPO_CIBLE`, reste accessible en lecture et exécution seules —
+issue #833, détail §7) ; `CREATION` (déclenche le
 bootstrap automatique d'un nouveau service CCW dédié de bout en bout —
 généré uniquement par le formulaire web, case « Projet CCW », jamais à
 produire à la main).
@@ -718,8 +739,10 @@ calibration (constantes actuelles du code : `K_VARIABILITE` = 3, issue
 
 ---
 
-*Dernière mise à jour : 31 octobre 2026 — §3.3/§3.4/§16/§19 : `REPO_CIBLE`
-transmis à la création (fichier déposé et formulaire web), obligatoire pour
-un projet à périmètre dynamique et refusé pour les autres (issue #829).*
+*Dernière mise à jour : 31 octobre 2026 — §3.3/§7/§16 : pour un projet à
+périmètre dynamique, `REP_TRAVAIL` disjoint de `REPO_CIBLE` reste accessible
+en lecture et exécution seules (jamais en écriture), avec détection
+technique après coup réutilisant le garde-fou #327 — limites documentées
+(fichiers ignorés par git, agent `vibe` jamais ouvert) (issue #833).*
 
 Historique complet : voir [`CHANGELOG.md`](CHANGELOG.md).
