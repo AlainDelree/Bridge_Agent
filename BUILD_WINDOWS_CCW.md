@@ -65,6 +65,14 @@ il contient le modèle à utiliser en bas de page.
   `C:\CCW\worktrees\<projet>-ccw-issue<N>`), sur une branche
   `worktree-issue-<numéro>`. Le script de build, suivi par git, s'y trouve
   et construit à partir des seuls fichiers suivis par git.
+- Le watcher rafraîchit le clone de travail du projet par un
+  `git pull --ff-only` au début de chaque cycle (issue #185), avant de
+  créer le worktree — c'est pourquoi l'agent n'a jamais à le faire
+  lui-même. Ce `pull` est « au mieux » : il ne bloque jamais, et il est
+  ignoré, avec un message dans le journal du watcher, si le clone a des
+  commits locaux non poussés ou en l'absence de réseau. C'est la raison
+  d'être de la vérification « le commit à construire est un ancêtre de
+  `HEAD` », et pourquoi il faut pousser juste après une fusion.
 - Le script se lance avec **l'outil PowerShell**, depuis la racine du
   worktree — jamais avec Git Bash : un appel `cmd /c` du script y échoue
   silencieusement.
@@ -127,6 +135,10 @@ il contient le modèle à utiliser en bas de page.
   `version.json`.
 - Il ne lit ni n'écrit **jamais** hors du worktree : le dossier de build
   local et Inno Setup sont utilisés par le script, pas par l'agent.
+- Pour inspecter une archive, il la liste sans l'extraire, ou l'extrait
+  seulement dans un sous-dossier temporaire du worktree, non suivi par git
+  et supprimé ensuite — jamais dans un dossier système ou temporaire situé
+  hors du worktree (ni `C:\WINDOWS\TEMP`, ni `/tmp`).
 - Il n'écrit **jamais** de jeton ni de secret dans son rapport : celui-ci
   est publié en commentaire public sur l'issue GitHub.
 - La branche courante est celle de cette issue ; si `git status --short` ne
@@ -258,23 +270,31 @@ liste de numéros, indépendante des autres.
 - **Release à deux fichiers** : comme pour Scrabble et Actualise, le
   rappel final du script avec `--publier` mentionne DEUX fichiers à
   attacher à la Release — l'installeur ET l'archive.
-- **Essais avec un numéro fictif** : comme pour Actualise et Scrabble, la
-  copie vers le dossier fixe (`C:\CCW_Share\_derniers_builds\rummikub\`) a
-  lieu dans tous les modes, y compris un essai sans `--publier` : Alain
-  supprime à la main les fichiers de l'essai après coup. Le mode
-  `--publier` n'a volontairement pas été exécuté depuis le durcissement
-  (pour ne pas écrire un `version.json` de test) : son comportement
-  (calcul de la somme, écriture de `version.json`, commit local) reste
-  **à confirmer par le build 14**, premier vrai build après le
-  durcissement.
-- **Essai de référence du script durci, numéro fictif 99, sans `--publier`**
-  (25 octobre 2026 — à confirmer par le build 14) : durée 99,69 secondes ;
-  installeur 12 796 415 octets ; archive 12 896 340 octets ; `dist\Rummikub`
-  non compressé 26 251 767 octets. Six refus vérifiés pendant cet essai,
-  tous avec le code de sortie 1 et sans rien écrire : numéro égal au build
+- **Build de référence du script durci** (build 14, issue #179 du dépôt
+  Rummikub, 25 octobre 2026) : commande
+  `build\rebuild_rummikub.bat --publier --build 14`, code de sortie 0. Le
+  mode `--publier` est validé : le script a écrit `version.json` (numéro et
+  somme SHA-256 de l'archive) et fait lui-même le commit local ; la somme
+  recalculée à part par l'agent est identique. Manifeste
+  `{"build": 14, "supprimer": []}`, trois premiers octets `7B 22 62`, sans
+  BOM. Installeur 12 801 538 octets ; archive 12 895 604 octets ;
+  `dist\Rummikub` non compressé 26 251 767 octets (identique au build 13) ;
+  dossier `_internal` de 73 fichiers (89 entrées en tout dans l'archive).
+  Durée réelle de l'issue : 229 secondes. Seuls avertissements : les deux
+  avertissements habituels de PyInstaller sur `pycparser.lextab` et
+  `pycparser.yacctab`. Copie vers `C:\CCW_Share\_derniers_builds\rummikub\`
+  confirmée par l'affichage du script (noms et tailles identiques). La
+  Release `v14` porte l'installeur et l'archive (sommes vérifiées),
+  `version.json` de `master` annonce le build 14, et la mise à jour par
+  Actualise de la v13 à la v14 a été vérifiée par Alain sur un PC.
+- **Essai antérieur avec le numéro fictif 99, sans `--publier`** (25 octobre
+  2026) : mêmes tailles à peu de chose près (installeur 12 796 415 octets,
+  archive 12 896 340 octets, durée 99,69 secondes) et six refus vérifiés,
+  tous avec le code de sortie 1 et sans rien écrire (numéro égal au build
   courant, numéro inférieur, numéro non numérique, `--build` seul,
-  `--publier --build` avec un numéro non supérieur, argument inconnu.
-- **Build de référence (avant le durcissement)** : build 13, issue #177 du
+  `--publier --build` avec un numéro non supérieur, argument inconnu).
+- **Build de référence de l'ancien script (avant le durcissement)** : build
+  13, issue #177 du
   dépôt Rummikub, réussi — worktree
   `C:\CCW\worktrees\rummikub-ccw-issue177`. Neuf étapes (numérotées 0 à 8)
   sans erreur ; seuls avertissements : deux avertissements habituels de
@@ -312,11 +332,25 @@ liste de numéros, indépendante des autres.
   en bloc).
 - **Vérification propre à ce projet** : s'assurer qu'aucun fichier de
   dictionnaire n'est présent dans l'archive produite.
-- **Référence de la nouvelle syntaxe, essai avec le numéro fictif 99**
-  (fournie par le Chat Scrabble le 2026-10-25, non recoupée dans le script
-  — **à confirmer par le build 14**, premier vrai build avec cette
-  syntaxe) : installeur 12 905 773 octets, archive 13 355 850 octets,
-  durée 113 secondes (1 min 53 s).
+- **Build de référence de la nouvelle syntaxe** (build 14, issue #474 du
+  dépôt Scrabble, 25 octobre 2026) : commande
+  `build\rebuild_scrabble.bat --publier --build 14`, code de sortie 0 ;
+  `version.json` écrit et commité par le script, somme recalculée
+  identique. Installeur 12 901 348 octets ; archive 13 356 766 octets ; 77
+  fichiers dans l'archive, comme au build 13 ; aucun fichier de
+  dictionnaire dans l'archive. Par rapport au build 13 : archive
+  +81 544 octets (+0,6 %), installeur +57 447 octets (+0,4 %), écart
+  attribué à des paquets Python mis à jour lors de la recréation de
+  l'environnement de build. Durée réelle de l'issue : 220 secondes. Mêmes
+  deux avertissements PyInstaller. Les deux fichiers copiés dans
+  `C:\CCW_Share\_derniers_builds\scrabble\` portent les mêmes tailles. La
+  Release `v14` porte l'installeur et l'archive (sommes vérifiées), et la
+  mise à jour par Actualise de la v13 à la v14 a été vérifiée par Alain.
+- **Écart connu du manifeste, sans conséquence fonctionnelle** : le
+  manifeste de l'archive contient `{"build": 1, "supprimer": []}`, avec un
+  numéro de build fixe égal à 1, dans la v13 comme dans la v14, parce que
+  le script de Scrabble l'écrit en dur. Le client Actualise ne lit que le
+  champ `supprimer`. Cet écart n'est pas corrigé.
 - **Build de référence de l'ancienne syntaxe** : build 13, issue réussie,
   283 secondes de durée réelle — worktree
   `C:\CCW\worktrees\scrabble-ccw-issue470`. Taille de référence du build 13
@@ -448,7 +482,10 @@ Ne jamais lancer `git push` ni `git pull`, ne jamais créer de Release
 GitHub (aucune commande `gh release`), ne jamais recompresser ni modifier
 l'archive produite. Ne rien lire ni écrire hors du worktree (le dossier de
 build local et Inno Setup sont utilisés par le script, pas par l'agent).
-N'écrire aucun jeton ni secret dans le rapport : il est publié en
+Pour inspecter une archive : la lister sans l'extraire, ou l'extraire
+seulement dans un sous-dossier temporaire du worktree, non suivi par git et
+supprimé ensuite — jamais dans un dossier système ou temporaire hors du
+worktree. N'écrire aucun jeton ni secret dans le rapport : il est publié en
 commentaire public sur GitHub.
 
 ## Conduite en cas d'échec
