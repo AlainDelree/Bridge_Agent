@@ -601,18 +601,84 @@ test('mode repli : la variante « reponse » (celle que la case copie, #787) est
     'la case ne doit plus répondre « en préparation » au premier clic : « reponse » est déjà préchargée');
 });
 
-test('precharderVisibles : ne lance rien quand la page est cachée (document.hidden)', async () => {
+// ─── Issue #839 point 1 : précharge même page cachée ────────────────────────
+test('precharderVisibles (issue #839) : prépare une issue TERMINÉE même quand la page est cachée (document.hidden)', async () => {
   fixerEnvironnement({ etatCommits: { etat: 'aucun', hashes: [] } });
   const { comptes } = intercepterFetchIssue(-1);
   document.hidden = true;
   try {
     store.remplacerIssues([
-      { projet: PROJET, number: 505001, title: 'Caché', createdAt: '2026-01-01T00:00:00Z', state: 'OPEN', labels: [] },
+      { projet: PROJET, number: 505001, title: 'Caché, terminée', createdAt: '2026-01-01T00:00:00Z', state: 'CLOSED', labels: [] },
+    ]);
+    resultatsCoches.precharderVisibles();
+    assert.ok(await attendreQue(() => comptes[505001] === 1),
+      'une issue terminée doit être préparée même quand document.hidden est vrai (plus de garde de page cachée)');
+  } finally {
+    document.hidden = false;
+  }
+});
+
+test('precharderVisibles (issue #839) : une issue EN COURS (ouverte, pas needs-human) n\'est toujours pas préparée, même page cachée', async () => {
+  fixerEnvironnement({ etatCommits: { etat: 'aucun', hashes: [] } });
+  const { comptes } = intercepterFetchIssue(-1);
+  document.hidden = true;
+  try {
+    store.remplacerIssues([
+      { projet: PROJET, number: 505002, title: 'Caché, en cours', createdAt: '2026-01-01T00:00:00Z', state: 'OPEN', labels: [] },
     ]);
     resultatsCoches.precharderVisibles();
     await new Promise((resolve) => setTimeout(resolve, 30));
-    assert.equal(comptes[505001], undefined, 'aucune préparation ne doit démarrer quand document.hidden est vrai');
+    assert.equal(comptes[505002], undefined,
+      'une issue en cours (règle #838) ne doit jamais être préparée, page cachée ou non');
   } finally {
+    document.hidden = false;
+  }
+});
+
+// ─── Issue #839 point 2 : retour sur la page (visibilitychange) ─────────────
+// La précharge elle-même (hidden ou non) est déjà couverte par les deux tests
+// ci-dessus ; le point proprement exclusif de l'écouteur visibilitychange est
+// le rafraîchissement IMMÉDIAT du repère (sinon seul le minuteur de 30s le
+// ferait). Pour l'isoler sans dépendre de l'ordre d'arrivée entre la
+// préparation initiale (point 3 de l'amorçage) et l'événement, le texte de
+// NUMERO est d'abord laissé se préparer complètement AVANT de poser le
+// scénario caché → visible : aucune nouvelle requête /issue n'est alors
+// attendue (texte déjà valide), seul le repère doit bouger.
+test('visibilitychange (issue #839) : le retour sur la page rafraîchit immédiatement le repère, sans attendre le minuteur de 30s', async () => {
+  fixerEnvironnement({ etatCommits: { etat: 'aucun', hashes: [] } });
+  const { comptes } = intercepterFetchIssue(-1);
+  const NUMERO = 508001;
+  store.remplacerIssues([
+    { projet: PROJET, number: NUMERO, title: 'Retour sur la page', createdAt: '2026-01-01T00:00:00Z', state: 'CLOSED', labels: [] },
+  ]);
+
+  let handlerVisibilite = null;
+  document.addEventListener = (type, fn) => { if (type === 'visibilitychange') handlerVisibilite = fn; };
+  const setIntervalOriginal = global.setInterval;
+  global.setInterval = () => 0;   // pas de minuteur 30s laissé actif après ce test
+  try {
+    await resultatsCoches.initialiser();
+    assert.equal(typeof handlerVisibilite, 'function', 'initialiser() doit poser un écouteur visibilitychange');
+    // Préparation initiale (point 3 de l'amorçage) : laissée se terminer
+    // avant le scénario, pour qu'aucune requête /issue ne soit encore due.
+    assert.ok(await attendreQue(() => comptes[NUMERO] === 1), 'la préparation initiale doit avoir eu lieu');
+    await new Promise((resolve) => setTimeout(resolve, 20));   // laisse memoriserTextePrepare s'exécuter
+
+    const span = { style: {} };
+    const ligne = { dataset: { projet: PROJET, numero: String(NUMERO) }, querySelector: () => span };
+    document.querySelectorAll = () => [ligne];
+
+    document.hidden = true;
+    handlerVisibilite();
+    assert.equal(span.style.display, undefined, 'rien ne doit se passer tant que la page reste cachée au moment de l\'événement');
+
+    document.hidden = false;
+    handlerVisibilite();
+    assert.notEqual(span.style.display, undefined,
+      'le passage à visible doit rafraîchir le repère (majReperesVisibles) immédiatement, sans attendre le minuteur de 30s');
+    assert.equal(comptes[NUMERO], 1, 'le texte déjà préparé et valide ne doit déclencher aucune nouvelle requête /issue');
+  } finally {
+    global.setInterval = setIntervalOriginal;
     document.hidden = false;
   }
 });

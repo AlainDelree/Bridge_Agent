@@ -574,10 +574,16 @@ export function cleValiditeIssue(it) {
   return (it.state || '') + '|' + noms.join(',');
 }
 
-// Âge maximum d'un texte préparé, filet de sécurité pour les changements que
-// cleValiditeIssue ne peut pas voir (ex. nouveau commentaire sans changement
-// d'état/label) — quelques minutes (issue #832 point 3).
-export const AGE_MAX_TEXTE_PREPARE_MS = 3 * 60 * 1000;
+// Âge maximum d'un texte préparé. Le texte d'une issue terminée ne change
+// plus tant que sa clé de validité (état + labels, voir cleValiditeIssue)
+// reste la même : cette durée n'est PAS la mesure de péremption normale,
+// c'est un filet de sécurité pour le seul cas que cleValiditeIssue ne peut
+// pas voir (un commentaire ajouté à l'issue sans changement d'état ni de
+// label, que la liste /issues-liste n'expose pas) — un cas rare. Portée à
+// une heure (depuis 3 minutes) par l'issue #839 : trois minutes périmait un
+// texte préparé à la clôture avant même le retour d'Alain sur la page après
+// une absence de quelques minutes.
+export const AGE_MAX_TEXTE_PREPARE_MS = 60 * 60 * 1000;
 
 // Vrai si `entree` ({valeur, ts, cleValidite} | undefined) est encore
 // utilisable tel quel : clé de validité inchangée ET pas plus vieille que
@@ -1219,12 +1225,16 @@ function compterEnAttenteOuPretes(mode) {
 // clic plutôt que préparé après (fenêtre d'activation du geste, issue #832).
 // En mode repli, précharge EN PLUS la variante 'all' (inchangé depuis #636).
 // Restreinte aux pastilles sélectionnées, ordonnée par ancienneté et bornée
-// au total (issue #835 point 1). Jamais lancée quand la page est cachée
-// (document.hidden) : pas de fetch inutile sur un onglet en arrière-plan.
+// au total (issue #835 point 1). Lancée MÊME quand la page est cachée
+// (document.hidden) depuis l'issue #839 : sans ce chemin, une issue qui se
+// termine pendant qu'Alain lit un autre onglet n'était préparée qu'à son
+// retour, trop tard pour que la copie soit immédiate (fenêtre d'activation
+// du geste, issue #832) — les protections restent les mêmes (une
+// préparation à la fois, borne totale, issues terminées seulement, projets
+// sélectionnés, plus ancienne d'abord).
 // Renommée depuis precharderVisiblesRepli (issue #832 : son nom ne disait
 // plus la vérité une fois étendue au mode moderne).
 function precharderVisibles() {
-  if (typeof document !== 'undefined' && document.hidden) return;
   const mode = modeCopie();
   const selection = new Set(appelerAncien('projetsActifsDansFiltreResultats') || nomsProjets());
   const candidats = candidatsPrechargement(
@@ -1384,6 +1394,15 @@ async function initialiser() {
   setInterval(() => {
     if (typeof document === 'undefined' || !document.hidden) majReperesVisibles();
   }, 30000);
+  // 6) Retour sur la page (issue #839) : au passage caché → visible, relance
+  //    immédiatement la précharge et le rafraîchissement des repères plutôt
+  //    que d'attendre le prochain tour du minuteur de 30s ci-dessus — le
+  //    repère « prêt à copier » doit déjà être à jour à l'instant du retour.
+  if (typeof document !== 'undefined' && document.addEventListener) {
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden) { precharderVisibles(); majReperesVisibles(); }
+    });
+  }
 }
 
 // Objet publié sous window.Bridge.resultatsCoches (via installerPont dans index.js) :

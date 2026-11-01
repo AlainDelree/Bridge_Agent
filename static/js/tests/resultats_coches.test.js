@@ -572,6 +572,25 @@ test('texteEstValide : entrée absente → jamais valide', () => {
   assert.equal(texteEstValide(null, 'OPEN|', 1000, AGE_MAX_TEXTE_PREPARE_MS), false);
 });
 
+// ─── Durée de validité portée à une heure (issue #839, auparavant 3 minutes
+//     — issue #832 point 3) : valeurs en minutes concrètes, en plus des tests
+//     ci-dessus déjà paramétrés sur AGE_MAX_TEXTE_PREPARE_MS.
+test('texteEstValide (issue #839) : encore valide à 59 minutes', () => {
+  const entree = { valeur: 'x', ts: 0, cleValidite: 'CLOSED|' };
+  const maintenant = 59 * 60 * 1000;
+  assert.equal(texteEstValide(entree, 'CLOSED|', maintenant, AGE_MAX_TEXTE_PREPARE_MS), true);
+});
+
+test('texteEstValide (issue #839) : périmé à 61 minutes', () => {
+  const entree = { valeur: 'x', ts: 0, cleValidite: 'CLOSED|' };
+  const maintenant = 61 * 60 * 1000;
+  assert.equal(texteEstValide(entree, 'CLOSED|', maintenant, AGE_MAX_TEXTE_PREPARE_MS), false);
+});
+
+test('texteEstValide (issue #839) : la durée vaut bien une heure (plus trois minutes)', () => {
+  assert.equal(AGE_MAX_TEXTE_PREPARE_MS, 60 * 60 * 1000);
+});
+
 // ─── reperePretACopier (issue #835 point 2 : repère « prêt à copier ») ───────
 test('reperePretACopier : prêt — texte valide, issue non cochée', () => {
   const entree = { valeur: 'x', ts: 1000, cleValidite: 'OPEN|' };

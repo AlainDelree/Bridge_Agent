@@ -208,6 +208,20 @@
       **ouverte** qui porte déjà le label `needs-human` (échec avec rapport
       posté) est, elle, **normalement préparée** : son repère apparaît comme
       pour une issue fermée.
+- [ ] **Précharge qui continue page cachée, texte qui tient le temps du retour
+      (issue #839)** : dans **Firefox**, ouvrir l'onglet Bridge Agent (onglet
+      Résultats), puis ouvrir et activer un **autre onglet** du navigateur.
+      Laisser une issue se terminer (clôture ou label `needs-human`) pendant
+      que l'onglet Bridge Agent est **caché**. Attendre **plusieurs minutes**
+      (plus que les trois minutes de l'ancienne durée de validité, pour
+      vérifier que la nouvelle durée d'une heure tient), puis revenir sur
+      l'onglet Bridge Agent : le repère « prêt à copier » est **déjà affiché**
+      sur la ligne de l'issue dès le retour (pas d'attente supplémentaire), et
+      cocher sa case copie **immédiatement**, sans la fenêtre rouge
+      « Préparation trop longue ». Dans `logs/charge_interface.log` (mesure de
+      précharge, issue #835 point 4), une série de préparation apparaît à
+      l'**heure de la clôture** de l'issue — pas seulement à l'heure du retour
+      sur l'onglet.
 - [ ] **Pastilles ↔ « Cocher tout »** (issue #636) : avec plusieurs projets
       chargés, cliquer **« ✓ Cocher tout »** → **aucune pastille des projets
       actifs (filtrés) ne reste** (même après une longue coupure). Le périmètre
