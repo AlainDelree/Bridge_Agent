@@ -785,6 +785,37 @@ le panneau) reste en place — simplement plus utilisé par l'interface,
 > clic ne puisse jamais être réinterprété comme Lancer/Supprimer/↑/↓. Tests :
 > `static/js/tests/attente.test.js` (`texteACopierAttente`).
 
+> **Onglet En attente — pastille durée typique/maximale (issue #842)** :
+> chaque ligne affiche désormais, à côté de la date de dépôt, une petite
+> pastille indicative « ≈ 12min · max 30min » (durée typique connue) ou
+> « max 30min » seul (sinon), « durée inconnue » si rien n'est disponible.
+> `max` est le `TIMEOUT` d'**une** tentative (lu dans le texte de l'issue,
+> `app/issues.py::_parser_timeout`, défaut du mode compris) multiplié par
+> `MAX_ESSAIS` du projet (`app/projets.py::projet_par_nom`, 3 si le projet
+> est introuvable) — pour une issue **critique** (priorité `haute` ou
+> `critique`, `watcher.PRIORITES_CRITIQUES`), `max` devient le mot **« infini »**
+> en rouge (jamais abandonnée, reprise à chaque cycle, `watcher._gerer_abandon_max_essais`),
+> avec sa propre classe CSS (`.pastille-duree-infini`, gras + couleur — le
+> gras seul garantit la lisibilité sans la couleur). La durée **typique**
+> (`≈`) réutilise **exactement** la même source que la pastille des issues
+> en cours de l'onglet Résultats (`app.issues.estimer_duree` sur
+> `logs/historique_durees.json`, repli sur `logs/etat_timeout.json` si trop
+> peu d'échantillons récents) — pas une seconde source — pour la combinaison
+> projet + type (`watcher.deduire_type_issue`) + mode + complexité déclarés
+> dans l'en-tête de l'issue encore en attente ; lecture **best-effort**, sans
+> verrou ni écriture (`None` si aucune calibration connue ou en cas d'erreur
+> de lecture, cf. `app/issues_inbox.py::_lire_item_attente`/
+> `_duree_typique_attente`). Ces sept champs (`timeout_s`, `max_essais`,
+> `critique`, `duree_max_s`, `mode`, `complexite`, `duree_typique_s`) sont
+> purement informatifs : ils ne changent ni l'ordre (#819), ni la condition
+> d'attente, ni la signature de rechargement automatique (#825 — un fichier
+> remplacé par une version à autre `TIMEOUT` est donc relu et sa pastille
+> mise à jour sans action manuelle), ni les calculs de calibration du
+> watcher. Formatage de la pastille : `static/js/attente.js::
+> descriptionPastilleDureeAttente`, qui réutilise `formaterDuree`
+> (`resultats.js`) sans le reproduire. Tests : `tests/test_duree_attente_842.py`
+> et `static/js/tests/attente.test.js`.
+
 > **Précharge du rapport — périmètre, ordre et borne (issue #835 point 1,
 > suite #832)** : jusqu'ici, `precharderVisibles` (`static/js/resultats_coches.js`)
 > préparait les premières issues non cochées de TOUS les projets connus,

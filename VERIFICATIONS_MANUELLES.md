@@ -455,6 +455,31 @@ historique dans le panneau latéral (voir plus haut).
       case à cocher), ignorées par **« Cocher tout »**, **« Tout à zéro »** et le
       **filtre projet / quota d'affichage**, et ne portent pas de **badge modèle**.
 
+## Onglet « En attente » — pastille durée typique/maximale (issue #842)
+
+- [ ] **Dépôt d'une issue avec `ATTENTE`** (issues_inbox/, `| TIMEOUT | 1200s |`
+      déclaré) → la pastille apparaît sur la ligne, à côté de la date de dépôt :
+      « max 20min » si aucune calibration connue pour ce projet+type+mode+
+      complexité, ou « ≈ … · max 20min » si une durée typique est connue
+      (même source que la pastille « ≈ … » des issues en cours de l'onglet
+      Résultats). Survoler la pastille (`title`) : le texte précise bien
+      « N tentatives de X min au maximum » avec les vraies valeurs du projet.
+- [ ] **Remplacement du fichier** par une version à un autre `TIMEOUT` (même
+      nom, dans `issues_inbox/en_attente/`) alors que l'onglet est déjà ouvert
+      → la pastille se met à jour **sans rechargement manuel** (signature de
+      rechargement de l'issue #825, inchangée par #842).
+- [ ] **Projet jamais calibré** (aucun succès enregistré pour sa combinaison
+      projet+type+mode+complexité) → la pastille affiche **seulement** le
+      `TIMEOUT` (« max … »), jamais de « ≈ … » ni d'exception/ligne manquante.
+- [ ] **Issue critique** (`| PRIORITE | haute |` ou `critique`) → le mot
+      **« infini »** remplace la durée maximale, affiché en **rouge et en
+      gras** ; vérifier qu'il reste identifiable même en désaturant l'écran
+      (le gras seul suffit, la couleur n'est pas le seul porteur de
+      l'information). Au survol, le texte précise que l'issue est critique et
+      reprise à chaque cycle sans limite.
+- [ ] La pastille ne gêne ni les boutons ↑/↓ (#819) ni le bouton 📋 copier le
+      titre (#823), ni la lisibilité du titre lui-même.
+
 ## Onglet « Journal watcher »
 
 *(sorti d'app.js vers `static/js/journal.js`, issue #650, étape 11 — import

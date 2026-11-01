@@ -72,7 +72,11 @@ from watcher_issues_inbox import (charger_config_inbox, DEFAUT_CHEMIN_CONFIG,  #
                                   DOSSIER_ORDRE_ATTENTE, FICHIER_ORDRE_ATTENTE,  # (issue #819,
                                   _chemin_ordre_attente, _lire_ordre_attente_persiste,  # relogés
                                   _ecrire_ordre_attente, fusionner_ordre_attente)  # côté #822 — voir plus bas)
-from watcher import _pid_vivant  # noqa: E402
+from watcher import (_pid_vivant, deduire_type_issue, extraire_priorite,  # noqa: E402
+                     extraire_complexite, extraire_mode_entete,
+                     _etiquette_calibration, PRIORITES_CRITIQUES)
+from app.projets import projet_par_nom  # noqa: E402
+from app.issues import _parser_timeout, estimer_duree, _charger_historique  # noqa: E402
 
 log = logging.getLogger("app.issues_inbox")
 
@@ -327,27 +331,92 @@ def _identifiant_attente_valide(nom: str) -> bool:
     return bool(nom) and nom not in (".", "..") and "/" not in nom and "\\" not in nom
 
 
+def _duree_typique_attente(projet: str, type_issue: str, mode: str, complexite: str) -> float | None:
+    """Durée typique (secondes), ou None si inconnue/illisible (issue #842).
+    Même SOURCE que la pastille « ≈ » des issues en cours (voir
+    static/js/resultats.js::calculerBadgeEstimation, alimentée par
+    app.issues.estimer_duree) — pas une seconde source : réutilise ici la
+    MÉDIANE (`estimation["mediane"]`) de cette même fonction, pour que les
+    deux chiffres restent comparables. Best-effort : `estimer_duree`/
+    `_charger_historique` sont déjà défensives (lecture JSON corrompue/
+    absente → repli silencieux), ce `try` supplémentaire couvre toute autre
+    erreur imprévue sans jamais empêcher l'affichage de la ligne."""
+    try:
+        historique = _charger_historique()
+        return estimer_duree(historique, projet, type_issue, mode, complexite).get("mediane")
+    except Exception:
+        return None
+
+
 def _lire_item_attente(chemin: Path) -> dict | None:
-    """{id, titre, projet, date, condition} pour un fichier d'en_attente/, ou
-    None si illisible. `extraire_champs` est réutilisé tel quel pour
-    titre/projet — le champ ATTENTE lui-même (encore présent dans ce
-    fichier) est lu séparément via lire_condition_attente, cohérent avec le
-    fait qu'il n'est jamais retiré avant le lancement (POST .../lancer)."""
+    """{id, titre, projet, date, condition, timeout_s, max_essais, critique,
+    duree_max_s, mode, complexite, duree_typique_s} pour un fichier
+    d'en_attente/, ou None si illisible (issue #842 pour les sept derniers
+    champs). `extraire_champs` est réutilisé tel quel pour titre/projet — le
+    champ ATTENTE lui-même (encore présent dans ce fichier) est lu
+    séparément via lire_condition_attente, cohérent avec le fait qu'il n'est
+    jamais retiré avant le lancement (POST .../lancer).
+
+    `contenu` (brut, AVANT extraire_champs) est relu pour TIMEOUT/MODE :
+    extraire_champs() retire ces lignes d'en-tête de champs["corps"] (elles
+    y seraient donc introuvables), à la différence de PRIORITE/COMPLEXITE
+    (jamais dans CHAMPS_ENTETE, donc toujours présentes dans le corps —
+    lues ici sur `contenu` par souci d'uniformité, sans conséquence).
+
+    `mode`/timeout_s : un élément d'en_attente/ n'a encore AUCUN label
+    GitHub (pas encore créé) — le mode ne peut donc venir que du champ
+    déclaré de l'en-tête (extraire_mode_entete), normalisé vers write/
+    scratch/read via `watcher._etiquette_calibration`, exactement la
+    convention déjà utilisée par les clés de calibration (etat_timeout.json,
+    historique_durees.json) et par app.issues._parser_timeout/estimer_duree.
+
+    `timeout_s` est lu via `app.issues._parser_timeout` (mirroir déjà
+    existant de `watcher.extraire_timeout`, pris avec un `cfg` explicite)
+    plutôt que `watcher.extraire_timeout` lui-même : ce dernier retombe sur
+    le CFG GLOBAL du module watcher (celui du dernier projet chargé par un
+    watcher, `None` hors de tout processus watcher) — faux pour un élément
+    d'un AUTRE projet que celui éventuellement chargé localement, et lève
+    une AttributeError si CFG est None. `_parser_timeout` prend le `cfg` du
+    PROJET DE L'ÉLÉMENT en paramètre, comme le fait déjà
+    `app.issues.donnees_temps_creation` pour les issues déjà créées.
+
+    `max_essais` : celui du projet de l'élément (`projet_par_nom`), 3 par
+    défaut si le projet est introuvable (projet encore jamais configuré,
+    ou champ PROJET vide/erroné)."""
     try:
         contenu = chemin.read_text(encoding="utf-8")
     except OSError:
         return None
     champs = extraire_champs(contenu)
+    titre = champs["titre"]
+    projet = champs["projet"]
     try:
         date_depot = chemin.stat().st_mtime
     except OSError:
         date_depot = 0.0
+
+    cfg_projet = projet_par_nom(projet) if projet else None
+    max_essais = cfg_projet.max_essais if cfg_projet else 3
+    mode = _etiquette_calibration(extraire_mode_entete(contenu))
+    timeout_s = _parser_timeout(contenu, titre, cfg_projet, mode)
+    priorite = extraire_priorite(contenu)
+    critique = priorite in PRIORITES_CRITIQUES
+    complexite = extraire_complexite(contenu)
+    type_issue = deduire_type_issue(titre, contenu)
+
     return {
         "id": chemin.name,
-        "titre": champs["titre"],
-        "projet": champs["projet"],
+        "titre": titre,
+        "projet": projet,
         "date": date_depot,
         "condition": lire_condition_attente(contenu) or "",
+        "timeout_s": timeout_s,
+        "max_essais": max_essais,
+        "critique": critique,
+        "duree_max_s": None if critique else timeout_s * max_essais,
+        "mode": mode,
+        "complexite": complexite,
+        "duree_typique_s": _duree_typique_attente(projet, type_issue, mode, complexite),
     }
 
 
