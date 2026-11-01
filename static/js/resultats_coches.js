@@ -555,6 +555,11 @@ const prechargementEnCours = new Set(); // "cle|variante" dont un préchargement
 
 function cleIC(projet, numero) { return projet + '#' + normaliserNumero(numero); }
 
+// Pont vers estIssueEnEchec (app.js, script classique non importable depuis
+// ce module ES — voir pont.js) — seul point d'appel réel de ce fichier,
+// injecté dans issueEnCours là où ce module en a besoin (issue #838).
+function estIssueEnEchecPont(it) { return !!appelerAncien('estIssueEnEchec', it); }
+
 // Signature de l'issue utilisée comme clé de validité d'un texte préparé
 // (issue #832 point 3) : state + labels, dans cet ordre, triés — c'est tout
 // ce que la liste /issues-liste expose (voir _enrichir_modele côté serveur :
@@ -582,6 +587,22 @@ export function texteEstValide(entree, cleValiditeActuelle, maintenant, ageMaxMs
   return !!entree
     && entree.cleValidite === cleValiditeActuelle
     && (maintenant - entree.ts) <= ageMaxMs;
+}
+
+// Vrai si l'issue est « en cours » (issue #838) : ouverte ET pas en échec
+// (needs-human) — dans ces deux cas un rapport existe déjà, et c'est lui
+// qu'on veut préparer/signaler, pas refaire un futur rapport de clôture.
+// Règle d'« ouvert » REPRISE de construireLigneIssueDOM (static/js/app.js,
+// suffixe [ouvert]/[fermé] affiché sur chaque ligne) : tout ce qui n'est pas
+// explicitement CLOSED compte comme ouvert — `gh issue list` ne renvoie que
+// OPEN ou CLOSED pour des issues (pas de 3e état, à la différence des PR).
+// `estIssueEnEchecFn` injectée plutôt qu'importée : app.js reste un script
+// classique (pas un module ES), donc non importable depuis ce fichier — même
+// contrainte que estCocheFn/dejaPresentFn de candidatsPrechargement ci-après.
+export function issueEnCours(it, estIssueEnEchecFn) {
+  if (!it) return false;
+  const fermee = (it.state || '').toUpperCase() === 'CLOSED';
+  return !fermee && !estIssueEnEchecFn(it);
 }
 
 async function detailIssue(projet, numero) {
@@ -1048,10 +1069,15 @@ export const BORNE_TOTALE_PRECHARGEMENT = 6;
 // #787) est préchargée dans LES DEUX MODES ; la variante 'all' ne l'est
 // qu'en mode repli (inchangé depuis #636 — Diff/All restent sur leur chemin
 // existant, jamais préchargés). `estCocheFn`/`dejaPresentFn` injectées pour
-// rester testable sous Node sans store ni réseau.
+// rester testable sous Node sans store ni réseau. Exclut aussi toute issue
+// « en cours » (issue #838, voir issueEnCours) : aucun rapport à préparer ni
+// à signaler pour une issue encore ouverte et pas en échec — le repli sur
+// `estIssueEnEchecFn = () => false` traite par défaut toute issue comme pas
+// en échec (seul le state CLOSED/ouvert reste alors décisif).
 export function candidatsPrechargement(
   issuesTriees, limite, mode, estCocheFn, dejaPresentFn,
   projetsSelectionnes, borneTotale, dejaEnAttenteOuPretes = 0,
+  estIssueEnEchecFn = () => false,
 ) {
   const selection = projetsSelectionnes instanceof Set
     ? projetsSelectionnes : new Set(projetsSelectionnes || []);
@@ -1075,6 +1101,7 @@ export function candidatsPrechargement(
     const projet = it.projet;
     const n = normaliserNumero(it.number);
     if (estCocheFn(projet, n)) continue;
+    if (issueEnCours(it, estIssueEnEchecFn)) continue;
     if (placeRestante() > 0 && !dejaPresentFn(projet, n, 'reponse')) {
       candidats.push({ projet, numero: n, variante: 'reponse' });
     }
@@ -1207,7 +1234,7 @@ function precharderVisibles() {
       const prep = textesPrepares.get(cle);
       return (prep && prep[variante] !== undefined) || prechargementEnCours.has(cle + '|' + variante);
     },
-    selection, BORNE_TOTALE_PRECHARGEMENT, compterEnAttenteOuPretes(mode));
+    selection, BORNE_TOTALE_PRECHARGEMENT, compterEnAttenteOuPretes(mode), estIssueEnEchecPont);
   for (const c of candidats) enqueuePrechargementUn(c.projet, c.numero, c.variante);
 }
 
@@ -1224,8 +1251,14 @@ function precharderVisibles() {
 // argument, aucun accès store/DOM), pour rester testable sous Node comme le
 // reste de la section 1 : la coche ET la validité du texte sont décidées ICI,
 // un seul endroit, plutôt que dispatchées entre l'appelant et texteEstValide.
-export function reperePretACopier(coche, entreeTexte, cleValiditeActuelle, maintenant, ageMaxMs) {
-  return !coche && texteEstValide(entreeTexte, cleValiditeActuelle, maintenant, ageMaxMs);
+// `enCours` (issue #838, voir issueEnCours) masque le repère pour une issue
+// encore ouverte et pas en échec, même si un texte préparé et valide existe
+// pour elle (préparé avant cette correction, ou par un autre chemin) : la
+// copie ne donnerait pas le rapport attendu tant que l'issue n'est pas
+// terminée. Calculé par l'appelant (pas ici) : cette fonction reste pure et
+// ignore délibérément l'état/les labels bruts de l'issue.
+export function reperePretACopier(coche, entreeTexte, cleValiditeActuelle, maintenant, ageMaxMs, enCours = false) {
+  return !coche && !enCours && texteEstValide(entreeTexte, cleValiditeActuelle, maintenant, ageMaxMs);
 }
 
 function majRepereLigne(ligne) {
@@ -1236,9 +1269,10 @@ function majRepereLigne(ligne) {
   const cle = cleIC(projet, numero);
   const prep = textesPrepares.get(cle);
   const entree = prep && prep.reponse;
+  const it = store.lireIssue(projet, numero);
   const pret = reperePretACopier(
-    estCoche(projet, numero), entree, cleValiditeIssue(store.lireIssue(projet, numero)),
-    Date.now(), AGE_MAX_TEXTE_PREPARE_MS);
+    estCoche(projet, numero), entree, cleValiditeIssue(it),
+    Date.now(), AGE_MAX_TEXTE_PREPARE_MS, issueEnCours(it, estIssueEnEchecPont));
   span.style.display = pret ? '' : 'none';
 }
 

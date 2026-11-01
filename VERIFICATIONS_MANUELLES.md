@@ -196,6 +196,18 @@
       obtenir leur repère avant les plus récentes** (observable en rechargeant
       la page avec le réseau ralenti dans les DevTools, pour voir les repères
       apparaître un par un dans cet ordre).
+- [ ] **Issue « en cours » exclue de la précharge et du repère (issue #838)** :
+      une issue **ouverte** et **sans label `needs-human`** (ex. un ouvrier en
+      cours d'exécution côté watcher) ne reçoit **jamais** le repère « prêt à
+      copier », même après avoir laissé passer largement le temps de
+      préchargement — et aucune requête `/issue` ne doit être faite pour elle
+      en tâche de fond (vérifiable dans l'onglet Réseau des DevTools). À sa
+      **clôture** (ou dès qu'elle reçoit le label `needs-human`), le repère
+      apparaît **après** la préparation qui suit (quelques secondes, le temps
+      du prochain cycle de précharge) — sans action manuelle. Une issue
+      **ouverte** qui porte déjà le label `needs-human` (échec avec rapport
+      posté) est, elle, **normalement préparée** : son repère apparaît comme
+      pour une issue fermée.
 - [ ] **Pastilles ↔ « Cocher tout »** (issue #636) : avec plusieurs projets
       chargés, cliquer **« ✓ Cocher tout »** → **aucune pastille des projets
       actifs (filtrés) ne reste** (même après une longue coupure). Le périmètre

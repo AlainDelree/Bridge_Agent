@@ -30,6 +30,7 @@ import {
   cleValiditeIssue,
   texteEstValide,
   AGE_MAX_TEXTE_PREPARE_MS,
+  issueEnCours,
   candidatsPrechargement,
   BORNE_TOTALE_PRECHARGEMENT,
   gesteExpireOuPreparationLente,
@@ -526,6 +527,31 @@ test('cleValiditeIssue : issue absente/null → null', () => {
   assert.equal(cleValiditeIssue(undefined), null);
 });
 
+// ─── issueEnCours (issue #838 : ne pas préparer/signaler « prêt » une issue
+//     encore en cours — ouverte et pas en échec needs-human) ────────────────
+test('issueEnCours : issue ouverte, sans needs-human → en cours', () => {
+  assert.equal(issueEnCours({ state: 'OPEN', labels: [] }, () => false), true);
+});
+
+test('issueEnCours : issue fermée → pas en cours, même sans needs-human', () => {
+  assert.equal(issueEnCours({ state: 'CLOSED', labels: [] }, () => false), false);
+});
+
+test('issueEnCours : issue ouverte avec needs-human → pas en cours (rapport d\'échec déjà posté)', () => {
+  const estIssueEnEchecFn = (it) => (it.labels || []).some((l) => l.name === 'needs-human');
+  assert.equal(issueEnCours({ state: 'OPEN', labels: [{ name: 'needs-human' }] }, estIssueEnEchecFn), false);
+});
+
+test('issueEnCours : état inconnu/absent → traité comme ouvert (même règle que [ouvert]/[fermé] de app.js)', () => {
+  assert.equal(issueEnCours({ state: '', labels: [] }, () => false), true);
+  assert.equal(issueEnCours({ labels: [] }, () => false), true);
+});
+
+test('issueEnCours : issue absente/null → pas en cours', () => {
+  assert.equal(issueEnCours(null, () => false), false);
+  assert.equal(issueEnCours(undefined, () => false), false);
+});
+
 test('texteEstValide : clé de validité inchangée et dans l\'âge maximum → valide', () => {
   const entree = { valeur: 'x', ts: 1000, cleValidite: 'OPEN|' };
   assert.equal(texteEstValide(entree, 'OPEN|', 1000 + AGE_MAX_TEXTE_PREPARE_MS, AGE_MAX_TEXTE_PREPARE_MS), true);
@@ -572,17 +598,31 @@ test('reperePretACopier : aucun texte préparé → caché', () => {
   assert.equal(reperePretACopier(false, undefined, 'OPEN|', 1000, AGE_MAX_TEXTE_PREPARE_MS), false);
 });
 
+test('reperePretACopier (issue #838) : issue en cours → caché, même avec un texte préparé et valide', () => {
+  const entree = { valeur: 'x', ts: 1000, cleValidite: 'OPEN|' };
+  assert.equal(
+    reperePretACopier(false, entree, 'OPEN|', 1000, AGE_MAX_TEXTE_PREPARE_MS, true), false);
+});
+
+test('reperePretACopier (issue #838) : enCours omis (défaut) → comportement inchangé', () => {
+  const entree = { valeur: 'x', ts: 1000, cleValidite: 'OPEN|' };
+  assert.equal(reperePretACopier(false, entree, 'OPEN|', 1000, AGE_MAX_TEXTE_PREPARE_MS), true);
+});
+
 test('BORNE_TOTALE_PRECHARGEMENT : constante nommée, valeur attendue (6)', () => {
   assert.equal(BORNE_TOTALE_PRECHARGEMENT, 6);
 });
 
 // ─── candidatsPrechargement (issue #832 point 1 : préparation à l'avance
 //     étendue aux deux modes ; issue #835 point 1 : restreinte aux pastilles
-//     sélectionnées, ordonnée par ancienneté, bornée au total) ─────────────
+//     sélectionnées, ordonnée par ancienneté, bornée au total ; issue #838 :
+//     exclusion des issues « en cours » — ci-dessous, les fixtures portent
+//     `state: 'CLOSED'` pour rester hors de cette exclusion : ces tests
+//     vérifient d'AUTRES règles, inchangées par #838) ─────────────────────
 test('candidatsPrechargement : exclut les projets dont la pastille n\'est pas sélectionnée', () => {
   const issues = [
-    { projet: 'a', number: 1, createdAt: '2026-01-01T00:00:00Z' },
-    { projet: 'b', number: 2, createdAt: '2026-01-02T00:00:00Z' },
+    { projet: 'a', number: 1, createdAt: '2026-01-01T00:00:00Z', state: 'CLOSED' },
+    { projet: 'b', number: 2, createdAt: '2026-01-02T00:00:00Z', state: 'CLOSED' },
   ];
   const r = candidatsPrechargement(issues, 10, 'moderne', () => false, () => false, ['a'], 6);
   assert.deepEqual(r, [{ projet: 'a', numero: 1, variante: 'reponse' }]);
@@ -590,9 +630,9 @@ test('candidatsPrechargement : exclut les projets dont la pastille n\'est pas s�
 
 test('candidatsPrechargement : la plus ancienne d\'abord, tous projets sélectionnés confondus', () => {
   const issues = [
-    { projet: 'b', number: 20, createdAt: '2026-01-03T00:00:00Z' },   // le plus récent
-    { projet: 'a', number: 10, createdAt: '2026-01-02T00:00:00Z' },
-    { projet: 'a', number: 9, createdAt: '2026-01-01T00:00:00Z' },    // le plus ancien
+    { projet: 'b', number: 20, createdAt: '2026-01-03T00:00:00Z', state: 'CLOSED' },   // le plus récent
+    { projet: 'a', number: 10, createdAt: '2026-01-02T00:00:00Z', state: 'CLOSED' },
+    { projet: 'a', number: 9, createdAt: '2026-01-01T00:00:00Z', state: 'CLOSED' },    // le plus ancien
   ];
   const r = candidatsPrechargement(issues, 10, 'moderne', () => false, () => false, ['a', 'b'], 6);
   assert.deepEqual(r.map((c) => c.numero), [9, 10, 20]);
@@ -600,8 +640,8 @@ test('candidatsPrechargement : la plus ancienne d\'abord, tous projets sélectio
 
 test('candidatsPrechargement : à égalité de date, le plus petit numéro d\'abord', () => {
   const issues = [
-    { projet: 'a', number: 20, createdAt: '2026-01-01T00:00:00Z' },
-    { projet: 'a', number: 9, createdAt: '2026-01-01T00:00:00Z' },
+    { projet: 'a', number: 20, createdAt: '2026-01-01T00:00:00Z', state: 'CLOSED' },
+    { projet: 'a', number: 9, createdAt: '2026-01-01T00:00:00Z', state: 'CLOSED' },
   ];
   const r = candidatsPrechargement(issues, 10, 'moderne', () => false, () => false, ['a'], 6);
   assert.deepEqual(r.map((c) => c.numero), [9, 20]);
@@ -609,10 +649,10 @@ test('candidatsPrechargement : à égalité de date, le plus petit numéro d\'ab
 
 test('candidatsPrechargement : bornée aux N premières de chaque projet (même fenêtre que les pastilles)', () => {
   const issues = [
-    { projet: 'a', number: 5, createdAt: '2026-01-05T00:00:00Z' },
-    { projet: 'a', number: 4, createdAt: '2026-01-04T00:00:00Z' },
-    { projet: 'a', number: 3, createdAt: '2026-01-03T00:00:00Z' },   // 3e de "a" : hors fenêtre (limite=2)
-    { projet: 'b', number: 9, createdAt: '2026-01-02T00:00:00Z' },
+    { projet: 'a', number: 5, createdAt: '2026-01-05T00:00:00Z', state: 'CLOSED' },
+    { projet: 'a', number: 4, createdAt: '2026-01-04T00:00:00Z', state: 'CLOSED' },
+    { projet: 'a', number: 3, createdAt: '2026-01-03T00:00:00Z', state: 'CLOSED' },   // 3e de "a" : hors fenêtre (limite=2)
+    { projet: 'b', number: 9, createdAt: '2026-01-02T00:00:00Z', state: 'CLOSED' },
   ];
   const r = candidatsPrechargement(issues, 2, 'moderne', () => false, () => false, ['a', 'b'], 6);
   assert.deepEqual(r.map((c) => c.numero).sort((x, y) => x - y), [4, 5, 9]);
@@ -620,9 +660,9 @@ test('candidatsPrechargement : bornée aux N premières de chaque projet (même 
 
 test('candidatsPrechargement : borne totale — déjà en attente/prêtes réduit la place restante', () => {
   const issues = [
-    { projet: 'a', number: 1, createdAt: '2026-01-01T00:00:00Z' },
-    { projet: 'a', number: 2, createdAt: '2026-01-02T00:00:00Z' },
-    { projet: 'a', number: 3, createdAt: '2026-01-03T00:00:00Z' },
+    { projet: 'a', number: 1, createdAt: '2026-01-01T00:00:00Z', state: 'CLOSED' },
+    { projet: 'a', number: 2, createdAt: '2026-01-02T00:00:00Z', state: 'CLOSED' },
+    { projet: 'a', number: 3, createdAt: '2026-01-03T00:00:00Z', state: 'CLOSED' },
   ];
   const r = candidatsPrechargement(issues, 10, 'moderne', () => false, () => false, ['a'], 2, 1);
   assert.deepEqual(r, [{ projet: 'a', numero: 1, variante: 'reponse' }]);   // 2 - 1 déjà = 1 place, la plus ancienne
@@ -630,27 +670,27 @@ test('candidatsPrechargement : borne totale — déjà en attente/prêtes rédui
 
 test('candidatsPrechargement : ignore les issues cochées', () => {
   const issues = [
-    { projet: 'p', number: 1, createdAt: '2026-01-01T00:00:00Z' },
-    { projet: 'p', number: 2, createdAt: '2026-01-02T00:00:00Z' },
+    { projet: 'p', number: 1, createdAt: '2026-01-01T00:00:00Z', state: 'CLOSED' },
+    { projet: 'p', number: 2, createdAt: '2026-01-02T00:00:00Z', state: 'CLOSED' },
   ];
   const r = candidatsPrechargement(issues, 10, 'moderne', (p, n) => n === 1, () => false, ['p'], 6);
   assert.deepEqual(r, [{ projet: 'p', numero: 2, variante: 'reponse' }]);
 });
 
 test('candidatsPrechargement : une seule fois par (issue, variante) — dejaPresentFn filtre', () => {
-  const issues = [{ projet: 'p', number: 1, createdAt: '2026-01-01T00:00:00Z' }];
+  const issues = [{ projet: 'p', number: 1, createdAt: '2026-01-01T00:00:00Z', state: 'CLOSED' }];
   const r = candidatsPrechargement(issues, 10, 'moderne', () => false, (p, n, v) => v === 'reponse', ['p'], 6);
   assert.deepEqual(r, []);   // 'reponse' déjà présent/en cours, 'all' non demandé en mode moderne
 });
 
 test('candidatsPrechargement : mode moderne → seulement la variante « reponse » (celle que la case copie)', () => {
-  const issues = [{ projet: 'p', number: 1, createdAt: '2026-01-01T00:00:00Z' }];
+  const issues = [{ projet: 'p', number: 1, createdAt: '2026-01-01T00:00:00Z', state: 'CLOSED' }];
   const r = candidatsPrechargement(issues, 10, 'moderne', () => false, () => false, ['p'], 6);
   assert.deepEqual(r, [{ projet: 'p', numero: 1, variante: 'reponse' }]);
 });
 
 test('candidatsPrechargement : mode repli → « reponse » ET « all » (comble l\'écart : la case copie « reponse » depuis #787, pas « all »)', () => {
-  const issues = [{ projet: 'p', number: 1, createdAt: '2026-01-01T00:00:00Z' }];
+  const issues = [{ projet: 'p', number: 1, createdAt: '2026-01-01T00:00:00Z', state: 'CLOSED' }];
   const r = candidatsPrechargement(issues, 10, 'repli', () => false, () => false, ['p'], 6);
   assert.deepEqual(r, [
     { projet: 'p', numero: 1, variante: 'reponse' },
@@ -659,9 +699,46 @@ test('candidatsPrechargement : mode repli → « reponse » ET « all » (comble
 });
 
 test('candidatsPrechargement : sélection de projets vide → aucun candidat', () => {
-  const issues = [{ projet: 'p', number: 1, createdAt: '2026-01-01T00:00:00Z' }];
+  const issues = [{ projet: 'p', number: 1, createdAt: '2026-01-01T00:00:00Z', state: 'CLOSED' }];
   const r = candidatsPrechargement(issues, 10, 'moderne', () => false, () => false, [], 6);
   assert.deepEqual(r, []);
+});
+
+test('candidatsPrechargement (issue #838) : exclut une issue en cours, inclut une issue fermée ou en échec', () => {
+  const issues = [
+    { projet: 'p', number: 1, createdAt: '2026-01-01T00:00:00Z', state: 'OPEN', labels: [] },               // en cours
+    { projet: 'p', number: 2, createdAt: '2026-01-02T00:00:00Z', state: 'CLOSED', labels: [] },              // fermée
+    { projet: 'p', number: 3, createdAt: '2026-01-03T00:00:00Z', state: 'OPEN', labels: [{ name: 'needs-human' }] }, // en échec
+  ];
+  const estIssueEnEchecFn = (it) => (it.labels || []).some((l) => l.name === 'needs-human');
+  const r = candidatsPrechargement(
+    issues, 10, 'moderne', () => false, () => false, ['p'], 6, 0, estIssueEnEchecFn);
+  assert.deepEqual(r.map((c) => c.numero), [2, 3]);
+});
+
+test('candidatsPrechargement (issue #838) : une issue en cours ne consomme pas la borne totale', () => {
+  const issues = [
+    { projet: 'p', number: 1, createdAt: '2026-01-01T00:00:00Z', state: 'OPEN', labels: [] },   // en cours, aucun candidat
+    { projet: 'p', number: 2, createdAt: '2026-01-02T00:00:00Z', state: 'CLOSED', labels: [] },
+    { projet: 'p', number: 3, createdAt: '2026-01-03T00:00:00Z', state: 'CLOSED', labels: [] },
+  ];
+  const estIssueEnEchecFn = () => false;
+  // borneTotale=2 : si l'issue en cours consommait une place, une seule des deux fermées sortirait.
+  const r = candidatsPrechargement(
+    issues, 10, 'moderne', () => false, () => false, ['p'], 2, 0, estIssueEnEchecFn);
+  assert.deepEqual(r.map((c) => c.numero), [2, 3]);
+});
+
+test('candidatsPrechargement (issue #838) : une issue qui passe de « en cours » à « fermée » entre dans les candidats', () => {
+  const issueEnCoursFixture = { projet: 'p', number: 1, createdAt: '2026-01-01T00:00:00Z', state: 'OPEN', labels: [] };
+  const issueFermeeFixture = { ...issueEnCoursFixture, state: 'CLOSED' };
+  const estIssueEnEchecFn = () => false;
+  const avant = candidatsPrechargement(
+    [issueEnCoursFixture], 10, 'moderne', () => false, () => false, ['p'], 6, 0, estIssueEnEchecFn);
+  const apres = candidatsPrechargement(
+    [issueFermeeFixture], 10, 'moderne', () => false, () => false, ['p'], 6, 0, estIssueEnEchecFn);
+  assert.deepEqual(avant, []);
+  assert.deepEqual(apres, [{ projet: 'p', numero: 1, variante: 'reponse' }]);
 });
 
 // ─── gesteExpireOuPreparationLente (issue #832 point 4 : geste expiré OU

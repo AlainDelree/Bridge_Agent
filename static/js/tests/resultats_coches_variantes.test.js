@@ -511,7 +511,7 @@ test('chemin rapide (issue #832 pt.2) : un texte déjà préparé et valide est 
 
   // Préchargement en tâche de fond de NUMERO_RAPIDE (variante 'reponse').
   store.remplacerIssues([
-    { projet: PROJET, number: NUMERO_RAPIDE, title: 'Rapide', createdAt: '2026-01-01T00:00:00Z', state: 'OPEN', labels: [] },
+    { projet: PROJET, number: NUMERO_RAPIDE, title: 'Rapide', createdAt: '2026-01-01T00:00:00Z', state: 'CLOSED', labels: [] },
   ]);
   resultatsCoches.precharderVisibles();
   assert.ok(await attendreQue(() => comptes[NUMERO_RAPIDE] === 1), 'le préchargement de NUMERO_RAPIDE doit avoir fetché /issue');
@@ -588,7 +588,7 @@ test('mode repli : la variante « reponse » (celle que la case copie, #787) est
   const { comptes } = intercepterFetchIssue(-1);
 
   store.remplacerIssues([
-    { projet: PROJET, number: NUMERO, title: 'Repli', createdAt: '2026-01-01T00:00:00Z', state: 'OPEN', labels: [] },
+    { projet: PROJET, number: NUMERO, title: 'Repli', createdAt: '2026-01-01T00:00:00Z', state: 'CLOSED', labels: [] },
   ]);
   resultatsCoches.precharderVisibles();
   assert.ok(await attendreQue(() => comptes[NUMERO] === 1), 'le préchargement doit avoir fetché /issue');
@@ -629,8 +629,8 @@ test('précharge : un projet désélectionné pendant l\'attente en file n\'est 
 
   const { comptes, debloquer } = intercepterFetchIssue(NUMERO_LENT);
   store.remplacerIssues([
-    { projet: PROJET, number: NUMERO_LENT, title: 'Lent', createdAt: '2026-01-01T00:00:00Z', state: 'OPEN', labels: [] },
-    { projet: AUTRE_PROJET, number: NUMERO_ABANDONNE, title: 'Abandonné', createdAt: '2026-01-02T00:00:00Z', state: 'OPEN', labels: [] },
+    { projet: PROJET, number: NUMERO_LENT, title: 'Lent', createdAt: '2026-01-01T00:00:00Z', state: 'CLOSED', labels: [] },
+    { projet: AUTRE_PROJET, number: NUMERO_ABANDONNE, title: 'Abandonné', createdAt: '2026-01-02T00:00:00Z', state: 'CLOSED', labels: [] },
   ]);
   resultatsCoches.precharderVisibles();
   assert.ok(await attendreQue(() => comptes[NUMERO_LENT] === 1),
@@ -653,8 +653,8 @@ test('précharge : résumé envoyé au serveur à la fin de la série (file vide
   const NUMERO_A = 507001;
   const NUMERO_B = 507002;
   store.remplacerIssues([
-    { projet: PROJET, number: NUMERO_A, title: 'A', createdAt: '2026-01-01T00:00:00Z', state: 'OPEN', labels: [] },
-    { projet: PROJET, number: NUMERO_B, title: 'B', createdAt: '2026-01-02T00:00:00Z', state: 'OPEN', labels: [] },
+    { projet: PROJET, number: NUMERO_A, title: 'A', createdAt: '2026-01-01T00:00:00Z', state: 'CLOSED', labels: [] },
+    { projet: PROJET, number: NUMERO_B, title: 'B', createdAt: '2026-01-02T00:00:00Z', state: 'CLOSED', labels: [] },
   ]);
   resultatsCoches.precharderVisibles();
   assert.ok(await attendreQue(() => resumesPrecharge.length === 1),
