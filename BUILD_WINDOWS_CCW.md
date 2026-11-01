@@ -389,11 +389,32 @@ liste de numéros, indépendante des autres.
   `C:\CCW_Share\_derniers_builds\scrabble\` portent les mêmes tailles. La
   Release `v14` porte l'installeur et l'archive (sommes vérifiées), et la
   mise à jour par Actualise de la v13 à la v14 a été vérifiée par Alain.
-- **Écart connu du manifeste, sans conséquence fonctionnelle** : le
-  manifeste de l'archive contient `{"build": 1, "supprimer": []}`, avec un
-  numéro de build fixe égal à 1, dans la v13 comme dans la v14, parce que
-  le script de Scrabble l'écrit en dur. Le client Actualise ne lit que le
-  champ `supprimer`. Cet écart n'est pas corrigé.
+- **Manifeste corrigé (issue #481 de Scrabble)** : le script écrit
+  désormais dans `manifest.json` le vrai numéro de build
+  (`{"build": N, "supprimer": []}`), au lieu du numéro fixe égal à 1 écrit
+  en dur auparavant. Les archives **déjà publiées** v13 et v14 contiennent
+  encore `{"build": 1, "supprimer": []}` : la première archive à porter le
+  vrai numéro sera celle du prochain build de publication. Sans
+  conséquence fonctionnelle dans tous les cas, puisque le client Actualise
+  ne lit que le champ `supprimer`.
+- **Autres changements de l'issue #481 de Scrabble** : le bloc `reset
+  --hard origin/master` obsolète de la fin du script (avec le calcul des
+  commits non poussés et son bandeau d'avertissement) est supprimé — le
+  mot « reset » n'apparaît plus dans le script. L'étape `[3/9]`, qui
+  fermait de force toute instance de `Scrabble.exe` par `taskkill /im
+  Scrabble.exe /f` puis attendait deux secondes, est remplacée par une
+  détection qui signale une instance en cours sans la fermer ni arrêter
+  le build. Le rappel de fin du mode `--publier` suit désormais l'ordre
+  du guide (fusionner la branche du worktree sans pousser, créer la
+  Release avec les deux fichiers, pousser `master`). Non établi : ce
+  nouveau rappel n'a été vu que dans un fichier de test jetable — le mode
+  `--publier` n'a pas été exécuté depuis cette issue.
+- **Essai de référence secondaire après #481** (`build\rebuild_scrabble.bat
+  --build 99`, sans `--publier`) : code de sortie 0 ; 166,6 secondes pour
+  le script, 880 secondes pour l'issue complète (`TIMEOUT` 2400s) ;
+  installeur 12 909 018 octets ; archive 13 362 977 octets ; `version.json`
+  inchangé (toujours au build 14) ; mêmes deux avertissements habituels de
+  PyInstaller sur `pycparser`.
 - **Build de référence de l'ancienne syntaxe** : build 13, issue réussie,
   283 secondes de durée réelle — worktree
   `C:\CCW\worktrees\scrabble-ccw-issue470`. Taille de référence du build 13
@@ -422,23 +443,49 @@ liste de numéros, indépendante des autres.
   `actualise-v<N>.zip` produits dans `installeur\output` du worktree, et
   copiés en plus dans `C:\CCW_Share\_derniers_builds\actualise\` **dans
   tous les modes**, même sans `--publier`.
-- **Garde-fou** (issue #71 d'Actualise) : le script refuse, avant toute
-  copie, construction ou écriture et dans tous les modes, un numéro qui
-  n'est pas un entier strictement supérieur au build de `version.json`,
-  ainsi que `--build` sans valeur et tout argument inconnu, avec un
-  message et le code de sortie 1.
+- **Garde-fou** (issue #71 d'Actualise, complété par l'issue #75) : le
+  script refuse, avant toute copie, construction ou écriture et dans tous
+  les modes, un numéro qui n'est pas un entier strictement supérieur au
+  build de `version.json`, ainsi que `--build` sans valeur et tout
+  argument inconnu, avec un message et le code de sortie 1. Depuis
+  l'issue #75, il refuse en plus tout numéro à zéro initial ou nul (forme
+  du contrôle `^[1-9][0-9]*$`, comme Scrabble) : vérifié avec `--build 0`,
+  `--build 014` et `--build 05`, les trois avec le code de sortie 1 et
+  sans rien écrire.
 - **Archive** : 31 entrées — à la racine `Actualise.exe`, `ActualiseUI.exe`,
   `manifest.json` (`{"build": N, "supprimer": []}`, sans BOM UTF-8) et le
   dossier `_internal` (28 entrées).
-- **Tailles de référence (build 11, publié)** : installeur 20 641 285
+- **Tailles de référence (build 12, publié)** : installeur 20 651 610
+  octets ; archive 20 580 646 octets ; `Actualise.exe` 4 165 651 octets ;
+  `dist\Actualise` non compressé 21 641 738 octets ; `ActualiseUI.exe`
+  10 313 876 octets (valeurs citées par le Chat Actualise, retrouvées à
+  l'identique dans l'essai pour les deux premières, à 1 263 octets près
+  pour la troisième).
+- **Référence précédente (build 11, publié)** : installeur 20 641 285
   octets ; archive 20 575 302 octets ; `Actualise.exe` 4 159 103 octets ;
   `dist\Actualise` non compressé 21 635 190 octets ; `ActualiseUI.exe`
   entre 10 314 263 et 10 315 521 octets selon la reconstruction.
+- **Essai de référence secondaire après #75** (`build\rebuild_actualise.bat
+  --build 99`, sans `--publier`) : code de sortie 0 ; installeur
+  20 646 638 octets ; archive 20 577 508 octets ; `Actualise.exe`
+  4 165 651 octets ; `dist\Actualise` 21 641 738 octets ; `ActualiseUI.exe`
+  10 312 613 octets ; archive de 31 entrées dont 4 éléments à la racine
+  (`_internal` de 25 fichiers, `Actualise.exe`, `ActualiseUI.exe`,
+  `manifest.json`) ; manifeste `{"build": 99, "supprimer": []}` (trois
+  premiers octets `7B 22 62`). Petits écarts de taille attribués par
+  l'agent à une dépendance mise à jour (`certifi`) sans l'avoir isolée.
 - **Durée observée** : environ 2 minutes pour le script ; les issues #70
-  et #71 d'Actualise ont pris respectivement 668 et 675 secondes en tout.
+  et #71 d'Actualise ont pris respectivement 668 et 675 secondes en tout ;
+  l'issue #75 a pris 977 secondes en tout, pour un `TIMEOUT` de 3600s —
+  ce n'est pas la durée du script seul (seule la durée de l'issue complète
+  est connue pour #75).
 - **Release à deux fichiers** : comme pour Rummikub et Scrabble, la
   Release porte l'installeur ET l'archive, créée par Alain avant de
-  pousser `master`.
+  pousser `master`. Depuis l'issue #75, le rappel de fin du mode
+  `--publier` suit en plus l'ordre du guide (fusionner la branche du
+  worktree sans pousser, créer la Release avec les deux fichiers, pousser
+  `master`). Non établi : ce rappel n'a été vu que dans un fichier de test
+  jetable — le mode `--publier` n'a pas été exécuté pendant l'issue #75.
 - **Essais toujours en `--build 99`**, jamais avec le numéro automatique ni
   avec un numéro proche d'un build réel : la copie vers le dossier fixe
   (`C:\CCW_Share\_derniers_builds\actualise\`) a lieu dans tous les modes.
