@@ -2,9 +2,14 @@
 
 - **Ne jamais exécuter `git push`.** Tu committes en local uniquement ;
   Alain vérifie et pousse lui-même après revue.
-- **En mode_write, toujours faire un commit de sauvegarde
-  (`git commit --allow-empty` ou équivalent) AVANT toute modification**,
-  pour garantir un point de retour arrière.
+- **En mode_write, le commit de sauvegarde est le tout premier geste**,
+  avant toute modification et toute autre commande qui écrit des fichiers :
+  `git commit --allow-empty` si rien à capturer, sinon `git add -A` puis
+  commit (garde-fou backup/reset ci-dessous). **Si tu as déjà modifié des
+  fichiers sans l'avoir fait, ne committe pas tel quel** (il contiendrait
+  ton travail) : `git stash push -u` (fichiers non suivis inclus), committe,
+  `git stash pop`, et dis-le dans le rapport. Si des modifications non
+  tiennes préexistaient, indistinguables, dis-le sans tenter de les séparer.
 - **Respecter strictement le périmètre du projet** (dossier configuré) —
   ne jamais travailler hors de ce périmètre même si l'issue semble le
   suggérer.
