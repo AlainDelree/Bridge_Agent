@@ -5702,6 +5702,40 @@ def _chemins_disjoints(a: Path, b: Path) -> bool:
     return a != b and not a.is_relative_to(b) and not b.is_relative_to(a)
 
 
+def _traiter_comme_perimetre_dynamique(body: str) -> bool:
+    """Décide si CETTE issue doit être traitée comme un projet à périmètre
+    dynamique (issue #837) — fonction PURE (aucun log, aucun I/O autre que la
+    lecture de chemins déjà en mémoire), appelée à chaque test qui distinguait
+    jusqu'ici dynamique/fixe pour une décision propre à une issue (dispatch
+    #337, résolution du contexte d'exécution) — PAS pour les réglages lus une
+    fois au démarrage (CFG.perimetre_dynamique lui-même, inchangé).
+
+    Faux (traitement NORMAL, comme un projet à périmètre fixe — worktree
+    #337, parallélisme, verrou, commit de sauvegarde habituels) :
+      - le projet n'est pas en périmètre dynamique (CFG.perimetre_dynamique
+        == False) ; ou
+      - le projet est dynamique mais `REPO_CIBLE` (une fois résolu) désigne
+        EXACTEMENT `REP_TRAVAIL` — l'issue vise le dépôt du projet lui-même
+        (ex. diagnostique_programme développant son propre code), même
+        comparaison de chemins résolus que `_chemins_disjoints` ci-dessus.
+
+    Vrai (traitement DYNAMIQUE, chemin historique #125 — direct dans
+    REP_TRAVAIL, sans worktree ni parallélisme) dans tous les autres cas :
+    `REPO_CIBLE` absent (l'abandon sans repli existant reste inchangé),
+    invalide (la validation existante — `valider_repo_cible` — s'en charge),
+    différent de `REP_TRAVAIL`, ou imbriqué dans un sens ou l'autre (ni
+    identique : ce n'est PAS le dépôt du projet lui-même)."""
+    if not CFG.perimetre_dynamique:
+        return False
+    repo_cible = extraire_repo_cible(body)
+    if not repo_cible:
+        return True
+    valide, _raison = valider_repo_cible(repo_cible)
+    if not valide:
+        return True
+    return Path(repo_cible).resolve() != CFG.rep_travail.resolve()
+
+
 def _resoudre_contexte_execution(numero: int, body: str, mode: str,
                                   chemin_worktree: Path | None,
                                   echec_worktree_deja_pris: str | None) -> ContexteExecution | None:
@@ -5716,11 +5750,25 @@ def _resoudre_contexte_execution(numero: int, body: str, mode: str,
 
     `chemin_outil_lecture_exec` (issue #833) : voir ContexteExecution — ajouté
     au contexte SANS modifier `perimetre_effectif` ni `cwd_effectif` ci-dessus,
-    qui restent exactement ceux d'aujourd'hui."""
+    qui restent exactement ceux d'aujourd'hui.
+
+    `dynamique` (issue #837) : calculée UNE fois ici par
+    `_traiter_comme_perimetre_dynamique` (fonction pure) et réutilisée pour
+    les trois tests qui distinguaient jusqu'ici dynamique/fixe ci-dessous —
+    faux pour un projet à périmètre fixe ET pour un projet dynamique dont
+    REPO_CIBLE désigne REP_TRAVAIL lui-même (traité comme un projet normal :
+    worktree #337, SOUS_DOSSIER #550, aucun REPO_CIBLE à résoudre ici)."""
     perimetre_effectif = CFG.perimetre
     cwd_effectif       = CFG.rep_travail
     avertissement_conflit = ""
     chemin_outil_lecture_exec: Path | None = None
+
+    dynamique = _traiter_comme_perimetre_dynamique(body)
+    if CFG.perimetre_dynamique:
+        if dynamique:
+            log.info(f"  Issue #{numero} : REPO_CIBLE = dépôt tiers : traitement dynamique (issue #837).")
+        else:
+            log.info(f"  Issue #{numero} : REPO_CIBLE = dépôt du projet : traitement normal (issue #837).")
 
     # Repli silencieux sur REP_TRAVAIL (issue #589) : rendu visible dans le
     # compte-rendu de clôture, sur le même modèle qu'avertissement_conflit
@@ -5740,14 +5788,14 @@ def _resoudre_contexte_execution(numero: int, body: str, mode: str,
     # Worktree isolé (issue #337) : chemin_travail effectif de CETTE tâche —
     # remplace REP_TRAVAIL comme cwd du subprocess ET comme périmètre du
     # prompt (Claude tourne physiquement dans ce dossier frère, un périmètre
-    # resté sur REP_TRAVAIL le bloquerait en pratique). Hors périmètre
-    # dynamique uniquement (#125) : les deux mécanismes ne se combinent pas,
-    # REPO_CIBLE reste seul décisif si les deux sont actifs par erreur.
-    if chemin_worktree is not None and not CFG.perimetre_dynamique:
+    # resté sur REP_TRAVAIL le bloquerait en pratique). Hors traitement
+    # dynamique uniquement (#125, #837) : les deux mécanismes ne se combinent
+    # pas, REPO_CIBLE reste seul décisif si les deux sont actifs par erreur.
+    if chemin_worktree is not None and not dynamique:
         cwd_effectif       = chemin_worktree
         perimetre_effectif = str(chemin_worktree)
 
-    if CFG.perimetre_dynamique:
+    if dynamique:
         repo_cible = extraire_repo_cible(body)
         if not repo_cible:
             log.error(f"  Issue #{numero} : PERIMETRE_DYNAMIQUE actif mais champ REPO_CIBLE absent — abandon (aucun repli).")
@@ -5839,7 +5887,7 @@ def _resoudre_contexte_execution(numero: int, body: str, mode: str,
     # esprit que la priorité worktree/REPO_CIBLE déjà en place ci-dessus.
     # Absent de l'issue (usage historique, sans sous-projet ciblé) :
     # cwd_effectif reste CFG.rep_travail, comportement strictement inchangé.
-    if chemin_worktree is None and not CFG.perimetre_dynamique:
+    if chemin_worktree is None and not dynamique:
         sous_dossier = extraire_sous_dossier(body)
         if sous_dossier:
             valide, raison, chemin_resolu = valider_sous_dossier(CFG.rep_travail, sous_dossier)
@@ -7227,9 +7275,13 @@ def traiter_issue(issue: dict, dry_run: bool) -> None:
 
     Décision de parallélisation (voir commentaire de section au-dessus de
     `_threads_ecriture`) :
-      - dry-run, ou projet à périmètre dynamique (#125, hors périmètre de
-        #337) → jamais de worktree, chemin historique intégral dans
-        REP_TRAVAIL.
+      - dry-run, ou issue traitée comme dynamique (`_traiter_comme_perimetre_
+        dynamique`, issue #837 — projet à périmètre dynamique #125 dont
+        REPO_CIBLE ne désigne PAS REP_TRAVAIL lui-même) → jamais de worktree,
+        chemin historique intégral dans REP_TRAVAIL. Un projet dynamique
+        dont REPO_CIBLE désigne REP_TRAVAIL (son propre dépôt, ex.
+        diagnostique_programme développant son propre code) est traité
+        comme un projet normal ci-dessous.
       - `MAX_WRITE_PARALLELE <= 1` (issue #577) → pas de thread (une seule
         tâche mode_write à la fois, thread principal), mais worktree dédié
         malgré tout : `_preparer_worktree_ecriture` puis
@@ -7301,8 +7353,9 @@ def traiter_issue(issue: dict, dry_run: bool) -> None:
         return
 
     mode = _deduire_mode(labels)
+    body = issue.get("body") or ""
 
-    if mode == MODE_ECRITURE and not dry_run and not CFG.perimetre_dynamique:
+    if mode == MODE_ECRITURE and not dry_run and not _traiter_comme_perimetre_dynamique(body):
         actifs   = _threads_ecriture_actifs()
         bloquees = _nb_issues_write_bloquees()
         if len(actifs) + bloquees >= CFG.max_write_parallele:

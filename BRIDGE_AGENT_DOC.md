@@ -417,6 +417,19 @@ hors périmètre même si l'issue le demande explicitement :
 > répertoire côté `vibe`) — un projet dynamique réglé sur cet agent reste
 > incapable de lire/exécuter son propre code quand il est hors `REPO_CIBLE`.
 
+> ℹ️ **Projet à périmètre dynamique : issue visant le dépôt du projet
+> lui-même traitée comme un projet normal (issue #837).** Quand `REPO_CIBLE`
+> d'une issue désigne EXACTEMENT `REP_TRAVAIL` (chemin résolu identique —
+> cas de `diagnostique_programme` développant son propre code), cette issue
+> précise suit les règles d'un projet à périmètre FIXE : worktree isolé
+> (#337) et parallélisme selon `MAX_WRITE_PARALLELE`, verrou, commit de
+> sauvegarde, contrôles habituels — `REPO_CIBLE` est alors seulement vérifié
+> (même dossier), sans autre effet. Pour TOUTES LES AUTRES issues de ce même
+> projet (`REPO_CIBLE` absent, différent, ou imbriqué dans un sens ou
+> l'autre avec `REP_TRAVAIL`), le traitement reste celui décrit ci-dessus :
+> direct dans `REP_TRAVAIL`, sans worktree ni parallélisme —
+> `MAX_WRITE_PARALLELE` n'a alors AUCUN effet sur elles.
+
 <!-- DEBUT:TABLEAU_PERIMETRE_PROJETS (généré automatiquement par regenerer_tableaux_projets.py
      depuis configs/*.conf — issue #571 ; ne pas éditer cette zone à la main,
      lancer `python3 regenerer_tableaux_projets.py` après toute création/suppression
@@ -676,7 +689,10 @@ commande git) ; `REPO_CIBLE` (chemin ABSOLU, réservé aux projets à
 périmètre dynamique, issue #125 — **obligatoire** pour ces projets,
 **refusé** pour les autres, voir §3.3/§3.4 ; leur `REP_TRAVAIL`, s'il est
 disjoint de `REPO_CIBLE`, reste accessible en lecture et exécution seules —
-issue #833, détail §7) ; `CREATION` (déclenche le
+issue #833, détail §7 ; s'il désigne `REP_TRAVAIL` lui-même, l'issue est
+traitée comme un projet normal — worktree, parallélisme, `MAX_WRITE_
+PARALLELE` effectif — sinon directe, sans worktree ni parallélisme, issue
+#837, détail §7) ; `CREATION` (déclenche le
 bootstrap automatique d'un nouveau service CCW dédié de bout en bout —
 généré uniquement par le formulaire web, case « Projet CCW », jamais à
 produire à la main).
@@ -739,10 +755,11 @@ calibration (constantes actuelles du code : `K_VARIABILITE` = 3, issue
 
 ---
 
-*Dernière mise à jour : 31 octobre 2026 — §3.3/§7/§16 : pour un projet à
-périmètre dynamique, `REP_TRAVAIL` disjoint de `REPO_CIBLE` reste accessible
-en lecture et exécution seules (jamais en écriture), avec détection
-technique après coup réutilisant le garde-fou #327 — limites documentées
-(fichiers ignorés par git, agent `vibe` jamais ouvert) (issue #833).*
+*Dernière mise à jour : 1er novembre 2026 — §7/§16 : pour un projet à
+périmètre dynamique, l'issue dont `REPO_CIBLE` désigne `REP_TRAVAIL`
+lui-même est désormais traitée comme un projet normal (worktree #337,
+parallélisme, `MAX_WRITE_PARALLELE` effectif) — les autres issues de ces
+projets restent sur le chemin dynamique direct, sans worktree ni
+parallélisme (issue #837).*
 
 Historique complet : voir [`CHANGELOG.md`](CHANGELOG.md).
