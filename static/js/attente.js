@@ -42,6 +42,7 @@ import { toasts } from './socle/toasts.js';
 import * as dom from './socle/dom.js';
 import { appelerAncien } from './socle/pont.js';
 import { copierTexteConnu, signalerEchecCopie } from './resultats_coches.js';
+import { formaterDuree } from './resultats.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // LOGIQUE PURE (testée sous Node — voir static/js/tests/attente.test.js)
@@ -91,6 +92,66 @@ export function descriptionLigneAttente(item) {
     projetAffiche: it.projet || 'projet inconnu',
     date: formaterDateAttente(it.date ? new Date(it.date * 1000) : null),
     condition: it.condition || '(condition non précisée)',
+  };
+}
+
+// ─── Pastille durée typique / durée maximale (issue #842) ─────────────────
+// Même esprit que la pastille « ≈ … » des issues en cours (voir
+// static/js/resultats.js::calculerBadgeEstimation) et le MÊME formatage de
+// durée (formaterDuree, importé ci-dessus, jamais reproduit ici) : la durée
+// maximale possible est le TIMEOUT par tentative × le nombre de tentatives
+// du projet (ex. 3 × 40min → 120min), ou « infini » pour une issue critique
+// (priorité haute ou critique, retry sans limite — cf. app/issues_inbox.py::
+// _lire_item_attente, champ `critique`). `item` = élément renvoyé par GET
+// /issues-attente, enrichi des champs timeout_s/max_essais/critique/
+// duree_max_s/duree_typique_s.
+//
+// Rendu en trois morceaux (`prefixe`/`infini`/`suffixe`) plutôt qu'une seule
+// chaîne : le mot « infini » porte sa PROPRE classe CSS (PASTILLE_CLASSE_INFINI,
+// posée par construireLigneDOM ci-dessous) — distincte du reste du texte,
+// pour rester identifiable même sans la couleur rouge (texte en gras, cf.
+// static/css/attente.css), conformément à l'exigence de contraste de
+// l'issue #842 (le rouge ne doit jamais être le SEUL porteur de
+// l'information).
+export const PASTILLE_CLASSE_INFINI = 'pastille-duree-infini';
+
+export function descriptionPastilleDureeAttente(item) {
+  const it = item || {};
+  const typiqueConnue = typeof it.duree_typique_s === 'number' && Number.isFinite(it.duree_typique_s);
+  const maxConnue = typeof it.timeout_s === 'number' && typeof it.max_essais === 'number';
+  const prefixe = typiqueConnue ? '≈ ' + formaterDuree(it.duree_typique_s) + ' · ' : '';
+  const titreTypique = typiqueConnue
+    ? 'Durée typique (≈) observée sur les issues comparables du même projet, type, mode et '
+    + 'complexité. '
+    : '';
+
+  if (it.critique) {
+    return {
+      classe: 'pastille-duree-attente',
+      prefixe,
+      infini: true,
+      suffixe: '',
+      titre: titreTypique + 'Issue critique (priorité haute ou critique) : reprise à chaque '
+           + 'cycle, sans limite de tentatives — aucune durée maximale.',
+    };
+  }
+  if (maxConnue) {
+    const duree_max_s = it.timeout_s * it.max_essais;
+    return {
+      classe: 'pastille-duree-attente',
+      prefixe,
+      infini: false,
+      suffixe: 'max ' + formaterDuree(duree_max_s),
+      titre: titreTypique + 'Durée maximale possible (max) : ' + it.max_essais
+           + ' tentatives de ' + formaterDuree(it.timeout_s) + ' au maximum.',
+    };
+  }
+  return {
+    classe: 'pastille-duree-attente pastille-duree-inconnue',
+    prefixe: '',
+    infini: false,
+    suffixe: 'durée inconnue',
+    titre: '',
   };
 }
 
@@ -212,6 +273,28 @@ function zoneListe() {
   return document.getElementById('attente-liste');
 }
 
+// Remplit la pastille durée (issue #842) à partir de descriptionPastilleDureeAttente
+// — `prefixe`/`suffixe` posés en noeuds texte (jamais innerHTML, même règle
+// que le reste de ce fichier), « infini » dans son propre <span> pour porter
+// sa classe dédiée (PASTILLE_CLASSE_INFINI, cf. static/css/attente.css :
+// gras + couleur rouge, le gras seul suffit à le distinguer sans la couleur).
+function construirePastilleDuree(pastille, item) {
+  if (!pastille) return;
+  const desc = descriptionPastilleDureeAttente(item);
+  pastille.className = desc.classe;
+  pastille.title = desc.titre;
+  pastille.textContent = '';
+  if (desc.prefixe) pastille.appendChild(document.createTextNode(desc.prefixe));
+  if (desc.infini) {
+    const spanInfini = document.createElement('span');
+    spanInfini.className = PASTILLE_CLASSE_INFINI;
+    spanInfini.textContent = 'infini';
+    pastille.appendChild(spanInfini);
+  } else if (desc.suffixe) {
+    pastille.appendChild(document.createTextNode(desc.suffixe));
+  }
+}
+
 function construireLigneDOM(item, index, total) {
   const desc = descriptionLigneAttente(item);
   const fond = couleurFondPastilleProjet(desc.projet);
@@ -233,6 +316,7 @@ function construireLigneDOM(item, index, total) {
         ? '<button type="button" class="attente-copier-titre" data-action="attente-copier-titre"'
           + ' title="Copier le titre">📋</button>'
         : '')
+    + '<span class="pastille-duree-attente"></span>'
     + '<span class="attente-date"></span>'
     + '</div>'
     + '<div class="attente-condition"></div>'
@@ -250,6 +334,7 @@ function construireLigneDOM(item, index, total) {
   pastille.style.color = texte;
   pastille.textContent = desc.projetAffiche;
   div.querySelector('.attente-titre').textContent = desc.titre;
+  construirePastilleDuree(div.querySelector('.pastille-duree-attente'), item);
   div.querySelector('.attente-date').textContent = desc.date;
   div.querySelector('.attente-condition').textContent = '⏳ Condition : ' + desc.condition;
   div.querySelector('[data-action="attente-monter"]').disabled = !peutMonter;

@@ -20,6 +20,8 @@ import {
   messageEchecAttente,
   texteACopierAttente,
   fautRechargerAttente,
+  descriptionPastilleDureeAttente,
+  PASTILLE_CLASSE_INFINI,
 } from '../attente.js';
 
 // ─── formaterDateAttente ────────────────────────────────────────────────────
@@ -220,4 +222,67 @@ test('fautRechargerAttente : nombre changé → rechargement (comportement #713 
 
 test('fautRechargerAttente : état précédent absent (premier appel) → rechargement', () => {
   assert.equal(fautRechargerAttente(null, { nb: 1, signature: 'a.txt:1:10' }), true);
+});
+
+// ─── descriptionPastilleDureeAttente (issue #842) ──────────────────────────
+// Pastille « ≈ … · max … » / « ≈ … · infini », même formatage que formaterDuree
+// (réutilisée, jamais reproduite) — voir app/issues_inbox.py::_lire_item_attente
+// pour l'origine des champs timeout_s/max_essais/critique/duree_typique_s.
+
+test('descriptionPastilleDureeAttente : durée typique connue + durée maximale connue', () => {
+  const desc = descriptionPastilleDureeAttente(
+    { timeout_s: 600, max_essais: 3, critique: false, duree_typique_s: 720 });
+  assert.equal(desc.prefixe, '≈ 12min · ');
+  assert.equal(desc.infini, false);
+  assert.equal(desc.suffixe, 'max 30min');
+  assert.match(desc.titre, /3 tentatives de 10min au maximum/);
+});
+
+test('descriptionPastilleDureeAttente : durée maximale seule (pas de durée typique)', () => {
+  const desc = descriptionPastilleDureeAttente(
+    { timeout_s: 600, max_essais: 3, critique: false, duree_typique_s: null });
+  assert.equal(desc.prefixe, '');
+  assert.equal(desc.infini, false);
+  assert.equal(desc.suffixe, 'max 30min');
+});
+
+test('descriptionPastilleDureeAttente : issue critique avec durée typique connue '
+   + '→ « ≈ … · infini »', () => {
+  const desc = descriptionPastilleDureeAttente(
+    { timeout_s: 600, max_essais: 3, critique: true, duree_typique_s: 720 });
+  assert.equal(desc.prefixe, '≈ 12min · ');
+  assert.equal(desc.infini, true);
+  assert.equal(desc.suffixe, '');
+  assert.match(desc.titre, /critique/);
+  assert.match(desc.titre, /sans limite/);
+});
+
+test('descriptionPastilleDureeAttente : issue critique sans durée typique → « infini » seul', () => {
+  const desc = descriptionPastilleDureeAttente(
+    { timeout_s: 600, max_essais: 3, critique: true, duree_typique_s: null });
+  assert.equal(desc.prefixe, '');
+  assert.equal(desc.infini, true);
+  assert.equal(desc.suffixe, '');
+});
+
+test('descriptionPastilleDureeAttente : rien de connu (ni typique, ni timeout/max_essais) '
+   + '→ « durée inconnue », jamais rien affiché', () => {
+  const desc = descriptionPastilleDureeAttente({ critique: false, duree_typique_s: null });
+  assert.equal(desc.prefixe, '');
+  assert.equal(desc.infini, false);
+  assert.equal(desc.suffixe, 'durée inconnue');
+  assert.equal(desc.classe, 'pastille-duree-attente pastille-duree-inconnue');
+});
+
+test('descriptionPastilleDureeAttente : item absent ne lève pas d\'exception', () => {
+  const desc = descriptionPastilleDureeAttente(null);
+  assert.equal(desc.suffixe, 'durée inconnue');
+});
+
+test('PASTILLE_CLASSE_INFINI : classe de style distincte pour « infini », texte lisible '
+   + 'sans la couleur (pas une classe générique partagée)', () => {
+  assert.equal(PASTILLE_CLASSE_INFINI, 'pastille-duree-infini');
+  const desc = descriptionPastilleDureeAttente({ critique: true, duree_typique_s: null });
+  assert.equal(desc.infini, true);
+  assert.notEqual(desc.classe, PASTILLE_CLASSE_INFINI);
 });

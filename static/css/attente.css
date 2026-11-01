@@ -23,6 +23,19 @@
 .attente-copier-titre{padding:2px 6px;line-height:1;font-size:12px;
   border:1px solid transparent;background:none;flex-shrink:0}
 .attente-copier-titre:hover{background:#f0efe9;border-color:#e0dfda}
+/* Pastille durée typique/maximale (issue #842) : « ≈ 12min · max 120min »,
+   même esprit que .ligne-estimation de l'onglet Résultats mais en texte
+   discret (pas de pilule colorée) — cette info est indicative, pas une
+   alerte. « infini » (issue critique, priorité haute/critique, retry sans
+   limite) porte sa PROPRE classe .pastille-duree-infini : gras + rouge,
+   le gras seul garantit sa lisibilité même sans la couleur (exigence de
+   contraste de l'issue #842 — le rouge n'est jamais le seul porteur de
+   l'information). */
+.attente-entete .pastille-duree-attente{font-size:11px;font-weight:600;
+  color:#5a5850;flex-shrink:0;white-space:nowrap}
+.attente-entete .pastille-duree-attente.pastille-duree-inconnue{font-style:italic;
+  font-weight:400;color:#9a978f}
+.attente-entete .pastille-duree-infini{font-weight:700;color:#B32020}
 .attente-date{margin-left:auto;font-size:11px;color:#9a978f;white-space:nowrap}
 /* Condition bien lisible (§ décision : « c'est elle qui dit à Alain quand
    lancer ») : même traitement visuel que .np-rappel-git (encart ambré). */
