@@ -37,7 +37,7 @@ Claude Chat → crée une issue → GitHub → watcher.py détecte → CCL/CCW e
 | Nom | Dépôt GitHub | Répertoire de travail CCL | Topic ntfy | Couleur |
 |-----|-------------|--------------------------|------------|---------|
 | `actualise` | AlainDelree/Actualise | ~/Actualise | (conf local) | `#009DD6` |
-| `actualise_ccw` | AlainDelree/Actualise | C:\CCW\actualise | (lecture CCW) | `#C9D8FF` |
+| `actualise_ccw` | AlainDelree/Actualise | C:\CCW\actualise | (lecture CCW) | `#00FFDD` |
 | `alchess` | AlainDelree/AlChess | ~/NicLink | (conf local) | `#00D68F` |
 | `annuairetoken` | AlainDelree/Annuairetoken | ~/AnnuaireToken | (conf local) | `#FFE4CC` |
 | `apiselect` | AlainDelree/ApiSelect | ~/ApiSelect | (conf local) | `#FFD429` |
@@ -45,14 +45,15 @@ Claude Chat → crée une issue → GitHub → watcher.py détecte → CCL/CCW e
 | `bridge_agent` | AlainDelree/Bridge_Agent | ~/Bridge_Agent | (conf local) | `#EB0000` |
 | `chesscoach` | AlainDelree/Chesscoach | ~/ChessCoach | (conf local) | `#BB00FF` |
 | `diagnostique_programme` | AlainDelree/Diagnostique_Programme | ~/Diagnostique_Programme | (conf local) | `#FC00A8` |
+| `dossiersperso` | AlainDelree/DossiersPerso | ~/DossiersPerso | (conf local) | `#CCDDFF` |
 | `ecole` | AlainDelree/Ecole | ~/Ecole | (conf local) | `#767676` |
 | `ff_galerie` | AlainDelree/FF_Galerie | ~/FF_Galerie | (conf local) | `#767676` |
 | `gestionmail` | AlainDelree/GestionMail | ~/GestionMail | (conf local) | `#3B45A0` |
 | `relecture_bridge` | AlainDelree/Relecture_Bridge | ~/Relecture_Bridge | (conf local) | `#CCFF00` |
 | `rummikub` | AlainDelree/Rummikub | ~/Rummikub | (conf local) | `#ADFF8F` |
-| `rummikub_ccw` | AlainDelree/Rummikub | C:\CCW\rummikub | (lecture CCW) | `#00FFDD` |
+| `rummikub_ccw` | AlainDelree/Rummikub | C:\CCW\rummikub | (lecture CCW) | `#3DD8FF` |
 | `scrabble` | AlainDelree/Scrabble | ~/Scrabble | (conf local) | `#7AFFFF` |
-| `scrabble_ccw` | AlainDelree/Scrabble | C:\CCW\scrabble | (lecture CCW) | `#3DD8FF` |
+| `scrabble_ccw` | AlainDelree/Scrabble | C:\CCW\scrabble | (lecture CCW) | `#767676` |
 <!-- FIN:TABLEAU_PROJETS_ACTIFS -->
 
 Chaque projet a son propre watcher (`watcher.py --config configs/<nom>.conf`)
@@ -444,6 +445,7 @@ hors périmètre même si l'issue le demande explicitement :
 | `bridge_agent` | /home/alain/Bridge_Agent |
 | `chesscoach` | /home/alain/ChessCoach |
 | `diagnostique_programme` | /home/alain/Diagnostique_Programme |
+| `dossiersperso` | /home/alain/DossiersPerso |
 | `ecole` | /home/alain/Ecole |
 | `ff_galerie` | /home/alain/FF_Galerie |
 | `gestionmail` | /home/alain/GestionMail |
@@ -755,7 +757,7 @@ calibration (constantes actuelles du code : `K_VARIABILITE` = 3, issue
 
 ---
 
-*Dernière mise à jour : 1er novembre 2026 — §7/§16 : pour un projet à
+*Dernière mise à jour : 1 novembre 2026 — §7/§16 : pour un projet à
 périmètre dynamique, l'issue dont `REPO_CIBLE` désigne `REP_TRAVAIL`
 lui-même est désormais traitée comme un projet normal (worktree #337,
 parallélisme, `MAX_WRITE_PARALLELE` effectif) — les autres issues de ces
