@@ -209,6 +209,23 @@ export function calculerBadgeSansRedacteur(labels) {
   return { afficher: true, titre: 'Créée sans REDACTEUR' };
 }
 
+// Label GitHub posé à la création (scripts/watcher_issues_inbox.py et
+// app/issues.py :: construire_labels) quand la ligne optionnelle COMPLEXITE
+// (issue #434) est ABSENTE de l'en-tête OU que sa valeur n'est pas l'une des
+// quatre reconnues par watcher.complexite_reconnue (issue #844).
+export const LABEL_SANS_COMPLEXITE = 'sans-complexite';
+
+// Décide si une issue doit afficher le badge « sans COMPLEXITE » (issue
+// #844) : même patron que calculerBadgeSansRedacteur() ci-dessus — purement
+// basé sur la présence du label, aucun appel réseau supplémentaire. Symbole
+// et couleur distincts du badge sans REDACTEUR (voir resultats.css) pour
+// rester reconnaissables au premier coup d'œil l'un de l'autre.
+export function calculerBadgeSansComplexite(labels) {
+  const noms = normaliserNomsLabels(labels);
+  if (!noms.includes(LABEL_SANS_COMPLEXITE)) return { afficher: false };
+  return { afficher: true, titre: 'Complexité absente ou non reconnue — comptée comme « normal »' };
+}
+
 // Décide, à partir de l'état courant et d'un événement /stream, l'action CIBLÉE
 // à mener — cœur du correctif de l'issue #627 : `debut_issue` recharge le
 // timing et ne passe JAMAIS par la vérification post-dépassement (#334), quelle
@@ -595,6 +612,13 @@ export function majBadges() {
       const it = issues[cle];
       appliquerBadgeSansRedacteur(badgeSansRedacteur, calculerBadgeSansRedacteur((it && it.labels) || []));
     }
+    // Badge « sans COMPLEXITE » (issue #844) : même patron que le badge sans
+    // REDACTEUR ci-dessus.
+    const badgeSansComplexite = ligne.querySelector('.badge-sans-complexite');
+    if (badgeSansComplexite) {
+      const it = issues[cle];
+      appliquerBadgeSansComplexite(badgeSansComplexite, calculerBadgeSansComplexite((it && it.labels) || []));
+    }
     // Icône dédiée d'interruption (issue #642) : révélée sur toute issue OUVERTE
     // actuellement EN COURS (lecture ou écriture), à partir du même `t.debut`
     // que le décompte TIMEOUT ci-dessous — jamais posée pour une ligne fermée
@@ -648,6 +672,19 @@ function appliquerBadgeModele(badge, decision) {
 // cf. construireLigneIssueDOM d'app.js) : seuls l'affichage et l'infobulle
 // varient ici.
 function appliquerBadgeSansRedacteur(badge, decision) {
+  if (!decision || !decision.afficher) {
+    badge.style.display = 'none';
+    badge.title = '';
+    return;
+  }
+  badge.style.display = '';
+  badge.title = decision.titre;
+}
+
+// Met à jour (sans reconstruire) le badge « sans COMPLEXITE » d'une ligne
+// déjà dans le DOM (issue #844) — même patron qu'appliquerBadgeSansRedacteur()
+// ci-dessus, décision déléguée à calculerBadgeSansComplexite().
+function appliquerBadgeSansComplexite(badge, decision) {
   if (!decision || !decision.afficher) {
     badge.style.display = 'none';
     badge.title = '';
@@ -1105,6 +1142,8 @@ export const resultats = {
   calculerBadgeModele,
   // Idem pour le badge « sans REDACTEUR » (issue #647).
   calculerBadgeSansRedacteur,
+  // Idem pour le badge « sans COMPLEXITE » (issue #844).
+  calculerBadgeSansComplexite,
   // Exposée pour que l'ancien app.js (construireBoutonsFiltre) décide de la
   // bordure « agent secondaire » d'une pastille via l'unique fonction testée
   // (issue #772).

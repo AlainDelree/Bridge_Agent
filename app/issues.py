@@ -28,6 +28,7 @@ from watcher import (est_titre_chef, deduire_type_issue, PAUSE_ENTRE_TENTATIVES,
                      _est_depot_git, LABEL_ECRITURE, LABEL_SCRATCH,
                      LABEL_NOTIF_PC, LABEL_NOTIF_GSM, LABEL_NOTIF_TOUS,
                      LABEL_ECHEC, extraire_complexite,
+                     LABEL_SANS_COMPLEXITE, complexite_reconnue,  # (issue #844)
                      PLANCHER_TIMEOUT_ECRITURE,  # (issue #752)
                      valider_repo_cible)  # (issue #829, étend #125/#567)
 # État partagé du quota GraphQL (issue #615) : rafraîchi après chaque appel gh
@@ -298,6 +299,14 @@ def construire_labels(data: dict) -> str:
     for extra in extras:
         if extra not in labels:
             labels.append(extra)
+    # Label « sans-complexite » (issue #844) : même règle que côté fichier
+    # déposé (scripts/watcher_issues_inbox.py::construire_labels) — posé quand
+    # le corps rédigé par Claude Chat ne porte aucune ligne COMPLEXITE
+    # reconnue (absente, ou valeur hors des quatre niveaux), détecté par
+    # watcher.complexite_reconnue (même reconnaissance EXACTE que la
+    # calibration TIMEOUT). Purement informatif, ne bloque jamais la création.
+    if not complexite_reconnue(data.get("corps", "")) and LABEL_SANS_COMPLEXITE not in labels:
+        labels.append(LABEL_SANS_COMPLEXITE)
     return ",".join(labels)
 
 

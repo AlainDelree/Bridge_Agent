@@ -239,6 +239,13 @@
 .ligne-issue .badge-sans-redacteur{flex-shrink:0;font-size:11px;font-weight:700;
   line-height:1;padding:1px 5px;border-radius:9px;white-space:nowrap;
   color:#8a5a00;background:#fdf0d5;border:1px solid #e8c98a}
+/* Badge « sans COMPLEXITE » (issue #844) : même patron que le badge « sans
+   REDACTEUR » ci-dessus (label GitHub `sans-complexite`), symbole ❔ et ton
+   sarcelle (au lieu du ⚠ ambre ci-dessus) pour rester reconnaissable au
+   premier coup d'œil face à lui — purement informatif, jamais un blocage. */
+.ligne-issue .badge-sans-complexite{flex-shrink:0;font-size:11px;font-weight:700;
+  line-height:1;padding:1px 5px;border-radius:9px;white-space:nowrap;
+  color:#0b5a5a;background:#def7f7;border:1px solid #a9dede}
 /* Badge de temps restant estimé des issues ouvertes (issue #91), conscient du
    budget de retry (issue #106). Couleur selon l'état : vert = large marge,
    orange = échéance proche (<=30 s), rouge = budget total dépassé, gris = pas

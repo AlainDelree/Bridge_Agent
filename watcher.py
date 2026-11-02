@@ -230,6 +230,14 @@ LABEL_FAIT      = "done"          # posé au succès
 # watcher_issues_inbox.py). Ne bloque jamais rien.
 LABEL_SANS_REDACTEUR = "sans-redacteur"
 
+# Posé à la création (issue #844) quand l'en-tête ne porte pas de ligne
+# COMPLEXITE reconnue (absente, ou valeur hors NIVEAUX_COMPLEXITE) — même
+# patron que LABEL_SANS_REDACTEUR ci-dessus : purement informatif pour
+# l'onglet Résultats (badge dédié), jamais un rejet. Voir complexite_reconnue()
+# plus bas, qui réutilise EXACTEMENT la reconnaissance d'extraire_complexite()
+# (calibration TIMEOUT) pour que les deux restent alignés.
+LABEL_SANS_COMPLEXITE = "sans-complexite"
+
 # Garde-fou explicite sur l'AUTEUR de l'issue (issue #563), en complément du
 # filtre par labels (#477 ci-dessous dans lister_issues). Jusqu'ici, la seule
 # protection contre une issue créée par un tiers était INDIRECTE : poser un
@@ -1865,6 +1873,30 @@ def extraire_modele(body: str) -> str:
                     return valeur
     return CFG.modele_ccl
 
+# Quatre niveaux reconnus par COMPLEXITE (issue #434), insensible à la casse —
+# source unique partagée par extraire_complexite() (calibration TIMEOUT) et
+# complexite_reconnue() (détection de LABEL_SANS_COMPLEXITE, issue #844) : les
+# deux DOIVENT rester alignés, sous peine qu'une issue acceptée par la
+# calibration reçoive quand même le label.
+NIVEAUX_COMPLEXITE = ("rapide", "court", "normal", "lourd")
+
+
+def _complexite_depuis_entete(body: str) -> str | None:
+    """Cherche une ligne `| COMPLEXITE | <valeur> |` dans `body` (insensible à
+    la casse/aux espaces) et renvoie la valeur en minuscules si elle
+    appartient à NIVEAUX_COMPLEXITE, sinon None — ligne absente ou valeur non
+    reconnue ne sont PAS distinguées ici (voir extraire_complexite et
+    complexite_reconnue, qui en font chacune un usage différent)."""
+    for ligne in body.splitlines():
+        if "| COMPLEXITE" in ligne.upper():
+            parts = ligne.split("|")
+            if len(parts) >= 3:
+                valeur = parts[2].strip().lower()
+                if valeur in NIVEAUX_COMPLEXITE:
+                    return valeur
+    return None
+
+
 def extraire_complexite(body: str) -> str:
     """Extrait la COMPLEXITE depuis le body de l'issue (en-tête bridge, issue
     #434) — 4e dimension de la clé EWMA de calibration TIMEOUT, aux côtés de
@@ -1876,15 +1908,17 @@ def extraire_complexite(body: str) -> str:
     ou valeur non reconnue → 'normal' (défaut, ~300s = TIMEOUT standard) —
     n'affecte pas l'historique des issues déjà closes, qui n'ont pas ce
     champ (nouvelles clés, recalibration progressive)."""
-    niveaux = ("rapide", "court", "normal", "lourd")
-    for ligne in body.splitlines():
-        if "| COMPLEXITE" in ligne.upper():
-            parts = ligne.split("|")
-            if len(parts) >= 3:
-                valeur = parts[2].strip().lower()
-                if valeur in niveaux:
-                    return valeur
-    return "normal"
+    return _complexite_depuis_entete(body) or "normal"
+
+
+def complexite_reconnue(body: str) -> bool:
+    """Vrai si `body` porte une ligne COMPLEXITE dont la valeur est l'une des
+    NIVEAUX_COMPLEXITE reconnues par extraire_complexite (même reconnaissance,
+    insensible à la casse) — Faux si la ligne est absente ou si sa valeur ne
+    correspond à aucun niveau. Utilisé pour poser LABEL_SANS_COMPLEXITE
+    (issue #844), construire_labels() côté scripts/watcher_issues_inbox.py et
+    app/issues.py."""
+    return _complexite_depuis_entete(body) is not None
 
 def extraire_repo_cible(body: str) -> str:
     """Extrait le REPO_CIBLE depuis le body de l'issue (en-tête bridge).

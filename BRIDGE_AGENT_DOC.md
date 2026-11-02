@@ -278,6 +278,7 @@ fichier rejeté laisse l'ancien élément intact).
 | `notif_tous` | notify-send + ntfy |
 | `mode_scratch` | **ARME le mode lecture active** — écriture confinée au dossier scratch, voir §5 |
 | `sans-redacteur` | Posé automatiquement quand `REDACTEUR` est absent de l'en-tête — purement informatif, voir §3.4 |
+| `sans-complexite` | Posé automatiquement quand `COMPLEXITE` est absente ou non reconnue dans l'en-tête — purement informatif, voir §6 |
 | `agent-claude` | Posé automatiquement à la clôture — **agent d'exécution** Claude Code (clé `AGENT` du `.conf`, issue #768) |
 | `agent-vibe` | Posé automatiquement à la clôture — **agent d'exécution** Mistral Vibe (clé `AGENT` du `.conf`, issue #768) |
 
