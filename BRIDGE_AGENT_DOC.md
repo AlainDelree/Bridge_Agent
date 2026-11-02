@@ -95,11 +95,12 @@ déplacé dans `issues_inbox/rejected/`, jamais retraité automatiquement.
 Un en-tête `| CHAMP | Valeur |` optionnel et une ligne `#Titre: ...`, dans
 **l'un ou l'autre ordre** (issue #512) — en-tête avant `#Titre:` ou
 `#Titre:` avant l'en-tête, les deux sont équivalents — puis le corps.
-Champs d'en-tête reconnus, tous optionnels sauf `PROJET` :
+Champs d'en-tête reconnus, tous optionnels sauf `PROJET` et `COMPLEXITE` :
 
 | Champ       | Rôle                                                                |
 |-------------|----------------------------------------------------------------------|
 | `PROJET`    | **Obligatoire** — doit correspondre à `configs/<PROJET>.conf`        |
+| `COMPLEXITE` | **Obligatoire, dans TOUTE issue, quel que soit le MODE** — une des quatre valeurs exactes `rapide`/`court`/`normal`/`lourd`, jamais un autre mot ; détail et critère de choix au §6 (issue #843). |
 | `REDACTEUR` | Optionnel — nom du projet depuis lequel Claude Chat écrit, validé pour cohérence avec `PROJET` (règle complète au §3.4). |
 | `TIMEOUT`   | Nombre (secondes, suffixe `s` toléré) — sinon défaut du projet (`TIMEOUT_CLAUDE` du `.conf`), au moins 900 s en écriture (issue #752) ; à toujours fixer explicitement |
 | `MODELE`    | Doit être une valeur reconnue (§6) si fourni                        |
@@ -126,8 +127,9 @@ sauf si `LABELS` demande déjà explicitement `notif_gsm` ou `notif_tous`.
 
 **Exemple canonique :**
 ```markdown
-| PROJET | bridge_agent |
-| MODE   | écriture     |
+| PROJET     | bridge_agent |
+| MODE       | écriture     |
+| COMPLEXITE | normal       |
 
 #Titre: Titre court et actionnable
 
@@ -372,15 +374,42 @@ Le watcher lit ces champs dans le tableau markdown de l'en-tête :
 | `SUITE_DE` | ex. `#5` | Indique que cette issue fait suite à l'issue #N — préfixer alors aussi le titre par `Suite #N : `. Absent = issue inédite. |
 | `RELANCE` | ex. `#612` | **Spécifique à `issues_inbox/`**, voir §3.14 — détourne le fichier déposé vers la correction/relance de l'issue #N déjà ouverte plutôt que de créer une nouvelle issue. |
 | `REDACTEUR` | ex. `bridge_agent` | **Spécifique à `issues_inbox/`**, voir §3.4 pour la règle complète — nom du projet depuis le contexte duquel Claude Chat a rédigé l'issue, validé pour cohérence avec `PROJET`. |
-| `COMPLEXITE` | `rapide` / `court` / `normal` / `lourd` | 4e dimension de la calibration automatique du TIMEOUT (voir §19), estimée par Claude Chat au moment de rédiger l'issue. Absent ou non reconnu = `normal`. |
+| `COMPLEXITE` | **uniquement** `rapide` / `court` / `normal` / `lourd` — aucun autre mot | **Obligatoire dans toute issue, quel que soit le MODE** (lecture, lecture active, écriture) — estimée par Claude Chat au moment de rédiger l'issue, jamais omise. 4e dimension de la calibration automatique du TIMEOUT (voir §19). `Absent ou non reconnu = normal` est un **repli technique du code**, pas un choix de rédaction légitime (voir encadré ci-dessous, issue #843). |
 | `RESEAU` | `oui` ou `non` | Tag réseau pour la calibration TIMEOUT (voir §19) : `oui` = issue impliquant de lourdes opérations réseau, `non` = purement locale. Optionnel. |
+
+> ⚠️ **`COMPLEXITE` obligatoire, quatre valeurs exactes (issue #843).** Une
+> mesure sur ~1500 issues fermées des dépôts du système montre ce champ
+> absent dans plus de la moitié des issues de plusieurs projets, et des
+> valeurs hors liste ailleurs (constatées en pratique : `moyen`, `léger`,
+> `simple`, `trivial`, `normale`) — le code range alors tout cela
+> silencieusement dans `normal`, ce qui fausse la calibration du TIMEOUT.
+> **Claude Chat doit donc inclure `| COMPLEXITE | <valeur> |` dans TOUTE
+> issue qu'il rédige**, quel que soit le MODE, en choisissant **exactement**
+> l'un de ces quatre mots — tout autre mot, y compris ceux listés ci-dessus,
+> est interdit :
+>
+> - `rapide` (durée médiane ≈ 1-2 min) — correction ponctuelle dans un seul
+>   fichier, sans test ni build : un libellé, une valeur de config, une
+>   couleur CSS.
+> - `court` (≈ 2-5 min) — modification simple limitée à 2-3 fichiers, sans
+>   refonte ni ajout de tests.
+> - `normal` (≈ 3-15 min) — plusieurs fichiers, ajout ou adaptation de
+>   tests, ou modification touchant à la fois le serveur et une page/l'IHM.
+> - `lourd` (≈ 10-30 min) — refonte ou migration, mesure/analyse portant sur
+>   un périmètre étendu, ou tâche impliquant un build/une installation
+>   longue.
+>
+> **En cas d'hésitation entre deux valeurs, toujours choisir la plus
+> élevée** : une issue sous-estimée (TIMEOUT trop court, échec par
+> dépassement) coûte plus cher qu'une issue surestimée.
 
 Format dans le corps :
 ```markdown
-| PRIORITE | haute |
-| TIMEOUT  | 600s  |
-| MODELE   | claude-opus-4-8 |
-| PROJET   | bridge_agent |
+| PRIORITE   | haute |
+| TIMEOUT    | 600s  |
+| MODELE     | claude-opus-4-8 |
+| PROJET     | bridge_agent |
+| COMPLEXITE | court |
 ```
 
 > ⚠️ **Claude Chat doit toujours inclure** `| PROJET | <nom> |` dans l'en-tête
@@ -755,11 +784,11 @@ calibration (constantes actuelles du code : `K_VARIABILITE` = 3, issue
 
 ---
 
-*Dernière mise à jour : 1 novembre 2026 — §7/§16 : pour un projet à
-périmètre dynamique, l'issue dont `REPO_CIBLE` désigne `REP_TRAVAIL`
-lui-même est désormais traitée comme un projet normal (worktree #337,
-parallélisme, `MAX_WRITE_PARALLELE` effectif) — les autres issues de ces
-projets restent sur le chemin dynamique direct, sans worktree ni
-parallélisme (issue #837).*
+*Dernière mise à jour : 2 novembre 2026 — §3.3/§6 : le champ `COMPLEXITE`
+devient obligatoire dans toute issue rédigée par Claude Chat, quel que soit
+le MODE, avec quatre valeurs exactes (`rapide`/`court`/`normal`/`lourd`),
+un critère de choix par valeur et la règle du choix de la valeur la plus
+élevée en cas d'hésitation ; `absent ou non reconnu = normal` reste un
+repli technique du code, pas un choix de rédaction légitime (issue #843).*
 
 Historique complet : voir [`CHANGELOG.md`](CHANGELOG.md).
