@@ -103,6 +103,7 @@ sys.path.insert(0, str(DOSSIER_SCRIPT))
 from watcher import (charger_config, lire_conf, est_titre_chef,  # noqa: E402
                      LABEL_NOTIF_PC, LABEL_NOTIF_GSM, LABEL_NOTIF_TOUS,
                      LABEL_SANS_REDACTEUR,  # (issue #647)
+                     LABEL_SANS_COMPLEXITE, complexite_reconnue,  # (issue #844)
                      PLANCHER_TIMEOUT_ECRITURE,  # (issue #752)
                      valider_sous_dossier, valider_repo_cible)  # noqa: E402 (issue #567)
 from app.watchers import redemarrer_si_eteint  # noqa: E402 (issue #486, #600)
@@ -951,6 +952,16 @@ def construire_labels(champs: dict) -> str:
     # REDACTEUR », calculerBadgeSansRedacteur de resultats.js) — ne bloque rien.
     if not champs.get("redacteur") and LABEL_SANS_REDACTEUR not in labels:
         labels.append(LABEL_SANS_REDACTEUR)
+    # Label « sans-complexite » (issue #844) : posé quand le corps ne porte
+    # aucune ligne COMPLEXITE reconnue (absente, ou valeur hors des quatre
+    # niveaux — ex. faute de frappe) — même reconnaissance EXACTE que
+    # watcher.extraire_complexite (calibration TIMEOUT), via
+    # watcher.complexite_reconnue, pour qu'aucune issue acceptée par la
+    # calibration ne reçoive ce label. COMPLEXITE n'étant pas dans
+    # CHAMPS_ENTETE, sa ligne (si présente) reste intacte dans champs["corps"].
+    # Purement informatif côté onglet Résultats — ne bloque jamais rien.
+    if not complexite_reconnue(champs.get("corps") or "") and LABEL_SANS_COMPLEXITE not in labels:
+        labels.append(LABEL_SANS_COMPLEXITE)
     return ",".join(labels)
 
 

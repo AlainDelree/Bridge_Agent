@@ -996,6 +996,18 @@ function construireLigneIssueDOM(it) {
   const badgeSansRedacteurHtml =
     '<span class="badge-sans-redacteur"' + (decisionSansRedacteur.afficher ? '' : ' style="display:none"')
     + ' title="' + escapeHtml(decisionSansRedacteur.titre || '') + '">⚠</span>';
+  // Badge « sans COMPLEXITE » (issue #844) : même patron que le badge sans
+  // REDACTEUR ci-dessus (label GitHub `sans-complexite`, posé par
+  // construire_labels() côté watcher_issues_inbox.py ET app/issues.py).
+  // Symbole et couleur distincts (resultats.css) pour rester reconnaissable
+  // au premier coup d'œil face au badge sans REDACTEUR.
+  const decisionSansComplexite = (window.Bridge && window.Bridge.resultats
+      && window.Bridge.resultats.calculerBadgeSansComplexite)
+    ? window.Bridge.resultats.calculerBadgeSansComplexite(it.labels)
+    : { afficher: false };
+  const badgeSansComplexiteHtml =
+    '<span class="badge-sans-complexite"' + (decisionSansComplexite.afficher ? '' : ' style="display:none"')
+    + ' title="' + escapeHtml(decisionSansComplexite.titre || '') + '">❔</span>';
   ligne.innerHTML =
     // Case à cocher libre (issue #154), tout à gauche de la ligne. Le clic ne
     // doit PAS sélectionner/ouvrir l'issue (stopPropagation) ; onchange délègue
@@ -1032,6 +1044,9 @@ function construireLigneIssueDOM(it) {
     // Badge « sans REDACTEUR » (issue #647) : juste après, même raison
     // d'être présent aussi sur une issue fermée.
     + badgeSansRedacteurHtml
+    // Badge « sans COMPLEXITE » (issue #844) : juste après, même raison
+    // d'être présent aussi sur une issue fermée.
+    + badgeSansComplexiteHtml
     // Badge d'estimation prédictive (issue #108) PUIS badge de temps restant
     // (issues #91/#106) : l'estimation (durée médiane historique du même
     // projet+type+mode) s'affiche JUSTE AVANT le décompte, qui reste inchangé.

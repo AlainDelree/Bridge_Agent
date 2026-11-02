@@ -28,7 +28,7 @@ apercevoir.
 
 import subprocess
 
-# Treize labels requis par le watcher (§4 de BRIDGE_AGENT_DOC.md). couleur =
+# Quatorze labels requis par le watcher (§4 de BRIDGE_AGENT_DOC.md). couleur =
 # hex sans '#'. Recréés à l'identique sur chaque dépôt cible — watcher.py au
 # démarrage (manquants seulement, voir verifier_labels_demarrage ci-dessous)
 # et nouveau_projet.py à la création d'un projet ; sans eux, le watcher ne
@@ -45,6 +45,7 @@ LABELS = [
     ("notif_gsm",      "fbca04", "Ajoute une notification push (ntfy)"),
     ("notif_tous",     "fbca04", "notify-send + ntfy"),
     ("sans-redacteur", "c2b280", "Posé automatiquement — l'issue ne précisait pas REDACTEUR"),
+    ("sans-complexite", "006b75", "Posé automatiquement — COMPLEXITE absente ou non reconnue"),
     ("agent-claude",   "c5def5", "Posé automatiquement — agent d'exécution Claude Code"),
     ("agent-vibe",     "c5def5", "Posé automatiquement — agent d'exécution Mistral Vibe"),
 ]

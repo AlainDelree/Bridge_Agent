@@ -11,6 +11,7 @@ import {
   calculerBadgeModele,
   libelleModele,
   calculerBadgeSansRedacteur,
+  calculerBadgeSansComplexite,
   estAgentSecondaire,
   planifierEvenementSse,
   fusionnerChargement,
@@ -172,6 +173,30 @@ test('badge sans REDACTEUR : reconnaît le format objet {name} de gh issue list'
 
 test('badge sans REDACTEUR : insensible à la casse du label', () => {
   assert.equal(calculerBadgeSansRedacteur(['Sans-Redacteur']).afficher, true);
+});
+
+// ─── calculerBadgeSansComplexite (issue #844) ────────────────────────────────
+test('badge sans COMPLEXITE : rien sans le label sans-complexite', () => {
+  assert.deepEqual(calculerBadgeSansComplexite([]), { afficher: false });
+  assert.deepEqual(calculerBadgeSansComplexite(null), { afficher: false });
+  assert.deepEqual(calculerBadgeSansComplexite(['bridge', 'for-linux']), { afficher: false });
+  // Un label voisin (sans-redacteur) ne doit jamais déclencher ce badge-ci.
+  assert.deepEqual(calculerBadgeSansComplexite(['sans-redacteur']), { afficher: false });
+});
+
+test('badge sans COMPLEXITE : affiché quand le label sans-complexite est présent', () => {
+  const r = calculerBadgeSansComplexite(['bridge', 'for-linux', 'sans-complexite']);
+  assert.equal(r.afficher, true);
+  assert.equal(r.titre, 'Complexité absente ou non reconnue — comptée comme « normal »');
+});
+
+test('badge sans COMPLEXITE : reconnaît le format objet {name} de gh issue list', () => {
+  const r = calculerBadgeSansComplexite([{ name: 'bridge' }, { name: 'sans-complexite' }]);
+  assert.equal(r.afficher, true);
+});
+
+test('badge sans COMPLEXITE : insensible à la casse du label', () => {
+  assert.equal(calculerBadgeSansComplexite(['Sans-Complexite']).afficher, true);
 });
 
 // ─── estAgentSecondaire (issue #772) ─────────────────────────────────────────
