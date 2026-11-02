@@ -30,7 +30,15 @@ from watcher import (est_titre_chef, deduire_type_issue, PAUSE_ENTRE_TENTATIVES,
                      LABEL_ECHEC, extraire_complexite,
                      LABEL_SANS_COMPLEXITE, complexite_reconnue,  # (issue #844)
                      PLANCHER_TIMEOUT_ECRITURE,  # (issue #752)
-                     valider_repo_cible)  # (issue #829, étend #125/#567)
+                     valider_repo_cible,  # (issue #829, étend #125/#567)
+                     # estimer_duree et son historique (issue #845) : déplacés
+                     # dans watcher.py, SEULE source désormais — le watcher a
+                     # besoin d'appeler l'EXACTE même fonction pour figer, au
+                     # lancement d'une issue, la même estimation que celle
+                     # affichée ici. Comportement inchangé, import seulement.
+                     FICHIER_HISTORIQUE, FICHIER_ETAT_TIMEOUT,
+                     SEUIL_ESTIM_CORRECT, SEUIL_ESTIM_SUR,
+                     _charger_historique, estimer_duree)
 # État partagé du quota GraphQL (issue #615) : rafraîchi après chaque appel gh
 # SIGNIFICATIF de ce module (création/fermeture d'issue).
 from etat_rate_limit import maj_rate_limit
@@ -52,26 +60,10 @@ DOSSIER_SCRIPT = Path(__file__).resolve().parent.parent
 # plus dans le corps de l'issue GitHub. Voir watcher.py::_consignes_injectees et
 # §12.1 de BRIDGE_AGENT_DOC.md.
 
-# Historique des durées réelles alimenté par le watcher (issue #108). Même
-# emplacement que watcher.FICHIER_HISTORIQUE — on le recalcule ici plutôt que de
-# l'importer pour rester robuste si le watcher n'a pas encore tourné.
-FICHIER_HISTORIQUE = DOSSIER_SCRIPT / "logs" / "historique_durees.json"
-
-# État de calibration EWMA du TIMEOUT (issue #221), utilisé en repli par
-# estimer_duree() quand historique_durees.json est mince ou absent (issue
-# #520) — même emplacement que watcher.FICHIER_ETAT_TIMEOUT, recalculé ici
-# pour la même raison que FICHIER_HISTORIQUE ci-dessus.
-FICHIER_ETAT_TIMEOUT = DOSSIER_SCRIPT / "logs" / "etat_timeout.json"
-
-# Seuils de fiabilité de l'estimation, exprimés en NOMBRE D'ÉCHANTILLONS de la
-# catégorie précise (projet+type+mode). Volume réel observé sur le bridge : la
-# plupart des catégories ont peu de fermetures, quelques-unes (ex. alchess) en
-# cumulent davantage. On garde donc les seuils indicatifs de l'issue #108 :
-#   n < 5   → estimation incertaine (rouge)
-#   5 ≤ n ≤ 15 → estimation correcte (noir)
-#   n > 15  → estimation fiable (vert)
-SEUIL_ESTIM_CORRECT = 5    # en dessous : « incertain » (rouge)
-SEUIL_ESTIM_SUR     = 15   # au-dessus : « sûr » (vert) ; entre les deux : « correct » (noir)
+# FICHIER_HISTORIQUE / FICHIER_ETAT_TIMEOUT / SEUIL_ESTIM_CORRECT /
+# SEUIL_ESTIM_SUR (issue #108, #221) : importés de watcher.py depuis l'issue
+# #845 (voir le bloc d'import ci-dessus) — c'est désormais là leur SEULE
+# définition, avec estimer_duree() lui-même.
 
 # ─── Pièces jointes image des issues (issue #191, isolation #248) ─────────────
 # Dossier (à la racine de la branche dédiée NOM_BRANCHE_PIECES_JOINTES, PAS de
@@ -1432,104 +1424,10 @@ def _commentaires_issue(cfg, numero) -> list:
 
 # ─── Estimation prédictive de durée (issue #108) ──────────────────────────────
 # Le badge de décompte (issues #91/#106) mesure le TEMPS RESTANT avant l'échéance
-# du TIMEOUT configuré — pas une durée réaliste. On ajoute ici une estimation
-# fondée sur l'historique réel des issues fermées du même projet+type+mode
-# (médiane), avec un code couleur de fiabilité selon le nombre d'échantillons.
-
-def _charger_historique() -> list:
-    """Charge la liste des durées historiques (logs/historique_durees.json).
-    Liste vide si le fichier n'existe pas encore ou est illisible/corrompu —
-    dans ce cas toutes les catégories seront « pas encore de données »."""
-    try:
-        if FICHIER_HISTORIQUE.exists():
-            return json.loads(FICHIER_HISTORIQUE.read_text(encoding="utf-8")) or []
-    except (json.JSONDecodeError, OSError):
-        pass
-    return []
-
-
-def _mediane(valeurs: list) -> float:
-    """Médiane d'une liste non vide (moyenne des deux centraux si pair)."""
-    s = sorted(valeurs)
-    n = len(s)
-    mid = n // 2
-    if n % 2:
-        return s[mid]
-    return (s[mid - 1] + s[mid]) / 2
-
-
-def _duree_typique_calibration(projet: str, type_issue: str, mode: str,
-                                complexite: str) -> tuple[float, int] | None:
-    """Lit (best-effort, sans verrou) duree_typique + n_observations pour la
-    combinaison projet+type+mode+complexite dans logs/etat_timeout.json — EWMA
-    maintenue en continu par la calibration automatique du TIMEOUT (issue
-    #221), avec une bien meilleure profondeur d'historique que
-    historique_durees.json puisqu'elle n'est jamais réinitialisée par une perte
-    partielle ou totale de ce dernier (issue #520).
-
-    Retourne None si le fichier est absent/corrompu, ou si la combinaison n'a
-    encore jamais été calibrée (aucun succès enregistré)."""
-    try:
-        if not FICHIER_ETAT_TIMEOUT.exists():
-            return None
-        donnees = json.loads(FICHIER_ETAT_TIMEOUT.read_text(encoding="utf-8")) or {}
-    except (json.JSONDecodeError, OSError):
-        return None
-    cle = f"{projet}|{type_issue}|{mode}|{complexite}"
-    combo = (donnees.get("combinaisons") or {}).get(cle)
-    if not combo:
-        return None
-    duree_typique = combo.get("duree_typique")
-    if duree_typique is None:
-        return None
-    return duree_typique, combo.get("n_observations") or 0
-
-
-def estimer_duree(historique: list, projet: str, type_issue: str, mode: str,
-                   complexite: str = "normal") -> dict:
-    """Estimation prédictive (médiane des durées) + niveau de fiabilité pour une
-    catégorie projet+type+mode (issue #108).
-
-    Retourne un dict prêt pour le navigateur :
-      - mediane   : durée médiane en secondes (int), ou None si aucune donnée
-      - n         : nombre d'échantillons de la catégorie
-      - fiabilite : 'aucune' (pas encore de données) | 'incertain' (rouge) |
-                    'correct' (noir) | 'sur' (vert)
-
-    Repli (issue #520) : si historique_durees.json ne fournit aucun échantillon
-    récent, ou trop peu pour être significatif (< SEUIL_ESTIM_CORRECT), on se
-    rabat sur duree_typique de la combinaison correspondante dans
-    logs/etat_timeout.json plutôt que d'afficher une absence d'estimation —
-    utile après une perte partielle ou totale, accidentelle ou non, de
-    historique_durees.json (fichier gitignoré, non versionné)."""
-    durees = [
-        r.get("duree") for r in historique
-        if r.get("projet") == projet
-        and r.get("type") == type_issue
-        and r.get("mode") == mode
-        and isinstance(r.get("duree"), (int, float))
-        and r.get("expiree") is not True
-    ]
-    n = len(durees)
-    if n >= SEUIL_ESTIM_CORRECT:
-        fiabilite = "correct" if n <= SEUIL_ESTIM_SUR else "sur"
-        return {"mediane": round(_mediane(durees)), "n": n, "fiabilite": fiabilite}
-
-    calibration = _duree_typique_calibration(projet, type_issue, mode, complexite)
-    if calibration is not None:
-        duree_typique, n_calibration = calibration
-        n_effectif = max(n, n_calibration)
-        if n_effectif < SEUIL_ESTIM_CORRECT:
-            fiabilite = "incertain"
-        elif n_effectif <= SEUIL_ESTIM_SUR:
-            fiabilite = "correct"
-        else:
-            fiabilite = "sur"
-        return {"mediane": round(duree_typique), "n": n_effectif, "fiabilite": fiabilite}
-
-    if n == 0:
-        return {"mediane": None, "n": 0, "fiabilite": "aucune"}
-    return {"mediane": round(_mediane(durees)), "n": n, "fiabilite": "incertain"}
+# du TIMEOUT configuré — pas une durée réaliste. `estimer_duree`/`_charger_
+# historique` (médiane de l'historique réel du même projet+type+mode, avec
+# repli sur la calibration EWMA, issue #520) vivent désormais dans watcher.py
+# (issue #845, voir son docstring) — importés ci-dessus, comportement inchangé.
 
 
 # ─── Données de temps connues DÈS LA CRÉATION d'une issue (issue #634) ────────

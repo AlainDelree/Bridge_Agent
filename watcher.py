@@ -130,6 +130,18 @@ DOSSIER_CONSIGNES = DOSSIER_SCRIPT / "consignes"
 # cours (médiane du même projet+type+mode).
 FICHIER_HISTORIQUE = DOSSIER_LOGS / "historique_durees.json"
 
+# Seuils de fiabilité de l'estimation (issue #108), exprimés en NOMBRE
+# D'ÉCHANTILLONS de la catégorie précise (projet+type+mode) :
+#   n < 5   → estimation incertaine (rouge)
+#   5 ≤ n ≤ 15 → estimation correcte (noir)
+#   n > 15  → estimation fiable (vert)
+# Définis ICI (pas dans app/issues.py) depuis l'issue #845 : estimer_duree()
+# vit désormais dans watcher.py (seule source, voir son docstring) pour que le
+# watcher puisse figer, AU LANCEMENT d'une issue, l'EXACTE même estimation que
+# celle affichée dans l'interface, sans dupliquer le calcul.
+SEUIL_ESTIM_CORRECT = 5    # en dessous : « incertain » (rouge)
+SEUIL_ESTIM_SUR     = 15   # au-dessus : « sûr » (vert) ; entre les deux : « correct » (noir)
+
 # Traçabilité des écritures sur historique_durees.json / etat_timeout.json
 # (issue #521) : une coupure nette de historique_durees.json (perte de données,
 # 2026-09-07) n'avait laissé AUCUNE trace exploitable — fichier gitignoré comme
@@ -1373,7 +1385,15 @@ def _journaliser_ecriture(fichier: str, date_iso: str, *, operation: str,
 def enregistrer_duree(projet: str, type_issue: str, mode: str,
                       duree_s: float | None, date_iso: str, *,
                       body: str = "", nb_projets_actifs: int = 0,
-                      expiree: bool = False):
+                      expiree: bool = False,
+                      numero_issue: int | None = None,
+                      tentative: int | None = None,
+                      timeout_applique: int | None = None,
+                      complexite_valeur: str | None = None,
+                      complexite_statut: str | None = None,
+                      complexite_brute: str | None = None,
+                      timeout_suggere_lancement: float | None = None,
+                      estimation_lancement: dict | None = None):
     """Ajoute une mesure de durée réelle (ACK → fermeture, ou ACK → timeout si
     expiree=True) à l'historique commun (issue #108, étendu #220). Best-effort :
     toute erreur est journalisée sans jamais interrompre le traitement de
@@ -1385,7 +1405,28 @@ def enregistrer_duree(projet: str, type_issue: str, mode: str,
     mieux vaut None qu'une extraction fragile par regex), nb_projets_actifs_au_
     lancement, expiree, et tag_reseau (omis tant qu'aucun marqueur explicite
     n'existe, cf. _detecter_tag_reseau). Journalise aussi chaque écriture dans
-    FICHIER_JOURNAL_ECRITURES (issue #521, cf. _journaliser_ecriture)."""
+    FICHIER_JOURNAL_ECRITURES (issue #521, cf. _journaliser_ecriture).
+
+    Nouveaux paramètres (issue #845), tous optionnels (None/non fourni →
+    champ absent de l'entrée, comme avant — RÉTROCOMPATIBILITÉ : les anciennes
+    lignes et tout appelant qui ne les fournit pas restent valides) :
+      - numero_issue / tentative / timeout_applique : contexte de décision de
+        CETTE tentative précise.
+      - complexite_valeur / complexite_statut / complexite_brute : la
+        COMPLEXITE retenue pour la calibration (identique à
+        extraire_complexite()), avec un statut ('valide' / 'absente' /
+        'non_reconnue') et, seulement si 'non_reconnue', la valeur
+        d'origine — voir extraire_complexite_pour_historique().
+      - timeout_suggere_lancement / estimation_lancement : valeurs FIGÉES AU
+        LANCEMENT de l'issue (avant toute mise à jour de la calibration par
+        CE traitement), jamais recalculées à la clôture — sinon la mesure de
+        fiabilité de l'estimation/suggestion serait faussée par les
+        observations de l'issue elle-même. `estimation_lancement` a le même
+        format que le retour de estimer_duree() (mediane/n/fiabilite).
+
+    Une entrée `expiree=True` (tentative expirée) n'est PAS une durée réelle
+    de traitement : `duree` y vaut le plafond TIMEOUT atteint, pas le temps
+    qu'aurait pris l'issue pour aboutir — voir §19 de BRIDGE_AGENT_DOC.md."""
     try:
         DOSSIER_LOGS.mkdir(parents=True, exist_ok=True)
         historique = []
@@ -1414,6 +1455,21 @@ def enregistrer_duree(projet: str, type_issue: str, mode: str,
         tag_reseau = _detecter_tag_reseau(body)
         if tag_reseau is not None:
             entree["tag_reseau"] = tag_reseau
+        if numero_issue is not None:
+            entree["numero_issue"] = numero_issue
+        if tentative is not None:
+            entree["tentative"] = tentative
+        if timeout_applique is not None:
+            entree["timeout_applique"] = timeout_applique
+        if complexite_valeur is not None:
+            entree["complexite"] = complexite_valeur
+            entree["complexite_statut"] = complexite_statut
+            if complexite_statut == "non_reconnue" and complexite_brute is not None:
+                entree["complexite_brute"] = complexite_brute
+        if timeout_suggere_lancement is not None:
+            entree["timeout_suggere_lancement"] = round(timeout_suggere_lancement)
+        if estimation_lancement is not None:
+            entree["estimation_lancement"] = estimation_lancement
         historique.append(entree)
         FICHIER_HISTORIQUE.write_text(
             json.dumps(historique, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -1426,6 +1482,115 @@ def enregistrer_duree(projet: str, type_issue: str, mode: str,
         )
     except Exception as e:
         log.error(f"Erreur enregistrement historique durée : {e}")
+
+
+# ─── Estimation prédictive de durée (issue #108) ──────────────────────────────
+# Déplacée depuis app/issues.py (issue #845) : le watcher a besoin de figer,
+# AU LANCEMENT d'une issue, l'EXACTE même estimation que celle affichée dans
+# l'interface (badge de fiabilité), pour l'enregistrer ensuite dans
+# l'historique des durées — sans dupliquer ce calcul. app/issues.py ne peut
+# pas être importé ICI (il importe déjà watcher — cycle), alors que l'inverse
+# (watcher comme source unique, importé par app/issues.py) ne pose aucun
+# problème : c'était déjà le sens de toutes les autres primitives partagées
+# (extraire_complexite, deduire_type_issue...). app/issues.py réimporte donc
+# désormais `estimer_duree`/`_charger_historique`/`FICHIER_HISTORIQUE`/
+# `FICHIER_ETAT_TIMEOUT`/`SEUIL_ESTIM_CORRECT`/`SEUIL_ESTIM_SUR` d'ici, avec
+# EXACTEMENT le même comportement qu'avant ce déplacement.
+
+def _charger_historique() -> list:
+    """Charge la liste des durées historiques (logs/historique_durees.json).
+    Liste vide si le fichier n'existe pas encore ou est illisible/corrompu —
+    dans ce cas toutes les catégories seront « pas encore de données »."""
+    try:
+        if FICHIER_HISTORIQUE.exists():
+            return json.loads(FICHIER_HISTORIQUE.read_text(encoding="utf-8")) or []
+    except (json.JSONDecodeError, OSError):
+        pass
+    return []
+
+
+def _mediane(valeurs: list) -> float:
+    """Médiane d'une liste non vide (moyenne des deux centraux si pair)."""
+    s = sorted(valeurs)
+    n = len(s)
+    mid = n // 2
+    if n % 2:
+        return s[mid]
+    return (s[mid - 1] + s[mid]) / 2
+
+
+def _duree_typique_calibration(projet: str, type_issue: str, mode: str,
+                                complexite: str) -> tuple[float, int] | None:
+    """Lit (best-effort, sans verrou) duree_typique + n_observations pour la
+    combinaison projet+type+mode+complexite dans logs/etat_timeout.json — EWMA
+    maintenue en continu par la calibration automatique du TIMEOUT (issue
+    #221), avec une bien meilleure profondeur d'historique que
+    historique_durees.json puisqu'elle n'est jamais réinitialisée par une perte
+    partielle ou totale de ce dernier (issue #520).
+
+    Retourne None si le fichier est absent/corrompu, ou si la combinaison n'a
+    encore jamais été calibrée (aucun succès enregistré)."""
+    try:
+        if not FICHIER_ETAT_TIMEOUT.exists():
+            return None
+        donnees = json.loads(FICHIER_ETAT_TIMEOUT.read_text(encoding="utf-8")) or {}
+    except (json.JSONDecodeError, OSError):
+        return None
+    cle = f"{projet}|{type_issue}|{mode}|{complexite}"
+    combo = (donnees.get("combinaisons") or {}).get(cle)
+    if not combo:
+        return None
+    duree_typique = combo.get("duree_typique")
+    if duree_typique is None:
+        return None
+    return duree_typique, combo.get("n_observations") or 0
+
+
+def estimer_duree(historique: list, projet: str, type_issue: str, mode: str,
+                   complexite: str = "normal") -> dict:
+    """Estimation prédictive (médiane des durées) + niveau de fiabilité pour une
+    catégorie projet+type+mode (issue #108).
+
+    Retourne un dict prêt pour le navigateur :
+      - mediane   : durée médiane en secondes (int), ou None si aucune donnée
+      - n         : nombre d'échantillons de la catégorie
+      - fiabilite : 'aucune' (pas encore de données) | 'incertain' (rouge) |
+                    'correct' (noir) | 'sur' (vert)
+
+    Repli (issue #520) : si historique_durees.json ne fournit aucun échantillon
+    récent, ou trop peu pour être significatif (< SEUIL_ESTIM_CORRECT), on se
+    rabat sur duree_typique de la combinaison correspondante dans
+    logs/etat_timeout.json plutôt que d'afficher une absence d'estimation —
+    utile après une perte partielle ou totale, accidentelle ou non, de
+    historique_durees.json (fichier gitignoré, non versionné)."""
+    durees = [
+        r.get("duree") for r in historique
+        if r.get("projet") == projet
+        and r.get("type") == type_issue
+        and r.get("mode") == mode
+        and isinstance(r.get("duree"), (int, float))
+        and r.get("expiree") is not True
+    ]
+    n = len(durees)
+    if n >= SEUIL_ESTIM_CORRECT:
+        fiabilite = "correct" if n <= SEUIL_ESTIM_SUR else "sur"
+        return {"mediane": round(_mediane(durees)), "n": n, "fiabilite": fiabilite}
+
+    calibration = _duree_typique_calibration(projet, type_issue, mode, complexite)
+    if calibration is not None:
+        duree_typique, n_calibration = calibration
+        n_effectif = max(n, n_calibration)
+        if n_effectif < SEUIL_ESTIM_CORRECT:
+            fiabilite = "incertain"
+        elif n_effectif <= SEUIL_ESTIM_SUR:
+            fiabilite = "correct"
+        else:
+            fiabilite = "sur"
+        return {"mediane": round(duree_typique), "n": n_effectif, "fiabilite": fiabilite}
+
+    if n == 0:
+        return {"mediane": None, "n": 0, "fiabilite": "aucune"}
+    return {"mediane": round(_mediane(durees)), "n": n, "fiabilite": "incertain"}
 
 
 # ─── Calibration automatique du TIMEOUT — mécanique EWMA (issue #221) ──────────
@@ -1919,6 +2084,42 @@ def complexite_reconnue(body: str) -> bool:
     (issue #844), construire_labels() côté scripts/watcher_issues_inbox.py et
     app/issues.py."""
     return _complexite_depuis_entete(body) is not None
+
+
+def _complexite_brute_depuis_entete(body: str) -> str | None:
+    """Valeur BRUTE de la ligne `| COMPLEXITE | <valeur> |` dans `body`, telle
+    qu'écrite (casse/espaces d'origine), qu'elle soit reconnue ou non — None
+    si aucune ligne COMPLEXITE n'est présente. Distincte de
+    `_complexite_depuis_entete` (qui ne renvoie QUE les valeurs reconnues) :
+    sert à journaliser, dans l'historique des durées (issue #845), la valeur
+    d'origine d'une COMPLEXITE non reconnue plutôt que de la perdre."""
+    for ligne in body.splitlines():
+        if "| COMPLEXITE" in ligne.upper():
+            parts = ligne.split("|")
+            if len(parts) >= 3:
+                return parts[2].strip()
+    return None
+
+
+def extraire_complexite_pour_historique(body: str) -> tuple[str, str, str | None]:
+    """Reconstitue la COMPLEXITE retenue pour cette issue — valeur IDENTIQUE à
+    extraire_complexite(body), même repli 'normal' si absente ou non reconnue
+    (issue #845 : AUCUN changement du comportement de calibration) — avec en
+    plus un statut qui permet de distinguer, dans l'historique des durées,
+    POURQUOI ce repli a eu lieu :
+      - (valeur, 'valide', None)           : ligne COMPLEXITE reconnue
+      - ('normal', 'absente', None)        : aucune ligne COMPLEXITE
+      - ('normal', 'non_reconnue', brute)  : ligne présente, valeur hors des
+        quatre niveaux (`brute` = valeur d'origine, telle qu'écrite dans le
+        body, pour investigation ultérieure)."""
+    brute = _complexite_brute_depuis_entete(body)
+    if brute is None:
+        return "normal", "absente", None
+    valeur = brute.lower()
+    if valeur in NIVEAUX_COMPLEXITE:
+        return valeur, "valide", None
+    return "normal", "non_reconnue", brute
+
 
 def extraire_repo_cible(body: str) -> str:
     """Extrait le REPO_CIBLE depuis le body de l'issue (en-tête bridge).
@@ -6027,17 +6228,29 @@ def _preparer_controle_outil(chemin_outil_lecture_exec: Path | None, dry_run: bo
     return statut
 
 
-def _demarrer_traitement(numero: int, mode: str, mode_txt: str, dry_run: bool,
-                          cwd_effectif: Path) -> tuple[bool, float, int, tuple[dict, float] | None, str | None]:
+def _demarrer_traitement(numero: int, titre: str, body: str, mode: str, mode_txt: str,
+                          dry_run: bool, cwd_effectif: Path
+                          ) -> tuple[bool, float, int, tuple[dict, float] | None, str | None,
+                                     float | None, dict]:
     """Tout ce qui précède la première tentative `lancer_claude` : détection
     RELANCE, ACK, rafraîchissement SSE, départ du chrono, sonde pre-flight
-    token, empreinte configs/*.conf et SHA de HEAD avant traitement. Retourne
-    (est_relance, debut_traitement, nb_projets_actifs_debut,
-    empreinte_configs_avant, tete_avant_traitement) — `empreinte_configs_avant`
+    token, empreinte configs/*.conf, SHA de HEAD avant traitement, et
+    (issue #845) capture FIGÉE du TIMEOUT_suggéré et de l'estimation de
+    durée en vigueur AU LANCEMENT. Retourne (est_relance, debut_traitement,
+    nb_projets_actifs_debut, empreinte_configs_avant, tete_avant_traitement,
+    timeout_suggere_lancement, estimation_lancement) — `empreinte_configs_avant`
     est un couple (empreinte, instant_unix) depuis #724 : l'instant sert de
     référence au garde-fou pour ne reconnaître comme légitimes que les
     actions de new_issue.py faites PENDANT ce traitement (voir
-    _action_legitime_posterieure)."""
+    _action_legitime_posterieure).
+
+    `timeout_suggere_lancement` / `estimation_lancement` (issue #845) : lus
+    ICI, une seule fois, AVANT la première tentative — donc avant toute mise
+    à jour de la calibration par CE traitement (maj_calibration_timeout,
+    appelée à chaque tentative expirée et à la clôture). Transmis tels quels
+    jusqu'à enregistrer_duree() (succès et tentatives expirées), JAMAIS
+    recalculés en cours de route : sinon la mesure de fiabilité de ces deux
+    valeurs serait faussée par les observations de l'issue elle-même."""
     # Détection RELANCE (champ RELANCE, issue #516) AVANT l'ACK courante
     # (issue #592) : un commentaire d'échec définitif déjà présent dans
     # l'historique de l'issue signale que le worktree peut contenir du
@@ -6093,8 +6306,23 @@ def _demarrer_traitement(numero: int, mode: str, mode_txt: str, dry_run: bool,
         _tete_git(cwd_effectif) if (mode == MODE_ECRITURE and not dry_run) else None
     )
 
+    # TIMEOUT_suggéré et estimation de durée en vigueur AU LANCEMENT (issue
+    # #845) : figés ici, AVANT toute tentative, pour l'historique des durées —
+    # voir docstring ci-dessus. `estimer_duree` est la MÊME fonction que celle
+    # utilisée par l'interface (badge de fiabilité, app/issues.py), déplacée
+    # dans watcher.py pour que les deux lectures restent garanties identiques.
+    type_issue_lancement = deduire_type_issue(titre, body)
+    mode_calib_lancement = _etiquette_calibration(mode)
+    complexite_lancement = extraire_complexite(body)
+    timeout_suggere_lancement = lire_timeout_suggere(
+        CFG.nom, type_issue_lancement, mode_calib_lancement, complexite_lancement, body)
+    estimation_lancement = estimer_duree(
+        _charger_historique(), CFG.nom, type_issue_lancement, mode_calib_lancement,
+        complexite_lancement)
+
     return (est_relance, debut_traitement, nb_projets_actifs_debut,
-            empreinte_configs_avant, tete_avant_traitement)
+            empreinte_configs_avant, tete_avant_traitement,
+            timeout_suggere_lancement, estimation_lancement)
 
 
 # Ligne de verdict du gabarit de prompt (issue #764, remplace la détection
@@ -6642,7 +6870,9 @@ def _finaliser_succes(numero: int, titre: str, body: str, labels: list[str], mod
                        avertissement_worktree_repris: str, sortie: str,
                        debut_traitement: float, nb_projets_actifs_debut: int,
                        est_relance: bool, dry_run: bool, cwd_effectif: Path,
-                       tete_avant_traitement: str | None) -> None:
+                       tete_avant_traitement: str | None,
+                       tentative: int, timeout_suggere_lancement: float | None,
+                       estimation_lancement: dict) -> None:
     """Traitement d'une tentative réussie : commentaire de résultat (avec
     retry), fermeture de l'issue, historique des durées, calibration
     automatique du TIMEOUT et notification. Termine toujours le traitement de
@@ -6654,7 +6884,13 @@ def _finaliser_succes(numero: int, titre: str, body: str, labels: list[str], mod
     (relance) plutôt que créé, et l'écart de commits avec master s'il y en a.
 
     dry_run / cwd_effectif / tete_avant_traitement (issue #764) : simplement
-    transmis à `_avertissement_succes_sans_commit` ci-dessus."""
+    transmis à `_avertissement_succes_sans_commit` ci-dessus.
+
+    tentative / timeout_suggere_lancement / estimation_lancement (issue
+    #845) : contexte de décision à journaliser dans l'historique des durées —
+    `tentative` est le rang (1 = première) auquel ce succès a été obtenu ;
+    les deux derniers sont les valeurs FIGÉES AU LANCEMENT (voir
+    _demarrer_traitement), jamais recalculées ici."""
     log.info(f"  ✓ Issue #{numero} traitée avec succès.")
     avertissement_sans_commit = _avertissement_succes_sans_commit(
         numero, mode, dry_run, cwd_effectif, tete_avant_traitement)
@@ -6694,7 +6930,8 @@ def _finaliser_succes(numero: int, titre: str, body: str, labels: list[str], mod
     # catégorisée par projet/type/mode, pour l'estimation prédictive.
     type_issue_close = deduire_type_issue(titre, body)
     mode_close        = _etiquette_calibration(mode)
-    complexite_close  = extraire_complexite(body)
+    complexite_close, complexite_statut_close, complexite_brute_close = \
+        extraire_complexite_pour_historique(body)
     duree_reelle      = time.monotonic() - debut_traitement
     date_iso_close    = datetime.now().isoformat(timespec="seconds")
     enregistrer_duree(
@@ -6705,6 +6942,14 @@ def _finaliser_succes(numero: int, titre: str, body: str, labels: list[str], mod
         date_iso_close,
         body=body,
         nb_projets_actifs=nb_projets_actifs_debut,
+        numero_issue=numero,
+        tentative=tentative,
+        timeout_applique=timeout,
+        complexite_valeur=complexite_close,
+        complexite_statut=complexite_statut_close,
+        complexite_brute=complexite_brute_close,
+        timeout_suggere_lancement=timeout_suggere_lancement,
+        estimation_lancement=estimation_lancement,
     )
     # Calibration automatique du TIMEOUT (issue #221) : met à jour les
     # EWMA duree_typique/variabilite/backoff (par combinaison) et F
@@ -6743,7 +6988,10 @@ def _finaliser_succes(numero: int, titre: str, body: str, labels: list[str], mod
 
 
 def _tracer_tentative_expiree(numero: int, titre: str, body: str, mode: str,
-                               debut_traitement: float, nb_projets_actifs_debut: int) -> None:
+                               debut_traitement: float, nb_projets_actifs_debut: int,
+                               tentative: int, timeout: int,
+                               timeout_suggere_lancement: float | None,
+                               estimation_lancement: dict) -> None:
     """Trace du timeout dans l'historique des durées (issue #220) : avant ce
     correctif, une tentative expirée (subprocess.TimeoutExpired dans
     lancer_claude, message "Timeout après <N>s") ne laissait AUCUNE trace
@@ -6752,10 +7000,16 @@ def _tracer_tentative_expiree(numero: int, titre: str, body: str, mode: str,
     expirée (pas seulement à l'abandon définitif), pour permettre de
     compter la fréquence réelle des timeouts dans une future issue — y
     compris pour les issues critiques en retry infini, qui n'atteignent
-    jamais la branche d'abandon."""
+    jamais la branche d'abandon.
+
+    tentative / timeout / timeout_suggere_lancement / estimation_lancement
+    (issue #845) : même contexte de décision que _finaliser_succes ci-dessus
+    — `duree_expiree` ci-dessous est le PLAFOND TIMEOUT atteint, pas une
+    durée réelle de traitement (voir §19 de BRIDGE_AGENT_DOC.md)."""
     type_issue_expire = deduire_type_issue(titre, body)
     mode_expire        = _etiquette_calibration(mode)
-    complexite_expire  = extraire_complexite(body)
+    complexite_expire, complexite_statut_expire, complexite_brute_expire = \
+        extraire_complexite_pour_historique(body)
     duree_expiree      = time.monotonic() - debut_traitement
     date_iso_expire    = datetime.now().isoformat(timespec="seconds")
     enregistrer_duree(
@@ -6767,6 +7021,14 @@ def _tracer_tentative_expiree(numero: int, titre: str, body: str, mode: str,
         body=body,
         nb_projets_actifs=nb_projets_actifs_debut,
         expiree=True,
+        numero_issue=numero,
+        tentative=tentative,
+        timeout_applique=timeout,
+        complexite_valeur=complexite_expire,
+        complexite_statut=complexite_statut_expire,
+        complexite_brute=complexite_brute_expire,
+        timeout_suggere_lancement=timeout_suggere_lancement,
+        estimation_lancement=estimation_lancement,
     )
     # Calibration automatique du TIMEOUT (issue #221) : sur timeout,
     # multiplicateur_backoff *= FACTEUR_BACKOFF immédiatement pour cette
@@ -7173,8 +7435,8 @@ def _traiter_issue_synchrone(issue: dict, dry_run: bool, chemin_worktree: Path |
         statut_outil_avant = _preparer_controle_outil(chemin_outil_lecture_exec, dry_run)
 
         est_relance, debut_traitement, nb_projets_actifs_debut, empreinte_configs_avant, \
-            tete_avant_traitement = \
-            _demarrer_traitement(numero, mode, mode_txt, dry_run, cwd_effectif)
+            tete_avant_traitement, timeout_suggere_lancement, estimation_lancement = \
+            _demarrer_traitement(numero, titre, body, mode, mode_txt, dry_run, cwd_effectif)
 
         # None si critique (essais illimités) : voir le bloc de prompt "rang
         # de tentative" dans lancer_claude, qui affiche alors juste "N" sans
@@ -7205,7 +7467,8 @@ def _traiter_issue_synchrone(issue: dict, dry_run: bool, chemin_worktree: Path |
                                    avertissement_conflit, avertissement_worktree_deja_pris,
                                    avertissement_worktree_repris,
                                    sortie, debut_traitement, nb_projets_actifs_debut, est_relance,
-                                   dry_run, cwd_effectif, tete_avant_traitement)
+                                   dry_run, cwd_effectif, tete_avant_traitement,
+                                   tentative, timeout_suggere_lancement, estimation_lancement)
                 return
 
             # Échec
@@ -7254,7 +7517,8 @@ def _traiter_issue_synchrone(issue: dict, dry_run: bool, chemin_worktree: Path |
                 return
 
             if sortie.startswith("Timeout après"):
-                _tracer_tentative_expiree(numero, titre, body, mode, debut_traitement, nb_projets_actifs_debut)
+                _tracer_tentative_expiree(numero, titre, body, mode, debut_traitement, nb_projets_actifs_debut,
+                                           tentative, timeout, timeout_suggere_lancement, estimation_lancement)
 
             if tentative >= CFG.max_essais:
                 _gerer_abandon_max_essais(numero, titre, body, labels, mode, critique, tentative,

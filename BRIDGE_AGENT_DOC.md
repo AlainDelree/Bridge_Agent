@@ -783,13 +783,62 @@ Voir §6 pour les champs `COMPLEXITE` et `RESEAU`, qui affinent cette
 calibration (constantes actuelles du code : `K_VARIABILITE` = 3, issue
 #475).
 
+### 19.1 Format d'une ligne de `logs/historique_durees.json` (issue #845)
+
+Fichier gitignoré (télémétrie locale), liste JSON append-only — une entrée
+par tentative close (succès OU tentative expirée). Champs présents depuis
+l'origine (issues #108/#220) : `projet`, `type`, `mode`, `duree` (secondes,
+entier, `None` si inconnue), `date`, `longueur_corps_issue`,
+`nb_etapes_checklist`, `nb_fichiers_cibles` (toujours `None`),
+`nb_projets_actifs_au_lancement`, `expiree`, `k_utilise`, et `tag_reseau`
+(absent si non détecté).
+
+Champs ajoutés par l'issue #845, **tous optionnels** (absents sur toute
+ligne écrite avant cette issue — voir rétrocompatibilité ci-dessous) :
+
+| Champ                        | Contenu |
+|-------------------------------|---------|
+| `numero_issue`                | numéro de l'issue GitHub |
+| `tentative`                   | rang de la tentative (1 = première) à laquelle cette ligne correspond |
+| `timeout_applique`            | TIMEOUT (secondes) réellement utilisé pour lancer l'agent sur cette tentative |
+| `complexite`                  | valeur RETENUE pour la calibration (identique à `extraire_complexite()`) : `rapide`/`court`/`normal`/`lourd` |
+| `complexite_statut`           | `valide` (ligne COMPLEXITE reconnue), `absente` (aucune ligne), ou `non_reconnue` (ligne présente, valeur hors des 4 niveaux — repli sur `normal`) |
+| `complexite_brute`            | valeur d'origine, telle qu'écrite — présent SEULEMENT si `complexite_statut == "non_reconnue"` |
+| `timeout_suggere_lancement`   | `TIMEOUT_suggéré` (secondes) en vigueur AU LANCEMENT de l'issue, avant toute mise à jour de la calibration par ce traitement — absent si aucune suggestion n'était encore calculable |
+| `estimation_lancement`        | estimation de durée affichée au lancement, même format que `estimer_duree()` : `{"mediane", "n", "fiabilite"}` |
+
+`timeout_suggere_lancement`/`estimation_lancement` sont **figés une seule
+fois, avant la première tentative** (`_demarrer_traitement`), puis
+retransmis tels quels à chaque ligne écrite pour cette même issue (succès et
+chaque tentative expirée) — jamais recalculés après coup : les recalculer
+à la clôture, une fois la calibration déjà mise à jour par CETTE issue,
+fausserait la mesure de leur propre fiabilité.
+
+**Tentative expirée (`expiree: true`)** : `duree` y est le **plafond
+TIMEOUT atteint**, pas une durée réelle de traitement — l'agent a été tué
+avant d'avoir fini. Ne jamais l'interpréter comme une mesure de durée de
+traitement réussi.
+
+**Rétrocompatibilité** : une ligne écrite avant l'issue #845 n'a aucun de
+ces nouveaux champs — tous les lecteurs (`estimer_duree`, l'estimation
+affichée côté interface, `scripts/archiver_historique.py`) doivent
+continuer à fonctionner sur une telle ligne sans lever d'exception.
+`scripts/archiver_historique.py` déplace chaque entrée comme un dict
+entier (jamais une reconstruction champ par champ) : une ligne archivée
+conserve donc automatiquement tous ses champs, anciens comme nouveaux.
+
+`estimer_duree()` (badge de fiabilité de l'interface, issue #108) vit
+désormais dans `watcher.py` — SEULE source, importée par `app/issues.py` —
+pour que le watcher puisse, au lancement d'une issue, figer l'EXACTE même
+estimation que celle déjà affichée, sans dupliquer ce calcul.
+
 ---
 
-*Dernière mise à jour : 2 novembre 2026 — §3.3/§6 : le champ `COMPLEXITE`
-devient obligatoire dans toute issue rédigée par Claude Chat, quel que soit
-le MODE, avec quatre valeurs exactes (`rapide`/`court`/`normal`/`lourd`),
-un critère de choix par valeur et la règle du choix de la valeur la plus
-élevée en cas d'hésitation ; `absent ou non reconnu = normal` reste un
-repli technique du code, pas un choix de rédaction légitime (issue #843).*
+*Dernière mise à jour : 2 novembre 2026 — §19.1 (nouvelle sous-section) :
+format documenté d'une ligne de `logs/historique_durees.json`, étendue par
+l'issue #845 (numéro d'issue, tentative, TIMEOUT appliqué, complexité avec
+statut valide/absente/non_reconnue, TIMEOUT_suggéré et estimation figés AU
+LANCEMENT) — rétrocompatibilité des anciennes lignes et préservation de ces
+champs par `scripts/archiver_historique.py` explicitées.*
 
 Historique complet : voir [`CHANGELOG.md`](CHANGELOG.md).

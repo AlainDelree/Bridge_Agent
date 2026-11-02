@@ -31,20 +31,20 @@ sys.path.insert(0, str(RACINE / "scripts"))
 
 import pytest  # noqa: E402
 
-import app.issues as issues_mod  # noqa: E402
 import app.issues_inbox as ii  # noqa: E402
+import watcher  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
 def _isoler():
     """Restaure après CHAQUE test les attributs substitués dans ce fichier."""
     original_projet_par_nom = ii.projet_par_nom
-    original_fichier_etat = issues_mod.FICHIER_ETAT_TIMEOUT
-    original_fichier_hist = issues_mod.FICHIER_HISTORIQUE
+    original_fichier_etat = watcher.FICHIER_ETAT_TIMEOUT
+    original_fichier_hist = watcher.FICHIER_HISTORIQUE
     yield
     ii.projet_par_nom = original_projet_par_nom
-    issues_mod.FICHIER_ETAT_TIMEOUT = original_fichier_etat
-    issues_mod.FICHIER_HISTORIQUE = original_fichier_hist
+    watcher.FICHIER_ETAT_TIMEOUT = original_fichier_etat
+    watcher.FICHIER_HISTORIQUE = original_fichier_hist
 
 
 def _deposer(tmp_path: Path, contenu: str, nom: str = "mono.txt") -> Path:
@@ -62,7 +62,7 @@ def _vider_historique(tmp_path: Path):
     """Neutralise estimer_duree côté historique_durees.json (fichier absent,
     best-effort → liste vide) pour isoler le comportement de calibration
     (etat_timeout.json) dans les scénarios qui en ont besoin."""
-    issues_mod.FICHIER_HISTORIQUE = tmp_path / "historique_absent.json"
+    watcher.FICHIER_HISTORIQUE = tmp_path / "historique_absent.json"
 
 
 def test_timeout_et_complexite_declares(tmp_path):
@@ -93,10 +93,10 @@ def test_sans_timeout_valeur_par_defaut_du_mode(tmp_path):
 
 def test_calibration_simulee_duree_typique_connue(tmp_path):
     ii.projet_par_nom = lambda nom: _cfg_projet()
-    issues_mod.FICHIER_HISTORIQUE = tmp_path / "hist.json"
-    issues_mod.FICHIER_HISTORIQUE.write_text("[]", encoding="utf-8")
-    issues_mod.FICHIER_ETAT_TIMEOUT = tmp_path / "etat.json"
-    issues_mod.FICHIER_ETAT_TIMEOUT.write_text(json.dumps({"combinaisons": {
+    watcher.FICHIER_HISTORIQUE = tmp_path / "hist.json"
+    watcher.FICHIER_HISTORIQUE.write_text("[]", encoding="utf-8")
+    watcher.FICHIER_ETAT_TIMEOUT = tmp_path / "etat.json"
+    watcher.FICHIER_ETAT_TIMEOUT.write_text(json.dumps({"combinaisons": {
         "bridge_agent|normal|write|normal": {"duree_typique": 735.4, "n_observations": 6},
     }}), encoding="utf-8")
     chemin = _deposer(tmp_path,
@@ -108,8 +108,8 @@ def test_calibration_simulee_duree_typique_connue(tmp_path):
 
 def test_sans_etat_de_calibration_renvoie_none(tmp_path):
     ii.projet_par_nom = lambda nom: _cfg_projet()
-    issues_mod.FICHIER_HISTORIQUE = tmp_path / "hist_absent.json"
-    issues_mod.FICHIER_ETAT_TIMEOUT = tmp_path / "etat_absent.json"
+    watcher.FICHIER_HISTORIQUE = tmp_path / "hist_absent.json"
+    watcher.FICHIER_ETAT_TIMEOUT = tmp_path / "etat_absent.json"
     chemin = _deposer(tmp_path,
         "| PROJET | bridge_agent |\n| MODE | écriture |\n| ATTENTE | x |\n\n#Titre: T.\nCorps.\n")
     item = ii._lire_item_attente(chemin)
@@ -119,10 +119,10 @@ def test_sans_etat_de_calibration_renvoie_none(tmp_path):
 
 def test_etat_illisible_renvoie_none_sans_exception(tmp_path):
     ii.projet_par_nom = lambda nom: _cfg_projet()
-    issues_mod.FICHIER_HISTORIQUE = tmp_path / "hist.json"
-    issues_mod.FICHIER_HISTORIQUE.write_text("[]", encoding="utf-8")
-    issues_mod.FICHIER_ETAT_TIMEOUT = tmp_path / "etat.json"
-    issues_mod.FICHIER_ETAT_TIMEOUT.write_text("{ceci n'est pas du JSON", encoding="utf-8")
+    watcher.FICHIER_HISTORIQUE = tmp_path / "hist.json"
+    watcher.FICHIER_HISTORIQUE.write_text("[]", encoding="utf-8")
+    watcher.FICHIER_ETAT_TIMEOUT = tmp_path / "etat.json"
+    watcher.FICHIER_ETAT_TIMEOUT.write_text("{ceci n'est pas du JSON", encoding="utf-8")
     chemin = _deposer(tmp_path,
         "| PROJET | bridge_agent |\n| MODE | écriture |\n| ATTENTE | x |\n\n#Titre: T.\nCorps.\n")
     item = ii._lire_item_attente(chemin)  # ne doit lever aucune exception
@@ -204,10 +204,10 @@ def test_anciens_champs_inchanges(tmp_path):
 
 def test_lecture_seule_aucune_ecriture(tmp_path):
     ii.projet_par_nom = lambda nom: _cfg_projet()
-    issues_mod.FICHIER_HISTORIQUE = tmp_path / "hist.json"
-    issues_mod.FICHIER_HISTORIQUE.write_text("[]", encoding="utf-8")
-    issues_mod.FICHIER_ETAT_TIMEOUT = tmp_path / "etat.json"
-    issues_mod.FICHIER_ETAT_TIMEOUT.write_text(json.dumps({"combinaisons": {
+    watcher.FICHIER_HISTORIQUE = tmp_path / "hist.json"
+    watcher.FICHIER_HISTORIQUE.write_text("[]", encoding="utf-8")
+    watcher.FICHIER_ETAT_TIMEOUT = tmp_path / "etat.json"
+    watcher.FICHIER_ETAT_TIMEOUT.write_text(json.dumps({"combinaisons": {
         "bridge_agent|normal|write|normal": {"duree_typique": 42.0, "n_observations": 6},
     }}), encoding="utf-8")
     chemin = _deposer(tmp_path,
@@ -215,7 +215,7 @@ def test_lecture_seule_aucune_ecriture(tmp_path):
     avant_contenu = chemin.read_text(encoding="utf-8")
     avant_mtime = chemin.stat().st_mtime
     avant_noms = sorted(p.name for p in tmp_path.iterdir())
-    avant_etat = issues_mod.FICHIER_ETAT_TIMEOUT.read_text(encoding="utf-8")
+    avant_etat = watcher.FICHIER_ETAT_TIMEOUT.read_text(encoding="utf-8")
 
     ii._lire_item_attente(chemin)
     ii._lire_item_attente(chemin)
@@ -223,7 +223,7 @@ def test_lecture_seule_aucune_ecriture(tmp_path):
     assert chemin.read_text(encoding="utf-8") == avant_contenu
     assert chemin.stat().st_mtime == avant_mtime
     assert sorted(p.name for p in tmp_path.iterdir()) == avant_noms, "aucun fichier créé"
-    assert issues_mod.FICHIER_ETAT_TIMEOUT.read_text(encoding="utf-8") == avant_etat
+    assert watcher.FICHIER_ETAT_TIMEOUT.read_text(encoding="utf-8") == avant_etat
     return {}
 
 
@@ -238,8 +238,8 @@ def main() -> int:
         return chemin
 
     original_projet_par_nom = ii.projet_par_nom
-    original_fichier_etat = issues_mod.FICHIER_ETAT_TIMEOUT
-    original_fichier_hist = issues_mod.FICHIER_HISTORIQUE
+    original_fichier_etat = watcher.FICHIER_ETAT_TIMEOUT
+    original_fichier_hist = watcher.FICHIER_HISTORIQUE
 
     tests = [
         ("TIMEOUT et COMPLEXITE déclarés", test_timeout_et_complexite_declares),
@@ -268,8 +268,8 @@ def main() -> int:
             print(f"  ✗ {nom} — erreur inattendue : {type(e).__name__}: {e}")
         finally:
             ii.projet_par_nom = original_projet_par_nom
-            issues_mod.FICHIER_ETAT_TIMEOUT = original_fichier_etat
-            issues_mod.FICHIER_HISTORIQUE = original_fichier_hist
+            watcher.FICHIER_ETAT_TIMEOUT = original_fichier_etat
+            watcher.FICHIER_HISTORIQUE = original_fichier_hist
 
     tmp_racine.cleanup()
     if echecs:
