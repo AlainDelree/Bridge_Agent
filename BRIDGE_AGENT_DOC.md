@@ -351,9 +351,13 @@ sur cet agent échoue.
 **Mode écriture (`mode_write`)** — CCL peut modifier des fichiers, exécuter
 des commandes, faire des commits git. Garde-fous automatiques :
 - Backup pinné **avant** toute modification — commit git fait par le
-  **watcher lui-même**, juste avant de lancer CCL (issue #846), sauf projet
-  définissant `CMD_BACKUP` dans son `.conf` (comportement conservé : la
-  commande du projet reste la consigne, CCL l'exécute lui-même)
+  **watcher lui-même**, juste avant de lancer CCL (issue #846), sauf
+  commande de sauvegarde personnalisée dans `CMD_BACKUP` (issue #847 :
+  une valeur vide ou la commande standard écrite par `nouveau_projet.py` —
+  `git add -A && git commit -m "avant-<description>" --allow-empty`, quel
+  que soit le message — ne compte pas comme personnalisée et laisse le
+  watcher committer ; seule une commande réellement différente, ex.
+  alchess, reste la consigne que CCL exécute lui-même)
 - **JAMAIS `git push`** — Alain pousse lui-même après vérification
 - Aucune commande destructrice sans demande explicite
 - Périmètre strict : CCL ne travaille que dans le dossier configuré

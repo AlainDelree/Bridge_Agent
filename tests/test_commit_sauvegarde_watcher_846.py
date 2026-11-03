@@ -17,8 +17,12 @@ demandés par l'issue :
 4. RELANCE sur un worktree déjà repris (travail déjà commité) : le commit
    de sauvegarde watcher reste le PREMIER après `tete_avant_traitement` —
    il ne fusionne jamais avec le travail déjà présent.
-5. Projet définissant `CMD_BACKUP` dans son `.conf` : comportement conservé
-   à l'identique, le watcher ne committe rien lui-même.
+5. Projet définissant une commande de sauvegarde PERSONNALISÉE dans
+   `CMD_BACKUP` (ex. alchess, cas non reconnu par `_cmd_backup_est_standard`
+   — issue #847) : comportement conservé à l'identique, le watcher ne
+   committe rien lui-même. Le cas où `CMD_BACKUP` est vide OU reconnu comme
+   la commande standard de `nouveau_projet.py` est couvert séparément par
+   `tests/test_cmd_backup_standard_847.py`.
 6. Échec du commit de sauvegarde (ex. verrou git) : repli sur `None`,
    signalé en log, sans lever ni bloquer le traitement.
 7. `_finaliser_succes` : le hash du commit de sauvegarde watcher figure
@@ -217,15 +221,15 @@ def test_relance_backup_separe_travail_precedent(depot):
     assert (depot / "travail_precedent.txt").exists()
 
 
-# ─── 5. Projet avec CMD_BACKUP : comportement conservé, watcher ne committe pas
+# ─── 5. Projet avec CMD_BACKUP personnalisée (alchess) : comportement conservé
 
 def test_cmd_backup_defini_watcher_ne_committe_pas(depot):
     tete_avant_appel = watcher._tete_git(depot)
-    cfg = _config_isolee(depot, "test846e", cmd_backup='git add -A && git commit -m "avant-<description>" --allow-empty')
+    cfg = _config_isolee(depot, "test846e", cmd_backup="python3 outils/sauvegarder.py")
     (_er, _d, _n, _e, tete_avant, _ts, _es,
      commit_sauvegarde, nouveaux_suivis) = _demarrer(cfg, 8465)
 
-    assert commit_sauvegarde is None, "CMD_BACKUP défini : le watcher ne doit rien committer lui-même"
+    assert commit_sauvegarde is None, "CMD_BACKUP personnalisée : le watcher ne doit rien committer lui-même"
     assert nouveaux_suivis == ()
     assert tete_avant == tete_avant_appel
     assert watcher._tete_git(depot) == tete_avant_appel, "aucun commit ne doit avoir été ajouté"
@@ -252,7 +256,7 @@ def test_cmd_backup_defini_consigne_inchangee_dans_le_prompt(depot, tmp_path, mo
     fichier_prompt = tmp_path / "prompt.txt"
     monkeypatch.setenv("TEST_846_PROMPT_FILE", str(fichier_prompt))
 
-    cmd_backup = 'git add -A && git commit -m "avant-<description>" --allow-empty'
+    cmd_backup = "python3 outils/sauvegarder.py"
     ancien_cfg = watcher.CFG
     watcher.CFG = _config_isolee(depot, "test846f", cmd_backup=cmd_backup)
     try:

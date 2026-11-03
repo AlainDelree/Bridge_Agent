@@ -961,6 +961,37 @@ def _tete_git(rep: Path) -> str | None:
         return None
 
 
+# Reconnaissance de la commande STANDARD écrite par défaut dans CMD_BACKUP à
+# la création d'un projet (issue #847, gabarit `GABARIT_CONF` de
+# nouveau_projet.py) : un commit git de tout le dossier, `--allow-empty`,
+# quel que soit le contenu du message `-m`. Constat de l'issue : 12 projets
+# sur 13 ont exactement cette valeur (seul alchess s'en écarte, avec un
+# gestionnaire de sauvegarde Python sans commit git) — la sauvegarde #846
+# par le watcher ne s'appliquait donc en pratique à aucun projet git tant
+# que CMD_BACKUP suffisait à l'exclure. Critère volontairement étroit :
+# tolère les espaces (normalisés avant comparaison) et les deux types de
+# guillemets autour du message, mais rien d'autre (ordre des éléments,
+# drapeaux exacts) — dans le doute, ne jamais reconnaître à tort une
+# commande personnalisée comme standard, ce qui committerait à la place de
+# l'agent sans qu'il l'ait demandé.
+_RE_CMD_BACKUP_STANDARD = re.compile(
+    r'^git\s+add\s+-A\s+&&\s+git\s+commit\s+-m\s+(["\']).*?\1\s+--allow-empty$'
+)
+
+
+def _cmd_backup_est_standard(cmd_backup: str) -> bool:
+    """True si `cmd_backup` (valeur brute du champ CMD_BACKUP d'un `.conf`)
+    est la commande standard de sauvegarde écrite par défaut par
+    `nouveau_projet.py` — voir `_RE_CMD_BACKUP_STANDARD` ci-dessus pour le
+    critère exact et sa justification. Chaîne vide : False (cas déjà
+    distingué par l'appelant, comportement #846 inchangé). N'importe quelle
+    autre valeur, y compris une variante que ce critère ne reconnaît pas
+    avec certitude : False — le watcher ne doit jamais se substituer à
+    l'agent par excès de confiance dans la reconnaissance."""
+    normalise = re.sub(r'\s+', ' ', cmd_backup.strip())
+    return bool(_RE_CMD_BACKUP_STANDARD.match(normalise))
+
+
 def _commit_sauvegarde_watcher(numero: int, titre: str, cwd_effectif: Path) -> tuple[str | None, tuple[str, ...]]:
     """Commit de sauvegarde fait par le WATCHER lui-même, juste avant de
     lancer la première tentative d'une issue mode écriture (issue #846,
@@ -976,8 +1007,10 @@ def _commit_sauvegarde_watcher(numero: int, titre: str, cwd_effectif: Path) -> t
     commit sépare alors le travail déjà présent dans le worktree de celui
     de CE nouveau traitement, plutôt que de l'engloutir).
 
-    N'est PAS appelée du tout si `CFG.cmd_backup` est renseigné (projet à
-    convention de sauvegarde propre — comportement conservé à l'identique,
+    N'est PAS appelée du tout si `CFG.cmd_backup` est renseigné avec une
+    commande de sauvegarde PERSONNALISÉE — c'est-à-dire non reconnue par
+    `_cmd_backup_est_standard` (issue #847 : projet à convention de
+    sauvegarde propre, ex. alchess — comportement conservé à l'identique,
     voir l'appelant) ni si `tete_avant_traitement` est None (hors dépôt git
     ou essai à blanc — comportement conservé à l'identique).
 
@@ -4145,10 +4178,14 @@ def lancer_claude(numero: int, titre: str, body: str, dry_run: bool,
     l'agent de le faire en tout premier geste, trop régulièrement oubliée
     (incident Relecture_Bridge #121). Décide, dans le bloc MODE_ECRITURE
     ci-dessous, lequel des trois textes de consigne de sauvegarde est
-    injecté : `CFG.cmd_backup` (commande propre au projet, prioritaire,
-    comportement inchangé) ; sinon, si `commit_sauvegarde_watcher` est
-    renseigné, consigne « déjà fait, ne refais rien » rappelant ce hash
-    (complétée d'un rappel du garde-fou backup/reset si
+    injecté : `CFG.cmd_backup` si c'est une commande PERSONNALISÉE —
+    renseignée ET non reconnue comme la commande standard de
+    `nouveau_projet.py` par `_cmd_backup_est_standard` (issue #847, ex.
+    alchess ; comportement inchangé pour ce cas) ; sinon, si
+    `commit_sauvegarde_watcher` est renseigné (valeur vide ou commande
+    standard — watcher déjà passé par `_commit_sauvegarde_watcher`),
+    consigne « déjà fait, ne refais rien » rappelant ce hash (complétée
+    d'un rappel du garde-fou backup/reset si
     `backup_watcher_nouveaux_suivis` n'est pas vide) ; sinon (commit watcher
     non tenté ou en échec — hors dépôt git, essai à blanc, ou repli #846
     point 3) la consigne historique demandant à l'agent de le faire
@@ -4166,15 +4203,17 @@ def lancer_claude(numero: int, titre: str, body: str, dry_run: bool,
     cwd_effectif = CFG.rep_travail if cwd is None else cwd
 
     if mode == MODE_ECRITURE:
-        if CFG.cmd_backup:
+        if CFG.cmd_backup and not _cmd_backup_est_standard(CFG.cmd_backup):
             consigne_backup = (
                 "- Fais TOUJOURS une sauvegarde avant toute modification, en lançant "
                 f"cette commande depuis le répertoire du projet :\n  {CFG.cmd_backup}"
             )
         elif commit_sauvegarde_watcher:
-            # Issue #846 : le watcher a déjà fait ce commit lui-même, juste
-            # avant ce lancement — l'agent n'a plus à le refaire (c'était la
-            # source de l'oubli régulier, incident Relecture_Bridge #121).
+            # Issue #846 (étendu #847 à CMD_BACKUP vide OU reconnu comme la
+            # commande standard) : le watcher a déjà fait ce commit lui-même,
+            # juste avant ce lancement — l'agent n'a plus à le refaire
+            # (c'était la source de l'oubli régulier, incident
+            # Relecture_Bridge #121).
             note_garde_fou_backup_reset = (
                 " Ce commit a mis sous suivi des chemins auparavant non suivis "
                 f"({', '.join(backup_watcher_nouveaux_suivis)}) — reste vigilant "
@@ -6410,11 +6449,15 @@ def _demarrer_traitement(numero: int, titre: str, body: str, mode: str, mode_txt
     TOUJOURS le premier (position inchangée pour les deux contrôles
     existants qui en dépendent, `_avertissement_succes_sans_commit` et
     `_commits_au_dela_sauvegarde`). None/() si `CFG.cmd_backup` est
-    renseigné (comportement du projet conservé à l'identique),
-    `tete_avant_traitement` est None (hors dépôt git ou essai à blanc,
-    comportement conservé à l'identique), ou si la tentative de commit a
-    échoué (repli sur la consigne de prompt historique — voir
-    `_commit_sauvegarde_watcher`, best-effort, jamais bloquant)."""
+    renseigné avec une commande PERSONNALISÉE (non reconnue par
+    `_cmd_backup_est_standard`, issue #847 — comportement du projet conservé
+    à l'identique ; une valeur vide ou reconnue comme la commande standard
+    de `nouveau_projet.py` ne compte PAS comme personnalisée et laisse donc
+    le watcher committer), `tete_avant_traitement` est None (hors dépôt git
+    ou essai à blanc, comportement conservé à l'identique), ou si la
+    tentative de commit a échoué (repli sur la consigne de prompt
+    historique — voir `_commit_sauvegarde_watcher`, best-effort, jamais
+    bloquant)."""
     # Détection RELANCE (champ RELANCE, issue #516) AVANT l'ACK courante
     # (issue #592) : un commentaire d'échec définitif déjà présent dans
     # l'historique de l'issue signale que le worktree peut contenir du
@@ -6472,12 +6515,16 @@ def _demarrer_traitement(numero: int, titre: str, body: str, mode: str, mode_txt
 
     # Commit de sauvegarde fait par le watcher lui-même (issue #846) : tout
     # de suite après avoir relevé `tete_avant_traitement` ci-dessus, pour en
-    # être TOUJOURS le premier commit. Sauté si le projet définit CMD_BACKUP
-    # (convention propre, conservée à l'identique — voir lancer_claude) ou
-    # si tete_avant_traitement est None (hors dépôt git ou essai à blanc).
+    # être TOUJOURS le premier commit. Sauté si le projet définit une
+    # commande de sauvegarde PERSONNALISÉE (CMD_BACKUP renseigné et non
+    # reconnu comme la commande standard — issue #847, voir
+    # `_cmd_backup_est_standard` — conservée à l'identique, voir
+    # lancer_claude) ou si tete_avant_traitement est None (hors dépôt git ou
+    # essai à blanc).
     commit_sauvegarde_watcher: str | None = None
     backup_watcher_nouveaux_suivis: tuple[str, ...] = ()
-    if tete_avant_traitement is not None and not CFG.cmd_backup:
+    cmd_backup_personnalisee = bool(CFG.cmd_backup) and not _cmd_backup_est_standard(CFG.cmd_backup)
+    if tete_avant_traitement is not None and not cmd_backup_personnalisee:
         commit_sauvegarde_watcher, backup_watcher_nouveaux_suivis = \
             _commit_sauvegarde_watcher(numero, titre, cwd_effectif)
 
