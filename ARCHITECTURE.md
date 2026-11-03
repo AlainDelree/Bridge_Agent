@@ -1302,6 +1302,76 @@ l'exécution réelle de `mettre_a_jour_tokens_ccw.ps1` modifié (contrôles de
 longueur avant/après écriture, redémarrage effectif) — à vérifier par
 Alain au premier renouvellement suivant la fusion de #744.
 
+### 10.2. Contrôle de forme d'un jeton AVANT la finalisation (issue #849)
+
+Avant #849, la section « Finaliser un projet » ne vérifiait qu'une chose
+avant l'envoi : qu'au moins un des deux jetons était renseigné. Un jeton
+collé avec un espace ou un retour à la ligne en trop, ou tronqué, partait
+donc tel quel vers le service Windows — le contrôle de longueur de §10.1
+n'intervient qu'APRÈS coup, côté PowerShell, une fois le service redémarré,
+et seulement sur un jeton RECONDUIT (jamais sur celui qui vient d'être
+saisi).
+
+**Contrôle en direct côté navigateur**, à chaque frappe/collage (événement
+`input`) — `static/js/ccw.js::controlerFormeJeton(valeurBrute, typeJeton)` :
+UNE SEULE fonction, paramétrée par le type de jeton (`'gh'` ou `'oauth'`),
+appliquée aux trois champs concernés — `GH_TOKEN` et
+`CLAUDE_CODE_OAUTH_TOKEN` de « Finaliser un projet », et le champ unique de
+« Poser ce jeton Claude sur tous les services CCW ». Jamais la valeur du
+jeton n'est affichée, seulement ce que renvoie cette fonction (longueur,
+préfixe reconnu, booléens) — mis en forme par `libelleFormeJeton()` (ex.
+« 93 caractères, préfixe github_pat_ : plausible »).
+
+- Repères de forme ISOLÉS dans la constante `FORMES_JETONS_CONNUES`, en
+  tête de `static/js/ccw.js`, pour être ajustés facilement si le format
+  GitHub/Anthropic évolue : pour `gh`, `github_pat_` (93 caractères) ou
+  `ghp_` (40 caractères) ; pour `oauth`, `sk-ant-oat01` (108 caractères —
+  mesuré sur le jeton Claude réellement en service au moment de l'issue,
+  pas une garantie de format officielle).
+- Un espace ou un retour à la ligne EN BORD de jeton (début ou fin) est
+  retiré AUTOMATIQUEMENT du champ et signalé dans le message affiché
+  (« Espace(s)/retour(s) à la ligne de bord retirés automatiquement. »).
+- Un espace ou un caractère de contrôle qui SUBSISTE au milieu du jeton une
+  fois les bords nettoyés (`bloquant`) empêche la finalisation — message
+  clair affiché dans le bandeau, bouton non désactivé mais la soumission
+  (`ccwFinaliserProjet`/`ccwPoserTokenTousLesServices`) s'arrête avant tout
+  appel réseau.
+- Un préfixe inconnu ou une longueur qui ne correspond pas à la forme
+  reconnue (`plausible` à `false`) donne un simple avertissement
+  (« inhabituel ») qui n'empêche JAMAIS de continuer — rappelé dans le
+  texte de la fenêtre de confirmation « Finaliser… » (longueur + préfixe de
+  chaque jeton effectivement fourni, jamais sa valeur).
+
+**Défense en profondeur côté serveur** (`app/ccw.py::ccw_finaliser_projet`,
+`_nettoyer_bords_jeton` / `_jeton_a_caractere_bloquant`) : le contrôle
+navigateur pouvant être contourné (appel direct à la route), la route
+retire elle aussi les espaces/retours à la ligne de bord, puis refuse —
+SANS appel SSH, et sans jamais recopier le jeton dans la réponse JSON, les
+journaux ou le message d'erreur — un jeton contenant encore un espace ou un
+caractère de contrôle en son milieu. Seule cette partie BLOQUANTE est
+reproduite côté serveur ; la plausibilité de préfixe/longueur reste un
+avertissement purement côté navigateur (elle ne protège rien côté serveur,
+inutile de la dupliquer). Un jeton accepté est écrit dans le fichier de
+valeurs sous sa forme NETTOYÉE (bords retirés), jamais la valeur brute
+reçue.
+
+**Inchangé** : le contrôle de longueur de §10.1 (`LONGUEUR_JETON_MIN`/
+`LONGUEUR_JETON_MAX`, PowerShell uniquement, sur un jeton RECONDUIT) et la
+façon dont les jetons sont effectivement posés sur les services
+(`mettre_a_jour_tokens_ccw.ps1`, non modifié par #849).
+
+**Tests** : `tests/test_controle_forme_jetons_849.py` (`_nettoyer_bords_jeton`,
+`_jeton_a_caractere_bloquant` — jeton plausible non bloqué, retour à la
+ligne final déjà retiré non bloquant, espace/caractère de contrôle au
+milieu bloqué ; route `ccw_finaliser_projet` — refus sans appel SSH ni
+fuite du jeton dans la réponse pour un jeton abîmé au milieu, acceptation
+et nettoyage d'un jeton avec seulement un espace/retour à la ligne de bord)
+et `static/js/tests/ccw.test.js` (`controlerFormeJeton`/`libelleFormeJeton` :
+jeton plausible — GH et OAuth —, tronqué, préfixe inconnu, espace au
+milieu, caractère de contrôle au milieu, retour à la ligne final et espaces
+de bord retirés automatiquement, jamais la valeur affichée dans le
+libellé).
+
 ---
 
 ## 11. Interruption d'une issue et verrous de traitement (issue #748, suite #323/#584/#322/#742)

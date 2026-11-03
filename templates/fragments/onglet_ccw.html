@@ -71,6 +71,9 @@
                   style="padding:6px 9px;font-size:14px;line-height:1"
                   onclick="var i=document.getElementById('ccw-fin-gh'); var m=i.type==='password'; i.type=m?'text':'password'; this.textContent=m?'🙈':'👁';">👁</button>
         </div>
+        <!-- Contrôle de forme en direct (issue #849) : longueur + préfixe
+             reconnu, jamais la valeur. -->
+        <div id="ccw-fin-gh-forme" style="font-size:11px;min-height:14px;margin-top:2px"></div>
       </div>
       <div class="champ">
         <label>CLAUDE_CODE_OAUTH_TOKEN <span style="color:#999;font-weight:400">(vide = conserver l'actuel)</span></label>
@@ -84,6 +87,7 @@
                   style="padding:6px 9px;font-size:14px;line-height:1"
                   onclick="var i=document.getElementById('ccw-fin-oauth'); var m=i.type==='password'; i.type=m?'text':'password'; this.textContent=m?'🙈':'👁';">👁</button>
         </div>
+        <div id="ccw-fin-oauth-forme" style="font-size:11px;min-height:14px;margin-top:2px"></div>
       </div>
     </div>
     <div style="font-size:12px;color:#999;margin-bottom:8px">
@@ -120,6 +124,7 @@
                   style="padding:6px 9px;font-size:14px;line-height:1"
                   onclick="var i=document.getElementById('ccw-tous-oauth'); var m=i.type==='password'; i.type=m?'text':'password'; this.textContent=m?'🙈':'👁';">👁</button>
         </div>
+        <div id="ccw-tous-oauth-forme" style="font-size:11px;min-height:14px;margin-top:2px"></div>
       </div>
     </div>
     <div class="barre-envoi">

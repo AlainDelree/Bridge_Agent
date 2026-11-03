@@ -13,6 +13,8 @@ import {
   ccwViderChampsFinalisation,
   planifierPoseTokenTous,
   resumerResultatsPoseTokenTous,
+  controlerFormeJeton,
+  libelleFormeJeton,
 } from '../ccw.js';
 
 // ─── couleurEtatCcw ─────────────────────────────────────────────────────────
@@ -133,4 +135,85 @@ test('resumerResultatsPoseTokenTous : décompte par statut, aucune valeur de jet
 test('resumerResultatsPoseTokenTous : liste vide → tous les compteurs à 0', () => {
   assert.deepEqual(resumerResultatsPoseTokenTous([]),
     { OK: 0, 'à vérifier': 0, 'échec': 0, 'sauté': 0 });
+});
+
+// ─── controlerFormeJeton / libelleFormeJeton (issue #849) ──────────────────
+
+test('controlerFormeJeton : jeton GH plausible (préfixe + longueur attendus)', () => {
+  const ghPlausible = 'ghp_' + 'a'.repeat(36);   // 40 caractères au total
+  const controle = controlerFormeJeton(ghPlausible, 'gh');
+  assert.equal(controle.longueur, 40);
+  assert.equal(controle.prefixe, 'ghp_');
+  assert.equal(controle.plausible, true);
+  assert.equal(controle.bloquant, false);
+  assert.equal(controle.bordsRetires, false);
+  assert.equal(libelleFormeJeton(controle), '40 caractères, préfixe ghp_ : plausible');
+});
+
+test('controlerFormeJeton : jeton OAuth plausible (sk-ant-oat01, 108 caractères)', () => {
+  const oauthPlausible = 'sk-ant-oat01' + 'b'.repeat(96);   // 108 caractères au total
+  const controle = controlerFormeJeton(oauthPlausible, 'oauth');
+  assert.equal(controle.longueur, 108);
+  assert.equal(controle.prefixe, 'sk-ant-oat01');
+  assert.equal(controle.plausible, true);
+  assert.equal(libelleFormeJeton(controle), '108 caractères, préfixe sk-ant-oat01 : plausible');
+});
+
+test('controlerFormeJeton : jeton tronqué (préfixe reconnu, longueur inhabituelle) → avertissement, non bloquant', () => {
+  const ghTronque = 'ghp_abcdef';   // préfixe ghp_ reconnu, mais 10 caractères seulement
+  const controle = controlerFormeJeton(ghTronque, 'gh');
+  assert.equal(controle.prefixe, 'ghp_');
+  assert.equal(controle.plausible, false);
+  assert.equal(controle.bloquant, false);
+  assert.match(libelleFormeJeton(controle), /inhabituel/);
+});
+
+test('controlerFormeJeton : préfixe inconnu → avertissement, non bloquant', () => {
+  const prefixeInconnu = 'xyz_' + 'c'.repeat(40);
+  const controle = controlerFormeJeton(prefixeInconnu, 'oauth');
+  assert.equal(controle.prefixe, null);
+  assert.equal(controle.plausible, false);
+  assert.equal(controle.bloquant, false);
+  assert.match(libelleFormeJeton(controle), /préfixe inconnu.*inhabituel/);
+});
+
+test('controlerFormeJeton : espace au milieu du jeton → bloquant', () => {
+  const ghAbime = 'ghp_abc def' + 'x'.repeat(29);
+  const controle = controlerFormeJeton(ghAbime, 'gh');
+  assert.equal(controle.bloquant, true);
+  assert.match(libelleFormeJeton(controle), /collage abîmé/);
+});
+
+test('controlerFormeJeton : caractère de contrôle au milieu du jeton → bloquant', () => {
+  const ghAbime = 'ghp_abc\tdef' + 'x'.repeat(29);
+  const controle = controlerFormeJeton(ghAbime, 'gh');
+  assert.equal(controle.bloquant, true);
+});
+
+test('controlerFormeJeton : retour à la ligne final → retiré automatiquement, non bloquant', () => {
+  const ghPlausible = 'ghp_' + 'a'.repeat(36);
+  const controle = controlerFormeJeton(ghPlausible + '\n', 'gh');
+  assert.equal(controle.bordsRetires, true);
+  assert.equal(controle.bloquant, false);
+  assert.equal(controle.valeurNettoyee, ghPlausible);
+  assert.equal(controle.longueur, 40);
+  assert.match(libelleFormeJeton(controle), /^Espace\(s\)\/retour\(s\) à la ligne de bord retirés automatiquement\./);
+});
+
+test('controlerFormeJeton : espace de bord (début ET fin) → retiré automatiquement, non bloquant', () => {
+  const ghPlausible = 'ghp_' + 'a'.repeat(36);
+  const controle = controlerFormeJeton('  ' + ghPlausible + '  ', 'gh');
+  assert.equal(controle.bordsRetires, true);
+  assert.equal(controle.bloquant, false);
+  assert.equal(controle.valeurNettoyee, ghPlausible);
+});
+
+test('libelleFormeJeton : champ vide (longueur 0) → chaîne vide', () => {
+  assert.equal(libelleFormeJeton(controlerFormeJeton('', 'gh')), '');
+});
+
+test('controlerFormeJeton : jamais la valeur du jeton dans le libellé affiché', () => {
+  const secret = 'ghp_valeurSecreteQuiNeDoitJamaisEtreAffichee123';
+  const libelle = libelleFormeJeton(controlerFormeJeton(secret, 'gh'));
+  assert.equal(libelle.includes(secret), false);
 });

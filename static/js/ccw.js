@@ -46,10 +46,72 @@ import { toasts } from './socle/toasts.js';
 import * as dom from './socle/dom.js';
 import { appelerAncien } from './socle/pont.js';
 
+// Repères de forme d'un jeton plausible (issue #849) — indicatifs, le format
+// peut évoluer : isolés ici pour être ajustés facilement, sans toucher à la
+// logique de contrôle (controlerFormeJeton ci-dessous). Un préfixe/longueur
+// hors de ces repères ne fait jamais échouer la finalisation, seulement un
+// avertissement « inhabituel » (voir libelleFormeJeton).
+export const FORMES_JETONS_CONNUES = {
+  gh: [
+    { prefixe: 'github_pat_', longueur: 93 },
+    { prefixe: 'ghp_', longueur: 40 },
+  ],
+  // sk-ant-oat01/108 caractères : mesuré sur le jeton Claude en service au
+  // moment de l'issue #849 (CCW-Watcher-Scrabble) — pas une garantie du format.
+  oauth: [
+    { prefixe: 'sk-ant-oat01', longueur: 108 },
+  ],
+};
+
 // ─────────────────────────────────────────────────────────────────────────────
 // LOGIQUE PURE (testée sous Node — voir static/js/tests/ccw.test.js)
 //    Aucune dépendance au DOM ni au réseau.
 // ─────────────────────────────────────────────────────────────────────────────
+
+// Contrôle de forme d'un jeton AVANT écriture (issue #849), en direct pendant
+// la saisie/le collage — jamais appelé sur la valeur pour l'afficher, seule
+// cette structure (longueur/préfixe/booléens) doit transiter vers l'affichage
+// ou un message. Même fonction pour GH_TOKEN (typeJeton='gh') et
+// CLAUDE_CODE_OAUTH_TOKEN (typeJeton='oauth'), paramétrée par ce type.
+//   - bordsRetires : un espace/retour à la ligne de bord a été retiré
+//     (valeurNettoyee est le résultat, à reposer dans le champ) ;
+//   - bloquant : un espace ou un caractère de contrôle SUBSISTE au milieu du
+//     jeton nettoyé — collage manifestement abîmé, doit bloquer l'envoi ;
+//   - plausible : préfixe ET longueur correspondent à une forme connue de
+//     FORMES_JETONS_CONNUES[typeJeton] — sinon simple avertissement, jamais
+//     bloquant.
+export function controlerFormeJeton(valeurBrute, typeJeton) {
+  const valeurNettoyee = valeurBrute.replace(/^\s+/, '').replace(/\s+$/, '');
+  const bordsRetires = valeurNettoyee !== valeurBrute;
+  const bloquant = /[\x00-\x20]/.test(valeurNettoyee);
+  const longueur = valeurNettoyee.length;
+  const formes = FORMES_JETONS_CONNUES[typeJeton] || [];
+  const forme = formes.find(function(f) { return valeurNettoyee.startsWith(f.prefixe); });
+  return {
+    valeurNettoyee: valeurNettoyee,
+    bordsRetires: bordsRetires,
+    bloquant: bloquant,
+    longueur: longueur,
+    prefixe: forme ? forme.prefixe : null,
+    plausible: !!forme && longueur === forme.longueur,
+  };
+}
+
+// Message à afficher pour un contrôle de forme (jamais la valeur du jeton) —
+// ex. « 93 caractères, préfixe github_pat_ : plausible ». Chaîne vide si le
+// champ est resté vide (rien à afficher).
+export function libelleFormeJeton(controle) {
+  if (!controle.longueur) return '';
+  const prefixeTexte = controle.prefixe ? 'préfixe ' + controle.prefixe : 'préfixe inconnu';
+  let message = controle.longueur + ' caractère' + (controle.longueur > 1 ? 's' : '') + ', ' + prefixeTexte;
+  message += controle.bloquant
+    ? ' — espace ou caractère de contrôle au milieu du jeton : collage abîmé, à corriger.'
+    : ' : ' + (controle.plausible ? 'plausible' : 'inhabituel');
+  if (controle.bordsRetires) {
+    message = 'Espace(s)/retour(s) à la ligne de bord retirés automatiquement. ' + message;
+  }
+  return message;
+}
 
 // Couleur de l'état d'un service CCW (colonne État du tableau).
 export function couleurEtatCcw(etat) {
@@ -260,6 +322,26 @@ export function ccwViderChampsFinalisation() {
   document.getElementById('ccw-fin-topic').value = '';
   document.getElementById('ccw-fin-gh').value    = '';
   document.getElementById('ccw-fin-oauth').value = '';
+  ccwMajFormeJeton('ccw-fin-gh', 'ccw-fin-gh-forme', 'gh');
+  ccwMajFormeJeton('ccw-fin-oauth', 'ccw-fin-oauth-forme', 'oauth');
+}
+
+// Contrôle de forme en direct (issue #849) : à chaque frappe/collage, retire
+// du champ un espace/retour à la ligne de bord (jamais la valeur affichée
+// ailleurs que dans ce champ lui-même) et affiche le résultat (longueur +
+// préfixe) sous le champ concerné. Couvre les trois champs de jeton de
+// l'onglet (GH_TOKEN et CLAUDE_CODE_OAUTH_TOKEN de « Finaliser », et le
+// champ unique de « Poser ce jeton Claude sur tous les services »).
+function ccwMajFormeJeton(idChamp, idAffichage, typeJeton) {
+  const champ = document.getElementById(idChamp);
+  const affichage = document.getElementById(idAffichage);
+  if (!champ || !affichage) return;
+  const brut = champ.value;
+  const controle = controlerFormeJeton(brut, typeJeton);
+  if (controle.bordsRetires) champ.value = controle.valeurNettoyee;
+  affichage.textContent = brut ? libelleFormeJeton(controle) : '';
+  affichage.style.color = !brut ? '' : controle.bloquant ? '#c0392b'
+    : controle.plausible ? '#2e8b57' : '#e0a800';
 }
 
 // Confort : un clic sur une ligne du tableau « Projets CCW existants »
@@ -449,15 +531,36 @@ async function ccwFinaliserProjet() {
       + 'laissez l\'autre champ vide pour conserver sa valeur actuelle.', 'erreur');
     return;
   }
+  // Issue #849 : contrôle de forme AVANT envoi — un espace/caractère de
+  // contrôle au milieu d'un jeton bloque la finalisation (jamais sa valeur
+  // dans le message). La forme (longueur + préfixe, jamais la valeur) de
+  // chaque jeton fourni est rappelée dans la confirmation ci-dessous.
+  const controleGh    = gh    ? controlerFormeJeton(gh, 'gh')       : null;
+  const controleOauth = oauth ? controlerFormeJeton(oauth, 'oauth') : null;
+  if (controleGh && controleGh.bloquant) {
+    ccwMessage('ccw-message',
+      'GH_TOKEN contient un espace ou un caractère de contrôle en son milieu — '
+      + 'collage abîmé, à corriger avant de finaliser.', 'erreur');
+    return;
+  }
+  if (controleOauth && controleOauth.bloquant) {
+    ccwMessage('ccw-message',
+      'CLAUDE_CODE_OAUTH_TOKEN contient un espace ou un caractère de contrôle en son '
+      + 'milieu — collage abîmé, à corriger avant de finaliser.', 'erreur');
+    return;
+  }
   // Issue #743 : un champ laissé vide conserve la valeur actuelle de CE
   // token sur le service (lue côté PC fixe, jamais ici) — message de
   // confirmation adapté selon ce qui est effectivement fourni.
   const quoiToken = (gh && oauth) ? 'les deux tokens'
     : gh ? 'le token GH_TOKEN (CLAUDE_CODE_OAUTH_TOKEN conservé tel quel)'
          : 'le token CLAUDE_CODE_OAUTH_TOKEN (GH_TOKEN conservé tel quel)';
+  let rappelForme = '';
+  if (controleGh) rappelForme += '\nGH_TOKEN : ' + libelleFormeJeton(controleGh);
+  if (controleOauth) rappelForme += '\nCLAUDE_CODE_OAUTH_TOKEN : ' + libelleFormeJeton(controleOauth);
   const ok = await toasts.confirmer(
     'Finaliser « ' + nom + ' » : écrire TOPIC_NTFY et poser ' + quoiToken
-    + ' sur le service, puis le redémarrer ?',
+    + ' sur le service, puis le redémarrer ?' + rappelForme,
     { texteConfirmer: 'Finaliser' });
   if (!ok) return;
   ccwOccupe('ccw-btn-finaliser', true, 'Finalisation…');
@@ -465,7 +568,9 @@ async function ccwFinaliserProjet() {
   ccwAfficherSortie('');
   try {
     const j = await api.post('/ccw/finaliser-projet',
-      { nom: nom, topic: topic, gh_token: gh, oauth_token: oauth }, { silencieux: true });
+      { nom: nom, topic: topic,
+        gh_token: controleGh ? controleGh.valeurNettoyee : gh,
+        oauth_token: controleOauth ? controleOauth.valeurNettoyee : oauth }, { silencieux: true });
     ccwAfficherSortie(j.sortie);
     if (j.succes && !j.avertissement) {
       ccwMessage('ccw-message', 'Projet « ' + nom + ' » finalisé : tokens posés, service redémarré.', 'succes');
@@ -522,6 +627,16 @@ async function ccwPoserTokenTousLesServices() {
     ccwMessage('ccw-message', 'Le jeton CLAUDE_CODE_OAUTH_TOKEN est requis.', 'erreur');
     return;
   }
+  // Issue #849 : même contrôle de forme/blocage que le champ OAUTH de
+  // « Finaliser » (point 3 de l'issue) — jamais la valeur dans le message.
+  const controleOauth = controlerFormeJeton(oauth, 'oauth');
+  if (controleOauth.bloquant) {
+    ccwMessage('ccw-message',
+      'CLAUDE_CODE_OAUTH_TOKEN contient un espace ou un caractère de contrôle en son '
+      + 'milieu — collage abîmé, à corriger avant de poser.', 'erreur');
+    return;
+  }
+  const oauthNettoye = controleOauth.valeurNettoyee;
   const projets = obtenirCcwProjetsConnus() || [];
   if (!projets.length) {
     ccwMessage('ccw-message', 'Aucun service CCW connu — rafraîchissez la liste des projets.', 'erreur');
@@ -532,7 +647,11 @@ async function ccwPoserTokenTousLesServices() {
     + ' service(s) CCW-Watcher* listé(s) ci-dessus, en conservant le jeton GitHub propre '
     + 'à chacun, et redémarrer chaque service non occupé ?',
     { texteConfirmer: 'Poser sur tous' });
-  if (!ok) { if (champOauth) champOauth.value = ''; return; }
+  if (!ok) {
+    if (champOauth) champOauth.value = '';
+    ccwMajFormeJeton('ccw-tous-oauth', 'ccw-tous-oauth-forme', 'oauth');
+    return;
+  }
 
   const resumeParProjet = {};
   projets.forEach(function(p) { resumeParProjet[p.projet] = appelerAncien('resumeProjetMonitoring', p.projet); });
@@ -561,7 +680,7 @@ async function ccwPoserTokenTousLesServices() {
     }
     try {
       const j = await api.post('/ccw/finaliser-projet',
-        { nom: etape.projet, topic: '', oauth_token: oauth }, { silencieux: true });
+        { nom: etape.projet, topic: '', oauth_token: oauthNettoye }, { silencieux: true });
       if (j.succes && !j.avertissement) {
         resultats.push({ projet: etape.projet, statut: 'OK', detail: '' });
       } else if (j.avertissement) {
@@ -574,6 +693,7 @@ async function ccwPoserTokenTousLesServices() {
     }
   }
   if (champOauth) champOauth.value = '';   // jamais réaffiché, même en cas d'échec partiel.
+  ccwMajFormeJeton('ccw-tous-oauth', 'ccw-tous-oauth-forme', 'oauth');
   ccwOccupe('ccw-btn-tous', false);
   ccwAfficherResumeTousServices(resultats);
   const compte = resumerResultatsPoseTokenTous(resultats);
@@ -597,6 +717,12 @@ function installerDelegationCcw() {
   dom.surAction('[data-action="ccw-ajouter"]', 'click', () => ccwAjouterProjet());
   dom.surAction('[data-action="ccw-finaliser"]', 'click', () => ccwFinaliserProjet());
   dom.surAction('[data-action="ccw-tous"]', 'click', () => ccwPoserTokenTousLesServices());
+
+  // Contrôle de forme en direct (issue #849), pendant la saisie ou le
+  // collage — jamais la valeur du jeton, seulement longueur + préfixe.
+  dom.surAction('#ccw-fin-gh', 'input', () => ccwMajFormeJeton('ccw-fin-gh', 'ccw-fin-gh-forme', 'gh'));
+  dom.surAction('#ccw-fin-oauth', 'input', () => ccwMajFormeJeton('ccw-fin-oauth', 'ccw-fin-oauth-forme', 'oauth'));
+  dom.surAction('#ccw-tous-oauth', 'input', () => ccwMajFormeJeton('ccw-tous-oauth', 'ccw-tous-oauth-forme', 'oauth'));
 
   dom.surAction('[data-action="ccw-preselectionner"]', 'click', (e, el) => {
     if (e.target.closest('button')) return;

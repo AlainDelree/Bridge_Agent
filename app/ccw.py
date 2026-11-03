@@ -296,6 +296,30 @@ def _resoudre_jetons_renouvellement(
     return gh, oauth, None
 
 
+# ─── Contrôle de forme d'un jeton AVANT écriture (issue #849) ──────────────────
+# Défense en profondeur du contrôle fait EN DIRECT côté navigateur pendant la
+# saisie/le collage (static/js/ccw.js::controlerFormeJeton) : ce contrôle peut
+# être contourné (appel direct à la route), donc la route le reproduit — mais
+# UNIQUEMENT sa partie BLOQUANTE (espace/caractère de contrôle au milieu du
+# jeton). La plausibilité de préfixe/longueur (avertissement « inhabituel »,
+# jamais bloquant) reste un contrôle purement côté navigateur, rappelé dans la
+# fenêtre de confirmation — elle ne protège rien côté serveur, inutile de la
+# dupliquer ici.
+
+def _nettoyer_bords_jeton(valeur: str) -> str:
+    """Retire les espaces/retours à la ligne de bord d'un jeton — jamais la
+    valeur elle-même dans un message appelant."""
+    return valeur.strip()
+
+
+def _jeton_a_caractere_bloquant(valeur_nettoyee: str) -> bool:
+    """True si `valeur_nettoyee` (déjà passée par `_nettoyer_bords_jeton`)
+    contient encore un espace ou un caractère de contrôle AU MILIEU du jeton
+    — signe d'un collage abîmé (troncature, double collage, caractère
+    invisible). Jamais la valeur elle-même dans un message appelant."""
+    return any(c == " " or ord(c) < 32 for c in valeur_nettoyee)
+
+
 # ─── Utilitaires : commandes ssh/scp ────────────────────────────────────────────
 
 def _base_ssh(hote: str, utilisateur: str, cle_privee: str) -> list[str]:
@@ -532,11 +556,22 @@ def ccw_finaliser_projet():
     data  = request.json or {}
     nom   = (data.get("nom")   or "").strip()
     topic = (data.get("topic") or "").strip()
-    gh    = data.get("gh_token")    or ""
-    oauth = data.get("oauth_token") or ""
+    gh    = _nettoyer_bords_jeton(data.get("gh_token")    or "")
+    oauth = _nettoyer_bords_jeton(data.get("oauth_token") or "")
     if not nom or re.search(r"[\\/\s]", nom):
         return jsonify(succes=False,
             erreur="Nom de projet requis, sans espace ni séparateur de chemin.")
+    # Issue #849 — défense en profondeur : le contrôle en direct côté
+    # navigateur retire déjà les espaces de bord et bloque un jeton abîmé
+    # avant l'envoi, mais peut être contourné. Jamais le jeton dans le refus.
+    if gh and _jeton_a_caractere_bloquant(gh):
+        return jsonify(succes=False,
+            erreur="GH_TOKEN contient un espace ou un caractère de contrôle en son "
+                   "milieu — collage abîmé, à corriger avant de réessayer.")
+    if oauth and _jeton_a_caractere_bloquant(oauth):
+        return jsonify(succes=False,
+            erreur="CLAUDE_CODE_OAUTH_TOKEN contient un espace ou un caractère de "
+                   "contrôle en son milieu — collage abîmé, à corriger avant de réessayer.")
     if not gh and not oauth:
         return jsonify(succes=False,
             erreur="Au moins un des deux tokens (GH_TOKEN ou CLAUDE_CODE_OAUTH_TOKEN) "
