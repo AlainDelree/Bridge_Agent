@@ -79,6 +79,43 @@
       avec un chemin invalide (relatif, inexistant) → même chose, avec la
       raison. Envoyer avec un chemin valide → l'issue créée porte bien la ligne
       `| REPO_CIBLE | <chemin> |` dans son en-tête sur GitHub.
+- [ ] **Complexité** (`#complexite`, issue #848) : défaut « normal » ; un
+      template enregistré avec une autre valeur la recharge correctement ; un
+      ANCIEN template (créé avant #848) recharge « normal » sans erreur
+      console. L'issue créée porte la ligne `| COMPLEXITE | <valeur> |` et
+      **jamais** le label `sans-complexite`.
+- [ ] **Bandeau d'audit** (`#audit-bandeau`, issue #848) : apparaît uniquement
+      après un clic sur « Préparer l'audit » (onglet Configuration d'un autre
+      projet) ; disparaît si on change le projet manuellement ensuite.
+
+## Onglet Configuration — section Audit (issue #848)
+
+- [ ] Projet sans template d'audit : section vide, message explicatif, bouton
+      « Préparer l'audit » **désactivé** (avec titre explicatif au survol).
+- [ ] Importer un fichier `.txt` valide (format `issues_inbox/`) : aperçu en
+      lecture seule rempli (titre/mode/timeout/complexité/corps), bouton
+      activé, aucun avertissement affiché.
+- [ ] Importer un fichier **sans** ligne COMPLEXITE, ou avec une valeur non
+      reconnue (ex. `moyen`) : avertissement visible, complexité retenue =
+      `normal`.
+- [ ] Importer un fichier avec `PROJET` ≠ `diagnostique_programme` et/ou
+      `REPO_CIBLE` ≠ le dossier de travail de ce projet : avertissement
+      visible nommant la valeur ignorée, import quand même accepté.
+- [ ] Réimporter un fichier alors qu'un template existe déjà : confirmation
+      demandée avant remplacement ; annuler la confirmation laisse l'ancien
+      template intact.
+- [ ] Bouton « 🗑 Supprimer le template d'audit » : confirmation, puis retour à
+      l'état vide (bouton « Préparer l'audit » redésactivé).
+- [ ] **Préparer l'audit** : bascule sur l'onglet « Nouvelle issue », projet
+      actif = `diagnostique_programme` (bandeau de couleur + libellé à jour),
+      formulaire pré-rempli avec le texte d'audit, Dépôt cible = `REP_TRAVAIL`
+      **Linux** (pas le chemin Windows) du projet audité, complexité du
+      template. Bandeau visible nommant le projet audité et
+      `diagnostique_programme`. Aucun envoi automatique — vérifier le contenu
+      puis cliquer soi-même sur « Envoyer ».
+- [ ] **Cas particulier** : « Préparer l'audit » depuis la Configuration de
+      `diagnostique_programme` lui-même — Dépôt cible = son propre
+      `REP_TRAVAIL`, envoi accepté normalement (périmètre fixe, §7 du DOC).
 
 ## Onglet « Résultats » (piloté par le store + SSE depuis l'issue #627)
 

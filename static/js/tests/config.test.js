@@ -14,6 +14,9 @@ import {
   construireOptionsAgent,
   champModeleCCLConcerne,
   texteModeleAutreAgent,
+  auditPreparable,
+  construireFormulaireAudit,
+  texteBandeauAudit,
 } from '../config.js';
 
 const MODELES = ['claude-sonnet-5', 'claude-opus-4-8', 'claude-haiku-4-5', 'claude-fable-5'];
@@ -145,4 +148,54 @@ test('champModeleCCLConcerne : casse/espaces normalisés avant comparaison', () 
 test('texteModeleAutreAgent : nomme l\'agent sélectionné, capitalisé', () => {
   assert.equal(texteModeleAutreAgent('vibe'),
     'Le modèle de l\'agent Vibe se règle dans son propre onglet « Agent Vibe ».');
+});
+
+// ─── Audit (issue #848) ─────────────────────────────────────────────────────
+// chargerAudit/importerAudit/supprimerAudit/preparerAudit touchent le DOM et
+// le réseau, vérifiés manuellement (VERIFICATIONS_MANUELLES.md) — seules les
+// trois fonctions pures ci-dessous sont testées sous Node.
+
+test('auditPreparable : aucun audit chargé → non préparable', () => {
+  assert.equal(auditPreparable(null), false);
+  assert.equal(auditPreparable(undefined), false);
+});
+
+test('auditPreparable : existe=false (projet sans template) → non préparable (bouton désactivé)', () => {
+  assert.equal(auditPreparable({ existe: false }), false);
+});
+
+test('auditPreparable : existe=true mais titre vide/absent → non préparable', () => {
+  assert.equal(auditPreparable({ existe: true, titre: '' }), false);
+  assert.equal(auditPreparable({ existe: true }), false);
+});
+
+test('auditPreparable : existe=true avec titre → préparable (bouton activable)', () => {
+  assert.equal(auditPreparable({ existe: true, titre: 'Audit du projet' }), true);
+});
+
+test('construireFormulaireAudit : remplit le Dépôt cible depuis le REP_TRAVAIL du projet audité', () => {
+  const audit = { titre: 'Audit', corps: '## Contexte\nTexte.', timeout: '1200', mode: 'ecriture', complexite: 'lourd' };
+  const donnees = construireFormulaireAudit(audit, '/home/alain/MonProjet');
+  assert.deepEqual(donnees, {
+    titre: 'Audit', corps: '## Contexte\nTexte.', timeout: '1200',
+    mode: 'ecriture', complexite: 'lourd', repo_cible: '/home/alain/MonProjet',
+  });
+});
+
+test('construireFormulaireAudit : champs absents du template → repli identique aux défauts serveur', () => {
+  const donnees = construireFormulaireAudit({}, '/home/alain/MonProjet');
+  assert.equal(donnees.timeout, '300');
+  assert.equal(donnees.mode, 'lecture');
+  assert.equal(donnees.complexite, 'normal');
+});
+
+test('construireFormulaireAudit : REP_TRAVAIL absent → Dépôt cible vide (jamais undefined/null)', () => {
+  const donnees = construireFormulaireAudit({ titre: 'Audit' }, undefined);
+  assert.equal(donnees.repo_cible, '');
+});
+
+test('texteBandeauAudit : nomme le projet audité ET diagnostique_programme (destination jamais silencieuse)', () => {
+  const texte = texteBandeauAudit('scrabble');
+  assert.match(texte, /scrabble/);
+  assert.match(texte, /diagnostique_programme/);
 });

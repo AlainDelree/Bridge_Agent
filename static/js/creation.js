@@ -54,6 +54,9 @@ function collecterFormulaire() {
   // quel ici, la validation (obligatoire pour un projet dynamique, chemin
   // refusé) se fait côté serveur dans app/issues.py::envoyer().
   const champRepoCible = document.getElementById('repo-cible');
+  // Complexité (issue #848) : sélecteur à défaut "normal" — champ toujours
+  // présent dans le DOM (contrairement à repo-cible), pas de garde nécessaire.
+  const champComplexite = document.getElementById('complexite');
   return {
     projet:          document.getElementById('projet').value,
     titre:           document.getElementById('titre').value.trim(),
@@ -64,6 +67,7 @@ function collecterFormulaire() {
     corps:           document.getElementById('corps').value.trim(),
     modele_ponctuel: document.getElementById('modele-ponctuel').value,
     repo_cible:      champRepoCible ? champRepoCible.value.trim() : '',
+    complexite:      champComplexite ? champComplexite.value : 'normal',
   };
 }
 
@@ -121,6 +125,14 @@ function chargerTemplateDansFormulaire(t) {
   });
   document.getElementById('corps').value = t.corps || '';
   document.getElementById('modele-ponctuel').value = t.modele_ponctuel || '';
+  // Dépôt cible et Complexité (issue #848) : absents d'un template enregistré
+  // avant cette issue — repli '' / 'normal' (même défaut que
+  // CHAMPS_TEMPLATE_DEFAUTS côté serveur) pour qu'un ancien template se
+  // recharge sans erreur.
+  const champRepoCible = document.getElementById('repo-cible');
+  if (champRepoCible) champRepoCible.value = t.repo_cible || '';
+  const champComplexite = document.getElementById('complexite');
+  if (champComplexite) champComplexite.value = t.complexite || 'normal';
   mettreAJourBoutonEnvoi();
   mettreAJourResumeEntete();
 }

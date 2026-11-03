@@ -29,6 +29,7 @@ from watcher import (est_titre_chef, deduire_type_issue, PAUSE_ENTRE_TENTATIVES,
                      LABEL_NOTIF_PC, LABEL_NOTIF_GSM, LABEL_NOTIF_TOUS,
                      LABEL_ECHEC, extraire_complexite,
                      LABEL_SANS_COMPLEXITE, complexite_reconnue,  # (issue #844)
+                     NIVEAUX_COMPLEXITE,  # sélecteur de complexité web (issue #848)
                      PLANCHER_TIMEOUT_ECRITURE,  # (issue #752)
                      valider_repo_cible,  # (issue #829, étend #125/#567)
                      # estimer_duree et son historique (issue #845) : déplacés
@@ -252,9 +253,15 @@ def construire_body(data: dict) -> str:
     # cible », visible seulement pour un projet à PERIMETRE_DYNAMIQUE=true
     # (voir envoyer() pour la validation, appliquée AVANT cet appel).
     repo_cible      = (data.get("repo_cible") or "").strip()
+    # COMPLEXITE (issue #848) : sélecteur du formulaire web (quatre valeurs
+    # exactes, watcher.NIVEAUX_COMPLEXITE) — une valeur hors de cette liste
+    # (champ absent, ancien template sans ce champ) est omise comme
+    # modele_ponctuel/repo_cible plutôt que d'écrire une ligne invalide.
+    complexite      = (data.get("complexite") or "").strip().lower()
 
     entete = formater_entete(mode, priorite, timeout, nom_projet,
                               modele=modele_ponctuel or None,
+                              complexite=complexite if complexite in NIVEAUX_COMPLEXITE else None,
                               repo_cible=repo_cible or None)
     # Ordre final : en-tête → corps. Les consignes ne sont plus empilées ici
     # (déplacées dans le prompt CCL, issue #211). Corps vide omis pour ne pas
@@ -291,13 +298,17 @@ def construire_labels(data: dict) -> str:
     for extra in extras:
         if extra not in labels:
             labels.append(extra)
-    # Label « sans-complexite » (issue #844) : même règle que côté fichier
-    # déposé (scripts/watcher_issues_inbox.py::construire_labels) — posé quand
-    # le corps rédigé par Claude Chat ne porte aucune ligne COMPLEXITE
-    # reconnue (absente, ou valeur hors des quatre niveaux), détecté par
-    # watcher.complexite_reconnue (même reconnaissance EXACTE que la
-    # calibration TIMEOUT). Purement informatif, ne bloque jamais la création.
-    if not complexite_reconnue(data.get("corps", "")) and LABEL_SANS_COMPLEXITE not in labels:
+    # Label « sans-complexite » (issue #844, étendu #848) : même règle que
+    # côté fichier déposé (scripts/watcher_issues_inbox.py::construire_labels)
+    # — posé sauf si le sélecteur de complexité du formulaire web (issue #848)
+    # porte une des quatre valeurs reconnues OU si le corps rédigé porte déjà
+    # sa propre ligne COMPLEXITE reconnue (corps collé directement, avant
+    # l'ajout du sélecteur) — détecté par watcher.complexite_reconnue (même
+    # reconnaissance EXACTE que la calibration TIMEOUT). Purement informatif,
+    # ne bloque jamais la création.
+    complexite = (data.get("complexite") or "").strip().lower()
+    complexite_ok = complexite in NIVEAUX_COMPLEXITE or complexite_reconnue(data.get("corps", ""))
+    if not complexite_ok and LABEL_SANS_COMPLEXITE not in labels:
         labels.append(LABEL_SANS_COMPLEXITE)
     return ",".join(labels)
 

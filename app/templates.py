@@ -31,6 +31,12 @@ CHAMPS_TEMPLATE_DEFAUTS = {
     "mode":            "lecture",
     "notifs":          [],
     "modele_ponctuel": "",
+    # Dépôt cible et Complexité (issue #848) : absents des templates
+    # enregistrés avant cette issue — leur défaut ("" / "normal") permet de
+    # relire un ancien template sans erreur (champs absents = comportement
+    # inchangé, repo_cible masqué/vide, complexite "normal").
+    "repo_cible":      "",
+    "complexite":      "normal",
 }
 
 

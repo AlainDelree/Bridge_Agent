@@ -110,6 +110,7 @@ def _enregistrer_routes(app: Flask) -> None:
                             recherche_issues, modifier_label_notif)
     from app.templates import (templates_liste, templates_sauvegarder,
                                templates_supprimer)
+    from app.audit import audit_lire, audit_importer, audit_supprimer
     from app.journal import journal
     from app.ccw import (ccw_projets,
                          ccw_ajouter_projet, ccw_finaliser_projet,
@@ -146,6 +147,10 @@ def _enregistrer_routes(app: Flask) -> None:
     app.add_url_rule("/templates/<nom_projet>", "templates_liste", login_requis(templates_liste), methods=["GET"])
     app.add_url_rule("/templates", "templates_sauvegarder", login_requis(templates_sauvegarder), methods=["POST"])
     app.add_url_rule("/templates/<nom_projet>/<template_id>", "templates_supprimer", login_requis(templates_supprimer), methods=["DELETE"])
+    # ─── Template d'audit par projet + « Préparer l'audit » (issue #848) ──────
+    app.add_url_rule("/audit/<nom_projet>", "audit_lire", login_requis(audit_lire), methods=["GET"])
+    app.add_url_rule("/audit/<nom_projet>/importer", "audit_importer", login_requis(audit_importer), methods=["POST"])
+    app.add_url_rule("/audit/<nom_projet>", "audit_supprimer", login_requis(audit_supprimer), methods=["DELETE"])
     app.add_url_rule("/journal/<nom_projet>", "journal", login_requis(journal))
     app.add_url_rule("/issues-liste/<nom_projet>", "issues_liste", login_requis(issues_liste))
     app.add_url_rule("/recherche-issues/<nom_projet>", "recherche_issues", login_requis(recherche_issues))

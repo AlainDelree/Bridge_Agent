@@ -92,6 +92,53 @@
       <button class="primaire" data-action="config-enregistrer-relancer">Enregistrer et relancer</button>
     </div>
 
+    <!-- ─── Audit (issue #848) : un seul template d'audit par projet, importé
+         depuis un fichier .txt au même format que ceux déposés dans
+         issues_inbox/. Pas d'éditeur : aperçu en lecture seule + import qui
+         remplace (après confirmation) + suppression. « Préparer l'audit »
+         bascule sur le formulaire « Nouvelle issue » de diagnostique_programme
+         (jamais sur ce projet), pré-rempli avec ce template et le Dépôt cible
+         (REP_TRAVAIL Linux de CE projet). ────────────────────────────────── -->
+    <div class="titre-section" style="margin-top:26px">Audit</div>
+    <div style="font-size:12.5px;color:#666;margin-bottom:10px">
+      Un seul template d'audit par projet. L'import remplace le template
+      existant (après confirmation) — pour le modifier, modifie le fichier
+      puis réimporte-le. « Préparer l'audit » crée toujours l'issue sur
+      <b>diagnostique_programme</b>, jamais sur ce projet.
+    </div>
+    <div class="rangee" style="align-items:center;gap:8px;margin-bottom:10px">
+      <input type="file" id="audit-fichier" accept=".txt" style="font-size:13px;max-width:280px">
+      <button type="button" data-action="audit-importer">Importer</button>
+    </div>
+    <div id="audit-avertissements" class="message avertissement" style="display:none;margin-bottom:10px"></div>
+    <div id="audit-apercu" style="background:#f8f8f5;border:1px solid #e0dfda;
+         border-radius:6px;padding:10px 14px;margin-bottom:10px;font-size:12.5px">
+      <div id="audit-etat-vide" style="color:#888">
+        Aucun template d'audit pour ce projet — importe un fichier .txt
+        ci-dessus pour activer « Préparer l'audit ».
+      </div>
+      <div id="audit-contenu" style="display:none">
+        <div><b>Titre :</b> <span id="audit-titre"></span></div>
+        <div><b>Mode :</b> <span id="audit-mode"></span> ·
+             <b>Timeout :</b> <span id="audit-timeout"></span>s ·
+             <b>Complexité :</b> <span id="audit-complexite"></span></div>
+        <pre id="audit-corps" style="white-space:pre-wrap;font-size:12px;max-height:200px;
+             overflow:auto;margin-top:6px;background:#fff;border:1px solid #e0dfda;
+             border-radius:4px;padding:6px"></pre>
+        <button class="danger" data-action="audit-supprimer" style="margin-top:8px">
+          🗑 Supprimer le template d'audit
+        </button>
+      </div>
+    </div>
+    <div class="barre-envoi" style="margin-bottom:14px">
+      <div id="audit-cible-info" style="flex:1;font-size:12px;color:#888"></div>
+      <button class="primaire" id="btn-preparer-audit" data-action="audit-preparer" disabled
+              title="Importe d'abord un template d'audit pour ce projet.">
+        Préparer l'audit →
+      </button>
+    </div>
+    <div id="audit-msg" class="message" style="display:none"></div>
+
     <!-- ─── Zone dangereuse : suppression de projet (issue #587), côté
          CCL/local uniquement — le dépôt GitHub et le côté CCW sont
          explicitement hors scope et restent intacts. ───────────────────── -->

@@ -1609,4 +1609,123 @@ Sans journal : message clair, code de sortie 0.
 
 ---
 
+## 15. Template d'audit par projet et bouton « Préparer l'audit » (issue #848)
+
+### 15.1 Pourquoi
+
+Les issues d'audit d'un projet sont toujours structurellement les mêmes pour
+ce projet, mais chaque projet a son propre texte. Avant cette issue, lancer
+un audit demandait de redemander le texte au Chat de Diagnostique_Programme
+puis de le déposer à la main dans `issues_inbox/`. L'onglet Configuration du
+projet à auditer permet désormais d'IMPORTER ce texte une fois (template
+d'audit) puis de PRÉPARER l'issue d'audit en un clic — l'issue est toujours
+créée sur `diagnostique_programme`, jamais sur le projet audité.
+
+### 15.2 Backend — `app/audit.py`
+
+Un seul template d'audit par projet, stocké dans `configs/audit_<projet>.json`
+(gitignoré) — un objet UNIQUE, volontairement DISTINCT de
+`configs/templates_<projet>.json` (bibliothèque de templates ordinaires,
+issue #284, `app/templates.py`) : stockage séparé pour que le template
+d'audit n'apparaisse jamais, par erreur, dans la liste déroulante « Charger
+un template » du formulaire du projet audité lui-même (`GET
+/templates/<projet>` ne lit jamais ce fichier).
+
+L'import (`POST /audit/<projet>/importer`, multipart, champ `fichier`)
+réutilise **telle quelle** `scripts/watcher_issues_inbox.py::extraire_champs()`
+— le même parseur que les fichiers déposés dans `issues_inbox/` — plutôt que
+d'en écrire un second : un fichier produit par un Claude Chat (même format,
+en-tête `| CHAMP | valeur |` + `#Titre:` + corps, §3.3 du DOC) s'importe tel
+quel. La COMPLEXITE, elle, n'est PAS un champ d'en-tête de ce parseur (elle
+reste embarquée dans le corps, voir §6 du DOC et le commentaire de
+`CHAMPS_ENTETE`) : elle est extraite séparément via
+`watcher.extraire_complexite_pour_historique()`, avec repli `'normal'` +
+avertissement si absente ou non reconnue, puis sa ligne est retirée du corps
+conservé (`retirer_ligne_entete`) pour qu'elle ne soit jamais dupliquée avec
+celle que le sélecteur de complexité du formulaire web (§15.3) ajoutera à la
+création de l'issue d'audit.
+
+Les champs `PROJET` et `REPO_CIBLE` du fichier importé sont TOUJOURS ignorés
+(jamais enregistrés) : l'audit est créé sur `diagnostique_programme` et son
+Dépôt cible est calculé depuis le `REP_TRAVAIL` (Linux) du projet audité au
+clic sur « Préparer l'audit » (jamais depuis le fichier). Un avertissement
+est renvoyé — mais n'empêche jamais l'import — si `PROJET` est présent et
+différent de `diagnostique_programme`, ou si `REPO_CIBLE` est présent et ne
+correspond pas (chemin résolu) au `REP_TRAVAIL` du projet audité.
+
+Trois routes (`app/__init__.py`), toutes `login_requis` comme le reste de
+l'interface :
+- `GET /audit/<projet>` — template courant, ou `{"existe": false}` ;
+- `POST /audit/<projet>/importer` — importe/REMPLACE le template existant
+  (toujours un seul objet, pas d'historique) ;
+- `DELETE /audit/<projet>` — supprime le template (404 si aucun).
+
+Aucun éditeur : la section affiche un aperçu en LECTURE SEULE ; pour modifier
+un audit, on modifie le fichier `.txt` puis on le réimporte (confirmation
+côté navigateur avant d'écraser un template déjà présent).
+
+### 15.3 Sélecteur de complexité du formulaire « Nouvelle issue » (point 4)
+
+`templates/fragments/onglet_creation.html` porte désormais un sélecteur
+`#complexite` (quatre valeurs exactes `rapide`/`court`/`normal`/`lourd`,
+défaut `normal`, à côté de Priorité/Timeout). `creation.js::collecterFormulaire()`
+le transmet (`complexite`), mémorisé/rechargé par la bibliothèque de
+templates (issue #284) au même titre que les autres champs — `CHAMPS_TEMPLATE_DEFAUTS`
+(`app/templates.py`) y ajoute `complexite` (défaut `"normal"`) ET
+`repo_cible` (défaut `""`, point 5 : le Dépôt cible est désormais mémorisé
+par TOUS les templates, pas seulement utilisable à l'audit) — un ANCIEN
+template, enregistré avant cette issue sans ces deux clés, se recharge sans
+erreur (défauts appliqués comme pour tout champ absent).
+
+Côté serveur, `app.issues.formater_entete()` acceptait déjà un paramètre
+`complexite` optionnel (issue #601) jamais alimenté par le formulaire web :
+`construire_body()` lui transmet maintenant `data["complexite"]` (ignoré si
+hors de `watcher.NIVEAUX_COMPLEXITE`, comme `modele_ponctuel`/`repo_cible`).
+`construire_labels()` ne pose plus `LABEL_SANS_COMPLEXITE` (issue #844) dès
+que ce champ porte une valeur reconnue — en plus de l'ancienne condition
+(ligne `COMPLEXITE` déjà présente dans un corps collé directement) — pour
+qu'une issue créée par ce sélecteur porte la ligne `COMPLEXITE` et jamais le
+label informatif « sans-complexite ».
+
+### 15.4 Bouton « Préparer l'audit » — `static/js/config.js` (point 2)
+
+Toute la logique vit dans `static/js/config.js` (même fichier que le reste de
+l'onglet Configuration) : `chargerAudit()` est appelée à chaque
+(re)chargement de l'onglet, au même titre que `chargerConfig()`. Le bouton
+« Préparer l'audit » (`disabled` tant qu'`auditPreparable()` est faux — sans
+template, un message explique pourquoi) :
+
+1. lit le `REP_TRAVAIL` du projet audité (`GET /config/<projet>`) ;
+2. bascule le sélecteur global `#projet` sur `diagnostique_programme` puis
+   **attend** `onProjetChange()` — rendue ASYNC dans `static/js/app.js` pour
+   cette occasion (elle ne faisait auparavant qu'un fire-and-forget sur
+   `mettreAJourInfoProjet`) : sans cet `await`, le remplissage du TIMEOUT par
+   défaut et de la visibilité du champ Dépôt cible, tous deux asynchrones,
+   risqueraient de s'exécuter APRÈS nos propres valeurs et de les effacer
+   (course) ;
+3. remplit titre/corps/timeout/mode/complexité (template d'audit) et Dépôt
+   cible (REP_TRAVAIL du projet audité, PAS celui de Windows) ;
+4. affiche un bandeau (`#audit-bandeau`, `onglet_creation.html`) nommant
+   explicitement le projet audité ET `diagnostique_programme` — jamais
+   silencieux sur la destination réelle de l'issue ;
+5. bascule sur l'onglet « Nouvelle issue » par un clic DOM délégué
+   (`.onglet[data-onglet="creation"]`), pas par un import direct
+   d'`onglets.js::activerOnglet` — `onglets.js` importe déjà
+   `config.js::chargerConfig`, un import retour créerait un cycle.
+
+Le formulaire et ses vérifications existantes (titre obligatoire,
+anti-doublon, validation du Dépôt cible pour un projet dynamique…) sont
+réutilisés tels quels : Alain relit puis clique lui-même sur « Envoyer »,
+aucun envoi automatique.
+
+### 15.5 Cas particulier — audit de `diagnostique_programme` lui-même (point 3)
+
+Quand le projet audité EST `diagnostique_programme`, le Dépôt cible calculé
+est son propre `REP_TRAVAIL` : `REPO_CIBLE` résolu == `REP_TRAVAIL` résolu,
+traité par `watcher.py` comme un périmètre FIXE normal (§7 du DOC, issue
+#837) — aucun code spécifique n'était nécessaire côté audit, ce cas découle
+naturellement du flux décrit en 15.4.
+
+---
+
 *Document technique interne — voir `BRIDGE_AGENT_DOC.md` pour l'usage du bridge.*

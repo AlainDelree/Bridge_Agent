@@ -133,6 +133,40 @@ export function texteModeleAutreAgent(agentSelectionne) {
   return `Le modèle de l'agent ${nomAffiche} se règle dans son propre onglet « Agent ${nomAffiche} ».`;
 }
 
+// ─── Audit (issue #848) ─────────────────────────────────────────────────────
+// Un template d'audit par projet (stockage/parsing côté app/audit.py, qui
+// réutilise extraire_champs() d'issues_inbox/) + bouton « Préparer l'audit »
+// qui bascule sur le formulaire « Nouvelle issue » de diagnostique_programme.
+
+/** Le bouton « Préparer l'audit » n'est activable que si un template
+ *  d'audit existe pour le projet ET porte un titre non vide. */
+export function auditPreparable(audit) {
+  return !!(audit && audit.existe && String(audit.titre || '').trim());
+}
+
+/** Construit les données à injecter dans le formulaire « Nouvelle issue » de
+ *  diagnostique_programme pour préparer l'audit du projet audité : le
+ *  contenu du template d'audit + le dossier de travail LINUX (REP_TRAVAIL,
+ *  jamais le chemin Windows) du projet audité comme Dépôt cible. */
+export function construireFormulaireAudit(audit, repTravailAudite) {
+  return {
+    titre:      audit.titre || '',
+    corps:      audit.corps || '',
+    timeout:    audit.timeout || '300',
+    mode:       audit.mode || 'lecture',
+    complexite: audit.complexite || 'normal',
+    repo_cible: repTravailAudite || '',
+  };
+}
+
+/** Bandeau rappelant la destination réelle de l'audit : l'issue est TOUJOURS
+ *  créée sur diagnostique_programme, jamais sur le projet audité — jamais
+ *  silencieux sur ce point (issue #848, point 2). */
+export function texteBandeauAudit(nomProjetAudite) {
+  return `🔎 Audit de « ${nomProjetAudite} » — cette issue sera créée sur `
+       + `diagnostique_programme, pas sur « ${nomProjetAudite} ».`;
+}
+
 /** Message final affiché après une suppression réussie, selon le statut du
  *  commit/push automatique de BRIDGE_AGENT_DOC.md (issue #645). */
 export function messageStatutCommitDoc(statut, commandeManuelle) {
@@ -247,6 +281,168 @@ export async function chargerConfig() {
       msg.className = 'message erreur'; msg.style.display = 'block';
     }
   }
+  // Audit (issue #848) : section indépendante du reste du .conf, mais liée
+  // au même projet sélectionné — rechargée à chaque (re)chargement de cet
+  // onglet, avec sa propre gestion d'erreur (jamais de régression si l'audit
+  // échoue à charger pendant que le reste de la config a réussi).
+  chargerAudit();
+}
+
+// ─── Audit (issue #848) : chargement / affichage / import / suppression ───
+
+let auditCourant = null;
+
+function majAffichageAudit(audit) {
+  const vide = document.getElementById('audit-etat-vide');
+  const contenu = document.getElementById('audit-contenu');
+  const btn = document.getElementById('btn-preparer-audit');
+  const ok = auditPreparable(audit);
+  if (vide) vide.style.display = ok ? 'none' : 'block';
+  if (contenu) contenu.style.display = ok ? 'block' : 'none';
+  if (btn) btn.disabled = !ok;
+  if (ok) {
+    majChampConfig('audit-titre', audit.titre, 'textContent');
+    majChampConfig('audit-mode', audit.mode, 'textContent');
+    majChampConfig('audit-timeout', audit.timeout, 'textContent');
+    majChampConfig('audit-complexite', audit.complexite, 'textContent');
+    majChampConfig('audit-corps', audit.corps, 'textContent');
+  }
+}
+
+/** Charge le template d'audit du projet actuellement sélectionné (sélecteur
+ *  global #projet) — appelée à chaque (re)chargement de l'onglet
+ *  Configuration, comme chargerConfig(). */
+export async function chargerAudit() {
+  const nom = document.getElementById('projet').value;
+  if (!nom) return;
+  try {
+    auditCourant = await api.get('/audit/' + encodeURIComponent(nom), { silencieux: true });
+  } catch (e) {
+    auditCourant = { existe: false };
+  }
+  majAffichageAudit(auditCourant);
+}
+
+function majMessageAudit(texte, type) {
+  const msg = document.getElementById('audit-msg');
+  if (!msg) return;
+  msg.textContent = texte;
+  msg.className = 'message ' + type;
+  msg.style.display = 'block';
+}
+
+// Import d'un fichier .txt (bouton « Importer ») — multipart, comme
+// creation.js::joindreImage(). Demande confirmation avant de remplacer un
+// template déjà existant (pas d'éditeur : la seule façon de modifier un
+// audit est de réimporter le fichier corrigé).
+async function importerAudit() {
+  const nom = document.getElementById('projet').value;
+  const input = document.getElementById('audit-fichier');
+  const avert = document.getElementById('audit-avertissements');
+  if (avert) avert.style.display = 'none';
+  if (!input || !input.files || !input.files.length) {
+    majMessageAudit('Choisis un fichier .txt à importer.', 'erreur');
+    return;
+  }
+  if (auditPreparable(auditCourant)
+      && !confirm('Un template d\'audit existe déjà pour ce projet — le remplacer ?')) {
+    return;
+  }
+  const donnees = new FormData();
+  donnees.append('fichier', input.files[0]);
+  let json;
+  try {
+    const rep = await fetch('/audit/' + encodeURIComponent(nom) + '/importer', { method: 'POST', body: donnees });
+    json = await rep.json();
+  } catch (e) {
+    majMessageAudit('Erreur réseau : ' + e.message, 'erreur');
+    return;
+  }
+  if (!json.succes) {
+    majMessageAudit('Erreur : ' + (json.erreur || 'échec inconnu'), 'erreur');
+    return;
+  }
+  auditCourant = { existe: true, ...json.audit };
+  majAffichageAudit(auditCourant);
+  input.value = '';
+  if (avert) {
+    if (json.avertissements && json.avertissements.length) {
+      avert.innerHTML = json.avertissements.map(dom.echapperHtml).join('<br>');
+      avert.style.display = 'block';
+    } else {
+      avert.style.display = 'none';
+    }
+  }
+  majMessageAudit('Template d\'audit importé.', 'succes');
+}
+
+async function supprimerAudit() {
+  const nom = document.getElementById('projet').value;
+  if (!confirm('Supprimer le template d\'audit de ce projet ?')) return;
+  try {
+    await api.supprimer('/audit/' + encodeURIComponent(nom));
+  } catch (e) {
+    return; // déjà signalé par api.supprimer (toast)
+  }
+  auditCourant = { existe: false };
+  majAffichageAudit(auditCourant);
+  const avert = document.getElementById('audit-avertissements');
+  if (avert) avert.style.display = 'none';
+  majMessageAudit('Template d\'audit supprimé.', 'succes');
+}
+
+function masquerBandeauAudit() {
+  const bandeau = document.getElementById('audit-bandeau');
+  if (bandeau) bandeau.style.display = 'none';
+}
+
+/** Bouton « Préparer l'audit » (issue #848, point 2) : bascule sur le
+ *  formulaire « Nouvelle issue » de diagnostique_programme, pré-rempli avec
+ *  le template d'audit du projet audité et son Dépôt cible (REP_TRAVAIL
+ *  Linux). Réutilise le formulaire et ses vérifications actuelles — Alain
+ *  relit puis clique lui-même sur « Envoyer », aucun envoi automatique. */
+async function preparerAudit() {
+  if (!auditPreparable(auditCourant)) return;
+  const nomAudite = document.getElementById('projet').value;
+
+  let cfgAudite;
+  try {
+    cfgAudite = await api.get('/config/' + encodeURIComponent(nomAudite), { silencieux: true });
+  } catch (e) {
+    return; // déjà signalé par api.get (toast)
+  }
+  const donnees = construireFormulaireAudit(auditCourant, cfgAudite.rep_travail);
+
+  document.getElementById('projet').value = 'diagnostique_programme';
+  // onProjetChange() (app.js) est désormais ASYNC (issue #848) : on l'attend
+  // avant d'écraser les champs ci-dessous — sinon son propre remplissage du
+  // TIMEOUT par défaut et de la visibilité de « Dépôt cible » risqueraient de
+  // s'exécuter APRÈS et d'effacer nos valeurs (course, mettreAJourInfoProjet
+  // étant asynchrone).
+  await appelerAncien('onProjetChange');
+
+  document.getElementById('titre').value = donnees.titre;
+  document.getElementById('corps').value = donnees.corps;
+  document.getElementById('timeout').value = donnees.timeout;
+  const radio = document.querySelector('input[name=mode][value="' + donnees.mode + '"]');
+  if (radio) radio.checked = true;
+  const champComplexite = document.getElementById('complexite');
+  if (champComplexite) champComplexite.value = donnees.complexite;
+  const champRepoCible = document.getElementById('repo-cible');
+  if (champRepoCible) champRepoCible.value = donnees.repo_cible;
+
+  const bandeau = document.getElementById('audit-bandeau');
+  if (bandeau) {
+    bandeau.textContent = texteBandeauAudit(nomAudite);
+    bandeau.style.display = 'block';
+  }
+
+  // Bascule d'onglet par clic délégué (plutôt qu'un import direct
+  // d'onglets.js::activerOnglet, qui importe déjà config.js::chargerConfig —
+  // un import retour créerait un cycle) : réutilise la délégation de clic
+  // déjà installée par onglets.js::initialiserOnglets().
+  const ongletCreation = document.querySelector('.onglet[data-onglet="creation"]');
+  if (ongletCreation) ongletCreation.click();
 }
 
 async function sauvegarderConfig(relancer) {
@@ -446,6 +642,15 @@ function installerDelegationConfig() {
   dom.surAction('[data-action="sp-nom-confirmation"]', 'input', () => spMajBoutonEtat());
   dom.surAction('[data-action="sp-fermer"]', 'click', () => fermerSupprimerProjet());
   dom.surAction('[data-action="sp-supprimer"]', 'click', () => soumettreSupprimerProjet());
+
+  // Audit (issue #848).
+  dom.surAction('[data-action="audit-importer"]', 'click', () => importerAudit());
+  dom.surAction('[data-action="audit-supprimer"]', 'click', () => supprimerAudit());
+  dom.surAction('[data-action="audit-preparer"]', 'click', () => preparerAudit());
+  // Un changement MANUEL de projet (pas celui, programmatique, que
+  // preparerAudit() fait lui-même — une affectation .value ne déclenche
+  // aucun événement 'change') rend le bandeau de destination obsolète.
+  dom.surAction('#projet', 'change', () => masquerBandeauAudit());
 }
 
 /** Point d'entrée, appelé une fois par index.js. */

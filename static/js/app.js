@@ -184,7 +184,7 @@ function appliquerAccentProjet(nom) {
 // projet. En revanche, la détection d'en-tête (detecterProjetDansCorps) appelle
 // onProjetChange(false) pour NE PAS écraser le TIMEOUT collé, dont la pose reste
 // la seule responsabilité de detecterTimeoutDansCorps (issue #143).
-function onProjetChange(reinitialiserTimeout = true) {
+async function onProjetChange(reinitialiserTimeout = true) {
   const nom = document.getElementById('projet').value;
   // Mémorise le projet choisi pour le restaurer à la prochaine ouverture.
   if (window.Bridge && window.Bridge.persistance) {
@@ -192,7 +192,14 @@ function onProjetChange(reinitialiserTimeout = true) {
   }
   appliquerAccentProjet(nom);
   verifierStatut();
-  mettreAJourInfoProjet(reinitialiserTimeout);
+  // issue #848 : AWAIT (plutôt que fire-and-forget comme avant) pour qu'un
+  // appelant (ex. static/js/config.js::preparerAudit, bouton « Préparer
+  // l'audit ») puisse attendre la fin de cette mise à jour (TIMEOUT par
+  // défaut, visibilité du champ Dépôt cible) avant d'écraser lui-même
+  // certains champs du formulaire — comportement inchangé pour les appelants
+  // existants (onchange="…" inline), aucun n'utilisait déjà la valeur de
+  // retour de onProjetChange().
+  await mettreAJourInfoProjet(reinitialiserTimeout);
   // Bibliothèque de templates (issue #284) : filtrée par projet, rechargée à
   // chaque changement de projet (manuel ou détection d'en-tête).
   chargerTemplates();

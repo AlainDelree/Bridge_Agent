@@ -18,6 +18,13 @@
               disabled title="Supprimer le template sélectionné" style="padding:8px 12px">🗑️</button>
     </div>
 
+    <!-- Bandeau « Préparer l'audit » (issue #848) : rempli/affiché par
+         static/js/config.js::preparerAudit() juste avant de basculer sur cet
+         onglet — rappelle que l'issue part vers diagnostique_programme et
+         pour quel projet audité, jamais silencieux sur ce point. Masqué par
+         défaut, et re-masqué dès que le projet est changé manuellement. -->
+    <div id="audit-bandeau" class="message avertissement" style="display:none;margin-bottom:14px"></div>
+
     <div class="rangee">
       <div class="champ" style="max-width:150px">
         <label>Priorité</label>
@@ -30,6 +37,20 @@
       <div class="champ" style="max-width:110px">
         <label>Timeout (s)</label>
         <input type="number" id="timeout" value="300" min="30" step="30">
+      </div>
+      <!-- Complexité (issue #848, §4) : quatre valeurs exactes, alimente la
+           calibration automatique du TIMEOUT (EWMA, issue #434/#843) côté
+           watcher — mémorisée/rechargée par les templates (issue #284),
+           "normal" par défaut. Transmise à construire_body() via le champ
+           `complexite` déjà accepté par formater_entete(). -->
+      <div class="champ" style="max-width:140px">
+        <label title="Alimente la calibration automatique du TIMEOUT (issue #843).">Complexité</label>
+        <select id="complexite">
+          <option value="rapide">rapide</option>
+          <option value="court">court</option>
+          <option value="normal" selected>normal</option>
+          <option value="lourd">lourd</option>
+        </select>
       </div>
     </div>
 
