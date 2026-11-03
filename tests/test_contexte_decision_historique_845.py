@@ -249,10 +249,12 @@ def test_bout_en_bout_estimation_figee_au_lancement_et_inchangee(tmp_path, monke
         assert estimation_avant == {"mediane": 100, "n": 5, "fiabilite": "correct"}
 
         (est_relance, debut_traitement, nb_projets_actifs_debut, empreinte_configs_avant,
-         tete_avant_traitement, timeout_suggere_lancement, estimation_lancement) = \
+         tete_avant_traitement, timeout_suggere_lancement, estimation_lancement,
+         commit_sauvegarde_watcher, _backup_watcher_nouveaux_suivis) = \
             watcher._demarrer_traitement(
                 numero, titre, body, watcher.MODE_LECTURE, "lecture seule",
                 dry_run=True, cwd_effectif=tmp_path)
+        assert commit_sauvegarde_watcher is None  # MODE_LECTURE : jamais de commit watcher (#846)
 
         # Capturée AU LANCEMENT, identique à l'estimation affichée juste avant.
         assert estimation_lancement == estimation_avant, estimation_lancement

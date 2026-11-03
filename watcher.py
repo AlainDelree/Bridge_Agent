@@ -961,6 +961,118 @@ def _tete_git(rep: Path) -> str | None:
         return None
 
 
+def _commit_sauvegarde_watcher(numero: int, titre: str, cwd_effectif: Path) -> tuple[str | None, tuple[str, ...]]:
+    """Commit de sauvegarde fait par le WATCHER lui-même, juste avant de
+    lancer la première tentative d'une issue mode écriture (issue #846,
+    incident Relecture_Bridge #121 : l'agent oubliait régulièrement de le
+    faire en tout premier geste, malgré la consigne de prompt — ce qui
+    mélangeait son travail de correction avec la sauvegarde). Appelé UNE
+    SEULE fois par traitement, par `_demarrer_traitement`, immédiatement
+    après avoir relevé `tete_avant_traitement` : ce commit en devient donc
+    TOUJOURS le premier après cette référence, y compris lors des tentatives
+    2/3 d'un même traitement (pas de nouveau commit à chaque tentative —
+    seulement avant la première, puisque `_demarrer_traitement` n'est
+    appelée qu'une fois) et lors d'une RELANCE sur un worktree repris (le
+    commit sépare alors le travail déjà présent dans le worktree de celui
+    de CE nouveau traitement, plutôt que de l'engloutir).
+
+    N'est PAS appelée du tout si `CFG.cmd_backup` est renseigné (projet à
+    convention de sauvegarde propre — comportement conservé à l'identique,
+    voir l'appelant) ni si `tete_avant_traitement` est None (hors dépôt git
+    ou essai à blanc — comportement conservé à l'identique).
+
+    Garde-fou backup/reset (même précaution que celle documentée côté agent
+    dans consignes/globales.md) : relève, par simple comparaison des
+    fichiers non suivis avant/après ce commit, les chemins qu'il vient de
+    faire passer sous suivi git — jamais détrackés automatiquement ICI (seul
+    l'agent, au fait du script qu'il va ensuite éventuellement lancer, sait
+    s'il doit le faire) : seulement remontés en log et à l'agent via le
+    bloc de prompt (`lancer_claude`), pour qu'il reste vigilant avant un
+    script qui se terminerait par une opération git destructrice.
+
+    Best-effort, comme `_avertissement_succes_sans_commit`/
+    `_commits_au_dela_sauvegarde` plus bas dans ce fichier : toute erreur à
+    n'importe quelle étape (dépôt inaccessible, `git add`/`commit` en
+    échec...) retourne (None, ()) sans jamais lever — l'appelant retombe
+    alors sur la consigne de prompt historique qui demande à l'agent de
+    faire lui-même cette sauvegarde (point 3 de l'issue #846), journalisée
+    ici en `log.warning` pour que l'échec reste visible sans jamais bloquer
+    l'issue.
+
+    Retourne (sha du commit créé ou None, tuple des chemins auparavant non
+    suivis que ce commit a mis sous suivi — vide si aucun ou si non
+    déterminable)."""
+    try:
+        avant = subprocess.run(
+            ["git", "status", "--porcelain"],
+            cwd=cwd_effectif, capture_output=True, text=True,
+            encoding="utf-8", errors="replace", timeout=30,
+        )
+        non_suivis_avant = {
+            ligne[3:] for ligne in avant.stdout.splitlines() if ligne.startswith("??")
+        } if avant.returncode == 0 else set()
+
+        ajout = subprocess.run(
+            ["git", "add", "-A"], cwd=cwd_effectif, capture_output=True, text=True,
+            encoding="utf-8", errors="replace", timeout=120,
+        )
+        if ajout.returncode != 0:
+            log.warning(
+                f"  ⚠ Issue #{numero} : commit de sauvegarde par le watcher — "
+                f"'git add -A' en échec ({ajout.stderr.strip()}) — repli sur la "
+                f"consigne de prompt habituelle (issue #846)."
+            )
+            return None, ()
+
+        slug = re.sub(r'[^a-z0-9]+', '-', titre.lower()).strip('-')[:50].strip('-') or "sans-titre"
+        commit = subprocess.run(
+            ["git", "commit", "--allow-empty", "-m", f"avant-{numero}-{slug}"],
+            cwd=cwd_effectif, capture_output=True, text=True,
+            encoding="utf-8", errors="replace", timeout=30,
+        )
+        if commit.returncode != 0:
+            log.warning(
+                f"  ⚠ Issue #{numero} : commit de sauvegarde par le watcher — "
+                f"'git commit' en échec ({commit.stderr.strip()}) — repli sur la "
+                f"consigne de prompt habituelle (issue #846)."
+            )
+            return None, ()
+
+        sha = _tete_git(cwd_effectif)
+        if sha is None:
+            log.warning(
+                f"  ⚠ Issue #{numero} : commit de sauvegarde par le watcher — "
+                f"SHA introuvable juste après le commit — repli sur la consigne "
+                f"de prompt habituelle (issue #846)."
+            )
+            return None, ()
+
+        apres = subprocess.run(
+            ["git", "status", "--porcelain"],
+            cwd=cwd_effectif, capture_output=True, text=True,
+            encoding="utf-8", errors="replace", timeout=30,
+        )
+        non_suivis_apres = {
+            ligne[3:] for ligne in apres.stdout.splitlines() if ligne.startswith("??")
+        } if apres.returncode == 0 else set()
+        nouveaux_suivis = tuple(sorted(non_suivis_avant - non_suivis_apres))
+
+        log.info(
+            f"  ✓ Issue #{numero} : commit de sauvegarde watcher {sha[:12]}."
+            + (f" Met sous suivi des chemins auparavant non suivis : "
+               f"{', '.join(nouveaux_suivis)} — garde-fou backup/reset, voir "
+               f"consignes/globales.md." if nouveaux_suivis else "")
+        )
+        return sha, nouveaux_suivis
+    except (OSError, subprocess.SubprocessError) as e:
+        log.warning(
+            f"  ⚠ Issue #{numero} : commit de sauvegarde par le watcher — "
+            f"exception ({e}) — repli sur la consigne de prompt habituelle "
+            f"(issue #846)."
+        )
+        return None, ()
+
+
 def rafraichir_depot(rep: Path, dry_run: bool = False):
     """Best-effort : rafraîchit le clone local via `git pull --ff-only` en début
     de cycle, pour qu'un watcher (CCL/CCW) travaille automatiquement sur le code
@@ -3947,7 +4059,9 @@ def lancer_claude(numero: int, titre: str, body: str, dry_run: bool,
                   tete_avant_traitement: str = None,
                   worktree_repris: bool = False,
                   commits_ecart_worktree: int = 0,
-                  chemin_outil_lecture_exec: Path = None) -> tuple[bool, str]:
+                  chemin_outil_lecture_exec: Path = None,
+                  commit_sauvegarde_watcher: str = None,
+                  backup_watcher_nouveaux_suivis: tuple[str, ...] = ()) -> tuple[bool, str]:
     """
     Lance Claude Code en mode non-interactif sur une issue.
 
@@ -4024,6 +4138,22 @@ def lancer_claude(numero: int, titre: str, body: str, dry_run: bool,
     nombre de commits dont master a avancé depuis la création de ce
     worktree, repris SANS rebase automatique (intention #725).
 
+    commit_sauvegarde_watcher / backup_watcher_nouveaux_suivis (issue #846) :
+    renseignés par `_demarrer_traitement` quand le watcher a lui-même fait
+    le commit de sauvegarde juste avant ce lancement (voir
+    `_commit_sauvegarde_watcher`) — remplace la consigne qui demandait à
+    l'agent de le faire en tout premier geste, trop régulièrement oubliée
+    (incident Relecture_Bridge #121). Décide, dans le bloc MODE_ECRITURE
+    ci-dessous, lequel des trois textes de consigne de sauvegarde est
+    injecté : `CFG.cmd_backup` (commande propre au projet, prioritaire,
+    comportement inchangé) ; sinon, si `commit_sauvegarde_watcher` est
+    renseigné, consigne « déjà fait, ne refais rien » rappelant ce hash
+    (complétée d'un rappel du garde-fou backup/reset si
+    `backup_watcher_nouveaux_suivis` n'est pas vide) ; sinon (commit watcher
+    non tenté ou en échec — hors dépôt git, essai à blanc, ou repli #846
+    point 3) la consigne historique demandant à l'agent de le faire
+    lui-même, inchangée caractère pour caractère.
+
     Retourne (succès, sortie).
     """
     if mode == MODE_LECTURE_ACTIVE and chemin_scratch is None:
@@ -4040,6 +4170,24 @@ def lancer_claude(numero: int, titre: str, body: str, dry_run: bool,
             consigne_backup = (
                 "- Fais TOUJOURS une sauvegarde avant toute modification, en lançant "
                 f"cette commande depuis le répertoire du projet :\n  {CFG.cmd_backup}"
+            )
+        elif commit_sauvegarde_watcher:
+            # Issue #846 : le watcher a déjà fait ce commit lui-même, juste
+            # avant ce lancement — l'agent n'a plus à le refaire (c'était la
+            # source de l'oubli régulier, incident Relecture_Bridge #121).
+            note_garde_fou_backup_reset = (
+                " Ce commit a mis sous suivi des chemins auparavant non suivis "
+                f"({', '.join(backup_watcher_nouveaux_suivis)}) — reste vigilant "
+                "au garde-fou backup/reset (consignes/globales.md) avant tout "
+                "script qui se terminerait par une opération git destructrice."
+                if backup_watcher_nouveaux_suivis else ""
+            )
+            consigne_backup = (
+                "- Le commit de sauvegarde a DÉJÀ été fait par le watcher, juste "
+                f"avant ce lancement : commit {commit_sauvegarde_watcher[:12]}. NE REFAIS "
+                "PAS de commit de sauvegarde toi-même — commence directement ton "
+                "travail. Reprends ce hash tel quel pour « [hash backup] » dans la "
+                f"ligne « Commits » de ton rapport de clôture.{note_garde_fou_backup_reset}"
             )
         else:
             consigne_backup = (
@@ -6231,17 +6379,19 @@ def _preparer_controle_outil(chemin_outil_lecture_exec: Path | None, dry_run: bo
 def _demarrer_traitement(numero: int, titre: str, body: str, mode: str, mode_txt: str,
                           dry_run: bool, cwd_effectif: Path
                           ) -> tuple[bool, float, int, tuple[dict, float] | None, str | None,
-                                     float | None, dict]:
+                                     float | None, dict, str | None, tuple[str, ...]]:
     """Tout ce qui précède la première tentative `lancer_claude` : détection
     RELANCE, ACK, rafraîchissement SSE, départ du chrono, sonde pre-flight
-    token, empreinte configs/*.conf, SHA de HEAD avant traitement, et
+    token, empreinte configs/*.conf, SHA de HEAD avant traitement, commit de
+    sauvegarde fait par le watcher lui-même (issue #846, voir ci-dessous), et
     (issue #845) capture FIGÉE du TIMEOUT_suggéré et de l'estimation de
     durée en vigueur AU LANCEMENT. Retourne (est_relance, debut_traitement,
     nb_projets_actifs_debut, empreinte_configs_avant, tete_avant_traitement,
-    timeout_suggere_lancement, estimation_lancement) — `empreinte_configs_avant`
-    est un couple (empreinte, instant_unix) depuis #724 : l'instant sert de
-    référence au garde-fou pour ne reconnaître comme légitimes que les
-    actions de new_issue.py faites PENDANT ce traitement (voir
+    timeout_suggere_lancement, estimation_lancement, commit_sauvegarde_watcher,
+    backup_watcher_nouveaux_suivis) — `empreinte_configs_avant` est un couple
+    (empreinte, instant_unix) depuis #724 : l'instant sert de référence au
+    garde-fou pour ne reconnaître comme légitimes que les actions de
+    new_issue.py faites PENDANT ce traitement (voir
     _action_legitime_posterieure).
 
     `timeout_suggere_lancement` / `estimation_lancement` (issue #845) : lus
@@ -6250,7 +6400,21 @@ def _demarrer_traitement(numero: int, titre: str, body: str, mode: str, mode_txt
     appelée à chaque tentative expirée et à la clôture). Transmis tels quels
     jusqu'à enregistrer_duree() (succès et tentatives expirées), JAMAIS
     recalculés en cours de route : sinon la mesure de fiabilité de ces deux
-    valeurs serait faussée par les observations de l'issue elle-même."""
+    valeurs serait faussée par les observations de l'issue elle-même.
+
+    `commit_sauvegarde_watcher` / `backup_watcher_nouveaux_suivis` (issue
+    #846) : remplace la consigne qui demandait à l'agent de faire lui-même
+    ce commit en tout premier geste — oubliée trop régulièrement (incident
+    Relecture_Bridge #121). Fait ICI, une seule fois par traitement, juste
+    après `tete_avant_traitement` ci-dessous : ce commit en est donc
+    TOUJOURS le premier (position inchangée pour les deux contrôles
+    existants qui en dépendent, `_avertissement_succes_sans_commit` et
+    `_commits_au_dela_sauvegarde`). None/() si `CFG.cmd_backup` est
+    renseigné (comportement du projet conservé à l'identique),
+    `tete_avant_traitement` est None (hors dépôt git ou essai à blanc,
+    comportement conservé à l'identique), ou si la tentative de commit a
+    échoué (repli sur la consigne de prompt historique — voir
+    `_commit_sauvegarde_watcher`, best-effort, jamais bloquant)."""
     # Détection RELANCE (champ RELANCE, issue #516) AVANT l'ACK courante
     # (issue #592) : un commentaire d'échec définitif déjà présent dans
     # l'historique de l'issue signale que le worktree peut contenir du
@@ -6306,6 +6470,17 @@ def _demarrer_traitement(numero: int, titre: str, body: str, mode: str, mode_txt
         _tete_git(cwd_effectif) if (mode == MODE_ECRITURE and not dry_run) else None
     )
 
+    # Commit de sauvegarde fait par le watcher lui-même (issue #846) : tout
+    # de suite après avoir relevé `tete_avant_traitement` ci-dessus, pour en
+    # être TOUJOURS le premier commit. Sauté si le projet définit CMD_BACKUP
+    # (convention propre, conservée à l'identique — voir lancer_claude) ou
+    # si tete_avant_traitement est None (hors dépôt git ou essai à blanc).
+    commit_sauvegarde_watcher: str | None = None
+    backup_watcher_nouveaux_suivis: tuple[str, ...] = ()
+    if tete_avant_traitement is not None and not CFG.cmd_backup:
+        commit_sauvegarde_watcher, backup_watcher_nouveaux_suivis = \
+            _commit_sauvegarde_watcher(numero, titre, cwd_effectif)
+
     # TIMEOUT_suggéré et estimation de durée en vigueur AU LANCEMENT (issue
     # #845) : figés ici, AVANT toute tentative, pour l'historique des durées —
     # voir docstring ci-dessus. `estimer_duree` est la MÊME fonction que celle
@@ -6322,7 +6497,8 @@ def _demarrer_traitement(numero: int, titre: str, body: str, mode: str, mode_txt
 
     return (est_relance, debut_traitement, nb_projets_actifs_debut,
             empreinte_configs_avant, tete_avant_traitement,
-            timeout_suggere_lancement, estimation_lancement)
+            timeout_suggere_lancement, estimation_lancement,
+            commit_sauvegarde_watcher, backup_watcher_nouveaux_suivis)
 
 
 # Ligne de verdict du gabarit de prompt (issue #764, remplace la détection
@@ -6526,7 +6702,10 @@ def _executer_une_tentative(numero: int, titre: str, body: str, dry_run: bool, m
                              tete_avant_traitement: str | None = None,
                              worktree_repris: bool = False,
                              commits_ecart_worktree: int = 0,
-                             chemin_outil_lecture_exec: Path | None = None) -> tuple[bool, str, str | None, float, bool]:
+                             chemin_outil_lecture_exec: Path | None = None,
+                             commit_sauvegarde_watcher: str | None = None,
+                             backup_watcher_nouveaux_suivis: tuple[str, ...] = ()
+                             ) -> tuple[bool, str, str | None, float, bool]:
     """Une tentative `lancer_claude`, garde-fou de format de clôture (#581) et
     restauration best-effort des configs/*.conf modifiés (#318/#327).
 
@@ -6543,6 +6722,12 @@ def _executer_une_tentative(numero: int, titre: str, body: str, dry_run: bool, m
     worktree_repris / commits_ecart_worktree (issue #725) : simplement
     transmis à `lancer_claude` — voir sa docstring (clause « worktree repris
     d'une relance » injectée dans le prompt).
+
+    commit_sauvegarde_watcher / backup_watcher_nouveaux_suivis (issue #846) :
+    simplement transmis à `lancer_claude` — voir sa docstring (choix du
+    texte de consigne de sauvegarde selon que le watcher l'a déjà faite ou
+    non). Figés une seule fois par `_demarrer_traitement`, donc identiques à
+    CHAQUE tentative d'un même traitement (y compris les tentatives ≥2).
 
     `duree_tentative` (issue #763) : durée en secondes du seul appel à
     `lancer_claude` ci-dessous (hors reclassifications #581/#757 et
@@ -6571,7 +6756,9 @@ def _executer_une_tentative(numero: int, titre: str, body: str, dry_run: bool, m
                                    tete_avant_traitement=tete_avant_traitement,
                                    worktree_repris=worktree_repris,
                                    commits_ecart_worktree=commits_ecart_worktree,
-                                   chemin_outil_lecture_exec=chemin_outil_lecture_exec)
+                                   chemin_outil_lecture_exec=chemin_outil_lecture_exec,
+                                   commit_sauvegarde_watcher=commit_sauvegarde_watcher,
+                                   backup_watcher_nouveaux_suivis=backup_watcher_nouveaux_suivis)
     duree_tentative = time.monotonic() - debut_tentative
 
     # `stderr_brut` (issue #761) : capturé ICI, AVANT les deux reclassifications
@@ -6872,7 +7059,8 @@ def _finaliser_succes(numero: int, titre: str, body: str, labels: list[str], mod
                        est_relance: bool, dry_run: bool, cwd_effectif: Path,
                        tete_avant_traitement: str | None,
                        tentative: int, timeout_suggere_lancement: float | None,
-                       estimation_lancement: dict) -> None:
+                       estimation_lancement: dict,
+                       commit_sauvegarde_watcher: str | None = None) -> None:
     """Traitement d'une tentative réussie : commentaire de résultat (avec
     retry), fermeture de l'issue, historique des durées, calibration
     automatique du TIMEOUT et notification. Termine toujours le traitement de
@@ -6890,10 +7078,22 @@ def _finaliser_succes(numero: int, titre: str, body: str, labels: list[str], mod
     #845) : contexte de décision à journaliser dans l'historique des durées —
     `tentative` est le rang (1 = première) auquel ce succès a été obtenu ;
     les deux derniers sont les valeurs FIGÉES AU LANCEMENT (voir
-    _demarrer_traitement), jamais recalculées ici."""
+    _demarrer_traitement), jamais recalculées ici.
+
+    commit_sauvegarde_watcher (issue #846) : hash du commit de sauvegarde
+    fait par le watcher pour ce traitement (None si non applicable ou en
+    échec — voir `_demarrer_traitement`/`_commit_sauvegarde_watcher`). Sert
+    de filet de sécurité : si le rapport de l'agent contient encore le
+    placeholder littéral « [hash backup] » du gabarit de prompt (oubli de
+    le remplacer malgré la consigne), on le substitue nous-mêmes ICI par le
+    vrai hash avant publication — le rapport de clôture reflète alors
+    TOUJOURS ce hash quand il est connu, sans dépendre uniquement de la
+    fidélité de transcription de l'agent."""
     log.info(f"  ✓ Issue #{numero} traitée avec succès.")
     avertissement_sans_commit = _avertissement_succes_sans_commit(
         numero, mode, dry_run, cwd_effectif, tete_avant_traitement)
+    if commit_sauvegarde_watcher:
+        sortie = sortie.replace("[hash backup]", commit_sauvegarde_watcher[:12])
     message_resultat = (
         f"{MARQUEUR_RESULTAT}\n## Résultat\n\n{avertissement_conflit}"
         f"{avertissement_worktree_deja_pris}{avertissement_worktree_repris}"
@@ -7435,7 +7635,8 @@ def _traiter_issue_synchrone(issue: dict, dry_run: bool, chemin_worktree: Path |
         statut_outil_avant = _preparer_controle_outil(chemin_outil_lecture_exec, dry_run)
 
         est_relance, debut_traitement, nb_projets_actifs_debut, empreinte_configs_avant, \
-            tete_avant_traitement, timeout_suggere_lancement, estimation_lancement = \
+            tete_avant_traitement, timeout_suggere_lancement, estimation_lancement, \
+            commit_sauvegarde_watcher, backup_watcher_nouveaux_suivis = \
             _demarrer_traitement(numero, titre, body, mode, mode_txt, dry_run, cwd_effectif)
 
         # None si critique (essais illimités) : voir le bloc de prompt "rang
@@ -7453,7 +7654,8 @@ def _traiter_issue_synchrone(issue: dict, dry_run: bool, chemin_worktree: Path |
                 perimetre_effectif, cwd_effectif, verrou, chemin_scratch,
                 chemin_worktree, empreinte_configs_avant, tentative,
                 max_tentatives, tete_avant_traitement,
-                worktree_repris, commits_ecart_worktree, chemin_outil_lecture_exec)
+                worktree_repris, commits_ecart_worktree, chemin_outil_lecture_exec,
+                commit_sauvegarde_watcher, backup_watcher_nouveaux_suivis)
 
             if _verifier_violation_scratch(numero, titre, labels, cwd_effectif, statut_rep_travail_avant):
                 return
@@ -7468,7 +7670,8 @@ def _traiter_issue_synchrone(issue: dict, dry_run: bool, chemin_worktree: Path |
                                    avertissement_worktree_repris,
                                    sortie, debut_traitement, nb_projets_actifs_debut, est_relance,
                                    dry_run, cwd_effectif, tete_avant_traitement,
-                                   tentative, timeout_suggere_lancement, estimation_lancement)
+                                   tentative, timeout_suggere_lancement, estimation_lancement,
+                                   commit_sauvegarde_watcher)
                 return
 
             # Échec

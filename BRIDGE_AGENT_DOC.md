@@ -350,7 +350,10 @@ sur cet agent échoue.
 
 **Mode écriture (`mode_write`)** — CCL peut modifier des fichiers, exécuter
 des commandes, faire des commits git. Garde-fous automatiques :
-- Backup pinné **avant** toute modification (via `CMD_BACKUP` du `.conf`)
+- Backup pinné **avant** toute modification — commit git fait par le
+  **watcher lui-même**, juste avant de lancer CCL (issue #846), sauf projet
+  définissant `CMD_BACKUP` dans son `.conf` (comportement conservé : la
+  commande du projet reste la consigne, CCL l'exécute lui-même)
 - **JAMAIS `git push`** — Alain pousse lui-même après vérification
 - Aucune commande destructrice sans demande explicite
 - Périmètre strict : CCL ne travaille que dans le dossier configuré
