@@ -331,6 +331,44 @@ def test_lot_mixte_remplacement_avec_et_sans_attente(_tmp_dir_factory):
     assert statuts.count("REMPLACE") == 1, lignes
 
 
+def test_lot_blocs_attente_meme_titre_et_projet_restent_distincts(_tmp_dir_factory):
+    """Issue #854 : deux blocs ATTENTE d'un MÊME lot partageant exactement le
+    même #Titre: ET le même PROJET (ex. copier-coller non corrigé) doivent
+    devenir DEUX lignes distinctes dans « En attente » — pas une seule. Avant
+    le correctif, le deuxième bloc était pris pour une correspondance (§3.16/
+    #820) avec le fichier que le premier bloc venait d'écrire PENDANT la même
+    boucle, et le remplaçait silencieusement. Vérifié de bout en bout : écriture
+    par le watcher PUIS lecture par la route /issues-attente, pour s'assurer
+    que chaque ligne affichée porte son propre titre/projet/condition."""
+    tmp = _tmp_dir_factory()
+    cfg = _preparer_cfg(tmp)
+    _route_cfg(tmp)
+    _neutraliser_creation()
+
+    def _jamais_appele(*a, **k):
+        raise AssertionError("gh issue create ne doit jamais être appelé — lot entièrement en attente")
+    w._creer_issue = _jamais_appele
+
+    chemin = cfg.inbox_dir / "lot.txt"
+    _deposer(chemin,
+             "#Titre: Même titre.\n| PROJET | bridge_agent |\n| ATTENTE | cond A |\nCorps A.\n"
+             "#Titre: Même titre.\n| PROJET | bridge_agent |\n| ATTENTE | cond B |\nCorps B.\n"
+             "#Titre: Même titre.\n| PROJET | bridge_agent |\n| ATTENTE | cond C |\nCorps C.\n")
+
+    w.traiter_fichier(cfg, chemin)
+
+    assert not chemin.exists(), "lot entièrement en attente : fichier d'origine supprimé"
+    en_attente = [p for p in cfg.en_attente_dir.iterdir() if p.is_file()]
+    assert len(en_attente) == 3, en_attente
+
+    with APP_FLASK.test_request_context("/issues-attente"):
+        rep = ii.issues_attente_liste()
+    items = rep.get_json()["items"]
+    assert len(items) == 3, items
+    assert all(it["titre"] == "Même titre." and it["projet"] == "bridge_agent" for it in items), items
+    assert sorted(it["condition"] for it in items) == ["cond A", "cond B", "cond C"], items
+
+
 # ─── 5. Position conservée côté route /issues-attente ─────────────────────
 
 def _route_cfg(tmp: Path) -> "w.ConfigInbox":

@@ -1629,10 +1629,27 @@ def traiter_fichier(cfg: ConfigInbox, chemin: Path) -> None:
         # limite documenté plus bas). Un bloc dont l'écriture en attente
         # échouerait (disque plein, permissions...) retombe sur le
         # traitement normal plutôt que d'être perdu silencieusement.
+        #
+        # Snapshot AVANT la boucle (issue #854) : _item_en_attente_correspondant
+        # relit le contenu LIVE de en_attente/, qui reçoit justement un
+        # nouveau fichier à chaque itération ci-dessous. Sans ce snapshot, un
+        # bloc du lot partageant le même #Titre: ET le même PROJET qu'un bloc
+        # FRÈRE déjà écrit par une itération précédente de CETTE MÊME boucle
+        # serait pris pour une correspondance et le remplacerait (§3.16/#820)
+        # au lieu de devenir sa propre ligne — deux blocs distincts du lot
+        # fusionneraient alors en une seule entrée dans l'onglet « En
+        # attente ». Le remplacement §3.16 ne doit viser qu'un élément
+        # DÉJÀ présent avant ce dépôt, jamais un frère du même lot.
+        items_preexistants = (
+            {p for p in cfg.en_attente_dir.iterdir() if p.is_file()}
+            if cfg.en_attente_dir.is_dir() else set()
+        )
         blocs_a_traiter = []
         for i, bloc in enumerate(blocs, start=1):
             titre_bloc, projet_bloc, condition = _identifier_bloc(bloc)
             item_correspondant = _item_en_attente_correspondant(cfg, titre_bloc, projet_bloc)
+            if item_correspondant is not None and item_correspondant not in items_preexistants:
+                item_correspondant = None
 
             # Remplacement d'un élément en attente (issue #820) : vérifié EN
             # PREMIER, avant la mise en attente habituelle ci-dessous — même

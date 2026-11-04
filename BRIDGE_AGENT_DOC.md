@@ -241,8 +241,10 @@ déplacé tel quel vers `issues_inbox/en_attente/`, aucune issue n'est créée.
 **Aucune vérification automatique de la condition** — c'est Alain seul qui
 juge, en relisant le texte, puis déclenche l'envoi depuis l'interface
 (onglet dédié « En attente »). Pour un lot (§3.13), chaque bloc portant le
-champ est mis de côté individuellement ; les autres blocs suivent le
-circuit normal.
+champ est mis de côté individuellement — une ligne par bloc dans l'onglet,
+même si plusieurs blocs du même lot partagent exactement le même `#Titre:`
+et le même `PROJET` (issue #854) ; les autres blocs suivent le circuit
+normal.
 
 **Corriger une issue encore en attente (issue #820).** Pas de nouveau champ
 — la règle est implicite : redéposer un fichier avec **exactement le même
@@ -252,7 +254,11 @@ d'en créer un second. Si le fichier corrigé porte toujours un `ATTENTE` non
 vide, sa nouvelle condition devient celle de l'élément (toujours en
 attente) ; sinon il suit le circuit normal de création, et l'ancien élément
 n'est supprimé qu'une fois l'issue réellement créée (jamais avant — un
-fichier rejeté laisse l'ancien élément intact).
+fichier rejeté laisse l'ancien élément intact). Dans un lot, cette
+correspondance ne vise jamais un bloc FRÈRE du même lot (seulement un
+élément déjà présent dans « En attente » avant ce dépôt, issue #854) :
+deux blocs du même lot, même de titre et projet identiques, restent deux
+lignes distinctes.
 
 > ⚠️ **Le titre doit être recopié à l'identique, au caractère près**, même
 > si la correction porte sur le sujet de l'issue : un titre modifié, même
