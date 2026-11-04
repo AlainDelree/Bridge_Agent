@@ -9,6 +9,18 @@ milliers de caractères sur une seule ligne logique, coûteux à relire et
 
 Convention d'ajout : voir §10 de `BRIDGE_AGENT_DOC.md`.
 
+## 4 novembre 2026 — issue #852
+
+Documentation uniquement (`BRIDGE_AGENT_DOC.md`) : le label `sans-redacteur`
+et le champ `REDACTEUR` n'étaient décrits que comme « purement informatif »,
+alors qu'ils servent en pratique à repérer une issue rédigée sans déclarer
+son projet d'origine — donc un projet qui rédige à la place d'un autre.
+Reformulé dans la table des labels (§4) et dans la règle `REDACTEUR` du
+§3.4 ; ajouté dans la table des champs du §3.3 et dans celle spécifique à
+`issues_inbox/` que Claude Chat doit toujours le renseigner, avec le nom du
+projet depuis lequel il écrit. Règle de validation inchangée (absent =
+aucune validation, label posé).
+
 ## 4 novembre 2026 — issue #851
 
 Doc uniquement (aucun changement de code), suite à une issue `COMPLEXITE |
