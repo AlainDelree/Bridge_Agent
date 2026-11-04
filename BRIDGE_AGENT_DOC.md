@@ -101,7 +101,7 @@ Champs d'en-tête reconnus, tous optionnels sauf `PROJET` et `COMPLEXITE` :
 |-------------|----------------------------------------------------------------------|
 | `PROJET`    | **Obligatoire** — doit correspondre à `configs/<PROJET>.conf`        |
 | `COMPLEXITE` | **Obligatoire, dans TOUTE issue, quel que soit le MODE** — une des quatre valeurs exactes `rapide`/`court`/`normal`/`lourd`, jamais un autre mot ; détail et critère de choix au §6 (issue #843). |
-| `REDACTEUR` | Optionnel — nom du projet depuis lequel Claude Chat écrit, validé pour cohérence avec `PROJET` (règle complète au §3.4). |
+| `REDACTEUR` | Optionnel pour le code, mais à toujours renseigner par Claude Chat avec le nom du projet depuis lequel il écrit, validé pour cohérence avec `PROJET` (règle complète au §3.4). |
 | `TIMEOUT`   | Nombre (secondes, suffixe `s` toléré) — sinon défaut du projet (`TIMEOUT_CLAUDE` du `.conf`), au moins 900 s en écriture (issue #752) ; à toujours fixer explicitement |
 | `MODELE`    | Doit être une valeur reconnue (§6) si fourni                        |
 | `MODE`      | Reconnu de façon tolérante (§5) — absent/non reconnu → `lecture`     |
@@ -170,8 +170,9 @@ cas, indiquer aussi `SOUS_DOSSIER` (chemin du projet sous le dossier
 partagé) : ce service central travaille dans un dossier parent commun à
 tous les projets, pas dans le dossier d'un seul projet. Tout autre
 `REDACTEUR` que ces deux cas → rejet. `REDACTEUR` absent → aucune
-validation (rétrocompatibilité), mais pose le label informatif
-`sans-redacteur` sur l'issue créée.
+validation (rétrocompatibilité), mais pose le label `sans-redacteur` sur
+l'issue créée, qui signale une issue rédigée sans déclarer son projet
+d'origine et permet de repérer un projet qui rédige à la place d'un autre.
 
 ### 3.13 Lots multi-issues par fichier — mode mixte (issue #508)
 
@@ -277,7 +278,7 @@ fichier rejeté laisse l'ancien élément intact).
 | `notif_gsm` | Ajoute une notification push (ntfy) |
 | `notif_tous` | notify-send + ntfy |
 | `mode_scratch` | **ARME le mode lecture active** — écriture confinée au dossier scratch, voir §5 |
-| `sans-redacteur` | Posé automatiquement quand `REDACTEUR` est absent de l'en-tête — purement informatif, voir §3.4 |
+| `sans-redacteur` | Posé automatiquement quand `REDACTEUR` est absent de l'en-tête — signale une issue rédigée sans déclarer son projet d'origine, pour repérer un projet qui rédige à la place d'un autre, voir §3.4 |
 | `sans-complexite` | Posé automatiquement quand `COMPLEXITE` est absente ou non reconnue dans l'en-tête — purement informatif, voir §6 |
 | `agent-claude` | Posé automatiquement à la clôture — **agent d'exécution** Claude Code (clé `AGENT` du `.conf`, issue #768) |
 | `agent-vibe` | Posé automatiquement à la clôture — **agent d'exécution** Mistral Vibe (clé `AGENT` du `.conf`, issue #768) |
@@ -381,7 +382,7 @@ Le watcher lit ces champs dans le tableau markdown de l'en-tête :
 | `TYPE` | `chef` ou `ouvrier` | Identifie le rôle de l'issue dans le pattern multi-agent (voir §14). `chef` = orchestre les ouvriers. `ouvrier` = sous-tâche créée par le chef. Absent = issue normale. |
 | `SUITE_DE` | ex. `#5` | Indique que cette issue fait suite à l'issue #N — préfixer alors aussi le titre par `Suite #N : `. Absent = issue inédite. |
 | `RELANCE` | ex. `#612` | **Spécifique à `issues_inbox/`**, voir §3.14 — détourne le fichier déposé vers la correction/relance de l'issue #N déjà ouverte plutôt que de créer une nouvelle issue. |
-| `REDACTEUR` | ex. `bridge_agent` | **Spécifique à `issues_inbox/`**, voir §3.4 pour la règle complète — nom du projet depuis le contexte duquel Claude Chat a rédigé l'issue, validé pour cohérence avec `PROJET`. |
+| `REDACTEUR` | ex. `bridge_agent` | **Spécifique à `issues_inbox/`**, voir §3.4 pour la règle complète — nom du projet depuis le contexte duquel Claude Chat a rédigé l'issue, validé pour cohérence avec `PROJET`. À toujours renseigner par Claude Chat. |
 | `COMPLEXITE` | **uniquement** `rapide` / `court` / `normal` / `lourd` — aucun autre mot | **Obligatoire dans toute issue, quel que soit le MODE** (lecture, lecture active, écriture) — estimée par Claude Chat au moment de rédiger l'issue, jamais omise. 4e dimension de la calibration automatique du TIMEOUT (voir §19). `Absent ou non reconnu = normal` est un **repli technique du code**, pas un choix de rédaction légitime (voir encadré ci-dessous, issue #843). |
 | `RESEAU` | `oui` ou `non` | Tag réseau pour la calibration TIMEOUT (voir §19) : `oui` = issue impliquant de lourdes opérations réseau, `non` = purement locale. Optionnel. |
 
