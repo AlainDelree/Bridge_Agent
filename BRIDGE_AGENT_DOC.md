@@ -246,6 +246,14 @@ même si plusieurs blocs du même lot partagent exactement le même `#Titre:`
 et le même `PROJET` (issue #854) ; les autres blocs suivent le circuit
 normal.
 
+Un lot déposé **directement** dans `issues_inbox/en_attente/` (dépôt
+manuel, hors circuit ci-dessus — par exemple pour reporter en bloc tout un
+ensemble de tâches) est lui aussi découpé automatiquement en un fichier par
+bloc, avec le même nommage que ci-dessus, dès que l'onglet « En attente »
+le lit (issue #855) : chaque bloc y apparaît ainsi sur sa propre ligne,
+avec son propre titre, projet et condition (« aucune condition » pour un
+bloc sans `ATTENTE`), au lieu d'une seule ligne pour tout le lot.
+
 **Corriger une issue encore en attente (issue #820).** Pas de nouveau champ
 — la règle est implicite : redéposer un fichier avec **exactement le même
 `#Titre:` ET le même `PROJET`** qu'un élément déjà présent dans « En

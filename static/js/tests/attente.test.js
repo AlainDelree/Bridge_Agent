@@ -86,7 +86,7 @@ test('descriptionLigneAttente : reprend titre/projet/condition tels quels', () =
 test('descriptionLigneAttente : titre/condition absents → replis explicites', () => {
   const desc = descriptionLigneAttente({ id: 'a.txt', projet: 'bridge_agent', date: 0 });
   assert.equal(desc.titre, '(sans titre)');
-  assert.equal(desc.condition, '(condition non précisée)');
+  assert.equal(desc.condition, '(aucune condition)');
   assert.equal(desc.date, '');
 });
 

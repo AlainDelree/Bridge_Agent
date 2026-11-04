@@ -91,7 +91,11 @@ export function descriptionLigneAttente(item) {
     projet: it.projet || '',
     projetAffiche: it.projet || 'projet inconnu',
     date: formaterDateAttente(it.date ? new Date(it.date * 1000) : null),
-    condition: it.condition || '(condition non précisée)',
+    // « aucune condition » (issue #855), pas « condition non précisée » :
+    // un bloc sans champ ATTENTE (dépôt manuel direct dans en_attente/,
+    // hors circuit du champ ATTENTE lui-même) n'a simplement RIEN à
+    // préciser, ce n'est pas une donnée manquante/corrompue.
+    condition: it.condition || '(aucune condition)',
   };
 }
 

@@ -48,6 +48,18 @@ mémorisé (dépôt manuel, ancienne installation) est ajouté en fin de liste,
 du plus ancien au plus récent — le résultat fusionné est réécrit sur disque
 à chaque lecture, pour que l'ordre reste toujours « propre » (auto-guérison)
 sans jamais toucher au CONTENU des fichiers d'en_attente/.
+
+Découpage d'un lot déposé à la main dans en_attente/ (issue #855) : un
+fichier à plusieurs blocs `#Titre:` arrivé par le circuit normal (issue
+#713 ci-dessus) est déjà découpé un bloc par fichier AVANT sa mise en
+attente — mais un fichier à plusieurs blocs déposé DIRECTEMENT par Alain
+dans en_attente/ (pour reporter leur lancement sans jamais passer par
+issues_inbox/) ne l'était pas, et n'apparaissait donc que comme UNE ligne
+(titre du premier bloc). `_items_attente`/`etat_inbox` appellent désormais
+`watcher_issues_inbox.decouper_fichiers_lot_attente` (même nommage de
+fichier que le circuit normal, `<stem>__bloc<N><suffixe>`) avant de lire le
+dossier — auto-guérison à chaque lecture, comme `fusionner_ordre_attente`
+ci-dessus, sans dépendre d'un cycle du watcher spool.
 """
 
 import logging
@@ -71,7 +83,8 @@ from watcher_issues_inbox import (charger_config_inbox, DEFAUT_CHEMIN_CONFIG,  #
                                   extraire_champs, _chemin_disponible,
                                   DOSSIER_ORDRE_ATTENTE, FICHIER_ORDRE_ATTENTE,  # (issue #819,
                                   _chemin_ordre_attente, _lire_ordre_attente_persiste,  # relogés
-                                  _ecrire_ordre_attente, fusionner_ordre_attente)  # côté #822 — voir plus bas)
+                                  _ecrire_ordre_attente, fusionner_ordre_attente,  # côté #822 — voir plus bas)
+                                  decouper_fichiers_lot_attente)  # (issue #855, voir plus bas)
 from watcher import (_pid_vivant, deduire_type_issue, extraire_priorite,  # noqa: E402
                      extraire_complexite, extraire_mode_entete,
                      _etiquette_calibration, PRIORITES_CRITIQUES)
@@ -253,6 +266,7 @@ def etat_inbox():
         fixée (indéfini) ou si inactif.
     """
     cfg = _config()
+    decouper_fichiers_lot_attente(cfg)  # auto-guérison d'un lot déposé à la main (issue #855)
 
     rejetes = []
     if cfg.rejected_dir.is_dir():
@@ -442,7 +456,14 @@ def _lire_item_attente(chemin: Path) -> dict | None:
 def _items_attente(cfg) -> list[dict]:
     """{id, titre, projet, date, condition} de chaque fichier d'en_attente/
     — jamais le sous-dossier DOSSIER_ORDRE_ATTENTE ci-dessus (exclu par
-    `chemin.is_file()`, comme DOSSIER_MOTIFS pour rejected/)."""
+    `chemin.is_file()`, comme DOSSIER_MOTIFS pour rejected/).
+
+    Découpe d'abord tout lot (≥ 2 blocs `#Titre:`) déposé directement dans
+    en_attente/ en un fichier par bloc (issue #855, voir
+    watcher_issues_inbox.decouper_fichiers_lot_attente) — sans quoi un tel
+    fichier n'apparaîtrait que comme UNE SEULE ligne (titre du premier bloc,
+    condition « non précisée ») au lieu d'une ligne par bloc."""
+    decouper_fichiers_lot_attente(cfg)
     items = []
     if cfg.en_attente_dir.is_dir():
         for chemin in cfg.en_attente_dir.iterdir():
