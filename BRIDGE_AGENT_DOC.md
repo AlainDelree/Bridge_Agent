@@ -388,13 +388,11 @@ Le watcher lit ces champs dans le tableau markdown de l'en-tête :
 > ⚠️ **`COMPLEXITE` obligatoire, quatre valeurs exactes (issue #843).** Une
 > mesure sur ~1500 issues fermées des dépôts du système montre ce champ
 > absent dans plus de la moitié des issues de plusieurs projets, et des
-> valeurs hors liste ailleurs (constatées en pratique : `moyen`, `léger`,
-> `simple`, `trivial`, `normale`) — le code range alors tout cela
+> valeurs hors liste ailleurs — le code range alors tout cela
 > silencieusement dans `normal`, ce qui fausse la calibration du TIMEOUT.
 > **Claude Chat doit donc inclure `| COMPLEXITE | <valeur> |` dans TOUTE
 > issue qu'il rédige**, quel que soit le MODE, en choisissant **exactement**
-> l'un de ces quatre mots — tout autre mot, y compris ceux listés ci-dessus,
-> est interdit :
+> l'un de ces quatre mots — tout autre mot est interdit :
 >
 > - `rapide` (durée médiane ≈ 1-2 min) — correction ponctuelle dans un seul
 >   fichier, sans test ni build : un libellé, une valeur de config, une
