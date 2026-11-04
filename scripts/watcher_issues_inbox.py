@@ -1173,6 +1173,103 @@ def _ecrire_bloc_en_attente(cfg: ConfigInbox, chemin_origine: Path, index: int,
     return cible
 
 
+# ─── Découpage d'un lot déposé DIRECTEMENT dans en_attente/ (issue #855) ───
+# Un lot (§3.13, ≥ 2 blocs #Titre:) qui arrive par le circuit normal
+# (issues_inbox/ → traiter_fichier) est déjà découpé un bloc à la fois AVANT
+# sa mise en attente (_ecrire_bloc_en_attente ci-dessus). Mais Alain dépose
+# souvent un fichier à plusieurs blocs À LA MAIN directement dans en_attente/
+# (pour reporter leur lancement sans jamais passer par ce circuit) — un tel
+# fichier n'est JAMAIS vu par traiter_dossier (qui ne scrute que inbox_dir,
+# pas son sous-dossier en_attente/) ni par aucun autre découpage : l'onglet
+# « En attente » (app/issues_inbox.py::_lire_item_attente/extraire_champs) ne
+# lit alors que le PREMIER #Titre: du fichier, avec une condition « non
+# précisée » — un lot de 7 blocs n'y apparaît que comme UNE ligne.
+#
+# Plutôt que de dupliquer la logique de scrutation du watcher (nouveau
+# dossier à surveiller, nouveau délai de détection), la solution retenue est
+# un découpage « auto-guérison » appelé depuis app/issues_inbox.py à chaque
+# lecture de l'onglet (même principe que fusionner_ordre_attente, #819) :
+# immédiat, sans dépendre d'un cycle du watcher spool ni de son état
+# démarré/arrêté. Même nommage que _ecrire_bloc_en_attente ci-dessus
+# (<stem>__bloc<N><suffixe>) pour que Lancer/Supprimer/la remontée/la
+# descente (app/issues_inbox.py) agissent ensuite sur un bloc unique,
+# indiscernable d'un lot découpé par le watcher lui-même.
+def decouper_fichiers_lot_attente(cfg: ConfigInbox) -> int:
+    """Découpe en un fichier par bloc tout fichier à ≥ 2 blocs #Titre: trouvé
+    directement dans en_attente/ (jamais le sous-dossier DOSSIER_ORDRE_ATTENTE,
+    déjà exclu par `is_file()` comme ailleurs). Retourne le nombre de fichiers
+    découpés. Idempotent : un fichier à un seul bloc — y compris un bloc déjà
+    écrit par _ecrire_bloc_en_attente, qui n'en contient jamais plus d'un —
+    n'est jamais concerné (`decouper_corps_en_blocs` renvoie alors 0 ou 1
+    élément, seuil inchangé par rapport à traiter_fichier).
+
+    Aucun bloc créé ni perdu : le nombre de blocs lus dans le fichier
+    d'origine (`decouper_corps_en_blocs`, même fonction que le circuit normal
+    — le contenu avant le premier #Titre: est ignoré de la même façon) est
+    exactement celui des fichiers écrits. Si l'écriture d'un bloc échoue
+    (disque plein, permissions...), les blocs déjà écrits pour CE fichier
+    sont retirés et l'original reste intact — retenté à la prochaine lecture,
+    plutôt qu'un découpage partiel qui perdrait des blocs."""
+    if not cfg.en_attente_dir.is_dir():
+        return 0
+
+    nb_decoupes = 0
+    for chemin in list(cfg.en_attente_dir.iterdir()):
+        if not chemin.is_file():
+            continue
+        try:
+            contenu = chemin.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        blocs = decouper_corps_en_blocs(contenu)
+        if len(blocs) < 2:
+            continue
+
+        try:
+            mtime_origine = chemin.stat().st_mtime
+        except OSError:
+            mtime_origine = None
+
+        chemins_ecrits = []
+        echec = False
+        for i, bloc in enumerate(blocs, start=1):
+            nom = f"{chemin.stem}__bloc{i}{chemin.suffix}"
+            cible = _chemin_disponible(cfg.en_attente_dir, nom)
+            try:
+                cible.write_text(bloc, encoding="utf-8")
+                if mtime_origine is not None:
+                    # Conserve la date d'arrivée du LOT (plus un décalage
+                    # infime entre blocs, pour que leur ordre entre eux
+                    # reflète celui du fichier) plutôt que « maintenant » —
+                    # l'instant de CE découpage, sans rapport avec le dépôt
+                    # manuel d'origine, fausserait sinon la place de chaque
+                    # bloc dans l'onglet (tri plus ancien → plus récent).
+                    horodatage = mtime_origine + i * 0.001
+                    os.utime(cible, (horodatage, horodatage))
+            except OSError as e:
+                log.error(f"Découpage du lot {chemin.name} (en_attente/) : "
+                          f"échec d'écriture du bloc {i}/{len(blocs)} : {e}")
+                echec = True
+                break
+            chemins_ecrits.append(cible)
+
+        if echec:
+            for ecrit in chemins_ecrits:
+                ecrit.unlink(missing_ok=True)
+            continue
+
+        try:
+            chemin.unlink()
+        except OSError as e:
+            log.warning(f"Lot {chemin.name} (en_attente/) découpé en {len(blocs)} blocs "
+                        f"mais suppression de l'original échouée : {e}")
+
+        nb_decoupes += 1
+        log.info(f"Lot {chemin.name} (déposé directement dans en_attente/) découpé en "
+                 f"{len(blocs)} blocs : " + ", ".join(c.name for c in chemins_ecrits))
+    return nb_decoupes
+
+
 # ─── Ordre manuel de l'onglet « En attente » (issue #819) ──────────────────
 # Logique PURE + persistance disque déplacées ici depuis app/issues_inbox.py
 # à l'occasion de l'issue #822 : le watcher doit pouvoir figer l'ordre
