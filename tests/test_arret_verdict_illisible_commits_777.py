@@ -9,9 +9,10 @@ verdict de clôture était illisible.
 
 Vérifie :
 1. `_commits_au_dela_sauvegarde` (fonction pure, sur dépôts git jetables) :
-   liste les commits au-delà de la sauvegarde (repérée par POSITION, comme
-   `_avertissement_succes_sans_commit`), [] si rien au-delà, [] si
-   `tete_avant_traitement` est absent ou le dépôt inaccessible.
+   liste les commits au-delà de la sauvegarde — exclue par son HASH EXACT
+   (transmis par l'appelant, issue #856), plus par position — [] si rien
+   au-delà, [] si `tete_avant_traitement` est absent ou le dépôt
+   inaccessible.
 2. Bout en bout (`traiter_issue`, MODE_ECRITURE, worktree dédié réel) :
    une tentative dont le rapport ne contient AUCUNE ligne de verdict (#581),
    mais dont le worktree contient déjà un commit de sauvegarde ET un commit
@@ -77,8 +78,9 @@ def scenario_sans_aucun_commit_au_dela_liste_vide():
         _init_depot_git(rep)
         tete = watcher._tete_git(rep)
         _commit(rep, "avant-test777", allow_empty=True)
+        backup = watcher._tete_git(rep)
 
-        assert watcher._commits_au_dela_sauvegarde(rep, tete) == []
+        assert watcher._commits_au_dela_sauvegarde(rep, tete, backup) == []
     return {"vide_ok": True}
 
 
@@ -89,10 +91,11 @@ def scenario_avec_commit_fix_liste_non_vide():
         _init_depot_git(rep)
         tete = watcher._tete_git(rep)
         _commit(rep, "avant-test777", allow_empty=True)
+        backup = watcher._tete_git(rep)
         (rep / "fichier.txt").write_text("modifie\n", encoding="utf-8")
         _commit(rep, "fix-test777")
 
-        commits = watcher._commits_au_dela_sauvegarde(rep, tete)
+        commits = watcher._commits_au_dela_sauvegarde(rep, tete, backup)
         assert len(commits) == 1, f"un seul commit (le fix) attendu au-delà de la sauvegarde : {commits}"
         assert "fix-test777" in commits[0]
     return {"non_vide_ok": True}
@@ -103,10 +106,10 @@ def scenario_tete_absente_ou_depot_inaccessible_liste_vide():
         rep = Path(tmp) / "projet"
         rep.mkdir()
         _init_depot_git(rep)
-        assert watcher._commits_au_dela_sauvegarde(rep, None) == []
+        assert watcher._commits_au_dela_sauvegarde(rep, None, None) == []
 
         chemin_inexistant = Path(tempfile.gettempdir()) / "ne-devrait-pas-exister-777"
-        assert watcher._commits_au_dela_sauvegarde(chemin_inexistant, "0" * 40) == []
+        assert watcher._commits_au_dela_sauvegarde(chemin_inexistant, "0" * 40, None) == []
     return {"best_effort_ok": True}
 
 

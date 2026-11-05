@@ -18,7 +18,15 @@
   committe pas tel quel** (il contiendrait ton travail) : `git stash push -u`
   (fichiers non suivis inclus), committe, `git stash pop`, et dis-le dans le
   rapport. Si des modifications non tiennes préexistaient, indistinguables,
-  dis-le sans tenter de les séparer.
+  dis-le sans tenter de les séparer. **Exception projet à sauvegarde
+  personnalisée (`CMD_BACKUP` propre au projet, ex. alchess) : rien de tout
+  ce qui précède ne s'applique.** Ce projet n'a AUCUN commit de sauvegarde
+  git — le bloc « RÈGLES DE SÉCURITÉ IMPÉRATIVES » te demande alors de
+  lancer sa commande de sauvegarde dédiée, pas de reprendre un hash. Dans ce
+  cas, la ligne « Commits » de ton rapport de clôture ne doit JAMAIS citer
+  un « (backup) » : n'invente pas de hash pour ce rôle (notamment pas le
+  dernier commit déjà présent avant ta tâche, sans rapport avec elle) — ne
+  liste QUE le ou les commits que TA tâche a réellement créés (issue #856).
 - **Respecter strictement le périmètre du projet** (dossier configuré) —
   ne jamais travailler hors de ce périmètre même si l'issue semble le
   suggérer.

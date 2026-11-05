@@ -12,9 +12,13 @@ Vérifie :
    qui l'emporte (correction reprise de l'étude #762, #757 gardait jusqu'ici
    la dernière).
 3. `_avertissement_succes_sans_commit` : signalement best-effort, limité au
-   mode écriture hors dry-run, qui ne déclenche que si AUCUN commit (hors
-   sauvegarde) n'a été fait — jamais d'incidence sur le succès lui-même
-   (la fonction ne fait que retourner un texte à ajouter au commentaire).
+   mode écriture hors dry-run, qui ne déclenche que si AUCUN commit propre à
+   la tâche n'a été fait (le commit de sauvegarde du watcher, s'il y en a
+   un, est exclu par son hash exact — issue #856, pas par position) —
+   jamais d'incidence sur le succès lui-même (la fonction ne fait que
+   retourner un texte à ajouter au commentaire). Le cas d'un projet à
+   sauvegarde personnalisée (sans commit de sauvegarde du tout) est couvert
+   par tests/test_sauvegarde_personnalisee_sans_commit_856.py.
 
 `git` est le seul outil externe utilisé (dépôts temporaires réels) — aucun
 appel réseau.
@@ -117,18 +121,21 @@ def scenario_premiere_occurrence_gagne():
 
 def scenario_sans_commit_signale_hors_dry_run_mode_ecriture():
     """Mode écriture, hors dry-run, un seul commit après `tete_avant_
-    traitement` (la sauvegarde) → signalement non vide, avec warning loggé."""
+    traitement` — le commit de sauvegarde FAIT PAR LE WATCHER (hash transmis
+    explicitement, issue #856) — et rien d'autre → signalement non vide,
+    avec warning loggé."""
     with tempfile.TemporaryDirectory() as tmp:
         rep = Path(tmp) / "projet"
         rep.mkdir()
         _init_depot_git(rep)
         tete = watcher._tete_git(rep)
         _commit(rep, "avant-tache-test764", allow_empty=True)
+        backup = watcher._tete_git(rep)
 
         avertissement = watcher._avertissement_succes_sans_commit(
-            9764, watcher.MODE_ECRITURE, False, rep, tete)
-        assert avertissement != "", "un succès sans commit au-delà de la sauvegarde doit être signalé"
-        assert "sauvegarde" in avertissement.lower()
+            9764, watcher.MODE_ECRITURE, False, rep, tete, backup)
+        assert avertissement != "", "un succès sans commit propre à la tâche doit être signalé"
+        assert "aucun commit" in avertissement.lower()
         return {"signale_ok": True}
 
 
@@ -141,11 +148,12 @@ def scenario_avec_commit_fix_pas_de_signalement():
         _init_depot_git(rep)
         tete = watcher._tete_git(rep)
         _commit(rep, "avant-tache-test764", allow_empty=True)
+        backup = watcher._tete_git(rep)
         (rep / "fichier.txt").write_text("modifie\n", encoding="utf-8")
         _commit(rep, "fix-tache-test764")
 
         avertissement = watcher._avertissement_succes_sans_commit(
-            9764, watcher.MODE_ECRITURE, False, rep, tete)
+            9764, watcher.MODE_ECRITURE, False, rep, tete, backup)
         assert avertissement == "", "un commit de fix au-delà de la sauvegarde doit supprimer le signalement"
         return {"pas_de_signalement_ok": True}
 
@@ -165,11 +173,11 @@ def scenario_hors_mode_ecriture_ou_dry_run_jamais_signale():
             (watcher.MODE_LECTURE_ACTIVE, False),
             (watcher.MODE_ECRITURE, True),
         ):
-            assert watcher._avertissement_succes_sans_commit(9764, mode, dry_run, rep, tete) == ""
+            assert watcher._avertissement_succes_sans_commit(9764, mode, dry_run, rep, tete, None) == ""
         # `tete_avant_traitement` absent (None) : jamais renseigné hors mode
         # écriture par `_demarrer_traitement` — même en mode écriture, pas de
         # signalement possible sans cette référence.
-        assert watcher._avertissement_succes_sans_commit(9764, watcher.MODE_ECRITURE, False, rep, None) == ""
+        assert watcher._avertissement_succes_sans_commit(9764, watcher.MODE_ECRITURE, False, rep, None, None) == ""
         return {"portee_stricte_ok": True}
 
 
@@ -180,7 +188,7 @@ def scenario_depot_inaccessible_best_effort():
     signalement, jamais de la clôture."""
     chemin_inexistant = Path(tempfile.gettempdir()) / "ne-devrait-pas-exister-764"
     avertissement = watcher._avertissement_succes_sans_commit(
-        9764, watcher.MODE_ECRITURE, False, chemin_inexistant, "0" * 40)
+        9764, watcher.MODE_ECRITURE, False, chemin_inexistant, "0" * 40, None)
     assert avertissement == ""
     return {"best_effort_ok": True}
 

@@ -376,6 +376,13 @@ des commandes, faire des commits git. Garde-fous automatiques :
 - **JAMAIS `git push`** — Alain pousse lui-même après vérification
 - Aucune commande destructrice sans demande explicite
 - Périmètre strict : CCL ne travaille que dans le dossier configuré
+- Avertissement best-effort « Succès sans commit » (issues #764/#856) :
+  signalé dans le commentaire de clôture si un succès ne laisse AUCUN commit
+  propre à la tâche depuis le HEAD d'avant traitement (en excluant le commit
+  de sauvegarde du watcher seulement s'il en a réellement fait un — jamais
+  par position, pour ne pas se tromper sur un projet à `CMD_BACKUP`
+  personnalisée comme alchess, qui n'en a aucun). Ton neutre, jamais
+  bloquant : peut être parfaitement légitime (rien à modifier).
 
 > `configs/*.conf` reste interdit à l'écriture **quel que soit le mode**
 > (lecture active comme écriture) — garde-fou technique, voir §11.
@@ -854,11 +861,11 @@ estimation que celle déjà affichée, sans dupliquer ce calcul.
 
 ---
 
-*Dernière mise à jour : 2 novembre 2026 — §19.1 (nouvelle sous-section) :
-format documenté d'une ligne de `logs/historique_durees.json`, étendue par
-l'issue #845 (numéro d'issue, tentative, TIMEOUT appliqué, complexité avec
-statut valide/absente/non_reconnue, TIMEOUT_suggéré et estimation figés AU
-LANCEMENT) — rétrocompatibilité des anciennes lignes et préservation de ces
-champs par `scripts/archiver_historique.py` explicitées.*
+*Dernière mise à jour : 5 novembre 2026 — §5, mode écriture : nouvelle puce
+documentant l'avertissement best-effort « Succès sans commit » (issues
+#764/#856) et son déclenchement exact (aucun commit propre à la tâche,
+sauvegarde du watcher exclue par hash seulement si elle existe réellement —
+jamais par position, corrigé pour les projets à `CMD_BACKUP` personnalisée
+comme alchess).*
 
 Historique complet : voir [`CHANGELOG.md`](CHANGELOG.md).

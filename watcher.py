@@ -4452,8 +4452,18 @@ le travail déjà fait par cette tentative précédente. Dans ce cas :
         # lit CETTE f-string et casse si la forme change sans que la
         # reconnaissance suive. Ne change pas le texte ci-dessous sans
         # relancer ce test.
+        #
+        # Cas CMD_BACKUP personnalisée (issue #856, ex. alchess) : pas de
+        # commit de sauvegarde git pour ce projet (voir commit_sauvegarde_watcher
+        # ci-dessus et _cmd_backup_est_standard) — demander « [hash backup] »
+        # produirait un hash inventé, et les fichiers du dernier commit déjà
+        # présent avant la tâche (souvent sans rapport avec elle) se
+        # retrouvaient listés à tort dans « Fichiers modifiés ».
         if mode == MODE_ECRITURE:
-            ligne_commits = f"Commits (dans {cwd_effectif}) : [hash backup] (backup) + [hash fix] (fix)"
+            if CFG.cmd_backup and not _cmd_backup_est_standard(CFG.cmd_backup):
+                ligne_commits = f"Commits (dans {cwd_effectif}) : [hash fix] (fix) — ce projet n'a pas de commit de sauvegarde git (sauvegarde personnalisée) : ne cite que les commits réellement créés par la tâche, ajoute « + [hash] » pour chacun des suivants s'il y en a plusieurs"
+            else:
+                ligne_commits = f"Commits (dans {cwd_effectif}) : [hash backup] (backup) + [hash fix] (fix)"
         else:
             ligne_commits = f"Commits (dans {cwd_effectif}) : aucun (lecture seule)"
         prompt = f"""Tu es l'agent Linux (CCL) du bridge inter-agents, projet « {CFG.nom} ».
@@ -6445,15 +6455,19 @@ def _demarrer_traitement(numero: int, titre: str, body: str, mode: str, mode_txt
     #846) : remplace la consigne qui demandait à l'agent de faire lui-même
     ce commit en tout premier geste — oubliée trop régulièrement (incident
     Relecture_Bridge #121). Fait ICI, une seule fois par traitement, juste
-    après `tete_avant_traitement` ci-dessous : ce commit en est donc
-    TOUJOURS le premier (position inchangée pour les deux contrôles
-    existants qui en dépendent, `_avertissement_succes_sans_commit` et
-    `_commits_au_dela_sauvegarde`). None/() si `CFG.cmd_backup` est
-    renseigné avec une commande PERSONNALISÉE (non reconnue par
-    `_cmd_backup_est_standard`, issue #847 — comportement du projet conservé
-    à l'identique ; une valeur vide ou reconnue comme la commande standard
-    de `nouveau_projet.py` ne compte PAS comme personnalisée et laisse donc
-    le watcher committer), `tete_avant_traitement` est None (hors dépôt git
+    après `tete_avant_traitement` ci-dessous. Transmis tel quel (son hash,
+    ou None) aux deux contrôles qui en dépendent, `_avertissement_succes_
+    sans_commit` et `_commits_au_dela_sauvegarde` : depuis #856, ces deux
+    fonctions excluent CE commit par son hash exact quand il est connu, plus
+    jamais par position — None (projet à `CMD_BACKUP` personnalisée, ex. alchess,
+    ou tentative de commit en échec) signifie qu'aucun commit n'est à
+    exclure, tous ceux trouvés comptent alors pour la tâche. None/() si
+    `CFG.cmd_backup` est renseigné avec une commande PERSONNALISÉE (non
+    reconnue par `_cmd_backup_est_standard`, issue #847 — comportement du
+    projet conservé à l'identique ; une valeur vide ou reconnue comme la
+    commande standard de `nouveau_projet.py` ne compte PAS comme
+    personnalisée et laisse donc le watcher committer),
+    `tete_avant_traitement` est None (hors dépôt git
     ou essai à blanc, comportement conservé à l'identique), ou si la
     tentative de commit a échoué (repli sur la consigne de prompt
     historique — voir `_commit_sauvegarde_watcher`, best-effort, jamais
@@ -7004,10 +7018,11 @@ def _verifier_violation_outil(numero: int, titre: str, labels: list[str], mode: 
 
 def _avertissement_succes_sans_commit(numero: int, mode: str, dry_run: bool,
                                        cwd_effectif: Path,
-                                       tete_avant_traitement: str | None) -> str:
-    """Signalement best-effort (issue #764, étude #762) d'un verdict de
-    succès en mode écriture qui ne laisse aucun commit au-delà de celui de
-    sauvegarde. Jamais une décision : ce cas peut être parfaitement légitime
+                                       tete_avant_traitement: str | None,
+                                       commit_sauvegarde_watcher: str | None) -> str:
+    """Signalement best-effort (issue #764, étude #762 ; corrigé #856) d'un
+    verdict de succès en mode écriture qui ne laisse AUCUN commit propre à
+    la tâche. Jamais une décision : ce cas peut être parfaitement légitime
     (tâche n'impliquant pas d'écriture, bug non reproductible, correctif
     déjà présent) ou révéler un agent qui se déclare satisfait sans rien
     avoir produit — on ne peut pas trancher automatiquement, donc on se
@@ -7019,11 +7034,18 @@ def _avertissement_succes_sans_commit(numero: int, mode: str, dry_run: bool,
     traitement` le renseigne). Les modes lecture seule et lecture active
     n'attendent aucun commit.
 
-    Le commit de sauvegarde est repéré par POSITION (le premier commit après
-    `tete_avant_traitement`, relevé par l'appelant AVANT tout traitement en
-    mode écriture), pas par son message : la convention de nommage
-    ("avant-<description>") n'est qu'une consigne de prompt, jamais imposée
-    techniquement.
+    `commit_sauvegarde_watcher` (issue #846, correction #856) : hash EXACT du
+    commit de sauvegarde si le watcher en a réellement fait un pour CE
+    traitement (voir `_commit_sauvegarde_watcher`/`_demarrer_traitement`),
+    `None` sinon — notamment pour un projet à `CMD_BACKUP` personnalisée (ex.
+    alchess, voir `_cmd_backup_est_standard`), qui ne produit aucun commit de
+    sauvegarde git. Seul CE commit, identifié par son hash, est exclu du
+    décompte des commits de la tâche — plus aucune hypothèse de POSITION
+    (« le premier commit après `tete_avant_traitement` est forcément la
+    sauvegarde ») : c'était le défaut de #764, qui faisait prendre l'unique
+    commit de correctif d'alchess pour une sauvegarde et déclenchait ce
+    signalement à tort sur 6 rapports sur 8 (issue #856). Si aucun commit de
+    sauvegarde n'est connu, TOUS les commits trouvés comptent pour la tâche.
 
     Capture best-effort (`git rev-list`) : toute erreur (dépôt inaccessible,
     commande indisponible...) ne prive que de ce signalement, jamais de la
@@ -7045,32 +7067,36 @@ def _avertissement_succes_sans_commit(numero: int, mode: str, dry_run: bool,
     except (OSError, subprocess.SubprocessError):
         return ""
 
-    if len(commits) > 1:
+    commits_tache = [c for c in commits if c != commit_sauvegarde_watcher]
+    if commits_tache:
         return ""
 
     log.warning(
         f"  ⚠ Issue #{numero} : verdict de succès en mode écriture sans "
-        f"aucun commit au-delà de celui de sauvegarde ({len(commits)} "
-        f"commit(s) depuis {tete_avant_traitement[:12]}) — peut être "
-        f"légitime ou révéler un agent qui se déclare satisfait sans rien "
-        f"avoir produit. Signalé pour relecture humaine (issue #764), sans "
-        f"incidence sur le succès."
+        f"aucun commit propre à la tâche (depuis {tete_avant_traitement[:12]}"
+        f"{', hors commit de sauvegarde watcher ' + commit_sauvegarde_watcher[:12] if commit_sauvegarde_watcher else ''}"
+        f") — peut être légitime ou révéler un agent qui se déclare "
+        f"satisfait sans rien avoir produit. Signalé pour relecture humaine "
+        f"(issue #764/#856), sans incidence sur le succès."
     )
     return (
-        "\n\n⚠️ **Succès sans commit au-delà de la sauvegarde** — ce "
-        "traitement en mode écriture s'est conclu par un succès sans "
-        "laisser aucun commit après celui de sauvegarde. Peut être légitime "
-        "(tâche n'impliquant pas d'écriture, bug non reproductible, "
-        "correctif déjà présent) — à vérifier en relecture humaine.\n"
+        "\n\n**Aucun commit sur cette tâche** — ce traitement en mode "
+        "écriture s'est conclu par un succès sans qu'aucun commit propre à "
+        "la tâche n'ait été créé. C'est normal si l'agent a conclu qu'il "
+        "n'y avait rien à modifier ; sinon, relire le rapport ci-dessus "
+        "pour vérifier ce qui s'est passé.\n"
     )
 
 
-def _commits_au_dela_sauvegarde(cwd_effectif: Path, tete_avant_traitement: str | None) -> list[str]:
+def _commits_au_dela_sauvegarde(cwd_effectif: Path, tete_avant_traitement: str | None,
+                                 commit_sauvegarde_watcher: str | None) -> list[str]:
     """Liste (`hash court` + sujet, un par ligne) des commits créés depuis
     `tete_avant_traitement`, AU-DELÀ du commit de sauvegarde — issue #777,
-    même convention de repérage par POSITION que
-    `_avertissement_succes_sans_commit` (le premier commit après
-    `tete_avant_traitement` est la sauvegarde, jamais par message).
+    corrigé #856 : exclusion par HASH EXACT (`commit_sauvegarde_watcher`, cf.
+    `_avertissement_succes_sans_commit` ci-dessus), plus par position — même
+    défaut corrigé pour la même raison (projet à `CMD_BACKUP` personnalisée,
+    ex. alchess, sans commit de sauvegarde git : l'ancien code écartait à
+    tort le commit de correctif en le prenant pour la sauvegarde).
 
     Sert à `_gerer_verdict_illisible_avec_commits` : un verdict illisible
     (#581) alors que le worktree contient déjà de tels commits est le signe
@@ -7086,16 +7112,22 @@ def _commits_au_dela_sauvegarde(cwd_effectif: Path, tete_avant_traitement: str |
         return []
     try:
         resultat = subprocess.run(
-            ["git", "log", "--reverse", "--format=%h %s", f"{tete_avant_traitement}..HEAD"],
+            ["git", "log", "--reverse", "--format=%H %h %s", f"{tete_avant_traitement}..HEAD"],
             cwd=cwd_effectif, capture_output=True, text=True,
             encoding="utf-8", errors="replace", timeout=30,
         )
         if resultat.returncode != 0:
             return []
-        commits = [ligne for ligne in resultat.stdout.splitlines() if ligne.strip()]
+        lignes = [ligne for ligne in resultat.stdout.splitlines() if ligne.strip()]
     except (OSError, subprocess.SubprocessError):
         return []
-    return commits[1:]  # exclut le premier (sauvegarde, par position)
+    commits = []
+    for ligne in lignes:
+        sha_complet, _, reste = ligne.partition(" ")
+        if sha_complet == commit_sauvegarde_watcher:
+            continue
+        commits.append(reste)
+    return commits
 
 
 def _finaliser_succes(numero: int, titre: str, body: str, labels: list[str], mode: str,
@@ -7138,7 +7170,8 @@ def _finaliser_succes(numero: int, titre: str, body: str, labels: list[str], mod
     fidélité de transcription de l'agent."""
     log.info(f"  ✓ Issue #{numero} traitée avec succès.")
     avertissement_sans_commit = _avertissement_succes_sans_commit(
-        numero, mode, dry_run, cwd_effectif, tete_avant_traitement)
+        numero, mode, dry_run, cwd_effectif, tete_avant_traitement,
+        commit_sauvegarde_watcher)
     if commit_sauvegarde_watcher:
         sortie = sortie.replace("[hash backup]", commit_sauvegarde_watcher[:12])
     message_resultat = (
@@ -7731,7 +7764,8 @@ def _traiter_issue_synchrone(issue: dict, dry_run: bool, chemin_worktree: Path |
             # aucune analyse de texte, et retenter répéterait ce travail.
             # MÊME pour une issue critique (pas de retry infini ici).
             if verdict_absent:
-                commits_au_dela = _commits_au_dela_sauvegarde(cwd_effectif, tete_avant_traitement)
+                commits_au_dela = _commits_au_dela_sauvegarde(
+                    cwd_effectif, tete_avant_traitement, commit_sauvegarde_watcher)
                 if commits_au_dela:
                     _gerer_verdict_illisible_avec_commits(
                         numero, titre, body, labels, mode, sortie, commits_au_dela,

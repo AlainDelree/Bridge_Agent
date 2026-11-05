@@ -35,21 +35,27 @@ const ICI = path.dirname(fileURLToPath(import.meta.url));
 const CHEMIN_APP_JS  = path.join(ICI, '..', 'app.js');
 const CHEMIN_WATCHER = path.join(ICI, '..', '..', '..', 'watcher.py');
 
-// Extrait les deux formes du gabarit watcher.py::ligne_commits (écriture /
-// lecture seule) depuis la f-string source elle-même.
+// Extrait les trois formes du gabarit watcher.py::ligne_commits (écriture
+// standard / écriture à sauvegarde personnalisée, issue #856 / lecture
+// seule) depuis la f-string source elle-même.
 function gabaritsLigneCommits() {
   const source = fs.readFileSync(CHEMIN_WATCHER, 'utf8');
   const trouves = [...source.matchAll(/ligne_commits = f"([^"]*)"/g)].map(m => m[1]);
-  assert.equal(trouves.length, 2,
-    `watcher.py : attendu 2 formes de ligne_commits (écriture/lecture seule), `
-    + `${trouves.length} trouvée(s) — gabarit modifié, mettre à jour ce test (issue #784).`);
-  const [gabaritEcriture, gabaritLectureSeule] = trouves;
+  assert.equal(trouves.length, 3,
+    `watcher.py : attendu 3 formes de ligne_commits (écriture standard / `
+    + `écriture sauvegarde personnalisée / lecture seule), `
+    + `${trouves.length} trouvée(s) — gabarit modifié, mettre à jour ce test (issues #784/#856).`);
+  const [gabaritEcriturePersonnalisee, gabaritEcriture, gabaritLectureSeule] = trouves;
   const cwd = '/home/alain/depots/bridge_agent';
   return {
     // Les placeholders [hash backup]/[hash fix] sont remplacés par l'agent
     // dans sa réponse réelle — on simule ce remplacement comme le ferait CCL.
     ecriture: gabaritEcriture.replace('{cwd_effectif}', cwd)
       .replace('[hash backup]', 'abc1234')
+      .replace('[hash fix]', 'def5678'),
+    // Projet à sauvegarde personnalisée (issue #856, ex. alchess) : aucun
+    // commit de sauvegarde git, un seul placeholder [hash fix].
+    ecriturePersonnalisee: gabaritEcriturePersonnalisee.replace('{cwd_effectif}', cwd)
       .replace('[hash fix]', 'def5678'),
     lectureSeule: gabaritLectureSeule.replace('{cwd_effectif}', cwd),
   };
@@ -88,7 +94,7 @@ const fonctionsVm = chargerHashesDeCommit();
 // réalm hôte via JSON avant comparaison.
 const hashesDeCommit = (it) => Array.from(fonctionsVm.hashesDeCommit(it));
 const etatCommitsDeclares = (it) => JSON.parse(JSON.stringify(fonctionsVm.etatCommitsDeclares(it)));
-const { ecriture, lectureSeule } = gabaritsLigneCommits();
+const { ecriture, ecriturePersonnalisee, lectureSeule } = gabaritsLigneCommits();
 
 test('hashesDeCommit : reconnaît la ligne réelle du gabarit écriture (chemin intercalé, issue #784)', () => {
   const it = { comments: [{ body: `✅ Tâche terminée — exemple\n${ecriture}\npy_compile : OK` }] };
@@ -98,6 +104,11 @@ test('hashesDeCommit : reconnaît la ligne réelle du gabarit écriture (chemin 
 test('hashesDeCommit : forme lecture seule du gabarit (aucun hash) → liste vide', () => {
   const it = { comments: [{ body: `✅ Tâche terminée — rien à faire\n${lectureSeule}\npy_compile : N/A` }] };
   assert.deepEqual(hashesDeCommit(it), []);
+});
+
+test('hashesDeCommit : forme écriture à sauvegarde personnalisée (issue #856, ex. alchess) — un seul hash, pas de "[hash backup]" inventé', () => {
+  const it = { comments: [{ body: `✅ Tâche terminée — exemple\n${ecriturePersonnalisee}\npy_compile : OK` }] };
+  assert.deepEqual(hashesDeCommit(it), ['def5678']);
 });
 
 test('hashesDeCommit : aucun commentaire → liste vide', () => {
@@ -113,6 +124,11 @@ test('hashesDeCommit : aucun commentaire → liste vide', () => {
 test('etatCommitsDeclares : forme écriture du gabarit → etat "hashes", mêmes hash que hashesDeCommit', () => {
   const it = { comments: [{ body: `✅ Tâche terminée — exemple\n${ecriture}\npy_compile : OK` }] };
   assert.deepEqual(etatCommitsDeclares(it), { etat: 'hashes', hashes: ['abc1234', 'def5678'] });
+});
+
+test('etatCommitsDeclares : forme écriture à sauvegarde personnalisée (issue #856) → etat "hashes" avec le seul hash de la tâche', () => {
+  const it = { comments: [{ body: `✅ Tâche terminée — exemple\n${ecriturePersonnalisee}\npy_compile : OK` }] };
+  assert.deepEqual(etatCommitsDeclares(it), { etat: 'hashes', hashes: ['def5678'] });
 });
 
 test('etatCommitsDeclares : forme lecture seule du gabarit (« … : aucun … ») → etat "aucun", cas normal', () => {
