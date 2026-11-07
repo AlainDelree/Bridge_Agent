@@ -979,6 +979,47 @@ function copierModerne(projet, numero, producteur, feedback) {
   })();
 }
 
+// Valeur de repli si le navigateur refuse une chaîne COMPLÈTEMENT vide dans le
+// presse-papier — la plus proche d'un presse-papier vide (issue #857).
+const TEXTE_QUASI_VIDE = ' ';
+
+// Vide le presse-papier DANS LE GESTE de clic, avant toute préparation du
+// texte du rapport (issue #857) : si la préparation est lente ou si
+// l'écriture finale échoue, l'ANCIEN contenu (texte ou capture d'écran) ne
+// doit jamais rester en place — Alain pourrait le coller par erreur dans la
+// mauvaise conversation sans remarquer l'échec. AUCUN feedback n'est levé ici
+// (ni succès ni échec) : un collage vide ne déclenche rien chez Alain,
+// contrairement à un message qui pourrait, lui, être collé par erreur. Si la
+// copie du rapport aboutit ensuite, elle remplace ce contenu vide ; si elle
+// échoue, le presse-papier reste vide (la fenêtre de secours existante
+// s'ouvre toujours, issue #782).
+// Mode moderne : l'écriture vide est ENFILÉE dans chaineCopieModerne (jamais
+// lancée à part), exactement comme ecrireApresPreparation — pour ne JAMAIS
+// annuler une écriture réelle déjà en vol (issue #832 point 2) ; le rapport,
+// une fois prêt, s'écrit à son tour après dans la même file.
+// Mode repli (execCommand, synchrone) : aucune file n'est nécessaire, aucune
+// écriture concurrente n'est possible pendant l'appel.
+function viderPressePapier() {
+  if (modeCopie() === 'moderne') {
+    const tache = chaineCopieModerne.then(async () => {
+      try {
+        await navigator.clipboard.write([new ClipboardItem({ 'text/plain': new Blob([''], { type: 'text/plain' }) })]);
+      } catch (e) {
+        try {
+          await navigator.clipboard.write(
+            [new ClipboardItem({ 'text/plain': new Blob([TEXTE_QUASI_VIDE], { type: 'text/plain' }) })]);
+        } catch (e2) {
+          console.warn('resultats_coches : échec du vidage du presse-papier (chaîne vide ET espace refusés).', e2);
+        }
+      }
+    });
+    chaineCopieModerne = tache.catch(() => {});
+    return;
+  }
+  // Mode repli : chaîne vide d'abord, espace si le navigateur la refuse.
+  if (!copierExecCommand('')) copierExecCommand(TEXTE_QUASI_VIDE);
+}
+
 // ─── Point d'entrée unique (issue #636, mode repli revu #782) ────────────────
 //   - moderne : voir copierModerne ci-dessus.
 //   - repli   : le texte doit déjà être préchargé et valide (textesPrepares,
@@ -986,7 +1027,12 @@ function copierModerne(projet, numero, producteur, feedback) {
 //     préparation » + préchargement (texte absent OU périmé, issue #832
 //     point 3 : un texte périmé n'est jamais écrit tel quel).
 // `variante` ∈ {all, diff, reponse}. `feedback` = { succes, echec, vide, aucun, nonPret }.
+// Vide IMMÉDIATEMENT le presse-papier (issue #857, voir viderPressePapier) —
+// avant même de savoir si une préparation sera nécessaire : les 4 boutons qui
+// passent par ce point d'entrée (case à cocher, badges ✅/Diff/All) en
+// bénéficient donc tous, sans code dupliqué.
 function lancerCopie(projet, numero, producteur, feedback) {
+  viderPressePapier();
   if (modeCopie() === 'moderne') {
     copierModerne(projet, numero, producteur, feedback);
     return;

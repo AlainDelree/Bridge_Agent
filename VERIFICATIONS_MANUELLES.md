@@ -221,6 +221,22 @@
       maintenant prêt, décoche puis recoche la case. » — décocher puis recocher
       doit alors copier **immédiatement** (texte conservé en cache), sans
       refaire la préparation.
+- [ ] **Vidage immédiat du presse-papier au clic, dans Firefox (issue #857)** :
+      vérifié par les tests JS que le vidage (chaîne vide) est bien la
+      PREMIÈRE écriture envoyée au navigateur, avant même que le rapport soit
+      prêt, et qu'un échec d'écriture laisse le presse-papier vide plutôt que
+      de le réécrire avec un ancien contenu — mais PAS que Firefox accepte
+      réellement d'écrire une chaîne vide ni l'ORDRE d'arrivée effectif des
+      deux écritures une fois sorties du navigateur : à vérifier à la main.
+      Copier un texte quelconque ailleurs (Ctrl+C), puis dans l'onglet
+      Résultats cocher la case d'une issue dont le rapport n'est manifestement
+      pas encore préchargé (juste après un rechargement de page) : coller
+      (Ctrl+V) dans un éditeur de texte DANS LA SECONDE QUI SUIT le clic — le
+      collage doit être vide (ou ne rien coller), jamais l'ancien texte copié
+      avant. Attendre ensuite la fin de la copie et recoller : le rapport doit
+      apparaître. Si Firefox refuse la chaîne vide (collage d'un espace au
+      lieu de rien), c'est le repli prévu (voir le rapport de l'issue) — pas
+      une anomalie.
 - [ ] **Repère « prêt à copier » et périmètre/ordre de la précharge (issue
       #835)** : sur une issue non cochée dont le texte est déjà préparé et
       valide, un petit repère (pastille à contour vert `✓`) apparaît juste

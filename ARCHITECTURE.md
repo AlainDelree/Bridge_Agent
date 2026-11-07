@@ -541,7 +541,13 @@ le panneau) reste en place — simplement plus utilisé par l'interface,
 > **préchargé** + `execCommand` synchrone en `--lan` (HTTP non-localhost, API
 > presse-papier moderne absente) — au lieu de fetcher AVANT d'écrire (ce qui
 > sortait de la fenêtre d'activation et faisait échouer la copie par
-> intermittence). **Feedback honnête** : jamais de ✓ sur échec (toast d'erreur),
+> intermittence). **Vidage immédiat du presse-papier au clic** (issue #857,
+> `lancerCopie`/`viderPressePapier`) : AVANT toute préparation, le
+> presse-papier est vidé (chaîne vide, ou un espace si le navigateur la
+> refuse) pour qu'une préparation lente ou un échec d'écriture ne laisse
+> jamais l'ANCIEN contenu en place — l'écriture vide passe par la même file
+> `chaineCopieModerne` que l'écriture réelle, qui la remplace sur succès.
+> **Feedback honnête** : jamais de ✓ sur échec (toast d'erreur),
 > et le cochage (persistance/grisage/pastilles) ne dépend jamais de la copie.
 > Enfin, « Cocher tout » est aligné sur le périmètre des pastilles (les N
 > premières issues par projet, `premieresParProjet`), et un bouton **« Tout à

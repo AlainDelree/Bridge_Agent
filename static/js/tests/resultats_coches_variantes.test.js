@@ -132,16 +132,21 @@ function fixerEnvironnement(options = {}) {
   return telechargements;
 }
 
-// Arme navigator.clipboard.write pour résoudre dès le PROCHAIN appel — chaque
-// test pose sa propre promesse juste avant de déclencher l'action, pas de
-// sleep ni de polling.
+// Arme navigator.clipboard.write pour résoudre dès le PROCHAIN appel qui
+// écrit un contenu NON VIDE — chaque test pose sa propre promesse juste avant
+// de déclencher l'action, pas de sleep ni de polling. Le vidage immédiat du
+// presse-papier au clic (chaîne vide ou TEXTE_QUASI_VIDE, issue #857) est
+// IGNORÉ ici : ces tests vérifient le contenu du RAPPORT copié, pas le
+// vidage lui-même (couvert à part, voir les tests dédiés issue #857).
 function attendreProchaineCopie() {
   return new Promise((resolve) => {
     global.navigator = {
       clipboard: {
         write: async (items) => {
           const blob = items[0].data['text/plain'];
-          resolve(await blob.text());
+          const texte = await blob.text();
+          if (!texte.trim()) return;   // vidage immédiat du clic (issue #857), pas le rapport
+          resolve(texte);
         },
       },
     };
@@ -288,9 +293,14 @@ test('case à cocher : issue Windows (etat « windows », SANS hashes) → même
 // ─── Diff/All au-delà du seuil de lignes (issue #790) : fichier, pas de copie ──
 const DIFF_VOLUMINEUX = Array(SEUIL_LIGNES_VOLUMINEUX + 10).fill('+ligne').join('\n');
 
-// clipboard.write ne doit JAMAIS être appelé dans ces tests — poser une sentinelle
-// qui échoue le test si elle est sollicitée, au lieu d'attendre une résolution
-// qui ne viendra jamais.
+// Le CONTENU réel ne doit JAMAIS être écrit dans ces tests (diff/all
+// volumineux → fichier téléchargé, pas de copie, issue #790) — cette
+// sentinelle rejette tout appel, pour qu'une écriture inattendue du rapport
+// échoue bruyamment plutôt que d'attendre une résolution qui ne viendrait
+// jamais. Le vidage immédiat du clic (chaîne vide, issue #857) appelle lui
+// aussi `write` une fois, mais son échec est avalé en interne par
+// viderPressePapier (aucun feedback, voir resultats_coches.js) : il ne
+// perturbe donc pas ces tests.
 function interdireCopiePressePapier() {
   global.navigator = {
     clipboard: { write: async () => { throw new Error('clipboard.write ne doit pas être appelé (diff volumineux, #790)'); } },
@@ -502,10 +512,16 @@ test('chemin rapide (issue #832 pt.2) : un texte déjà préparé et valide est 
   const NUMERO_RAPIDE = 501002;
   const { comptes, debloquer } = intercepterFetchIssue(NUMERO_LENT);
 
+  // Ne compte que les écritures du RAPPORT — le vidage immédiat du clic
+  // (chaîne vide, issue #857) passe aussi par cette même file et ne doit pas
+  // être confondu avec les écritures mesurées ici.
   const ecritures = [];
   global.navigator = {
     clipboard: {
-      write: async (items) => { ecritures.push(await items[0].data['text/plain'].text()); },
+      write: async (items) => {
+        const texte = await items[0].data['text/plain'].text();
+        if (texte.trim()) ecritures.push(texte);
+      },
     },
   };
 
@@ -534,15 +550,20 @@ test('chemin lent, écriture refusée pour geste expiré (NotAllowedError) : tex
   const NUMERO = 502001;
   const { comptes } = intercepterFetchIssue(-1);   // aucun numéro bloqué : tout résout immédiatement
 
+  // `premierAppel` ne compte que la première écriture du RAPPORT — le vidage
+  // immédiat du clic (chaîne vide, issue #857) est ignoré ici, sinon c'est LUI
+  // qui recevrait le NotAllowedError simulé au lieu de l'écriture du rapport.
   let premierAppel = true;
   global.navigator = {
     clipboard: {
       write: async (items) => {
+        const texte = await items[0].data['text/plain'].text();
+        if (!texte.trim()) return;
         if (premierAppel) {
           premierAppel = false;
           throw Object.assign(new Error('The request is not allowed.'), { name: 'NotAllowedError' });
         }
-        return items[0].data['text/plain'].text();
+        return texte;
       },
     },
   };
@@ -731,4 +752,104 @@ test('précharge : résumé envoyé au serveur à la fin de la série (file vide
   assert.ok(resume.nb_requetes >= 2, 'au moins une requête /issue par issue préparée');
   assert.ok(typeof resume.duree_totale_ms === 'number' && resume.duree_totale_ms >= 0);
   assert.ok(typeof resume.duree_max_ms === 'number' && resume.duree_max_ms >= 0);
+});
+
+// ─── Issue #857 : vidage immédiat du presse-papier au clic ───────────────────
+// Préparation lente ou écriture refusée laissaient jusqu'ici l'ANCIEN contenu
+// en place (texte ou capture d'écran) : Alain changeait d'onglet sans
+// remarquer l'échec et collait ce vieux contenu dans la mauvaise conversation.
+// Depuis cette issue, lancerCopie (point d'entrée UNIQUE de la case à cocher
+// et des badges ✅/Diff/All) vide le presse-papier DANS LE GESTE, avant toute
+// préparation — voir viderPressePapier dans resultats_coches.js.
+
+// Capture TOUTES les écritures clipboard.write, y compris le vidage (chaîne
+// vide), dans l'ordre d'arrivée — contrairement à attendreProchaineCopie qui
+// les filtre pour les autres tests de ce fichier.
+function capturerToutesLesEcritures() {
+  const ecritures = [];
+  global.navigator = {
+    clipboard: {
+      write: async (items) => {
+        const texte = await items[0].data['text/plain'].text();
+        ecritures.push(texte);
+      },
+    },
+  };
+  return ecritures;
+}
+
+test('mode moderne : le clic vide IMMÉDIATEMENT le presse-papier (chaîne vide), avant même que le rapport soit prêt', async () => {
+  fixerEnvironnement({ etatCommits: { etat: 'aucun', hashes: [] } });
+  const NUMERO = 601001;
+  const { debloquer } = intercepterFetchIssue(NUMERO);   // fetch bloqué : le rapport n'est jamais « prêt » pendant ce test
+  const ecritures = capturerToutesLesEcritures();
+
+  resultatsCoches.copierReponseBadge(evenementBadge(), PROJET, NUMERO);
+  assert.ok(await attendreQue(() => ecritures.length >= 1),
+    'le presse-papier doit être vidé sans attendre la préparation du rapport (encore en vol ici)');
+  assert.equal(ecritures[0], '', 'la première écriture doit être une chaîne vide, pas le rapport');
+
+  debloquer();   // laisse le fetch bloqué se terminer pour ne rien laisser en vol après ce test
+  await attendreQue(() => ecritures.length >= 2);
+});
+
+test('mode moderne : une fois la copie du rapport RÉUSSIE, le presse-papier contient le rapport (remplace le contenu vidé)', async () => {
+  fixerEnvironnement();
+  const ecritures = capturerToutesLesEcritures();
+  resultatsCoches.copierReponseBadge(evenementBadge(), PROJET, 602001);
+  assert.ok(await attendreQue(() => ecritures.length >= 2),
+    'deux écritures attendues : le vidage immédiat puis le rapport');
+  assert.equal(ecritures[0], '', 'la première écriture est bien le vidage immédiat');
+  assert.match(ecritures[1], /Corps du rapport pour #787/,
+    'la seconde écriture doit être le rapport, qui remplace donc le contenu vidé');
+});
+
+test('mode moderne : si l\'écriture du rapport ÉCHOUE, le presse-papier reste vide (jamais réécrit avec un ancien contenu ni un faux succès)', async () => {
+  fixerEnvironnement();
+  const ecritures = [];
+  let appel = 0;
+  global.navigator = {
+    clipboard: {
+      write: async (items) => {
+        appel += 1;
+        const texte = await items[0].data['text/plain'].text();
+        if (appel === 1) { ecritures.push(texte); return; }   // vidage : réussit normalement
+        throw new Error('Erreur inattendue du presse-papier.');   // écriture du rapport : échoue
+      },
+    },
+  };
+  resultatsCoches.copierReponseBadge(evenementBadge(), PROJET, 602002);
+  await attendreZoneSecours();   // l'échec déclenche bien la fenêtre de secours existante (#782)
+  assert.equal(ecritures.length, 1, 'seul le vidage a réussi : aucun contenu ne doit avoir été réellement écrit');
+  assert.equal(ecritures[0], '', 'le presse-papier reste donc à la valeur vidée, jamais à un ancien contenu');
+  const messages = texteDesToasts();
+  assert.ok(messages.some((m) => m === 'Copie impossible — le presse-papier n\'a pas pu être écrit.'),
+    'l\'échec doit être signalé, jamais un faux succès');
+});
+
+test('mode repli (execCommand) : le clic vide IMMÉDIATEMENT le presse-papier, avant même que le texte soit préchargé', async () => {
+  fixerEnvironnement({ etatCommits: { etat: 'aucun', hashes: [] } });
+  window.isSecureContext = false;
+  global.navigator = {};
+  global.ClipboardItem = undefined;
+  const ecritures = [];
+  const textareas = [];
+  const createElementOriginal = document.createElement;
+  document.createElement = (tag) => {
+    if (tag !== 'textarea') return createElementOriginal(tag);   // laisse les toasts (nonPret) se construire normalement
+    const el = { tag, style: {}, appendChild() {}, focus() {}, select() {}, remove() {} };
+    textareas.push(el);
+    return el;
+  };
+  document.body = { appendChild: () => {}, removeChild: () => {} };
+  document.execCommand = (cmd) => {
+    if (cmd === 'copy') ecritures.push(textareas[textareas.length - 1].value);
+    return true;
+  };
+
+  // Rien n'est préchargé (precharderVisibles jamais appelé) : le texte n'est
+  // pas prêt — AVANT cette issue, rien n'était écrit avant le second clic.
+  resultatsCoches.copierReponseBadge(evenementBadge(), PROJET, 603001);
+  assert.equal(ecritures.length, 1, 'le vidage doit avoir lieu même quand le texte n\'est pas encore prêt');
+  assert.equal(ecritures[0], '', 'le vidage écrit une chaîne vide via execCommand, comme en mode moderne');
 });
