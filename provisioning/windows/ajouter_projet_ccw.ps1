@@ -32,7 +32,38 @@
        est rallumé à la demande par la création ou la relance d'une issue
        `for-windows` (formulaire web, `issues_inbox/`, relance — voir §16 du DOC),
        jamais par une boucle de redémarrage NSSM. AppRestartDelay, logs\ccw-<nom>-
-       service.log inchangés.
+       service.log inchangés ;
+    5. configure le COMPTE de service (NSSM ObjectName) — issue #860 : par défaut
+       -CompteService (le compte qui lance ce script), mot de passe demandé en
+       saisie masquée (Read-Host -AsSecureString, jamais affiché ni écrit dans un
+       journal). -ConserverLocalSystem garde le comportement HISTORIQUE
+       (LocalSystem, défaut de NSSM) — voir encadré ci-dessous.
+
+  ┌─────────────────────────────────────────────────────────────────────────┐
+  │ COMPTE DE SERVICE — Vibe/Mistral et le trousseau Windows (issue #860).  │
+  │                                                                          │
+  │ Constat réel (test Vibe sous Windows) : un service NSSM tournant sous   │
+  │ LocalSystem (comportement par défaut de NSSM tant qu'ObjectName n'est   │
+  │ pas posé — c'était le cas de TOUS les services créés par ce script      │
+  │ avant #860) ne voit PAS le trousseau Windows (Credential Manager /      │
+  │ DPAPI) du compte utilisateur : Vibe y range sa connexion (voir           │
+  │ provisioning/vibe/README.md §3) et ne la retrouve pas sous un autre     │
+  │ compte, y compris LocalSystem. Le service doit donc tourner sous le     │
+  │ compte qui POSSÈDE ~\.vibe (ou ~\.claude pour Claude Code).             │
+  │                                                                          │
+  │ -ConserverLocalSystem : à utiliser pour NE PAS casser un service Claude  │
+  │ déjà en place qui fonctionne sous LocalSystem — Claude Code n'a pas ce   │
+  │ problème de trousseau, ses jetons étant posés en clair dans             │
+  │ AppEnvironmentExtra par mettre_a_jour_tokens_ccw.ps1, jamais via un      │
+  │ trousseau OS.                                                           │
+  │                                                                          │
+  │ Idempotent dans les deux cas : relancer ce script avec -CompteService   │
+  │ sur un service jusqu'ici LocalSystem le RECONFIGURE sous ce compte (et  │
+  │ inversement, relancer avec -ConserverLocalSystem le reconfigure en      │
+  │ LocalSystem) — nssm install (étape de recréation) réinitialise toujours │
+  │ ObjectName à LocalSystem par défaut, chaque exécution repose le compte  │
+  │ voulu explicitement.                                                    │
+  └─────────────────────────────────────────────────────────────────────────┘
 
   Idempotent : relançable sans dommage — le clone est mis à jour par pull, et le
   service existant est arrêté/supprimé avant recréation (même pattern que
@@ -67,7 +98,23 @@ param(
     [string]$Depot,
 
     # Racine de travail dédiée à CCW côté invité (comme provisionner.ps1).
-    [string]$RepCCW = 'C:\CCW'
+    [string]$RepCCW = 'C:\CCW',
+
+    # Compte Windows sous lequel le service tourne (NSSM ObjectName) — compte
+    # qui LANCE ce script par défaut (issue #860 : doit être le compte qui
+    # POSSÈDE ~\.vibe / ~\.claude, sans quoi l'agent ne retrouve pas sa
+    # connexion dans le trousseau Windows sous un autre compte). Mot de passe
+    # demandé en saisie masquée (Read-Host -AsSecureString), jamais affiché ni
+    # écrit dans un journal. Sans effet si -ConserverLocalSystem est fourni.
+    [string]$CompteService = $env:USERNAME,
+
+    # Garde le comportement HISTORIQUE (LocalSystem, défaut de NSSM) au lieu
+    # de poser -CompteService — à utiliser pour NE PAS casser un service
+    # Claude déjà en place qui fonctionne sous LocalSystem (issue #860 :
+    # Claude Code n'a pas le problème de trousseau qui affecte Vibe, ses
+    # jetons étant posés en clair dans AppEnvironmentExtra, pas via un
+    # trousseau OS — voir l'encadré en tête de fichier).
+    [switch]$ConserverLocalSystem
 )
 
 $ErrorActionPreference = 'Stop'
@@ -79,6 +126,20 @@ Set-StrictMode -Version Latest
 # module est copié à ses côtés dans les deux cas (même dossier : $PSScriptRoot).
 Import-Module (Join-Path $PSScriptRoot 'ccw-commun.psm1') -Force
 Set-PrefixeCcw 'ajouter-projet'
+
+# Convertit un SecureString en texte brut le temps strictement nécessaire,
+# puis libère immédiatement le buffer non managé (BSTR) — même fonction que
+# provisionner.ps1 / mettre_a_jour_tokens_ccw.ps1 (dupliquée à l'identique :
+# chaque script CCW reste volontairement autonome pour cette fonction, voir
+# ccw-commun.psm1 en tête).
+function ConvertFrom-SecureStringPlain([System.Security.SecureString]$secure) {
+    $ptr = [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure)
+    try {
+        return [System.Runtime.InteropServices.Marshal]::PtrToStringBSTR($ptr)
+    } finally {
+        [System.Runtime.InteropServices.Marshal]::ZeroFreeBSTR($ptr)
+    }
+}
 
 # ---------------------------------------------------------------------------
 # 0. Paramètres (arguments ou prompt interactif) + validation minimale.
@@ -114,6 +175,11 @@ Info "Dossier     : $RepDepot"
 Info "Service     : $NomService"
 Info "Config      : configs\$NomConf"
 Info "Log service : logs\$NomLog"
+if ($ConserverLocalSystem) {
+    Info "Compte      : LocalSystem (-ConserverLocalSystem)"
+} else {
+    Info "Compte      : $CompteService (mot de passe demandé plus bas)"
+}
 Write-Host ''
 
 # ---------------------------------------------------------------------------
@@ -347,6 +413,32 @@ if ($tokensPreserve) {
     }
 }
 
+# ---------------------------------------------------------------------------
+# 4bis. Compte de service (NSSM ObjectName) — issue #860. Voir l'encadré
+#       « COMPTE DE SERVICE » en tête de fichier pour le détail du constat
+#       (Vibe/trousseau Windows) et la raison de -ConserverLocalSystem.
+#
+#       nssm install (étape 4 ci-dessus, à chaque création OU recréation)
+#       remet toujours ObjectName à LocalSystem par défaut : ce bloc le
+#       reconfigure explicitement à CHAQUE exécution de ce script, dans un
+#       sens ou dans l'autre selon -ConserverLocalSystem — jamais d'état
+#       résiduel d'une exécution précédente.
+# ---------------------------------------------------------------------------
+if ($ConserverLocalSystem) {
+    Info "-ConserverLocalSystem fourni — ObjectName non modifié pour « $NomService » (LocalSystem)."
+} else {
+    Info "Mot de passe du compte « $CompteService » requis pour l'exécution du service « $NomService » :"
+    $secMotDePasse   = Read-Host -AsSecureString "Mot de passe de $CompteService"
+    $motDePassePlain = ConvertFrom-SecureStringPlain $secMotDePasse
+    try {
+        nssm set $NomService ObjectName ".\$CompteService" $motDePassePlain | Out-Null
+    } finally {
+        $motDePassePlain = $null
+        [System.GC]::Collect()
+    }
+    Info "Service « $NomService » configuré pour tourner sous le compte « $CompteService »."
+}
+
 # Démarrer immédiatement (le service repartira ensuite seul à chaque boot).
 # Il tournera mais restera inactif tant que TOPIC_NTFY et le token ne sont pas
 # renseignés — c'est attendu.
@@ -371,6 +463,11 @@ try {
 # ---------------------------------------------------------------------------
 Info ''
 Info "Projet « $NomProjet » ajouté : clone + config + service « $NomService »."
+if ($ConserverLocalSystem) {
+    Info "Compte de service : LocalSystem (-ConserverLocalSystem)."
+} else {
+    Info "Compte de service : $CompteService."
+}
 Info ''
 Info 'RESTE UNE SEULE COMMANDE pour finaliser (le service ne travaillera pas avant) :'
 Info "     powershell -File provisioning\windows\finaliser_projet_ccw.ps1 -NomProjet $NomProjet"

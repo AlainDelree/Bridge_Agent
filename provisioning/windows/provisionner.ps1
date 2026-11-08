@@ -95,10 +95,13 @@ param(
     # Compte Windows non-admin sous lequel tourne le service CCW-Watcher
     # (NSSM ObjectName) — PC fixe physique, plus de justification LocalSystem
     # (issue #446, suite #447 : REP_TRAVAIL est désormais un chemin local,
-    # accessible normalement à n'importe quel compte). C'est aussi, en
-    # pratique, le compte interactif habituel du PC fixe (voir avertissement
-    # plus bas si $env:USERNAME diffère).
-    [string]$CompteService = 'AlainW',
+    # accessible normalement à n'importe quel compte). Par défaut, le compte
+    # qui LANCE ce script ($env:USERNAME) — plus portable qu'un nom codé en
+    # dur (issue #860 : l'ancien défaut 'AlainW' ne convenait qu'au PC fixe
+    # d'Alain). C'est aussi, en pratique, le compte interactif habituel de la
+    # machine (voir avertissement plus bas si -CompteService est fourni avec
+    # une valeur différente de $env:USERNAME).
+    [string]$CompteService = $env:USERNAME,
     # Affiche les actions prévues SANS rien exécuter (issue #658). Alias
     # -WhatIf pour rester intuitif, sans dépendre de SupportsShouldProcess
     # (trop de types d'actions différents ici — téléchargements, installeurs
@@ -128,9 +131,11 @@ if ($DryRun) {
 
 # Hypothèse implicite du reste du script (issue #658, point « ajout du PATH
 # utilisateur ») : le compte qui EXÉCUTE ce script est le même que
-# $CompteService — vrai en pratique sur ce PC fixe mono-utilisateur (AlainW
-# est à la fois le compte interactif et le compte de service). Avertissement
-# si ce n'est pas le cas, pour ne pas poser silencieusement le PATH sur le
+# $CompteService — vrai par construction avec le défaut $env:USERNAME
+# ci-dessus (issue #860), et vrai en pratique sur une machine mono-
+# utilisateur où ce compte est à la fois le compte interactif et le compte
+# de service. Avertissement si -CompteService a été fourni explicitement
+# avec une autre valeur, pour ne pas poser silencieusement le PATH sur le
 # mauvais profil.
 if ($env:USERNAME -ne $CompteService) {
     Avert ("Ce script tourne sous le compte '$env:USERNAME', différent de " +
@@ -988,10 +993,11 @@ Desactiver-WindowsUpdate
 #     aucun démarrage à la demande. Default Restart + AppRestartDelay
 #     suffisent donc ici : ce service ne doit jamais s'éteindre de lui-même.
 #
-#     Compte de service — $CompteService (AlainW par défaut), PAS LocalSystem
-#     (issue #446, suite #447) : PC physique, non-admin, cohérent avec un
-#     compte utilisateur normal du PC. NSSM exige le mot de passe du compte
-#     pour ObjectName (sauf comptes virtuels type LocalSystem).
+#     Compte de service — $CompteService (compte de l'utilisateur courant par
+#     défaut, issue #860), PAS LocalSystem (issue #446, suite #447) : PC
+#     physique, non-admin, cohérent avec un compte utilisateur normal de la
+#     machine. NSSM exige le mot de passe du compte pour ObjectName (sauf
+#     comptes virtuels type LocalSystem).
 #
 #     Saisie du mot de passe — Read-Host -AsSecureString, PAS Get-Credential
 #     (issue #658, point 2) : Get-Credential ouvre une fenêtre GRAPHIQUE, qui

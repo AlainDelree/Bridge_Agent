@@ -96,6 +96,17 @@ n'est disponible. Une fois connecté par compte, ni `MISTRAL_API_KEY` ni
 réelle — le fichier peut exister, vide, sans que cela signifie quoi que ce
 soit.
 
+> **Sous Windows (CCW) : le trousseau est lié au COMPTE Windows (issue
+> #860).** Le trousseau système sollicité ci-dessus est le Credential
+> Manager / DPAPI du compte Windows connecté au moment de `vibe` login — un
+> service NSSM tournant sous `LocalSystem` (comportement historique de
+> `ajouter_projet_ccw.ps1`) n'y a PAS accès, même si le fichier
+> `~\.vibe\…` existe bien sur le disque : constaté sur un essai réel. Le
+> service CCW du projet basculé sur Vibe doit tourner sous le MÊME compte
+> Windows que celui utilisé pour `vibe` login — poser `-CompteService
+> <compte>` à `ajouter_projet_ccw.ps1` (voir
+> `provisioning/windows/REINSTALLATION_CCW.md`, étape 7).
+
 **Conséquence pour `watcher.py` :** `verifier_preflight_cle_api_vibe` ne
 vérifie plus que `MISTRAL_API_KEY`/`~/.vibe/.env`, quand l'un des deux est
 présent, a une forme plausible (best-effort hérité de #760) — leur absence

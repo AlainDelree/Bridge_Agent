@@ -55,7 +55,15 @@ param(
     [string]$FichierValeurs,
 
     # Racine de travail dédiée à CCW côté invité (comme les autres scripts CCW).
-    [string]$RepCCW = 'C:\CCW'
+    [string]$RepCCW = 'C:\CCW',
+
+    # Compte Windows sous lequel tourne le service du projet (NSSM ObjectName) —
+    # transmis à mettre_a_jour_tokens_ccw.ps1 pour reconstruire correctement la
+    # ligne PATH (issue #860, même rôle que dans finaliser_projet_ccw.ps1). Par
+    # défaut, le compte sous lequel tourne CE script — correct tant que c'est
+    # le même compte que celui passé à -CompteService lors de
+    # ajouter_projet_ccw.ps1 (cas normal).
+    [string]$CompteService = $env:USERNAME
 )
 
 $ErrorActionPreference = 'Stop'
@@ -179,7 +187,7 @@ try {
 
     Info "Pose des tokens sur « $NomService » via mettre_a_jour_tokens_ccw.ps1 (mode fichier)…"
     Write-Host ''
-    & $scriptTokens -NomService $NomService -RepDepot $RepDepot -NomLog $NomLog -FichierTokens $FichierValeurs
+    & $scriptTokens -NomService $NomService -RepDepot $RepDepot -NomLog $NomLog -FichierTokens $FichierValeurs -CompteService $CompteService
     $codeTokens = $LASTEXITCODE
 
     Write-Host ''

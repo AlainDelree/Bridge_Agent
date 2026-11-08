@@ -56,8 +56,14 @@ Info "Service     : $NomService"
 Write-Host ""
 
 # --- Etape 1 : clone + .conf + service (scripts officiels existants) -------
+# -ConserverLocalSystem (issue #860) : ce helper est specifique a Claude Code
+# (etape 3 ci-dessous teste `claude --print` / `claude setup-token`, jamais
+# Vibe) - garde le comportement HISTORIQUE (LocalSystem) pour ne pas ajouter
+# une saisie de mot de passe inattendue a ce flux deja scripte. Pour un
+# service qui doit tourner sous un compte nomme (ex. Vibe, trousseau
+# Windows), appeler ajouter_projet_ccw.ps1 directement avec -CompteService.
 Info "Etape 1/3 - ajouter_projet_ccw.ps1..."
-powershell -ExecutionPolicy Bypass -File provisioning\windows\ajouter_projet_ccw.ps1 -NomProjet $NomProjet -Depot $Depot
+powershell -ExecutionPolicy Bypass -File provisioning\windows\ajouter_projet_ccw.ps1 -NomProjet $NomProjet -Depot $Depot -ConserverLocalSystem
 
 # --- Etape 2 : TOPIC_NTFY (edition ciblee, meme logique que finaliser_projet_ccw.ps1) ---
 Write-Host ""
