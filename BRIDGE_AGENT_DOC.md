@@ -37,7 +37,7 @@ Claude Chat → crée une issue → GitHub → watcher.py détecte → CCL/CCW e
 | Nom | Dépôt GitHub | Répertoire de travail CCL | Topic ntfy | Couleur |
 |-----|-------------|--------------------------|------------|---------|
 | `actualise` | AlainDelree/Actualise | ~/Actualise | (conf local) | `#009DD6` |
-| `actualise_ccw` | AlainDelree/Actualise | C:\CCW\actualise | (lecture CCW) | `#C9D8FF` |
+| `actualise_ccw` | AlainDelree/Actualise | C:\CCW\actualise | (lecture CCW) | `#00FFDD` |
 | `alchess` | AlainDelree/AlChess | ~/NicLink | (conf local) | `#00D68F` |
 | `annuairetoken` | AlainDelree/Annuairetoken | ~/AnnuaireToken | (conf local) | `#FFE4CC` |
 | `apiselect` | AlainDelree/ApiSelect | ~/ApiSelect | (conf local) | `#FFD429` |
@@ -50,9 +50,10 @@ Claude Chat → crée une issue → GitHub → watcher.py détecte → CCL/CCW e
 | `gestionmail` | AlainDelree/GestionMail | ~/GestionMail | (conf local) | `#3B45A0` |
 | `relecture_bridge` | AlainDelree/Relecture_Bridge | ~/Relecture_Bridge | (conf local) | `#CCFF00` |
 | `rummikub` | AlainDelree/Rummikub | ~/Rummikub | (conf local) | `#ADFF8F` |
-| `rummikub_ccw` | AlainDelree/Rummikub | C:\CCW\rummikub | (lecture CCW) | `#00FFDD` |
+| `rummikub_ccw` | AlainDelree/Rummikub | C:\CCW\rummikub | (lecture CCW) | `#3DD8FF` |
 | `scrabble` | AlainDelree/Scrabble | ~/Scrabble | (conf local) | `#7AFFFF` |
-| `scrabble_ccw` | AlainDelree/Scrabble | C:\CCW\scrabble | (lecture CCW) | `#3DD8FF` |
+| `scrabble_ccw` | AlainDelree/Scrabble | C:\CCW\scrabble | (lecture CCW) | `#767676` |
+| `testvibe` | AlainDelree/Testvibe | ~/Testvibe | (conf local) | `#CCDDFF` |
 <!-- FIN:TABLEAU_PROJETS_ACTIFS -->
 
 Chaque projet a son propre watcher (`watcher.py --config configs/<nom>.conf`)
@@ -507,6 +508,7 @@ hors périmètre même si l'issue le demande explicitement :
 | `relecture_bridge` | /home/alain/Relecture_Bridge |
 | `rummikub` | /home/alain/Rummikub |
 | `scrabble` | /home/alain/Scrabble |
+| `testvibe` | /home/alain/Testvibe |
 <!-- FIN:TABLEAU_PERIMETRE_PROJETS -->
 
 ---
@@ -861,7 +863,7 @@ estimation que celle déjà affichée, sans dupliquer ce calcul.
 
 ---
 
-*Dernière mise à jour : 5 novembre 2026 — §5, mode écriture : nouvelle puce
+*Dernière mise à jour : 8 novembre 2026 — §5, mode écriture : nouvelle puce
 documentant l'avertissement best-effort « Succès sans commit » (issues
 #764/#856) et son déclenchement exact (aucun commit propre à la tâche,
 sauvegarde du watcher exclue par hash seulement si elle existe réellement —
