@@ -204,39 +204,56 @@
       dont le texte n'est pas encore préchargé, un toast « préparation en cours »
       peut apparaître — un second clic aboutit. **Jamais de faux succès.**
 - [ ] **Copie dans Firefox, préparation à l'avance en mode moderne (issue
-      #832)** : ouvrir l'onglet Résultats dans **Firefox** sur `http://localhost`
-      (mode moderne, pas `--lan`), attendre la fin du chargement de la liste
-      (laisser passer quelques secondes pour le préchargement en tâche de fond),
-      puis cocher la case d'une issue **dont le rapport compte plusieurs
-      commits** : la copie doit être **immédiate**, **sans la fenêtre rouge**
-      d'échec (le texte était déjà préparé avant le clic — plus de dépendance au
-      délai d'activation du geste d'environ 5 s de Firefox).
-- [ ] **Fenêtre rouge du point précédent, provoquée délibérément (issue
-      #832 point 4)** : juste après avoir **rechargé la page** (cache de
-      l'onglet vidé, rien n'a encore eu le temps d'être préchargé), cocher
-      immédiatement la case d'une issue dont le rapport est volumineux
-      (plusieurs commits) : si le geste expire avant la fin de la préparation,
-      la fenêtre rouge affiche désormais « Préparation trop longue pour le
-      presse-papier : copie manuelle ci-dessous (Ctrl+C) ; le texte est
-      maintenant prêt, décoche puis recoche la case. » — décocher puis recocher
-      doit alors copier **immédiatement** (texte conservé en cache), sans
-      refaire la préparation.
-- [ ] **Vidage immédiat du presse-papier au clic, dans Firefox (issue #857)** :
-      vérifié par les tests JS que le vidage (chaîne vide) est bien la
-      PREMIÈRE écriture envoyée au navigateur, avant même que le rapport soit
-      prêt, et qu'un échec d'écriture laisse le presse-papier vide plutôt que
-      de le réécrire avec un ancien contenu — mais PAS que Firefox accepte
-      réellement d'écrire une chaîne vide ni l'ORDRE d'arrivée effectif des
-      deux écritures une fois sorties du navigateur : à vérifier à la main.
-      Copier un texte quelconque ailleurs (Ctrl+C), puis dans l'onglet
-      Résultats cocher la case d'une issue dont le rapport n'est manifestement
-      pas encore préchargé (juste après un rechargement de page) : coller
-      (Ctrl+V) dans un éditeur de texte DANS LA SECONDE QUI SUIT le clic — le
-      collage doit être vide (ou ne rien coller), jamais l'ancien texte copié
-      avant. Attendre ensuite la fin de la copie et recoller : le rapport doit
-      apparaître. Si Firefox refuse la chaîne vide (collage d'un espace au
-      lieu de rien), c'est le repli prévu (voir le rapport de l'issue) — pas
-      une anomalie.
+      #832, chemin rapide conservé par #858)** : ouvrir l'onglet Résultats
+      dans **Firefox** sur `http://localhost` (mode moderne, pas `--lan`),
+      attendre la fin du chargement de la liste (laisser passer quelques
+      secondes pour le préchargement en tâche de fond), puis cocher la case
+      d'une issue **dont le rapport compte plusieurs commits** : la copie
+      doit être **immédiate**, **sans la fenêtre rouge** d'échec (le texte
+      était déjà préparé avant le clic).
+- [ ] **Préparation lente SANS préchargement, dans le geste du clic (issue
+      #858)** : juste après avoir **rechargé la page** (cache de l'onglet
+      vidé, rien n'a encore eu le temps d'être préchargé), cocher
+      IMMÉDIATEMENT la case d'une issue dont le rapport n'est manifestement
+      pas encore préchargé (idéalement un rapport volumineux, plusieurs
+      commits, pour que la préparation prenne sciemment **plus de 10
+      secondes**) : contrairement au comportement d'avant cette issue
+      (jusque-là, le geste expirait et une fenêtre rouge « Préparation trop
+      longue pour le presse-papier » apparaissait, issue #832 point 4),
+      **aucune fenêtre rouge ne doit apparaître**, même en attendant
+      longtemps. Une fois la préparation terminée (patienter, puis **coller
+      avec Ctrl+V** dans un éditeur) : le rapport complet doit être présent.
+      C'est le point établi par cette issue : l'écriture presse-papier est
+      désormais engagée DANS le geste du clic, le contenu pouvant arriver
+      après coup quelle que soit sa durée — comme c'était déjà le cas avant
+      l'issue #782. Si une fenêtre rouge apparaît malgré tout, l'hypothèse de
+      cette issue (que Firefox accepte réellement un contenu différé après
+      plusieurs secondes) ne tient pas en pratique : à signaler.
+- [ ] **Plusieurs cases cochées très vite, sans vouloir leur rapport (issue
+      #858 point 3)** : cocher 2 ou 3 cases d'affilée très rapidement (comme
+      pour simplement barrer des issues sans intention de copier leur
+      rapport) : **aucune fenêtre rouge ni aucun message d'échec** ne doit
+      apparaître pour les cases cochées en premier (abandon silencieux) —
+      seul le rapport de la DERNIÈRE case cochée doit se retrouver dans le
+      presse-papier (coller pour vérifier).
+- [ ] **Vidage immédiat du presse-papier au clic, dans Firefox (issue #857,
+      inchangé en principe par #858)** : vérifié par les tests JS que le
+      vidage (chaîne vide) est bien la PREMIÈRE écriture envoyée au
+      navigateur, avant même que le rapport soit prêt, et qu'un échec
+      d'écriture laisse le presse-papier vide plutôt que de le réécrire avec
+      un ancien contenu — mais PAS que Firefox accepte réellement d'écrire
+      une chaîne vide ni l'ORDRE d'arrivée effectif des deux écritures une
+      fois sorties du navigateur (ces deux écritures sont désormais engagées
+      l'une après l'autre dans le MÊME geste, voir le rapport de l'issue
+      #858) : à vérifier à la main. Copier un texte quelconque ailleurs
+      (Ctrl+C), puis dans l'onglet Résultats cocher la case d'une issue dont
+      le rapport n'est manifestement pas encore préchargé (juste après un
+      rechargement de page) : coller (Ctrl+V) dans un éditeur de texte DANS
+      LA SECONDE QUI SUIT le clic — le collage doit être vide (ou ne rien
+      coller), jamais l'ancien texte copié avant. Attendre ensuite la fin de
+      la copie et recoller : le rapport doit apparaître. Si Firefox refuse la
+      chaîne vide (collage d'un espace au lieu de rien), c'est le repli prévu
+      (voir le rapport de l'issue) — pas une anomalie.
 - [ ] **Repère « prêt à copier » et périmètre/ordre de la précharge (issue
       #835)** : sur une issue non cochée dont le texte est déjà préparé et
       valide, un petit repère (pastille à contour vert `✓`) apparaît juste

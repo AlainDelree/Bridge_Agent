@@ -517,17 +517,27 @@ async function marquerCases(cases) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 3. MOTEUR DE COPIE FIABLE (issue #636, mode moderne revu #782, fichier #790)
+// 3. MOTEUR DE COPIE FIABLE (issue #636, mode moderne revu #782 puis #858, fichier #790)
 //    Un seul chemin pour toutes les copies « fetch puis écriture » : cocher une
 //    case, badges ✅/Diff/All. Le succès n'est signalé QUE s'il a réellement eu
-//    lieu. Mode moderne (voir copierModerne) : le texte est préparé AVANT la
-//    demande d'écriture et les écritures sont sérialisées — cocher plusieurs
-//    cases rapprochées ne fait plus échouer toutes les copies sauf la
-//    dernière (issue #782, voir le rapport pour la reproduction).
+//    lieu. Mode moderne (voir copierModerne) : depuis l'issue #858,
+//    navigator.clipboard.write() est appelé SYNCHRONEMENT au clic (comme avant
+//    #782), le contenu étant fourni de façon DIFFÉRÉE — l'ENGAGEMENT, pas la
+//    résolution du contenu, doit tomber dans la fenêtre d'activation. #782
+//    avait abandonné cet engagement différé pour sérialiser les écritures
+//    (texte préparé AVANT la demande d'écriture) afin que cocher plusieurs
+//    cases rapprochées ne fasse plus échouer toutes les copies sauf la
+//    dernière ; mais l'écriture avait alors lieu hors fenêtre d'activation, ce
+//    qui faisait échouer une préparation lente (issue #824 : 10,1s de
+//    préparation, NotAllowedError). #858 restaure l'engagement synchrone et
+//    traite les clics rapprochés par un compteur de génération (voir
+//    generationCopieModerne) : seule la DERNIÈRE copie demandée compte, une
+//    copie supplantée par une plus récente est abandonnée EN SILENCE.
 //    Diff/All au-delà de SEUIL_LIGNES_VOLUMINEUX lignes (issue #790) : ni
 //    moderne ni repli ne copient — un fichier .txt est téléchargé à la place
-//    (voir telechargerOuSignalerVolumineux/declencherTelechargement). 'reponse'
-//    n'est jamais concernée (seul l'ancien toast d'avertissement s'applique).
+//    (voir declencherTelechargement, et telechargerOuSignalerVolumineux pour
+//    le repli). 'reponse' n'est jamais concernée (seul l'ancien toast
+//    d'avertissement s'applique).
 // ─────────────────────────────────────────────────────────────────────────────
 
 const TITRE_COPIE_VIDE = 'Réponse pas encore disponible — réessaie dans quelques secondes';
@@ -800,19 +810,61 @@ function copierExecCommand(texte) {
   }
 }
 
-// ─── Mode « moderne » : sérialisé (issue #782) ────────────────────────────────
-// Diagnostic établi par reproduction (WebDriver + Firefox, voir le rapport de
-// l'issue) : navigator.clipboard.write() ANNULE (NotAllowedError) une écriture
-// encore PENDANTE dès qu'une NOUVELLE est lancée avant que la précédente ait
-// abouti — seule la plus récente survit. Cocher plusieurs cases rapprochées
-// (chacune fetchant son contenu avant d'écrire) laissait donc plusieurs
-// écritures en vol en même temps, et toutes sauf la dernière échouaient. Le
-// correctif tient en deux points : le texte est intégralement PRÊT avant de
-// demander l'écriture (jamais de Blob en promesse pendante confié à
-// ClipboardItem — testé jusqu'à 5s de latence réseau sans que la seule
-// activation du clic ne soit requise au moment de l'appel), et les appels sont
-// CHAÎNÉS pour qu'une seule écriture soit en vol à la fois, même si plusieurs
-// textes deviennent prêts au même instant.
+// ─── Mode « moderne » : écriture ENGAGÉE au clic, contenu DIFFÉRÉ (issue #858,
+//     retour à l'esprit d'avant #782) ──────────────────────────────────────
+// CAUSE CONFIRMÉE par relecture du code et de l'historique (pas une simple
+// hypothèse) : depuis #782, le texte est entièrement PRÉPARÉ (fetch /issue,
+// /diff, /inventaire-commit…) AVANT même de DEMANDER l'écriture — l'appel à
+// navigator.clipboard.write() n'a donc lieu qu'une fois la préparation
+// terminée, potentiellement bien après la fin de la fenêtre d'activation
+// ouverte par le clic. Firefox refuse alors l'écriture (NotAllowedError),
+// comme diagnostiqué sur un cas réel à 10,1s de préparation (issue #824).
+// Avant #782, l'appel à write() était SYNCHRONE au clic — seul le CONTENU
+// (confié au ClipboardItem via une promesse) pouvait arriver après coup — et
+// Firefox l'acceptait quelle que soit la durée de préparation : c'est
+// l'ENGAGEMENT (l'appel), pas la résolution du contenu, qui doit tomber dans
+// la fenêtre du geste. #782 avait abandonné cet engagement différé pour une
+// AUTRE cause, elle aussi réelle mais distincte : plusieurs cases cochées
+// très vite annulaient les écritures précédentes (Firefox annule une
+// écriture encore pendante dès qu'une nouvelle est lancée avant qu'elle
+// n'aboutisse). #832/#835/#839 avaient ensuite contourné le SYMPTÔME
+// (précharger AVANT le clic pour que la préparation soit déjà faite) sans
+// toucher à la cause : un clic trop rapide pour un rapport pas encore
+// préchargé restait exposé.
+//
+// Cette issue restaure l'engagement synchrone ET règle directement la
+// seconde cause (clics rapprochés), par un compteur de génération GLOBAL :
+// seule la DERNIÈRE copie demandée (case ou badge, n'importe quelle issue —
+// une seule écriture presse-papier possible à la fois, comme le système
+// lui-même) compte ; une copie en vol supplantée par une plus récente est
+// abandonnée EN SILENCE (ni toast, ni fenêtre de secours, ni badge
+// d'échec) — Alain coche parfois plusieurs cases très vite sans vouloir le
+// rapport de chacune (voir le contexte de l'issue), il ne doit donc jamais
+// être interrompu par un « échec » qui n'en est pas un pour lui. Un échec
+// RÉEL (toute autre cause) garde l'affichage existant (toast, fenêtre de
+// secours, ligne de détail technique).
+//
+// NON vérifié ici, seulement SIMULÉ par les tests Node (mock de
+// clipboard.write) : que Firefox accepte RÉELLEMENT une préparation de
+// plusieurs secondes une fois l'écriture engagée au clic. C'est le
+// comportement documenté d'avant #782, mais pas re-reproduit en vrai
+// navigateur pour cette issue — voir l'essai ajouté à
+// VERIFICATIONS_MANUELLES.md.
+let generationCopieModerne = 0;
+
+// Vrai si la copie de génération `monGen` a été supplantée par une copie plus
+// récente (issue #858 point 3) — comparaison PURE d'un compteur, testée par
+// construction via les tests d'intégration de copierModerne (une fonction
+// aussi triviale n'a pas besoin de son propre test unitaire séparé).
+function copieSupplantee(monGen) {
+  return monGen !== generationCopieModerne;
+}
+
+// Conservée UNIQUEMENT pour copierTexteConnu (issue #823, hors périmètre de
+// cette issue, non modifiée) : ni viderPressePapier ni copierModerne ne s'en
+// servent plus depuis #858 — la sérialisation qu'elle offrait (#782) allait
+// à l'encontre du nouveau comportement voulu (seule la dernière copie
+// compte, pas « toutes finissent par réussir, dans l'ordre d'arrivée »).
 let chaineCopieModerne = Promise.resolve();
 
 // Construit la ligne de détail technique d'un échec (issue #824) : lit le
@@ -897,6 +949,14 @@ export function gesteExpireOuPreparationLente(e, dureePreparationMs, seuilMs = S
   return !!(e && e.name === 'NotAllowedError')
     || (typeof dureePreparationMs === 'number' && dureePreparationMs > seuilMs);
 }
+// Devenue SUPERFLUE pour le chemin principal depuis l'issue #858 (gardée,
+// non supprimée, non branchée dans le nouveau copierModerne) : le mode
+// moderne engage désormais l'écriture SYNCHRONEMENT au clic, plus après la
+// préparation — une préparation lente ne peut donc plus, par construction,
+// provoquer ce NotAllowedError par expiration du geste. Le cas des clics
+// rapprochés (l'AUTRE cause historique de NotAllowedError, #782) est traité
+// directement par generationCopieModerne/copieSupplantee ci-dessous, pas par
+// cette heuristique de durée. Voir le rapport de clôture de #858.
 
 // Enregistre/remplace le texte préparé de (projet, numero, variante) — utilisé
 // par precharger() (préchargement en tâche de fond) ET par le chemin lent de
@@ -912,71 +972,85 @@ function memoriserTextePrepare(projet, numero, variante, valeur) {
   textesPrepares.set(cle, prep);
 }
 
-// Écrit `t` dans le presse-papier (mode moderne), une fois le texte en main —
-// qu'il vienne du cache (chemin rapide) ou d'une préparation qui vient de se
-// terminer (chemin lent). SEUL l'appel au presse-papier est inséré dans la
-// chaîne `chaineCopieModerne` (issue #832 point 2) : la préparation
-// elle-même (producteur, hors de cette fonction) ne bloque jamais la file —
-// une préparation lente en cours ne retarde plus une copie dont le texte est
-// déjà prêt. `dureePreparationMs` (0 pour le chemin rapide, sans préparation)
-// sert uniquement à gesteExpireOuPreparationLente (issue #832 point 4a).
-function ecrireApresPreparation(projet, numero, variante, t, feedback, feedbackAvecDetail, dureePreparationMs) {
-  if (texteVide(t)) { feedback.vide(); return; }
-  if (telechargerOuSignalerVolumineux(projet, numero, variante, t, feedbackAvecDetail)) return;
-  const tache = chaineCopieModerne.then(async () => {
-    try {
-      await navigator.clipboard.write([new ClipboardItem({ 'text/plain': new Blob([t], { type: 'text/plain' }) })]);
-      feedback.succes();
-    } catch (e) {
-      if (gesteExpireOuPreparationLente(e, dureePreparationMs)) {
-        // Issue #832 point 4 : le texte obtenu n'est pas perdu (clic suivant
-        // immédiat) et le message principal du toast devient actionnable —
-        // le détail technique (issue #824) et la zone de secours (#782)
-        // restent, eux, inchangés.
-        memoriserTextePrepare(projet, numero, variante, t);
-        feedbackAvecDetail.echec(e, t, MESSAGE_PREPARATION_TROP_LONGUE);
-      } else {
-        feedbackAvecDetail.echec(e, t);   // texte transmis : reste accessible malgré l'échec (issue #782)
-      }
-    }
-  });
-  // La chaîne continue même après un échec : une écriture en erreur ne doit
-  // jamais bloquer les suivantes.
-  chaineCopieModerne = tache.catch(() => {});
-}
-
+// Point d'entrée du mode moderne (issue #858) : ENGAGE navigator.clipboard.write()
+// SYNCHRONEMENT (au clic), avec un contenu DIFFÉRÉ — `blobP` résout vers le
+// rapport une fois prêt, quelle que soit la durée. Le FEEDBACK (succès/vide/
+// aucun/volumineux/échec) est décidé à partir de l'ISSUE DE LA PRÉPARATION
+// (`issuePreparation`, qui ne rejette JAMAIS) et du sort RÉEL de l'écriture
+// (`resultatEcriture`) — jamais de faux succès (#636/#782). Une copie
+// supplantée par une plus récente (compteur `generationCopieModerne`)
+// n'émet AUCUN feedback, quelle que soit l'issue de sa propre écriture
+// (issue #858 point 3).
 function copierModerne(projet, numero, producteur, feedback) {
+  const monGen = ++generationCopieModerne;
   const variante = variantDuProducteur(producteur);
   const debut = Date.now();   // début de la copie (issue #824) : référence du délai de la ligne de détail
   const feedbackAvecDetail = envelopperFeedbackEchec(feedback, 'moderne', debut);
 
-  // Chemin rapide (issue #832 point 2) : le texte de cette variante est déjà
-  // préparé et encore valide → écrire SANS attendre aucune préparation (ni
-  // la sienne, ni celle d'une autre copie en cours) — seules les écritures
-  // restent sérialisées entre elles, via ecrireApresPreparation.
+  // Chemin rapide (issue #832 point 2, conservé) : le texte de cette variante
+  // est déjà préparé et encore valide → promesse déjà résolue. Sinon, la
+  // préparation (fetch) est lancée maintenant. Dans les deux cas, l'appel à
+  // navigator.clipboard.write() ci-dessous a lieu AVANT que cette promesse ne
+  // soit même construite — c'est tout l'enjeu de #858 : le chemin lent n'est
+  // plus traité différemment du correctif #782 (préparer PUIS écrire), il ne
+  // retarde simplement plus l'ENGAGEMENT de l'écriture elle-même.
   const cle = cleIC(projet, numero);
   const prep = textesPrepares.get(cle);
   const entree = prep && prep[variante];
-  if (texteEstValide(entree, cleValiditeIssue(store.lireIssue(projet, numero)), Date.now(), AGE_MAX_TEXTE_PREPARE_MS)) {
-    ecrireApresPreparation(projet, numero, variante, entree.valeur, feedback, feedbackAvecDetail, 0);
-    return;
-  }
+  const dejaValide = texteEstValide(
+    entree, cleValiditeIssue(store.lireIssue(projet, numero)), Date.now(), AGE_MAX_TEXTE_PREPARE_MS);
+  const promesseTexte = dejaValide
+    ? Promise.resolve(entree.valeur)
+    : Promise.resolve().then(() => producteur(projet, numero));
 
-  // Chemin lent (inchangé en esprit, issue #782) : préparer PUIS écrire — la
-  // préparation (fetch) n'est plus elle-même chaînée (issue #832 point 2) :
-  // seule l'écriture finale est enfilée dans chaineCopieModerne.
-  (async () => {
-    let t;
-    try {
-      t = await producteur(projet, numero);
-    } catch (e) {
-      if (e && e.aucun) { feedback.aucun ? feedback.aucun() : feedback.vide(); }
-      else feedbackAvecDetail.echec(e);
+  // Issue de la préparation — NE REJETTE JAMAIS (issue #858) : pour que le
+  // contenu réellement confié au presse-papier (`blobP` ci-dessous) résolve
+  // toujours vers quelque chose d'exploitable (le rapport, ou une chaîne
+  // vide) plutôt que de laisser l'écriture en situation d'échec pour une
+  // cause qui n'a rien à voir avec le presse-papier lui-même (texte vide,
+  // aucun diff, diff volumineux). Le FEEDBACK (plus bas) reste, lui,
+  // entièrement fidèle à cette distinction : rien n'est perdu.
+  const issuePreparation = promesseTexte.then(
+    (t) => {
+      if (t && t.aucun) return { statut: 'aucun' };
+      if (texteVide(t)) return { statut: 'vide' };
+      if (doitTelecharger(variante, t)) return { statut: 'volumineux', texte: t };
+      return { statut: 'ok', texte: t };
+    },
+    (e) => ((e && e.aucun) ? { statut: 'aucun' } : { statut: 'echec', erreur: e }),
+  );
+  const blobP = issuePreparation.then(
+    (r) => new Blob([r.statut === 'ok' ? r.texte : ''], { type: 'text/plain' }));
+
+  // ENGAGEMENT SYNCHRONE, ICI, AU CLIC (issue #858) : le contenu (`blobP`)
+  // peut mettre n'importe combien de temps à se résoudre, Firefox a déjà
+  // accepté l'activation du geste pour CET appel. Si une copie plus récente
+  // est lancée avant que celle-ci n'aboutisse, Firefox annule cette écriture
+  // encore pendante (constat de l'issue #782) : `copieSupplantee` la rend
+  // silencieuse ci-dessous plutôt que de la traiter comme un échec réel.
+  const ecriture = navigator.clipboard.write([new ClipboardItem({ 'text/plain': blobP })])
+    .then(() => ({ ok: true }), (erreurEcriture) => ({ ok: false, erreurEcriture }));
+
+  Promise.all([ecriture, issuePreparation]).then(([resultatEcriture, r]) => {
+    if (copieSupplantee(monGen)) return;   // issue #858 point 3 : silence total, succès ou échec
+    if (r.statut === 'vide') { feedback.vide(); return; }
+    if (r.statut === 'aucun') { feedback.aucun ? feedback.aucun() : feedback.vide(); return; }
+    if (r.statut === 'volumineux') {
+      const nomFichier = nomFichierCopie(projet, numero, variante);
+      if (declencherTelechargement(nomFichier, r.texte)) {
+        feedback.fichier(messageFichierVolumineux(variante, nombreLignes(r.texte), nomFichier));
+      } else {
+        feedbackAvecDetail.echec(undefined, r.texte);   // texte transmis : reste accessible (issue #782)
+      }
       return;
     }
-    const dureePreparationMs = Date.now() - debut;
-    ecrireApresPreparation(projet, numero, variante, t, feedback, feedbackAvecDetail, dureePreparationMs);
-  })();
+    if (r.statut === 'echec') { feedbackAvecDetail.echec(r.erreur); return; }
+    // r.statut === 'ok' : le rapport était prêt — seul le sort de L'ÉCRITURE
+    // elle-même décide maintenant du feedback (jamais de faux succès,
+    // issue #636/#782).
+    if (resultatEcriture.ok) { avertirVolumineux(r.texte); feedback.succes(); }
+    else feedbackAvecDetail.echec(resultatEcriture.erreurEcriture, r.texte);
+  });
 }
 
 // Valeur de repli si le navigateur refuse une chaîne COMPLÈTEMENT vide dans le
@@ -993,27 +1067,35 @@ const TEXTE_QUASI_VIDE = ' ';
 // copie du rapport aboutit ensuite, elle remplace ce contenu vide ; si elle
 // échoue, le presse-papier reste vide (la fenêtre de secours existante
 // s'ouvre toujours, issue #782).
-// Mode moderne : l'écriture vide est ENFILÉE dans chaineCopieModerne (jamais
-// lancée à part), exactement comme ecrireApresPreparation — pour ne JAMAIS
-// annuler une écriture réelle déjà en vol (issue #832 point 2) ; le rapport,
-// une fois prêt, s'écrit à son tour après dans la même file.
-// Mode repli (execCommand, synchrone) : aucune file n'est nécessaire, aucune
-// écriture concurrente n'est possible pendant l'appel.
+// Mode moderne (revu par l'issue #858) : écriture SYNCHRONE elle aussi,
+// directement — PLUS via chaineCopieModerne (abandonnée pour ce chemin, voir
+// plus haut) : l'écriture du rapport qui suit immédiatement (copierModerne,
+// engagée dans le MÊME geste, juste après) est elle-même désormais
+// synchrone ; la faire patienter derrière une file aurait inversé l'ordre
+// (le rapport se serait engagé AVANT son propre vidage). Si Firefox annule
+// ce vidage au profit de l'écriture du rapport qui le suit immédiatement
+// (même mécanisme que pour deux clics rapprochés sur des cases différentes,
+// voir copierModerne), ce n'est jamais grave : le contenu réellement confié
+// au presse-papier par copierModerne est LUI-MÊME déjà garanti résoudre vers
+// le rapport ou une chaîne vide (jamais l'ancien contenu, voir
+// `issuePreparation` dans copierModerne) ; ce vidage reste une protection
+// supplémentaire PENDANT la préparation, pas la seule.
+// UNE SEULE tentative, SANS repli sur TEXTE_QUASI_VIDE en cas d'échec (à la
+// différence du mode repli ci-dessous) : un second appel à
+// navigator.clipboard.write() ICI serait lui-même une NOUVELLE écriture, qui
+// annulerait silencieusement l'écriture du rapport si elle était déjà en
+// vol au moment de cet échec (reproduit par un test Node simulant
+// l'annulation concurrente, issue #858) — l'échec de ce vidage, best-effort,
+// est donc simplement journalisé.
+// Mode repli (execCommand, synchrone) : inchangé, aucune file n'a jamais été
+// nécessaire, aucune écriture concurrente n'est possible pendant l'appel —
+// le repli sur TEXTE_QUASI_VIDE y reste donc sans danger.
 function viderPressePapier() {
   if (modeCopie() === 'moderne') {
-    const tache = chaineCopieModerne.then(async () => {
-      try {
-        await navigator.clipboard.write([new ClipboardItem({ 'text/plain': new Blob([''], { type: 'text/plain' }) })]);
-      } catch (e) {
-        try {
-          await navigator.clipboard.write(
-            [new ClipboardItem({ 'text/plain': new Blob([TEXTE_QUASI_VIDE], { type: 'text/plain' }) })]);
-        } catch (e2) {
-          console.warn('resultats_coches : échec du vidage du presse-papier (chaîne vide ET espace refusés).', e2);
-        }
-      }
-    });
-    chaineCopieModerne = tache.catch(() => {});
+    navigator.clipboard.write([new ClipboardItem({ 'text/plain': new Blob([''], { type: 'text/plain' }) })])
+      .catch((e) => {
+        console.warn('resultats_coches : échec du vidage du presse-papier (chaîne vide refusée ou annulée).', e);
+      });
     return;
   }
   // Mode repli : chaîne vide d'abord, espace si le navigateur la refuse.
@@ -1341,10 +1423,10 @@ function majReperesVisibles() {
 const MESSAGE_ECHEC_COPIE = 'Copie impossible — le presse-papier n\'a pas pu être écrit.';
 
 // Message principal du toast quand l'écriture a été refusée pour geste
-// expiré/préparation trop longue (issue #832 point 4b) — remplace
-// MESSAGE_ECHEC_COPIE dans ce seul cas (voir gesteExpireOuPreparationLente et
-// ecrireApresPreparation) : le texte est désormais en cache, un second clic
-// suffit.
+// expiré/préparation trop longue (issue #832 point 4b) — DEVENU SUPERFLU
+// depuis #858 (gardé, non supprimé, non branché dans copierModerne) :
+// l'écriture étant désormais engagée au clic (voir gesteExpireOuPreparationLente),
+// ce cas précis ne se produit plus par construction.
 export const MESSAGE_PREPARATION_TROP_LONGUE = 'Préparation trop longue pour le presse-papier : '
   + 'copie manuelle ci-dessous (Ctrl+C) ; le texte est maintenant prêt, décoche puis recoche la case.';
 

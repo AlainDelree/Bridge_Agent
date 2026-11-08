@@ -88,6 +88,13 @@ function fixerEnvironnement(options = {}) {
       return el;
     },
     body: { appendChild: () => {}, removeChild: () => {} },
+    // injecterStyles (toasts.js) y ajoute une feuille de style au premier
+    // toast affiché — sans ce mock, `toasts.succes()` (case à cocher, feedback
+    // PAR TOAST) levait une exception masquée par hasard dans l'ancien code
+    // (rattrapée par le même try/catch que l'écriture presse-papier, qui la
+    // traitait à tort comme un échec de copie — jamais un vrai problème,
+    // juste un angle mort de ce mock, mis au jour par le refactor #858).
+    head: { appendChild: () => {} },
     querySelector: () => null,
   };
   global.URL = { createObjectURL: () => 'blob:mock', revokeObjectURL: () => {} };
@@ -138,12 +145,16 @@ function fixerEnvironnement(options = {}) {
 // presse-papier au clic (chaîne vide ou TEXTE_QUASI_VIDE, issue #857) est
 // IGNORÉ ici : ces tests vérifient le contenu du RAPPORT copié, pas le
 // vidage lui-même (couvert à part, voir les tests dédiés issue #857).
+// Le contenu (`items[0].data['text/plain']`) est désormais une PROMESSE de
+// Blob, pas un Blob direct (issue #858 : retour au contenu différé d'avant
+// #782) — `await` la résout, que ce soit un Blob (vidage, immédiat) ou une
+// vraie promesse encore en vol (rapport).
 function attendreProchaineCopie() {
   return new Promise((resolve) => {
     global.navigator = {
       clipboard: {
         write: async (items) => {
-          const blob = items[0].data['text/plain'];
+          const blob = await items[0].data['text/plain'];
           const texte = await blob.text();
           if (!texte.trim()) return;   // vidage immédiat du clic (issue #857), pas le rapport
           resolve(texte);
@@ -295,12 +306,15 @@ const DIFF_VOLUMINEUX = Array(SEUIL_LIGNES_VOLUMINEUX + 10).fill('+ligne').join(
 
 // Le CONTENU réel ne doit JAMAIS être écrit dans ces tests (diff/all
 // volumineux → fichier téléchargé, pas de copie, issue #790) — cette
-// sentinelle rejette tout appel, pour qu'une écriture inattendue du rapport
-// échoue bruyamment plutôt que d'attendre une résolution qui ne viendrait
-// jamais. Le vidage immédiat du clic (chaîne vide, issue #857) appelle lui
-// aussi `write` une fois, mais son échec est avalé en interne par
-// viderPressePapier (aucun feedback, voir resultats_coches.js) : il ne
-// perturbe donc pas ces tests.
+// sentinelle rejette TOUT appel. Depuis l'issue #858, `write()` est en fait
+// appelé DEUX fois (vidage du clic, #857, PUIS l'écriture du rapport
+// elle-même, désormais engagée au clic quelle que soit la variante) : les
+// deux rejets sont sans conséquence ici — le vidage avale son propre échec
+// en interne (aucun feedback, voir viderPressePapier), et pour un contenu
+// « volumineux » copierModerne ignore totalement le sort de l'écriture
+// elle-même (seul le téléchargement compte, voir resultats_coches.js).
+// Cette sentinelle reste donc utile : elle ferait échouer bruyamment le
+// test si un jour le rapport entier finissait par être réellement écrit.
 function interdireCopiePressePapier() {
   global.navigator = {
     clipboard: { write: async () => { throw new Error('clipboard.write ne doit pas être appelé (diff volumineux, #790)'); } },
@@ -427,7 +441,7 @@ test('badge Diff, diff volumineux (> seuil) ET téléchargement en SUCCÈS : le 
 
 // ─── Issue #824 : la cause réelle de l'échec de copie atteint l'affichage ────
 
-test('badge ✅, échec RÉEL de navigator.clipboard.write (NotAllowedError) : le toast ET la console reçoivent la cause, la zone de secours reste inchangée, le message principal devient celui du geste expiré (issue #832 point 4b, remplace le message générique de #824)', async () => {
+test('badge ✅, échec RÉEL de navigator.clipboard.write (NotAllowedError SEUL, sans clic plus récent) : le toast ET la console reçoivent la cause, la zone de secours reste inchangée, le message principal reste GÉNÉRIQUE (issue #858 : l\'écriture étant engagée au clic, un NotAllowedError solitaire n\'est plus attribué à une préparation trop longue — remplace la classification « geste expiré » de #832, devenue sans objet pour ce cas)', async () => {
   fixerEnvironnement();
   const avertissements = [];
   const warnOriginal = console.warn;
@@ -456,9 +470,11 @@ test('badge ✅, échec RÉEL de navigator.clipboard.write (NotAllowedError) : l
     );
     const messages = texteDesToasts();
     assert.ok(
-      messages.some((m) => m === 'Préparation trop longue pour le presse-papier : copie manuelle ci-dessous '
-        + '(Ctrl+C) ; le texte est maintenant prêt, décoche puis recoche la case.'),
-      'NotAllowedError est un geste expiré (issue #832 point 4) : le message principal devient actionnable');
+      messages.some((m) => m === 'Copie impossible — le presse-papier n\'a pas pu être écrit.'),
+      'un NotAllowedError SEUL (aucun clic plus récent) est un échec réel comme un autre depuis #858 : '
+      + 'l\'écriture est engagée AU CLIC, une préparation lente ne peut plus en être la cause');
+    assert.ok(!messages.some((m) => m === MESSAGE_PREPARATION_TROP_LONGUE),
+      'le message spécifique « préparation trop longue » (#832) ne s\'applique plus à ce cas (issue #858)');
   } finally {
     console.warn = warnOriginal;
   }
@@ -506,20 +522,25 @@ async function attendreQue(predicat, tentativesMax = 100) {
   return predicat();
 }
 
-test('chemin rapide (issue #832 pt.2) : un texte déjà préparé et valide est écrit sans attendre la préparation lente d\'une AUTRE copie en cours', async () => {
+test('chemin rapide (issue #832 pt.2, conservé par #858) : un texte déjà préparé et valide est écrit sans attendre la préparation d\'une AUTRE copie en cours', async () => {
   fixerEnvironnement({ etatCommits: { etat: 'aucun', hashes: [] } });
   const NUMERO_LENT = 501001;
   const NUMERO_RAPIDE = 501002;
   const { comptes, debloquer } = intercepterFetchIssue(NUMERO_LENT);
 
   // Ne compte que les écritures du RAPPORT — le vidage immédiat du clic
-  // (chaîne vide, issue #857) passe aussi par cette même file et ne doit pas
-  // être confondu avec les écritures mesurées ici.
+  // (chaîne vide, issue #857) passe aussi par un appel write() et ne doit
+  // pas être confondu avec les écritures mesurées ici. Mock simple (pas de
+  // simulation d'annulation concurrente ici) : cette copie LENTE n'a ici
+  // AUCUNE copie plus récente pour la supplanter, elle doit donc aboutir
+  // elle aussi, juste sans attendre NUMERO_RAPIDE (voir le test suivant pour
+  // le cas où une copie plus récente en annule une plus ancienne).
   const ecritures = [];
   global.navigator = {
     clipboard: {
       write: async (items) => {
-        const texte = await items[0].data['text/plain'].text();
+        const blob = await items[0].data['text/plain'];
+        const texte = await blob.text();
         if (texte.trim()) ecritures.push(texte);
       },
     },
@@ -542,49 +563,91 @@ test('chemin rapide (issue #832 pt.2) : un texte déjà préparé et valide est 
   assert.equal(ecritures.length, 1, 'une seule écriture à ce stade : NUMERO_LENT est toujours en préparation');
 
   debloquer();
-  assert.ok(await attendreQue(() => ecritures.length >= 2), 'la copie lente doit finir par aboutir une fois débloquée');
+  assert.ok(await attendreQue(() => ecritures.length >= 2), 'la copie lente doit finir par aboutir une fois débloquée (aucune copie plus récente ne l\'a supplantée)');
 });
 
-test('chemin lent, écriture refusée pour geste expiré (NotAllowedError) : texte conservé dans le cache (point 4a), message du point 4b, détail technique conservé — le clic suivant aboutit sans nouvelle requête', async () => {
-  fixerEnvironnement({ etatCommits: { etat: 'aucun', hashes: [] } });
-  const NUMERO = 502001;
-  const { comptes } = intercepterFetchIssue(-1);   // aucun numéro bloqué : tout résout immédiatement
-
-  // `premierAppel` ne compte que la première écriture du RAPPORT — le vidage
-  // immédiat du clic (chaîne vide, issue #857) est ignoré ici, sinon c'est LUI
-  // qui recevrait le NotAllowedError simulé au lieu de l'écriture du rapport.
-  let premierAppel = true;
+// ─── Issue #858 point 3 : clics rapprochés — seule la dernière compte ────────
+// Simule le comportement RÉEL observé de Firefox (diagnostic de l'issue
+// #782, non re-vérifié en vrai navigateur pour #858, voir
+// VERIFICATIONS_MANUELLES.md) : navigator.clipboard.write() annule toute
+// écriture encore PENDANTE dès qu'un nouvel appel survient avant sa
+// résolution — seule la plus récente peut aboutir. Sans ce mock, impossible
+// de distinguer une vraie annulation (ce que #858 veut) d'une simple
+// absence de feedback alors que l'ancien contenu écraserait quand même le
+// nouveau une fois résolu.
+function creerClipboardAvecAnnulationConcurrente() {
+  let dernierAppel = 0;
+  const ecritures = [];
+  const ANNULE = () => Object.assign(new Error('Annulé par une écriture plus récente.'), { name: 'NotAllowedError' });
   global.navigator = {
     clipboard: {
-      write: async (items) => {
-        const texte = await items[0].data['text/plain'].text();
-        if (!texte.trim()) return;
-        if (premierAppel) {
-          premierAppel = false;
-          throw Object.assign(new Error('The request is not allowed.'), { name: 'NotAllowedError' });
-        }
-        return texte;
+      write(items) {
+        const monAppel = ++dernierAppel;
+        return (async () => {
+          const blob = await items[0].data['text/plain'];
+          if (monAppel !== dernierAppel) throw ANNULE();
+          const texte = await blob.text();
+          if (monAppel !== dernierAppel) throw ANNULE();
+          ecritures.push(texte);
+        })();
       },
     },
   };
+  return ecritures;
+}
+
+test('clics rapprochés (issue #858 point 3) : seule la DERNIÈRE copie demandée compte, la précédente encore en vol est abandonnée EN SILENCE (ni toast, ni fenêtre de secours)', async () => {
+  fixerEnvironnement({ etatCommits: { etat: 'aucun', hashes: [] } });
+  const NUMERO_LENT = 608001;
+  const NUMERO_RAPIDE = 608002;
+  const { comptes, debloquer } = intercepterFetchIssue(NUMERO_LENT);
+  const ecritures = creerClipboardAvecAnnulationConcurrente();
+
+  store.remplacerIssues([
+    { projet: PROJET, number: NUMERO_RAPIDE, title: 'Rapide', createdAt: '2026-01-01T00:00:00Z', state: 'CLOSED', labels: [] },
+  ]);
+  resultatsCoches.precharderVisibles();
+  assert.ok(await attendreQue(() => comptes[NUMERO_RAPIDE] === 1), 'le préchargement de NUMERO_RAPIDE doit avoir fetché /issue');
+  await new Promise((resolve) => setTimeout(resolve, 20));   // laisse memoriserTextePrepare s'exécuter
+
+  // Coche NUMERO_LENT (préparation encore en vol), puis IMMÉDIATEMENT
+  // NUMERO_RAPIDE — exactement le scénario décrit par l'issue : plusieurs
+  // cases cochées très vite, sans vouloir le rapport de chacune.
+  resultatsCoches.copierReponseBadge(evenementBadge(), PROJET, NUMERO_LENT);
+  resultatsCoches.copierReponseBadge(evenementBadge(), PROJET, NUMERO_RAPIDE);
+
+  assert.ok(await attendreQue(() => ecritures.some((t) => t.trim())), 'la copie déjà prête ne doit pas attendre celle en cours');
+  const nbMessagesAvant = texteDesToasts().length;
+
+  debloquer();   // NUMERO_LENT finit par se préparer, mais TROP TARD : sa copie a déjà été supplantée
+  await new Promise((resolve) => setTimeout(resolve, 30));
+
+  const rapports = ecritures.filter((t) => t.trim());
+  assert.equal(rapports.length, 1, 'une seule écriture de RAPPORT doit avoir lieu : celle de NUMERO_RAPIDE');
+  assert.match(rapports[0], /Corps du rapport pour #787/);
+  assert.equal(texteDesToasts().length, nbMessagesAvant,
+    'le déblocage tardif de NUMERO_LENT ne doit produire AUCUN message supplémentaire (ni succès, ni échec) — abandon silencieux');
+  assert.ok(!zoneSecoursToast(), 'aucune fenêtre de secours ne doit apparaître pour une copie supplantée');
+});
+
+// ─── Issue #858 point 1/6 : préparation volontairement très lente ───────────
+test('préparation très lente (15 s SIMULÉES) : l\'écriture reste acceptée, aucune expiration du geste (issue #858)', async () => {
+  fixerEnvironnement({ etatCommits: { etat: 'aucun', hashes: [] } });
+  const NUMERO = 610001;
+  // Bloque le fetch /issue indéfiniment — REPRÉSENTE une préparation de 15s
+  // (ou plus) sans dépendre du temps réel écoulé, pour ne pas ralentir la
+  // suite de tests : l'enjeu de cette issue est que la DURÉE n'ait plus
+  // AUCUNE incidence, contrairement à l'ancien SEUIL_PREPARATION_LENTE_MS
+  // (4s), devenu superflu pour ce chemin (voir le rapport de clôture).
+  const { debloquer } = intercepterFetchIssue(NUMERO);
+  const copie = attendreProchaineCopie();
 
   resultatsCoches.copierReponseBadge(evenementBadge(), PROJET, NUMERO);
-  const zone = await attendreZoneSecours();
-  assert.ok(zone, 'le texte complet doit rester accessible (texteSecours, issue #782, inchangé)');
-  const detail = detailToast();
-  assert.ok(detail, 'la ligne de détail technique (issue #824) doit rester présente');
-  assert.match(detail.textContent, /NotAllowedError/);
-  const messages = texteDesToasts();
-  assert.ok(messages.some((m) => m === MESSAGE_PREPARATION_TROP_LONGUE),
-    'le message principal doit devenir celui du point 4b');
+  await new Promise((resolve) => setTimeout(resolve, 20));   // laisse la préparation « traîner »
+  debloquer();
 
-  const comptesAvant = comptes[NUMERO];
-  const copieSuivante = attendreProchaineCopie();
-  resultatsCoches.copierReponseBadge(evenementBadge(), PROJET, NUMERO);
-  const texteEcrit = await copieSuivante;
-  assert.match(texteEcrit, /Corps du rapport pour #787/);
-  assert.equal(comptes[NUMERO], comptesAvant,
-    'le second clic doit utiliser le texte mis en cache (point 4a), sans nouvelle requête /issue');
+  const texte = await copie;
+  assert.match(texte, /Corps du rapport pour #787/, 'l\'écriture doit aboutir malgré la préparation très lente');
 });
 
 test('autre erreur (ni NotAllowedError, ni préparation lente) : le message principal reste inchangé', async () => {
@@ -770,7 +833,8 @@ function capturerToutesLesEcritures() {
   global.navigator = {
     clipboard: {
       write: async (items) => {
-        const texte = await items[0].data['text/plain'].text();
+        const blob = await items[0].data['text/plain'];
+        const texte = await blob.text();
         ecritures.push(texte);
       },
     },
@@ -807,14 +871,19 @@ test('mode moderne : une fois la copie du rapport RÉUSSIE, le presse-papier con
 test('mode moderne : si l\'écriture du rapport ÉCHOUE, le presse-papier reste vide (jamais réécrit avec un ancien contenu ni un faux succès)', async () => {
   fixerEnvironnement();
   const ecritures = [];
-  let appel = 0;
+  // Distingue par CONTENU, pas par ordre d'appel (issue #858 : le vidage et
+  // l'écriture du rapport sont désormais engagés SYNCHRONEMENT l'un après
+  // l'autre, au clic — les deux appels à write() ont donc déjà eu lieu avant
+  // que la première continuation asynchrone ne reprenne ; un compteur
+  // incrémenté dans chaque continuation ne refléterait plus l'ORDRE
+  // d'engagement).
   global.navigator = {
     clipboard: {
       write: async (items) => {
-        appel += 1;
-        const texte = await items[0].data['text/plain'].text();
-        if (appel === 1) { ecritures.push(texte); return; }   // vidage : réussit normalement
-        throw new Error('Erreur inattendue du presse-papier.');   // écriture du rapport : échoue
+        const blob = await items[0].data['text/plain'];
+        const texte = await blob.text();
+        if (!texte.trim()) { ecritures.push(texte); return; }   // vidage (chaîne vide) : réussit normalement
+        throw new Error('Erreur inattendue du presse-papier.');   // écriture du RAPPORT : échoue
       },
     },
   };

@@ -541,13 +541,23 @@ le panneau) reste en place — simplement plus utilisé par l'interface,
 > **préchargé** + `execCommand` synchrone en `--lan` (HTTP non-localhost, API
 > presse-papier moderne absente) — au lieu de fetcher AVANT d'écrire (ce qui
 > sortait de la fenêtre d'activation et faisait échouer la copie par
-> intermittence). **Vidage immédiat du presse-papier au clic** (issue #857,
-> `lancerCopie`/`viderPressePapier`) : AVANT toute préparation, le
-> presse-papier est vidé (chaîne vide, ou un espace si le navigateur la
-> refuse) pour qu'une préparation lente ou un échec d'écriture ne laisse
-> jamais l'ANCIEN contenu en place — l'écriture vide passe par la même file
-> `chaineCopieModerne` que l'écriture réelle, qui la remplace sur succès.
-> **Feedback honnête** : jamais de ✓ sur échec (toast d'erreur),
+> intermittence). **Revu par l'issue #858** : entre #782 et #858, le texte
+> était au contraire entièrement préparé AVANT de demander l'écriture
+> (sérialisation via `chaineCopieModerne`), ce qui sortait de la fenêtre
+> d'activation pour une préparation lente (NotAllowedError, #824) ; #858
+> restaure l'engagement synchrone d'avant #782 (`copierModerne`,
+> `navigator.clipboard.write` appelé AU CLIC avec un contenu différé qui ne
+> rejette jamais) et traite les clics rapprochés par un compteur de
+> génération (`generationCopieModerne`/`copieSupplantee`) plutôt que par une
+> file : seule la DERNIÈRE copie demandée compte, une copie supplantée est
+> abandonnée en silence (ni toast, ni fenêtre de secours). `chaineCopieModerne`
+> ne sert plus qu'à `copierTexteConnu` (#823, inchangé). **Vidage immédiat du
+> presse-papier au clic** (issue #857, `lancerCopie`/`viderPressePapier`) :
+> AVANT toute préparation, le presse-papier est vidé (chaîne vide, SANS repli
+> sur un espace en mode moderne depuis #858 — un second appel y risquerait
+> d'annuler l'écriture du rapport qui suit immédiatement) pour qu'une
+> préparation lente ou un échec d'écriture ne laisse jamais l'ANCIEN contenu
+> en place. **Feedback honnête** : jamais de ✓ sur échec (toast d'erreur),
 > et le cochage (persistance/grisage/pastilles) ne dépend jamais de la copie.
 > Enfin, « Cocher tout » est aligné sur le périmètre des pastilles (les N
 > premières issues par projet, `premieresParProjet`), et un bouton **« Tout à
