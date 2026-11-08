@@ -45,6 +45,9 @@ from datetime import datetime
 # l'import direct fonctionne. Les enveloppes bip()/notifier*() ci-dessous
 # délèguent à ce module en passant les valeurs du CFG courant.
 import notifications
+# Identifiant GitHub autorisé et autres valeurs propres à l'installation en
+# cours (issue #859) — plus de compte codé en dur ici, voir identite.py.
+import identite
 # Labels GitHub requis par le bridge (LABELS, creer_labels) — module dédié
 # plutôt qu'un import de nouveau_projet.py, qui importe regenerer_tableaux_
 # projets, qui importe lui-même `from watcher import lire_conf` : un cycle
@@ -262,7 +265,40 @@ LABEL_SANS_COMPLEXITE = "sans-complexite"
 # CCW, #556). En dur plutôt qu'en config (comme LABEL_* ci-dessus) : c'est un
 # contrat de sécurité du protocole commun, pas un réglage qui doit pouvoir
 # diverger d'un projet à l'autre par erreur.
-AUTEURS_AUTORISES = {"AlainDelree"}
+#
+# Le ou les comptes autorisés ne sont plus codés en dur ici depuis l'issue
+# #859 (Bridge_Agent installable par quelqu'un d'autre qu'Alain, compte
+# GitHub différent) : auteurs_autorises() ci-dessous construit cet ensemble
+# à partir de identite.compte_github() — jamais en dur, jamais vide par
+# défaut ni "tout le monde" en intention. Si l'identifiant ne peut être
+# déterminé (voir identite.py), auteurs_autorises() renvoie un ensemble VIDE
+# (et non une exception) : aucun auteur ne peut alors matcher dans la boucle
+# de lister_issues() ci-dessous, donc AUCUNE issue n'est traitée — refuser de
+# traiter plutôt qu'ouvrir l'accès. verifier_identite_demarrage() (voir
+# main()) rend ce cas bruyant immédiatement (sys.exit) plutôt que de laisser
+# le watcher boucler indéfiniment en rejetant chaque issue sans explication
+# claire.
+def auteurs_autorises() -> frozenset:
+    compte = identite.compte_github()
+    return frozenset({compte}) if compte else frozenset()
+
+
+def verifier_identite_demarrage() -> None:
+    """Résout l'identifiant GitHub autorisé une seule fois au démarrage
+    (issue #859) et arrête le watcher si indéterminable, plutôt que de le
+    laisser démarrer et rejeter silencieusement (hors log.warning répété)
+    toute issue cycle après cycle sans que la cause ne soit visible
+    immédiatement."""
+    compte = identite.compte_github()
+    if not compte:
+        sys.exit(
+            "[identite] Impossible de déterminer le compte GitHub autorisé à "
+            "faire traiter des issues : ni identite_locale.conf "
+            "(COMPTE_GITHUB=...), ni compte `gh` connecté (gh auth login). "
+            "Le watcher refuse de démarrer plutôt que d'ouvrir le traitement "
+            "des issues à tout le monde (§8 de BRIDGE_AGENT_DOC.md)."
+        )
+    log.info(f"Identifiant GitHub autorisé (garde-fou §8, issue #859) : {compte}")
 
 # ─── Mode de traitement à trois valeurs (issue #327) ───────────────────────────
 # Remplace l'ancien booléen `autoriser_ecriture`, qui ne pouvait piloter que
@@ -1301,22 +1337,23 @@ def lister_issues():
             if any(l.get("name", "") in ("for-linux", "for-windows")
                    for l in i.get("labels", []))
         ]
-        # Garde-fou explicite sur l'AUTEUR (issue #563, cf. AUTEURS_AUTORISES en
-        # tête de fichier). Contrairement au filtre #477 ci-dessus, une issue
-        # rejetée ici N'EST PAS un simple non-match anodin : elle porte les BONS
-        # labels (donc a été labellisée par quelqu'un ayant les droits
-        # d'écriture sur le dépôt) mais ne vient pas d'un auteur autorisé — un
-        # événement digne d'attention, d'où le log.warning explicite plutôt
-        # qu'un filtrage silencieux.
+        # Garde-fou explicite sur l'AUTEUR (issue #563, cf. auteurs_autorises()
+        # en tête de fichier — issue #859). Contrairement au filtre #477
+        # ci-dessus, une issue rejetée ici N'EST PAS un simple non-match
+        # anodin : elle porte les BONS labels (donc a été labellisée par
+        # quelqu'un ayant les droits d'écriture sur le dépôt) mais ne vient
+        # pas d'un auteur autorisé — un événement digne d'attention, d'où le
+        # log.warning explicite plutôt qu'un filtrage silencieux.
+        autorises = auteurs_autorises()
         issues_autorisees = []
         for i in issues:
             auteur = (i.get("author") or {}).get("login", "")
-            if auteur in AUTEURS_AUTORISES:
+            if auteur and auteur in autorises:
                 issues_autorisees.append(i)
             else:
                 log.warning(
                     f"Issue #{i.get('number')} ignorée : auteur '{auteur}' non "
-                    f"autorisé (labels valides mais hors {sorted(AUTEURS_AUTORISES)}) — "
+                    f"autorisé (labels valides mais hors {sorted(autorises)}) — "
                     f"issue #563."
                 )
         issues = issues_autorisees
@@ -8095,6 +8132,12 @@ def main():
     log.info(f"Polling toutes les {intervalle}s — dry-run: {args.dry_run}")
     log.info(f"contexte projet: {CFG.fichier_contexte or 'aucun'}")
     log.info("=" * 60)
+
+    # Identifiant GitHub autorisé (issue #859, garde-fou §8) : une seule fois
+    # par processus, AVANT le premier appel à lister_issues() — sys.exit
+    # immédiat et explicite si indéterminable, plutôt que de démarrer et
+    # rejeter silencieusement chaque issue cycle après cycle.
+    verifier_identite_demarrage()
 
     # Vérification des labels GitHub requis (issue #816) : une seule fois par
     # processus, ici plutôt qu'en tête de boucle, APRÈS configurer_logs (pour

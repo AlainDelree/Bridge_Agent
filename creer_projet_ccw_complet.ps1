@@ -11,7 +11,7 @@
 #
 # Usage :
 #   cd C:\CCW\Bridge_Agent
-#   powershell -ExecutionPolicy Bypass -File creer_projet_ccw_complet.ps1 -NomProjet actualise -Depot AlainDelree/Actualise
+#   powershell -ExecutionPolicy Bypass -File creer_projet_ccw_complet.ps1 -NomProjet actualise -Depot votre-compte-github/Actualise
 #
 # Avant de lancer : cree le token GitHub dedie (repo unique, Issues=RW,
 # Metadata=RO, expiration alignee ~2026-11-14 comme les tokens CCW recents)

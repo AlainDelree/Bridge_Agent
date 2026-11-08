@@ -139,7 +139,8 @@ def projet_par_depot(depot: str) -> Config | None:
     """Retrouve le projet dont le champ DEPOT du .conf correspond EXACTEMENT
     (issue #323) — jamais déduit du nom projet ni du basename de REP_TRAVAIL,
     qui peuvent diverger du dépôt GitHub (ex. projet « echecs », dépôt
-    AlainDelree/AlChess, REP_TRAVAIL ~/NicLink : trois chaînes distinctes)."""
+    <compte-github>/AlChess, REP_TRAVAIL ~/NicLink : trois chaînes
+    distinctes)."""
     depot = (depot or "").strip()
     return next((p for p in lister_projets() if p.depot == depot), None)
 

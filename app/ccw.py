@@ -21,7 +21,9 @@ CONFIGURATION SSH :
   configs/ccw_ssh.conf (gitignoré — comme les configs/*.conf, format
   « CLÉ = valeur ») :
     1. hôte du PC fixe (IP ou nom réseau local) : CCW_SSH_HOTE / HOTE ;
-    2. utilisateur SSH : CCW_SSH_UTILISATEUR / UTILISATEUR (défaut AlainW) ;
+    2. utilisateur SSH : CCW_SSH_UTILISATEUR / UTILISATEUR (défaut : voir
+       identite.utilisateur_ssh_defaut(), "AlainW" pour l'installation
+       d'Alain — issue #859) ;
     3. chemin de la clé privée SSH sur CCL : CCW_SSH_CLE_PRIVEE / CLE_PRIVEE.
   Prérequis manuels (hors périmètre de ce code) : OpenSSH Server activé sur le
   PC fixe, clé publique installée dans authorized_keys de l'utilisateur SSH.
@@ -61,14 +63,19 @@ from pathlib import Path
 
 from flask import has_app_context, jsonify, request
 
+import identite
+
 log = logging.getLogger(__name__)
 
 # Racine du projet (dossier parent du package app/) et dossier des scripts CCW.
 DOSSIER_SCRIPT  = Path(__file__).resolve().parent.parent
 DOSSIER_WINDOWS = DOSSIER_SCRIPT / "provisioning" / "windows"
 
-FICHIER_CONF_SSH   = DOSSIER_SCRIPT / "configs" / "ccw_ssh.conf"
-UTILISATEUR_DEFAUT = "AlainW"
+FICHIER_CONF_SSH = DOSSIER_SCRIPT / "configs" / "ccw_ssh.conf"
+# L'utilisateur SSH par défaut ("AlainW") n'est plus codé en dur ici depuis
+# l'issue #859 — voir identite.utilisateur_ssh_defaut(), consulté seulement
+# si ni CCW_SSH_UTILISATEUR ni la clé UTILISATEUR de ccw_ssh.conf ne sont
+# renseignées (cf. _charger_config_ssh ci-dessous).
 
 # Destination des scripts sur le PC fixe. Barres obliques (pas de « \ ») :
 # acceptées telles quelles par scp comme par powershell.exe -File, et ce code
@@ -124,7 +131,7 @@ def _charger_config_ssh() -> tuple[tuple[str, str, str] | None, str | None]:
     conf = _lire_conf_ssh()
     hote        = os.environ.get("CCW_SSH_HOTE") or conf.get("HOTE")
     utilisateur = (os.environ.get("CCW_SSH_UTILISATEUR") or conf.get("UTILISATEUR")
-                   or UTILISATEUR_DEFAUT)
+                   or identite.utilisateur_ssh_defaut())
     cle         = os.environ.get("CCW_SSH_CLE_PRIVEE") or conf.get("CLE_PRIVEE")
     if not hote:
         return None, ("Hôte SSH du PC fixe CCW non configuré. Définissez la variable "
@@ -502,7 +509,7 @@ def ccw_ajouter_projet():
             erreur="Nom de projet requis, sans espace ni séparateur de chemin.")
     if not re.match(r"^[^/\s]+/[^/\s]+$", depot):
         return jsonify(succes=False,
-            erreur="Dépôt invalide : attendu au format owner/repo (ex. AlainDelree/Scrabble).")
+            erreur="Dépôt invalide : attendu au format owner/repo (ex. votre-compte-github/Scrabble).")
     ctx, err = _preparer()
     if err:
         return err

@@ -52,7 +52,7 @@
 
   Exemple concret (Scrabble, dépôt public — aucun token requis pour le clone) :
     powershell -ExecutionPolicy Bypass -File provisioning\windows\ajouter_projet_ccw.ps1 `
-        -NomProjet Scrabble -Depot AlainDelree/Scrabble
+        -NomProjet Scrabble -Depot votre-compte-github/Scrabble
 #>
 
 [CmdletBinding()]
@@ -62,7 +62,7 @@ param(
     # Demandé interactivement s'il n'est pas fourni.
     [string]$NomProjet,
 
-    # Dépôt GitHub au format owner/repo (ex. AlainDelree/Scrabble).
+    # Dépôt GitHub au format owner/repo (ex. votre-compte-github/Scrabble).
     # Demandé interactivement s'il n'est pas fourni.
     [string]$Depot,
 
@@ -87,7 +87,7 @@ if ([string]::IsNullOrWhiteSpace($NomProjet)) {
     $NomProjet = Read-Host 'Nom du projet (ex. Scrabble)'
 }
 if ([string]::IsNullOrWhiteSpace($Depot)) {
-    $Depot = Read-Host 'Dépôt GitHub au format owner/repo (ex. AlainDelree/Scrabble)'
+    $Depot = Read-Host 'Dépôt GitHub au format owner/repo (ex. votre-compte-github/Scrabble)'
 }
 
 $NomProjet = $NomProjet.Trim()
@@ -95,7 +95,7 @@ $Depot     = $Depot.Trim()
 
 if ([string]::IsNullOrWhiteSpace($NomProjet)) { throw 'Nom de projet vide — abandon.' }
 if ($Depot -notmatch '^[^/\s]+/[^/\s]+$') {
-    throw "Dépôt « $Depot » invalide : attendu au format owner/repo (ex. AlainDelree/Scrabble)."
+    throw "Dépôt « $Depot » invalide : attendu au format owner/repo (ex. votre-compte-github/Scrabble)."
 }
 
 # nom en minuscules pour le préfixe du config et du log (cohérent avec les

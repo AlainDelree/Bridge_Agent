@@ -85,19 +85,19 @@ Write-Host ''
 if (-not (Test-Path (Join-Path $RepDepot '.git'))) {
     Avert "Dossier « $RepDepot » absent (ou non cloné) : le projet « $NomProjet » n'a pas encore été créé."
     Avert 'Lance d''abord ajouter_projet_ccw.ps1 :'
-    Avert "  powershell -File provisioning\windows\ajouter_projet_ccw.ps1 -NomProjet $NomProjet -Depot AlainDelree/$NomProjet"
+    Avert "  powershell -File provisioning\windows\ajouter_projet_ccw.ps1 -NomProjet $NomProjet -Depot votre-compte-github/$NomProjet"
     exit 1
 }
 if (-not (Test-Path $CheminConf)) {
     Avert "Fichier config « $CheminConf » introuvable : le projet « $NomProjet » n'a pas été correctement créé."
     Avert 'Relance ajouter_projet_ccw.ps1 pour (re)générer le config :'
-    Avert "  powershell -File provisioning\windows\ajouter_projet_ccw.ps1 -NomProjet $NomProjet -Depot AlainDelree/$NomProjet"
+    Avert "  powershell -File provisioning\windows\ajouter_projet_ccw.ps1 -NomProjet $NomProjet -Depot votre-compte-github/$NomProjet"
     exit 1
 }
 if (-not (Get-Service -Name $NomService -ErrorAction SilentlyContinue)) {
     Avert "Service « $NomService » introuvable : le projet « $NomProjet » n'a pas été enregistré."
     Avert 'Relance ajouter_projet_ccw.ps1 pour (re)créer le service :'
-    Avert "  powershell -File provisioning\windows\ajouter_projet_ccw.ps1 -NomProjet $NomProjet -Depot AlainDelree/$NomProjet"
+    Avert "  powershell -File provisioning\windows\ajouter_projet_ccw.ps1 -NomProjet $NomProjet -Depot votre-compte-github/$NomProjet"
     exit 1
 }
 
@@ -145,7 +145,7 @@ Write-Host ''
 # ---------------------------------------------------------------------------
 Info 'AVANT de coller les tokens : crée le token GitHub fine-grained DÉDIÉ à ce projet'
 Info '(GitHub → Settings → Developer settings → Fine-grained tokens) :'
-Info "  • Repository access → AlainDelree/$NomProjet UNIQUEMENT"
+Info "  • Repository access → votre-compte-github/$NomProjet UNIQUEMENT"
 Info '  • Permissions : Issues = Read and write, Metadata = Read-only'
 Info '  • Expiration : LA MÊME DATE que le token Bridge_Agent (≈ 2026-10-17,'
 Info "    aligné sur l'éval Windows) — ne pas laisser dériver (cf. §16)."
