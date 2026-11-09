@@ -37,10 +37,43 @@ from app.watchers import surveiller_redemarrages_differes
 from app.issues_inbox import (watcher_inbox_actif, demarrer_watcher_inbox,
                               arreter_watcher_inbox)
 from etat_cases_cochees import nettoyer_anciennes as nettoyer_cases_cochees
-from watcher import nettoyer_verrous_perimes
+from watcher import nettoyer_verrous_perimes, tenter_maj_auto_demarrage
 from mesure_charge_interface import demarrer_echantillonnage
 
 DOSSIER_SCRIPT = Path(__file__).resolve().parent
+
+# Niveau de bandeau (classes CSS .bandeau-eval-windows existantes, issue
+# #741) associé à chaque statut de tenter_maj_auto_demarrage() (issue #868).
+_NIVEAU_MAJ_AUTO_DEPOT = {"maj": "gris", "a_jour": "gris", "ignore": "orange", "echec": "rouge"}
+
+
+def _formater_message_maj_auto_depot(resultat: dict) -> str | None:
+    """Message humain à afficher (console + bandeau de l'interface) pour le
+    résultat d'une tentative de mise à jour automatique du dépôt au
+    démarrage (issue #868, `watcher.tenter_maj_auto_demarrage`). None si la
+    fonctionnalité est désactivée (réglage absent — cas par défaut, aucun
+    message, comportement inchangé pour les installations existantes
+    d'Alain). Rien n'est jamais silencieux dans les autres cas : chaque
+    statut (à jour, mis à jour, ignoré, échec) produit un message explicite,
+    avec sa raison pour « ignoré »/« échec » et la liste des fichiers changés
+    pour « mis à jour » — accompagné du rappel que les watchers déjà
+    démarrés tournent encore sur l'ancien code tant qu'ils ne sont pas
+    relancés."""
+    statut = resultat.get("statut")
+    message = resultat.get("message")
+    if statut == "desactive":
+        return None
+    prefixe = "Mise à jour automatique du dépôt de l'outil (MAJ_AUTO_DEPOT)"
+    if statut == "a_jour":
+        return f"{prefixe} : déjà à jour."
+    if statut == "maj":
+        fichiers = resultat.get("fichiers") or []
+        detail = f" — {len(fichiers)} fichier(s) modifié(s) : {', '.join(fichiers)}" if fichiers else ""
+        return (f"{prefixe} : mis à jour ({message}){detail}. Les watchers déjà démarrés "
+                "utilisent encore l'ancien code tant qu'ils ne sont pas relancés.")
+    if statut == "ignore":
+        return f"{prefixe} : ignorée — {message}."
+    return f"{prefixe} : échec — {message}."
 
 
 def _mode_reseau(args) -> tuple[str, str, bool]:
@@ -114,6 +147,33 @@ def main():
     # chargement de l'état initial.
     app = create_app()
     app.config["MOT_DE_PASSE"] = etat.charger_mot_de_passe()
+
+    # Mise à jour automatique FACULTATIVE du dépôt de l'outil au lancement
+    # (issue #868) — équivalent, pour une installation locale sans service
+    # CCW, du rafraîchissement que le watcher fait lui-même en début de
+    # cycle (watcher.rafraichir_depot, issue #185). Désactivée par défaut
+    # (réglage MAJ_AUTO_DEPOT absent de identite_locale.conf, issue #859) :
+    # dans ce cas tenter_maj_auto_demarrage() ne lance AUCUNE commande git et
+    # renvoie {"statut": "desactive"}, donc aucun message ici — comportement
+    # strictement inchangé pour les installations existantes d'Alain
+    # (ThinkPad, PC fixe). Jamais bloquant (délai court, --ff-only) ; rien
+    # n'est silencieux : le résultat est à la fois affiché ici (capturé dans
+    # logs/new_issue-session.log par le superviseur de démarrage Windows,
+    # provisioning/windows/installer_demarrage_session.ps1) et exposé dans
+    # app.config pour le bandeau d'état de l'interface (app/vues.py,
+    # templates/fragments/bandeaux.html).
+    _resultat_maj_depot = tenter_maj_auto_demarrage()
+    _message_maj_depot = _formater_message_maj_auto_depot(_resultat_maj_depot)
+    if _message_maj_depot:
+        print(_message_maj_depot)
+    app.config["MAJ_AUTO_DEPOT"] = (
+        {
+            "statut": _resultat_maj_depot.get("statut"),
+            "message": _message_maj_depot,
+            "niveau": _NIVEAU_MAJ_AUTO_DEPOT.get(_resultat_maj_depot.get("statut"), "gris"),
+        }
+        if _message_maj_depot else None
+    )
 
     # Nettoyage de l'état des cases cochées « traité/lu » (issue #629) :
     # purement local, AUCUN appel GitHub — retire, pour chaque projet, les

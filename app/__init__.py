@@ -72,6 +72,7 @@ def create_app() -> Flask:
     app.config["SSE_DEJA_VU"]            = False # au moins une connexion SSE a-t-elle eu lieu (issue #157)
     app.config["PROC_TUNNEL"]    = None    # processus cloudflared (mode --externe)
     app.config["FIN_ISSUE_ABONNES"] = []   # files SSE actives /stream, une par onglet Résultats (issue #350)
+    app.config["MAJ_AUTO_DEPOT"] = None    # résultat affichable de la mise à jour auto du dépôt au démarrage (issue #868)
 
     # Versionnage des fichiers statiques (cache-busting) : url_statique() et
     # importmap_socle() disponibles dans les gabarits (issue #625, étape 1).

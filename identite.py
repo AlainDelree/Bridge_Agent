@@ -89,6 +89,18 @@ def compte_github() -> str | None:
     return login or None
 
 
+def valeur_locale(cle: str, defaut: str = "") -> str:
+    """Valeur brute de `cle` dans `identite_locale.conf`, ou `defaut` si le
+    fichier est absent ou ne contient pas cette clé — lecture publique
+    générique pour d'autres réglages propres à l'installation locale que
+    COMPTE_GITHUB/UTILISATEUR_SSH (ex. MAJ_AUTO_DEPOT et ses compagnons,
+    issue #868). Volontairement PAS mise en cache comme compte_github() : ce
+    fichier n'est relu qu'une poignée de fois par processus appelant (ex. une
+    fois au démarrage de new_issue.py), le coût d'une relecture par appel est
+    négligeable."""
+    return _lire_identite_locale().get(cle.upper(), defaut)
+
+
 def utilisateur_ssh_defaut() -> str:
     """Utilisateur SSH/Windows par défaut proposé pour le PC fixe CCW
     (app/ccw.py), utilisé seulement si ni la variable d'environnement

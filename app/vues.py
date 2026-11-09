@@ -18,4 +18,5 @@ def index():
                            auth_active=bool(etat.get("MOT_DE_PASSE")),
                            formats_image=formats_image_acceptes(),
                            jetons_annuaire=etat_jetons_annuaire(),
+                           maj_auto_depot=etat.get("MAJ_AUTO_DEPOT"),
                            agent_par_defaut=AGENT_PAR_DEFAUT)
