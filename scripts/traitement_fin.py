@@ -58,6 +58,7 @@ import argparse
 import json
 import math
 import os
+import platform
 import struct
 import subprocess
 import sys
@@ -65,6 +66,11 @@ import tempfile
 import urllib.request
 import wave
 from pathlib import Path
+
+try:
+    import winsound  # stdlib, Windows uniquement — aucune dépendance ajoutée
+except ImportError:
+    winsound = None
 
 # etat_son_issue.py vit à la racine du dépôt (parent de scripts/) — ajouté au
 # sys.path pour fonctionner quel que soit le cwd depuis lequel ce script est
@@ -84,6 +90,26 @@ URL_NOTIFIER_DEBUT_ISSUE   = "http://localhost:5100/notifier-debut-issue"
 TIMEOUT_NOTIFIER_FIN_ISSUE = 1   # s — new_issue.py non lancé ne doit jamais retarder le bip
 
 FICHIER_SON_ACTIF = os.path.join(os.path.dirname(os.path.abspath(__file__)), "son_actif.txt")
+
+
+def _jouer_wav(chemin: str):
+    """Joue le fichier WAV `chemin` selon la plateforme (issue #863) : `aplay`
+    sous Linux (comportement historique, inchangé), `winsound` (stdlib,
+    Windows uniquement, aucune dépendance ajoutée) sous Windows. Best-effort
+    strict — l'absence de l'outil de lecture (aplay non installé, pas de
+    session audio/bureau si le watcher tourne en SERVICE Windows) ou toute
+    autre erreur est avalée silencieusement ici : un bip qui échoue ne doit
+    JAMAIS faire échouer la fin de traitement d'une issue, sous aucun
+    système (le POST /notifier-fin-issue qui suit dans main() doit toujours
+    avoir lieu)."""
+    try:
+        if platform.system() == "Windows":
+            if winsound is not None:
+                winsound.PlaySound(chemin, winsound.SND_FILENAME)
+        else:
+            subprocess.run(["aplay", chemin], capture_output=True)
+    except Exception:
+        pass
 
 
 def _frequence_decalee(f_base: float, demitons: int) -> float:
@@ -109,13 +135,14 @@ def bip_plat(demitons: int = 0):
     w.writeframes(data)
     w.close()
 
-    subprocess.run(["aplay", tmp], capture_output=True)
+    _jouer_wav(tmp)
     os.remove(tmp)
 
 
 def bip(demitons: int = 0):
-    """Son de cloche douce (880 Hz, enveloppe exponentielle décroissante) via
-    aplay. `demitons` (issue #526) : décalage de tonalité par projet."""
+    """Son de cloche douce (880 Hz, enveloppe exponentielle décroissante),
+    `aplay` sous Linux / `winsound` sous Windows (voir _jouer_wav, issue
+    #863). `demitons` (issue #526) : décalage de tonalité par projet."""
     f = _frequence_decalee(F, demitons)
     samples = [
         int(32767 * math.sin(2 * math.pi * f * t / SR) * math.exp(-t * DECAY / SR))
@@ -213,10 +240,18 @@ def main():
     args = parser.parse_args()
 
     son = son_a_jouer(args.projet, args.numero)
-    if son == "cloche":
-        bip(args.tonalite)
-    elif son != "silence":
-        bip_plat(args.tonalite)
+    try:
+        if son == "cloche":
+            bip(args.tonalite)
+        elif son != "silence":
+            bip_plat(args.tonalite)
+    except Exception:
+        # Garde-fou supplémentaire (issue #863) : même une erreur imprévue
+        # dans la génération/lecture du son (au-delà de celles déjà avalées
+        # par _jouer_wav) ne doit jamais empêcher le POST best-effort
+        # ci-dessous — la fin de traitement d'une issue ne doit JAMAIS
+        # échouer à cause du son, sous aucun système.
+        pass
 
     if args.projet and args.numero:
         notifier_fin_issue(args.projet, args.numero)
