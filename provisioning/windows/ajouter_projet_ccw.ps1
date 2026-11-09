@@ -448,8 +448,10 @@ nssm start $NomService | Out-Null
 # 5. Droits de démarrage/arrêt sans élévation UAC (issue #717, persistance).
 #    nssm remove + nssm install (étape 3 ci-dessus) efface tout réglage
 #    sc.exe sdset posé précédemment — on le repose donc ICI systématiquement,
-#    à chaque création OU recréation, pour qu'AlainW n'ait jamais besoin de
-#    relancer manuellement autoriser_demarrage_ccw.ps1 après un ajout de projet.
+#    à chaque création OU recréation, pour que le compte courant n'ait jamais
+#    besoin de relancer manuellement autoriser_demarrage_ccw.ps1 après un
+#    ajout de projet (compte par défaut : celui qui lance CE script, voir
+#    ccw-commun.psm1::Autoriser-DemarrageServiceCcw, issue #861).
 # ---------------------------------------------------------------------------
 try {
     Autoriser-DemarrageServiceCcw -NomService $NomService | Out-Null

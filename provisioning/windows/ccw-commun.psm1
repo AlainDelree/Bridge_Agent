@@ -105,13 +105,15 @@ function Lire-ValeurFichier {
     return $null
 }
 
-# Accorde à un compte (AlainW par défaut) le droit de démarrer/arrêter/
-# interroger un service CCW SANS élévation UAC (issue #717, étape F du
-# retrofit CCW). Constat du 04/10/2026 : AlainW est administrateur, mais son
-# jeton en session NORMALE est bridé par l'UAC (groupe Administrators en
-# « deny only », niveau Medium) — nssm status fonctionne, nssm start échoue
-# avec « OpenService(): Access is denied ». Le démarrage par SSH marche
-# parce qu'une session SSH d'administrateur reçoit les droits complets.
+# Accorde à un compte (le compte qui lance ce script par défaut, issue #861
+# — ancien défaut codé en dur 'AlainW', ne convenait qu'au PC fixe d'Alain)
+# le droit de démarrer/arrêter/interroger un service CCW SANS élévation UAC
+# (issue #717, étape F du retrofit CCW). Constat du 04/10/2026 : un compte
+# administrateur voit son jeton en session NORMALE bridé par l'UAC (groupe
+# Administrators en « deny only », niveau Medium) — nssm status fonctionne,
+# nssm start échoue avec « OpenService(): Access is denied ». Le démarrage
+# par SSH marche parce qu'une session SSH d'administrateur reçoit les
+# droits complets.
 #
 # `sc.exe sdset` pose une entrée DÉDIÉE au compte visé, sans dépendre de son
 # appartenance au groupe Administrateurs — ce compte peut alors démarrer/
@@ -131,7 +133,7 @@ function Lire-ValeurFichier {
 function Autoriser-DemarrageServiceCcw {
     param(
         [Parameter(Mandatory=$true)][string]$NomService,
-        [string]$NomCompte = 'AlainW'
+        [string]$NomCompte = $env:USERNAME
     )
 
     $sid = (New-Object System.Security.Principal.NTAccount($NomCompte)).

@@ -1,24 +1,25 @@
 ﻿<#
-  autoriser_demarrage_ccw.ps1 — Accorde à AlainW (ou un autre compte) le
-  droit de démarrer/arrêter/interroger TOUS les services CCW-Watcher*
-  existants SANS élévation UAC (issue #717, étape F du retrofit CCW).
+  autoriser_demarrage_ccw.ps1 — Accorde au compte qui lance ce script (ou à
+  un autre compte, -NomCompte) le droit de démarrer/arrêter/interroger TOUS
+  les services CCW-Watcher* existants SANS élévation UAC (issue #717,
+  étape F du retrofit CCW).
 
   Contexte : un service de projet (CCW-Watcher-<Projet>) s'éteint seul après
   20 min d'inactivité (AppExit 42 Exit, issue #712) et doit être rallumé par
   `nssm start`. Le rallumage par SSH (app.ccw.demarrer_service_ccw_arriere_plan)
   fonctionne parce qu'une session SSH d'administrateur reçoit les droits
   complets — mais quand `new_issue.py` tourne NATIVEMENT sous Windows (aucun
-  hôte SSH configuré), le process tourne sous le jeton NORMAL d'AlainW,
+  hôte SSH configuré), le process tourne sous le jeton NORMAL du compte,
   bridé par l'UAC (groupe Administrators en « deny only », niveau Medium)
-  même si AlainW est administrateur. Constat vérifié le 04/10/2026, depuis
+  même si ce compte est administrateur. Constat vérifié le 04/10/2026, depuis
   un PowerShell NON élevé : `nssm status` fonctionne, mais `nssm start`
   échoue avec « OpenService(): Access is denied » — l'hypothèse « UAC
   désactivé » était donc fausse.
 
   Ce script pose UNE FOIS, sans élévation requise ENSUITE, les droits
-  START + STOP + QUERY (SDDL : `(A;;LCSWRPWPLOCRRC;;;<SID>)`) à AlainW sur
-  CHAQUE service `CCW-Watcher*` déjà présent sur la machine (le service de
-  base `CCW-Watcher`, SANS suffixe, est inclus — il reste toujours actif,
+  START + STOP + QUERY (SDDL : `(A;;LCSWRPWPLOCRRC;;;<SID>)`) au compte visé
+  sur CHAQUE service `CCW-Watcher*` déjà présent sur la machine (le service
+  de base `CCW-Watcher`, SANS suffixe, est inclus — il reste toujours actif,
   volontairement, mais bénéficie aussi des boutons Démarrer/Arrêter de
   l'onglet CCW). Logique partagée avec `ajouter_projet_ccw.ps1` (persistance
   à la création/recréation d'un service) : voir
@@ -39,9 +40,12 @@
 [CmdletBinding()]
 param(
     # Compte à autoriser à démarrer/arrêter/interroger les services sans
-    # élévation. Le SID est résolu dynamiquement à partir de ce nom — jamais
-    # codé en dur (propre à chaque PC).
-    [string]$NomCompte = 'AlainW'
+    # élévation. Par défaut, le compte qui LANCE ce script ($env:USERNAME,
+    # issue #861) — plus portable qu'un nom codé en dur (l'ancien défaut
+    # 'AlainW' ne convenait qu'au PC fixe d'Alain). Le SID est résolu
+    # dynamiquement à partir de ce nom — jamais codé en dur (propre à
+    # chaque PC).
+    [string]$NomCompte = $env:USERNAME
 )
 
 $ErrorActionPreference = 'Stop'

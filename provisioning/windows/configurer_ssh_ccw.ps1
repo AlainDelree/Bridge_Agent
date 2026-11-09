@@ -154,4 +154,4 @@ if (-not $dejaActive) {
 Info 'Redémarrage du service sshd…'
 Restart-Service sshd
 
-Info 'Configuration SSH terminée — connexion possible depuis CCL (ssh AlainW@<hôte>).'
+Info 'Configuration SSH terminée — connexion possible depuis CCL (ssh <compte-administrateur>@<hôte>).'
