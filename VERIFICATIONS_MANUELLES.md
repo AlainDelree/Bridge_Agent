@@ -237,23 +237,39 @@
       seul le rapport de la DERNIÈRE case cochée doit se retrouver dans le
       presse-papier (coller pour vérifier).
 - [ ] **Vidage immédiat du presse-papier au clic, dans Firefox (issue #857,
-      inchangé en principe par #858)** : vérifié par les tests JS que le
-      vidage (chaîne vide) est bien la PREMIÈRE écriture envoyée au
-      navigateur, avant même que le rapport soit prêt, et qu'un échec
-      d'écriture laisse le presse-papier vide plutôt que de le réécrire avec
-      un ancien contenu — mais PAS que Firefox accepte réellement d'écrire
-      une chaîne vide ni l'ORDRE d'arrivée effectif des deux écritures une
-      fois sorties du navigateur (ces deux écritures sont désormais engagées
-      l'une après l'autre dans le MÊME geste, voir le rapport de l'issue
-      #858) : à vérifier à la main. Copier un texte quelconque ailleurs
-      (Ctrl+C), puis dans l'onglet Résultats cocher la case d'une issue dont
-      le rapport n'est manifestement pas encore préchargé (juste après un
-      rechargement de page) : coller (Ctrl+V) dans un éditeur de texte DANS
-      LA SECONDE QUI SUIT le clic — le collage doit être vide (ou ne rien
-      coller), jamais l'ancien texte copié avant. Attendre ensuite la fin de
-      la copie et recoller : le rapport doit apparaître. Si Firefox refuse la
-      chaîne vide (collage d'un espace au lieu de rien), c'est le repli prévu
-      (voir le rapport de l'issue) — pas une anomalie.
+      PUIS correctif de l'issue #865)** : CAUSE établie par #865 — jusque-là,
+      le vidage (chaîne vide) et l'écriture du rapport (contenu différé)
+      étaient engagés l'un après l'autre SANS ATTENDRE la fin du premier ;
+      Firefox annule une écriture encore pendante dès qu'une nouvelle est
+      lancée avant qu'elle n'aboutisse (constat de #782), si bien que le
+      vidage était TOUJOURS annulé par l'écriture du rapport qui le suivait,
+      AVANT d'avoir pu remplacer l'ancien contenu — l'ancien rapport restait
+      donc en place pendant toute la préparation. Depuis #865, `lancerCopie`
+      ATTEND la fin réelle du vidage avant d'engager l'écriture du rapport.
+      Prouvé par les tests JS (modèle du presse-papier réel, avec annulation
+      simulée) : le vidage se termine bien AVANT que le rapport ne soit
+      engagé, et le contenu réel ne contient jamais l'ancien rapport pendant
+      la préparation, ni en cas d'échec. NON prouvable sous Node, à vérifier
+      à la main (voir essai ci-dessous) : que Firefox se comporte réellement
+      comme modélisé (annulation d'une écriture pendante par une plus
+      récente, mise à jour différée jusqu'à résolution du contenu), et que
+      le délai introduit par l'attente du vidage (quelques millisecondes)
+      ne fait pas sortir l'écriture du rapport de la fenêtre d'activation du
+      clic.
+      **Essai précis** : copier un texte quelconque ailleurs (Ctrl+C) pour
+      avoir un « ancien contenu » reconnaissable dans le presse-papier.
+      Recharger la page (cache de l'onglet vidé, rien n'a encore eu le temps
+      d'être préchargé), puis dans l'onglet Résultats cocher la case d'une
+      issue dont le rapport n'est manifestement pas encore préchargé.
+      **Coller (Ctrl+V) immédiatement dans un éditeur de texte, le plus vite
+      possible après le clic** : le résultat attendu est **vide** (ou un
+      simple espace) — JAMAIS l'ancien texte copié avant. Attendre quelques
+      secondes (fin de la préparation), puis **coller de nouveau** dans le
+      même éditeur : le rapport complet de l'issue cochée doit apparaître
+      cette fois. Si l'ancien contenu ressurgit au premier collage, le
+      correctif de #865 ne suffit pas en pratique (hypothèse de ce correctif
+      invalidée) : à signaler avec le délai observé entre le clic et le
+      collage.
 - [ ] **Repère « prêt à copier » et périmètre/ordre de la précharge (issue
       #835)** : sur une issue non cochée dont le texte est déjà préparé et
       valide, un petit repère (pastille à contour vert `✓`) apparaît juste
