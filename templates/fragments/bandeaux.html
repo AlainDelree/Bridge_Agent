@@ -11,6 +11,19 @@
   </div>
   {% endif %}
 
+  <!-- ─── Bandeau : résultat de la mise à jour automatique FACULTATIVE du
+       dépôt de l'outil au démarrage (réglage MAJ_AUTO_DEPOT dans
+       identite_locale.conf, issue #868) — alimenté une fois par
+       new_issue.py avant app.run() (app.config["MAJ_AUTO_DEPOT"]), lu par
+       app/vues.py::index(). Absent (None) tant que le réglage n'est pas
+       activé — aucun changement visuel pour les installations existantes
+       d'Alain. ─ -->
+  {% if maj_auto_depot %}
+  <div class="bandeau-eval-windows {{ maj_auto_depot.niveau }}">
+    <div>{{ maj_auto_depot.message }}</div>
+  </div>
+  {% endif %}
+
   <!-- ─── Bandeau global : tâche(s) mode_write en cours directement dans
        REP_TRAVAIL, hors worktree isolé (repli #589, issue #609) — visible sur
        TOUS les onglets, comme le bandeau de l'annuaire ci-dessus. Alimenté par

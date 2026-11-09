@@ -1142,7 +1142,51 @@ def _commit_sauvegarde_watcher(numero: int, titre: str, cwd_effectif: Path) -> t
         return None, ()
 
 
-def rafraichir_depot(rep: Path, dry_run: bool = False):
+def _depot_est_propre(rep: Path, timeout: int = 10) -> tuple[bool, str]:
+    """Vrai si `rep` n'a aucune modification non enregistrée (`git status
+    --porcelain` vide) — garde-fou supplémentaire utilisé par le
+    rafraîchissement automatique FACULTATIF au démarrage de new_issue.py
+    (issue #868, `exiger_propre` de rafraichir_depot ci-dessous) : une copie
+    personnalisée par un tiers ne doit jamais être touchée, même dans les cas
+    où `git pull --ff-only` resterait lui-même sans danger (fichiers modifiés
+    non concernés par la mise à jour). Toute impossibilité de vérifier
+    (erreur, délai dépassé) est traitée par prudence comme « pas propre »."""
+    try:
+        res = subprocess.run(
+            ["git", "status", "--porcelain"],
+            cwd=rep, capture_output=True, text=True,
+            encoding="utf-8", errors="replace", timeout=timeout,
+        )
+    except (OSError, subprocess.SubprocessError) as e:
+        return False, f"impossible de vérifier l'état du dépôt ({e})"
+    if res.returncode != 0:
+        return False, "impossible de vérifier l'état du dépôt (git status en échec)"
+    if res.stdout.strip():
+        return False, "modifications locales non enregistrées"
+    return True, ""
+
+
+def _fichiers_modifies_par_pull(rep: Path, sha_avant: str, sha_apres: str, timeout: int = 10) -> list[str]:
+    """Liste des fichiers changés par un rafraîchissement réel (`git diff
+    --name-only` entre les deux SHA) — best-effort, pour affichage seulement
+    (issue #868) : liste vide si la commande échoue, jamais d'exception."""
+    try:
+        res = subprocess.run(
+            ["git", "diff", "--name-only", sha_avant, sha_apres],
+            cwd=rep, capture_output=True, text=True,
+            encoding="utf-8", errors="replace", timeout=timeout,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return []
+    if res.returncode != 0:
+        return []
+    return [l for l in res.stdout.splitlines() if l.strip()]
+
+
+def rafraichir_depot(rep: Path, dry_run: bool = False, remote: str | None = None,
+                      branche: str | None = None, timeout: int = 60,
+                      exiger_propre: bool = False,
+                      avec_liste_fichiers: bool = False) -> dict:
     """Best-effort : rafraîchit le clone local via `git pull --ff-only` en début
     de cycle, pour qu'un watcher (CCL/CCW) travaille automatiquement sur le code
     le plus récent poussé sur origin, sans git pull manuel (issue #185).
@@ -1160,31 +1204,68 @@ def rafraichir_depot(rep: Path, dry_run: bool = False):
     cycle — le pull est un confort de fraîcheur, pas une précondition.
 
     En dry-run, on n'altère pas l'arbre de travail local : on se contente de
-    signaler ce qui serait fait (cohérent avec le reste du mode simulation)."""
+    signaler ce qui serait fait (cohérent avec le reste du mode simulation).
+
+    Paramètres ajoutés par l'issue #868 (réutilisation par
+    `tenter_maj_auto_demarrage()` ci-dessous, pour new_issue.py) — tous
+    facultatifs, défauts strictement inchangés pour l'appel historique
+    (watcher.py, cycle de watcher) :
+      • `remote`/`branche` : si renseignés, suivis au lieu du remote/branche
+        par défaut du dépôt (`git pull --ff-only <remote> <branche>` plutôt
+        que `git pull --ff-only`) — utile si l'installation locale a sa
+        propre branche mais veut malgré tout suivre celle d'Alain ;
+      • `timeout` : délai maximum (s) du `git pull`, 60 par défaut (comme
+        avant) ;
+      • `exiger_propre` : si True, vérifie D'ABORD l'absence de modifications
+        non enregistrées (`_depot_est_propre`) et renonce sans même tenter le
+        pull si le dépôt n'est pas propre — par défaut False (comportement
+        historique inchangé : git pull --ff-only gère déjà seul les cas où
+        une modification locale serait écrasée) ;
+      • `avec_liste_fichiers` : si True, calcule la liste des fichiers changés
+        par un rafraîchissement réel (git diff --name-only) — coût
+        supplémentaire négligeable, seulement payé quand demandé.
+
+    Retourne désormais toujours un dict structuré — {"statut": …, "message":
+    …} au minimum, "fichiers"/"sha_avant"/"sha_apres" en plus pour "maj" —
+    ignoré par l'appel historique (watcher.py) mais exploité par
+    `tenter_maj_auto_demarrage()` pour l'affichage dans l'interface."""
     if not rep.is_dir():
-        return
+        return {"statut": "echec", "message": f"{rep} n'existe pas."}
     if not _est_depot_git(rep):
         log.debug(f"  [pull] {rep} n'est pas un dépôt git — rafraîchissement ignoré.")
-        return
+        return {"statut": "ignore", "message": f"{rep} n'est pas un dépôt git."}
 
     if dry_run:
         log.info(f"  [DRY-RUN] [pull] git pull --ff-only serait lancé dans {rep}.")
-        return
+        return {"statut": "ignore", "message": "dry-run : aucune action."}
+
+    if exiger_propre:
+        propre, raison = _depot_est_propre(rep)
+        if not propre:
+            log.info(f"  [pull] {rep} : ignoré — {raison}. Poursuite sur le code local.")
+            return {"statut": "ignore", "message": raison}
 
     tete_avant = _tete_git(rep)
 
+    cmd = ["git", "pull", "--ff-only"]
+    if remote or branche:
+        cmd.append(remote or "origin")
+        if branche:
+            cmd.append(branche)
+
     try:
         res = subprocess.run(
-            ["git", "pull", "--ff-only"],
+            cmd,
             cwd=rep, capture_output=True, text=True,
-            encoding="utf-8", errors="replace", timeout=60,
+            encoding="utf-8", errors="replace", timeout=timeout,
         )
     except subprocess.TimeoutExpired:
+        message = f"délai dépassé ({timeout}s) sur git pull dans {rep} (réseau lent ?)"
         log.warning(f"  [pull] échoué : délai dépassé sur git pull dans {rep} (réseau lent ?) — poursuite sur le code local.")
-        return
+        return {"statut": "echec", "message": message}
     except Exception as e:
         log.warning(f"  [pull] échoué : {e} — poursuite sur le code local.")
-        return
+        return {"statut": "echec", "message": str(e)}
 
     if res.returncode == 0:
         # Détection avancement locale-indépendante : comparer HEAD avant/après
@@ -1192,24 +1273,89 @@ def rafraichir_depot(rep: Path, dry_run: bool = False):
         tete_apres = _tete_git(rep)
         if tete_avant and tete_apres and tete_avant != tete_apres:
             log.info(f"  [pull] {rep} mis à jour ({tete_avant[:7]} → {tete_apres[:7]}).")
+            fichiers = (_fichiers_modifies_par_pull(rep, tete_avant, tete_apres)
+                        if avec_liste_fichiers else [])
+            return {"statut": "maj", "message": f"{tete_avant[:7]} → {tete_apres[:7]}",
+                    "fichiers": fichiers, "sha_avant": tete_avant, "sha_apres": tete_apres}
         else:
             log.debug(f"  [pull] {rep} déjà à jour.")
-        return
+            return {"statut": "a_jour", "message": "déjà à jour."}
 
     # Échec : distinguer la cause pour un message clair et actionnable.
     err = (res.stderr + "\n" + res.stdout).strip()
     err_bas = err.lower()
     if "fast-forward" in err_bas or "diverg" in err_bas:
+        message = ("commits locaux non poussés (fast-forward impossible — "
+                    "backup/fix en attente de revue ?)")
         log.info("  [pull] ignoré : commits locaux non poussés (fast-forward impossible — "
                  "backup/fix en attente de revue ?) — pensez à git push. Poursuite sur le code local.")
+        return {"statut": "ignore", "message": message}
     elif ("could not resolve host" in err_bas or "connection" in err_bas
           or "unable to access" in err_bas or "timed out" in err_bas
           or "network is unreachable" in err_bas):
         premiere = err.splitlines()[0] if err else "réseau indisponible"
         log.warning(f"  [pull] échoué : réseau indisponible ({premiere}) — poursuite sur le code local.")
+        return {"statut": "echec", "message": f"réseau indisponible ({premiere})"}
     else:
         premiere = err.splitlines()[0] if err else "erreur inconnue"
         log.warning(f"  [pull] échoué : {premiere} — poursuite sur le code local.")
+        return {"statut": "echec", "message": premiere}
+
+
+TIMEOUT_MAJ_AUTO_DEMARRAGE = 8  # secondes — délai court, ne doit jamais retarder
+                                 # durablement le démarrage de new_issue.py (issue #868)
+
+
+def tenter_maj_auto_demarrage(rep: Path | None = None) -> dict:
+    """Tentative de mise à jour automatique du dépôt de l'outil au lancement
+    de new_issue.py (issue #868) — équivalent, pour une installation locale
+    sans service CCW, du rafraîchissement que le watcher fait déjà lui-même en
+    début de cycle (`rafraichir_depot` ci-dessus). Réglage FACULTATIF,
+    désactivé par défaut : aucun changement de comportement pour les
+    installations existantes d'Alain (ThinkPad, PC fixe) tant que rien n'est
+    ajouté dans `identite_locale.conf`.
+
+    Réglages lus dans `identite_locale.conf` (racine du dépôt, gitignoré,
+    hors de configs/*.conf — voir identite.py, issue #859) :
+      • `MAJ_AUTO_DEPOT = oui` : active la fonctionnalité (toute autre valeur,
+        ou absence de la clé, la laisse désactivée) ;
+      • `MAJ_AUTO_DEPOT_REMOTE` / `MAJ_AUTO_DEPOT_BRANCHE` (facultatifs) :
+        dépôt distant et branche à suivre, si différents de ceux déjà
+        configurés dans le dépôt — pensé pour un ami qui personnalise sa
+        propre copie sur sa propre branche mais veut malgré tout pouvoir
+        suivre les mises à jour d'Alain sans y toucher. Forme choisie la plus
+        simple : si l'une des deux clés est renseignée, la commande devient
+        `git pull --ff-only <remote ou "origin"> <branche>` (branche omise si
+        seule MAJ_AUTO_DEPOT_REMOTE est renseignée) plutôt que le `git pull
+        --ff-only` sans argument utilisé par défaut.
+
+    Réutilise rafraichir_depot() ci-dessus sans dupliquer sa logique, avec
+    deux réglages supplémentaires propres à ce contexte de démarrage
+    d'interface (plutôt qu'à un cycle de watcher) : `exiger_propre=True` (une
+    copie personnalisée ne doit JAMAIS être altérée, y compris dans les cas
+    où le pull resterait lui-même sans danger) et un délai court
+    (`TIMEOUT_MAJ_AUTO_DEMARRAGE`) pour ne jamais retarder durablement le
+    démarrage.
+
+    Retourne toujours un dict (jamais d'exception) — {"statut": "desactive",
+    "message": None} si le réglage est absent/désactivé, sinon le dict
+    structuré de rafraichir_depot (statut parmi "a_jour"/"maj"/"ignore"/
+    "echec"), "fichiers" renseigné pour "maj"."""
+    if rep is None:
+        rep = DOSSIER_SCRIPT
+
+    actif = identite.valeur_locale("MAJ_AUTO_DEPOT", "").strip().lower()
+    if actif not in ("true", "1", "oui", "yes", "vrai"):
+        return {"statut": "desactive", "message": None}
+
+    remote = identite.valeur_locale("MAJ_AUTO_DEPOT_REMOTE").strip() or None
+    branche = identite.valeur_locale("MAJ_AUTO_DEPOT_BRANCHE").strip() or None
+
+    return rafraichir_depot(
+        rep, remote=remote, branche=branche,
+        timeout=TIMEOUT_MAJ_AUTO_DEMARRAGE, exiger_propre=True,
+        avec_liste_fichiers=True,
+    )
 
 
 def _lister_worktrees_secondaires(rep_travail: Path = None) -> list[dict]:

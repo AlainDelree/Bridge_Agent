@@ -1,6 +1,6 @@
 # GUIDE_INSTALLATION_WINDOWS_SEUL — Bridge_Agent sur un PC Windows seul, avec Mistral Vibe
 
-Dernière mise à jour : 9 novembre 2026. Version de travail : à corriger après la première installation réelle.
+Dernière mise à jour : 9 novembre 2026 (§3, réglage `MAJ_AUTO_DEPOT`, issue #868). Version de travail : à corriger après la première installation réelle.
 
 Ce guide ne répète pas ce que disent déjà les autres documents du dépôt : il donne l'ordre des étapes, renvoie vers le bon document pour le détail, et signale les pièges déjà rencontrés.
 
@@ -42,7 +42,17 @@ git clone https://github.com/AlainDelree/Bridge_Agent.git C:\CCW\Bridge_Agent
 
 Le chemin `C:\CCW\Bridge_Agent` est celui que supposent l'alias `bridge` et les scripts (établi). Ne pas le changer sans lire `NEW_ISSUE_LOCAL_WINDOWS.md`.
 
-**Recevoir les mises à jour de l'outil (à vérifier).** Ce dossier est une copie de l'outil Bridge_Agent, publié par Alain ; les projets de l'utilisateur ont leurs propres dépôts, ailleurs. Quand Alain corrige ou améliore l'outil, ces changements arrivent sur GitHub mais pas dans cette copie. Sur le PC fixe d'Alain, un service CCW fait cette mise à jour seul avant chaque cycle ; cette installation n'a pas ce service, et aucun équivalent n'est confirmé. Il n'y a donc rien à faire au quotidien : **seulement quand Alain annonce une mise à jour**, lancer :
+**Recevoir les mises à jour de l'outil (établi, issue #868).** Ce dossier est une copie de l'outil Bridge_Agent, publié par Alain ; les projets de l'utilisateur ont leurs propres dépôts, ailleurs. Quand Alain corrige ou améliore l'outil, ces changements arrivent sur GitHub mais pas dans cette copie. Sur le PC fixe d'Alain, un service CCW fait cette mise à jour seul avant chaque cycle ; cette installation n'a pas ce service, mais `new_issue.py` peut désormais faire l'équivalent tout seul à son lancement — réglage **facultatif, désactivé par défaut**, à ajouter dans `identite_locale.conf` (racine du dépôt, gitignoré, voir §4 ci-dessous) :
+
+```
+MAJ_AUTO_DEPOT = oui
+```
+
+Avec ce réglage, chaque lancement de `new_issue.py` tente un `git pull --ff-only` rapide (quelques secondes maximum, jamais bloquant) avant d'ouvrir l'interface : rien n'est écrasé si la copie a été personnalisée (modification non enregistrée) ou si son historique a divergé de celui d'Alain (ex. un correctif local pas encore poussé) — la tentative est alors simplement ignorée, sans toucher au dépôt. Le résultat (à jour, mis à jour avec la liste des fichiers changés, ignoré ou en échec, avec sa raison) s'affiche à la fois dans la console de `new_issue.py` (capturée dans `logs\new_issue-session.log` sous l'installeur de démarrage de session, §9) et dans un bandeau de l'interface elle-même. **Un rappel important accompagne toute mise à jour réussie** : les watchers déjà démarrés continuent de tourner sur l'ancien code tant qu'ils ne sont pas relancés — penser à les relancer (§9 ou boutons de l'onglet Infrastructure) après une mise à jour signalée.
+
+Deux clés facultatives supplémentaires, `MAJ_AUTO_DEPOT_REMOTE` et `MAJ_AUTO_DEPOT_BRANCHE`, permettent de suivre un dépôt distant/une branche différents de ceux déjà configurés dans le dépôt — utile si cette copie est elle-même personnalisée sur sa propre branche mais doit malgré tout continuer à suivre celle d'Alain (voir §8.1 de `BRIDGE_AGENT_DOC.md`).
+
+Sans ce réglage (valeur par défaut), ou en complément quand Alain annonce une mise à jour entre deux lancements de l'interface, la méthode manuelle reste :
 
 ```powershell
 git -C C:\CCW\Bridge_Agent pull --ff-only

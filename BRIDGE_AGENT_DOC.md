@@ -592,6 +592,51 @@ lit `UTILISATEUR_SSH` dans `identite_locale.conf`, à défaut retombe sur le
 repli historique `AlainW` (seule installation existante à ce jour, sans
 équivalent auto-détectable comme `gh`).
 
+### 8.1 Mise à jour automatique facultative du dépôt au démarrage de `new_issue.py` (issue #868)
+
+Sur le PC fixe d'Alain, un service CCW rafraîchit le clone de l'outil avant
+chaque cycle de watcher (`rafraichir_depot()`, issue #185). Une installation
+locale sans ce service (ex. un ami, poste Windows seul) n'a aucun équivalent :
+sans action manuelle (`git pull --ff-only`), elle ne reçoit jamais les
+correctifs publiés par Alain.
+
+**Réglage facultatif, désactivé par défaut**, dans `identite_locale.conf`
+(racine du dépôt, gitignoré — §8 ci-dessus) :
+```
+MAJ_AUTO_DEPOT          = oui        # active la fonctionnalité (absent/toute
+                                      # autre valeur = désactivé, comportement
+                                      # inchangé pour les installations
+                                      # existantes d'Alain)
+MAJ_AUTO_DEPOT_REMOTE   = <remote>   # facultatif, défaut : celui du dépôt
+MAJ_AUTO_DEPOT_BRANCHE  = <branche>  # facultatif, défaut : celle du dépôt
+```
+`MAJ_AUTO_DEPOT_REMOTE`/`MAJ_AUTO_DEPOT_BRANCHE` permettent à un ami qui
+personnalise sa propre copie, sur sa propre branche, de malgré tout suivre
+les mises à jour d'Alain sans toucher à sa branche de travail (ex.
+`MAJ_AUTO_DEPOT_REMOTE = upstream`, `MAJ_AUTO_DEPOT_BRANCHE = master`).
+
+**Comportement, une fois activé** (`watcher.tenter_maj_auto_demarrage()`,
+appelé par `new_issue.py` juste avant de démarrer le serveur Flask) :
+réutilise `rafraichir_depot()` — même sécurité par construction
+(`--ff-only`, jamais rien écrasé) — avec deux garanties supplémentaires
+propres à ce contexte de démarrage : délai court (8 s, ne retarde jamais
+durablement l'ouverture de l'interface) et **renonce sans même tenter le
+pull si le dépôt contient la moindre modification non enregistrée**, même
+dans les cas où le pull resterait lui-même sans danger — une copie
+personnalisée par un tiers ne doit jamais être altérée. Une divergence
+d'historique (commit local non poussé) est elle aussi ignorée proprement
+(fast-forward impossible).
+
+**Rien n'est silencieux** : le résultat de chaque tentative (à jour, mis à
+jour avec la liste des fichiers changés, ignoré avec sa raison, échec avec
+sa raison) est à la fois affiché sur la sortie standard de `new_issue.py`
+(capturée dans `logs/new_issue-session.log` sous l'installeur de démarrage
+de session Windows) et exposé dans l'interface elle-même, en bandeau
+(`app.config["MAJ_AUTO_DEPOT"]` → `app/vues.py::index()` →
+`templates/fragments/bandeaux.html`). Après une mise à jour réelle, ce même
+message rappelle explicitement que les watchers déjà démarrés tournent
+encore sur l'ancien code tant qu'ils ne sont pas relancés.
+
 ---
 
 ## 9. Accès externe
@@ -977,13 +1022,13 @@ estimation que celle déjà affichée, sans dupliquer ce calcul.
 
 ---
 
-*Dernière mise à jour : 9 novembre 2026 — §16.1 (nouvelle sous-section) :
-cartographie du piège de routage des labels `for-linux`/`for-windows` sur
-un **poste Windows seul** (sans second poste CCW) — une issue
-`for-windows` n'y est traitée par aucun watcher local et le démarrage de
-repli échoue silencieusement (tentative `nssm` locale sur un service CCW
-inexistant sur ce type de poste) ; solution de fond proposée mais non
-implémentée (trop de fichiers sensibles, dont `watcher.py::lister_issues()`
-en continu sur les deux machines d'Alain), voir issue #867 (issue #866).*
+*Dernière mise à jour : 9 novembre 2026 — §8.1 (nouvelle sous-section) :
+mise à jour automatique FACULTATIVE du dépôt de l'outil au lancement de
+`new_issue.py` (réglage `MAJ_AUTO_DEPOT` dans `identite_locale.conf`,
+désactivé par défaut), pour les installations locales sans service CCW
+(ex. poste Windows seul, issue #868) — réutilise `rafraichir_depot()`
+(#185) sans le dupliquer, délai court, renonce si le dépôt contient la
+moindre modification non enregistrée, résultat toujours visible (sortie
+standard + bandeau de l'interface, jamais silencieux).*
 
 Historique complet : voir [`CHANGELOG.md`](CHANGELOG.md).
