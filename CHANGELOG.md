@@ -9,6 +9,68 @@ milliers de caractères sur une seule ligne logique, coûteux à relire et
 
 Convention d'ajout : voir §10 de `BRIDGE_AGENT_DOC.md`.
 
+## 8 novembre 2026 — issue #860
+
+Service CCW Windows d'un projet : compte de service configurable (plus
+LocalSystem par défaut), pour que l'agent Vibe (Mistral) retrouve sa
+connexion dans le trousseau Windows.
+
+**CONSTAT** (test réel Vibe sous Windows) : `ajouter_projet_ccw.ps1` ne
+posait jamais `ObjectName` sur les services NSSM qu'il crée — comportement
+par défaut de NSSM, donc `LocalSystem`. Vibe range sa connexion dans le
+trousseau Windows (Credential Manager / DPAPI) du compte utilisateur
+(`provisioning/vibe/README.md` §3) : sous `LocalSystem`, ce trousseau est
+invisible, même si `~\.vibe\…` existe bien sur le disque. Le service doit
+tourner sous le compte qui POSSÈDE `~\.vibe` (ou `~\.claude`).
+
+**`provisionner.ps1`** : la valeur par défaut de `-CompteService` devient le
+compte qui lance le script (`$env:USERNAME`) au lieu du nom codé en dur
+`'AlainW'` — ne convenait qu'au PC fixe d'Alain, pas à une autre machine CCW.
+
+**`ajouter_projet_ccw.ps1`** : nouveaux paramètres `-CompteService` (défaut
+`$env:USERNAME`) et `-ConserverLocalSystem` (switch). Par défaut, le service
+créé OU reconfiguré (script idempotent) tourne désormais sous
+`-CompteService`, mot de passe demandé en saisie masquée (`Read-Host
+-AsSecureString`), jamais affiché ni écrit dans un journal. Avec
+`-ConserverLocalSystem`, le comportement historique (`LocalSystem`) est
+gardé explicitement — nécessaire pour ne pas casser un service Claude Code
+déjà en place (pas de problème de trousseau pour cet agent, ses jetons étant
+posés en clair dans `AppEnvironmentExtra`).
+
+**Compatibilité des flux automatisés (sans console interactive) —
+régression évitée** : trois appelants de `ajouter_projet_ccw.ps1` l'exécutent
+sans terminal capable de répondre à l'invite de mot de passe (`app/ccw.py`
+via SSH `BatchMode=yes`, `watcher.py` pour le bootstrap « Projet CCW » issue
+#554, et `creer_projet_ccw_complet.ps1`) — sans correctif, ces trois flux
+seraient restés bloqués jusqu'au timeout. Les trois passent désormais
+`-ConserverLocalSystem` explicitement (ils ne créent que des projets Claude
+Code). Un projet Vibe se crée en lançant `ajouter_projet_ccw.ps1
+-CompteService <compte>` directement, à la main, sur le PC CCW.
+
+**`mettre_a_jour_tokens_ccw.ps1`** : même généralisation du défaut de
+`-CompteService` (`$env:USERNAME` au lieu de `'AlainW'`), pour que la ligne
+`PATH` reconstruite dans `AppEnvironmentExtra` reste correcte sur une autre
+machine. `finaliser_projet_ccw.ps1` et `finaliser_projet_ccw_auto.ps1`
+reçoivent un nouveau paramètre `-CompteService` (même défaut), transmis à
+`mettre_a_jour_tokens_ccw.ps1` — ni l'un ni l'autre ne touchent `ObjectName`
+(`nssm restart` est indifférent au compte de service), donc compatibles sans
+changement de fond, seulement pour garder la ligne `PATH` cohérente.
+
+Documentation : `provisioning/windows/REINSTALLATION_CCW.md` (étapes 4 et 7)
+et `provisioning/vibe/README.md` §3 mentionnent le nouveau défaut et
+`-ConserverLocalSystem`.
+
+**NON EXÉCUTABLE SOUS LINUX** (aucun PowerShell/NSSM disponible dans cet
+environnement) : vérifié par relecture rigoureuse de chaque script modifié
+et des trois appelants Python (`app/ccw.py`, `watcher.py`,
+`creer_projet_ccw_complet.ps1`), plus la suite de tests Python complète
+(102 fichiers, 0 échec). **Reste à tester à la main sur le PC CCW** :
+création/reconfiguration réelle d'un service avec `-CompteService` (saisie
+du mot de passe, démarrage effectif sous ce compte), bascule d'un service
+Vibe existant de `LocalSystem` vers un compte nommé et vérification que
+`vibe` y retrouve sa connexion, et non-régression des trois flux automatisés
+(`-ConserverLocalSystem`).
+
 ## 8 novembre 2026 — issue #859
 
 §8 « Sécurité » + §10 (ligne « Dernière mise à jour ») : **compte GitHub et utilisateur SSH paramétrables** (issue #859) — Bridge_Agent était jusqu'ici installable uniquement pour Alain : `AUTEURS_AUTORISES = {"AlainDelree"}` (`watcher.py`), le propriétaire de dépôt par défaut (`nouveau_projet.py`), l'utilisateur SSH par défaut du PC fixe CCW (`app/ccw.py`) et plusieurs exemples/placeholders (`app/projets.py`, `templates/fragments/onglet_ccw.html`, `templates/fragments/modale_nouveau_projet.html`, `creer_projet_ccw_complet.ps1`, `provisioning/windows/ajouter_projet_ccw.ps1`, `provisioning/windows/finaliser_projet_ccw.ps1`) codaient en dur le compte `AlainDelree`. Nouveau module `identite.py` à la racine, seule source de vérité : `compte_github()` lit `identite_locale.conf` (racine du dépôt, gitignoré, format `CLÉ = valeur` comme `configs/*.conf` mais délibérément hors de ce dossier interdit à l'écriture — §12) en priorité, sinon le compte `gh` connecté (`gh api user --jq .login`) ; `utilisateur_ssh_defaut()` lit `UTILISATEUR_SSH` dans ce même fichier, sinon retombe sur le repli historique `AlainW`. `watcher.py` gagne `auteurs_autorises()` (construit l'ensemble à partir de `identite.compte_github()`, **vide** — jamais « tout le monde » — si indéterminable) et `verifier_identite_demarrage()` (appelée dans `main()`, arrête le watcher par `sys.exit` si l'identifiant ne peut être déterminé, plutôt que de tourner en rejetant silencieusement chaque issue). Pour Alain, comportement strictement inchangé sans rien configurer (le compte `gh` déjà connecté renvoie `AlainDelree`). Nouveau test `tests/test_identite_859.py` (priorité fichier local/`gh`, refus → `None` quand indéterminable, repli SSH historique) ; `tests/test_filtre_auteur_563.py` et `tests/test_casse_defauts_nouveau_projet_738.py` adaptés pour monkeypatcher `identite.compte_github()` plutôt que de dépendre de la constante en dur. Non touché, comme demandé : `provisioning/windows/provisionner.ps1` (traité par l'issue sœur du lot) et les chemins `/home/alain/...` de `systemd/watcher@.service`/`installer_services.sh` (Linux, hors sujet ici).
