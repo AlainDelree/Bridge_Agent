@@ -846,6 +846,49 @@ posé), le service reste à relancer manuellement.
 Provisioning et réinstallation complète du PC fixe :
 `provisioning/windows/REINSTALLATION_CCW.md`.
 
+### 16.1 Poste Windows seul (pas de rôle CCW) — issue #866
+
+Un agent (Claude Code ou l'agent Vibe) tournant **seul** sur un PC
+Windows, sans second poste, utilise `installer_demarrage_session.ps1`
+(#864, voir `provisioning/windows/DEMARRAGE_SESSION_WINDOWS.md`) — **pas**
+le rôle CCW ci-dessus. Chaque watcher de projet y reste un watcher
+**for-linux** ordinaire (clé `LABEL` du `.conf`, défaut `for-linux`,
+inchangée) : il ne voit **jamais** une issue `for-windows`, exactement
+comme sur le ThinkPad.
+
+**Piège identifié (#866)** : une issue créée avec le label `for-windows`
+sur un tel poste (champ `LABELS` rempli par erreur ou par habitude du
+canal CCW, voir §16 ci-dessus) n'est traitée par **aucun** watcher local,
+et le démarrage de repli tenté côté serveur
+(`app/ccw.py::demarrer_service_ccw_arriere_plan`) essaie de lancer en
+local un service NSSM `CCW-Watcher-<projet>` qui n'existe pas sur ce type
+de poste (#864 n'installe que des tâches de session, jamais un service
+CCW) — l'échec n'est journalisé que côté serveur (`app.ccw`), jamais sur
+l'issue GitHub ni notifié à l'utilisateur (même limite que celle déjà
+documentée en §14 pour un échec SSH). L'issue reste ouverte
+indéfiniment, sans aucun signal visible. La case « Projet CCW » de la
+modale de création de projet (bootstrap d'un **second** poste délégué)
+n'a, elle non plus, rien à faire sur un poste seul.
+
+**À faire aujourd'hui, sans changement de code** : sur un poste Windows
+seul, ne jamais remplir `LABELS` avec `for-windows` ni cocher « Projet
+CCW » à la création d'un projet — laisser `LABELS` vide : `construire_
+labels()` pose alors `for-linux` par défaut, traité normalement par le
+watcher local.
+
+**Solution de fond, non implémentée** : un réglage machine dans
+`identite_locale.conf` (#859) indiquant que ce poste joue tous les
+rôles, pour que les deux labels soient traités localement sans SSH ni
+appel `nssm` distant — nécessite de modifier `watcher.py::lister_issues()`
+(interrogation GitHub par label) ainsi que les points de démarrage/
+relance à la demande (`app/issues.py`, `scripts/watcher_issues_inbox.py`
+×2, `app/interruption.py`) : trop de fichiers sensibles, dont le cœur du
+polling utilisé en continu par les deux machines d'Alain, pour cette
+issue — voir #867 pour l'implémentation détaillée.
+
+Détail complet et historique de l'audit :
+`provisioning/windows/ROUTAGE_LABELS_POSTE_SEUL.md`.
+
 ---
 
 ## 18. Pièces jointes image dans les issues (issues #191, #248)
@@ -934,11 +977,13 @@ estimation que celle déjà affichée, sans dupliquer ce calcul.
 
 ---
 
-*Dernière mise à jour : 9 novembre 2026 — §4.1 (nouveau), notifications :
-chemin Windows natif pour la bulle de bureau (PowerShell/NotifyIcon) et le
-bip (`winsound`), sans dépendance Python supplémentaire ; une notification
-qui échoue (outil absent, watcher en service sans session de bureau) ne
-peut plus faire échouer la fin de traitement d'une issue, sous aucun
-système (issue #863).*
+*Dernière mise à jour : 9 novembre 2026 — §16.1 (nouvelle sous-section) :
+cartographie du piège de routage des labels `for-linux`/`for-windows` sur
+un **poste Windows seul** (sans second poste CCW) — une issue
+`for-windows` n'y est traitée par aucun watcher local et le démarrage de
+repli échoue silencieusement (tentative `nssm` locale sur un service CCW
+inexistant sur ce type de poste) ; solution de fond proposée mais non
+implémentée (trop de fichiers sensibles, dont `watcher.py::lister_issues()`
+en continu sur les deux machines d'Alain), voir issue #867 (issue #866).*
 
 Historique complet : voir [`CHANGELOG.md`](CHANGELOG.md).
