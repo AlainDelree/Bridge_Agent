@@ -23,7 +23,10 @@
     4. Appelle DIRECTEMENT mettre_a_jour_tokens_ccw.ps1 (pas de duplication de
        code) avec les paramètres déduits à l'étape 1 : saisie masquée des deux
        tokens, pose de AppEnvironmentExtra, redémarrage du service, vérification
-       finale des logs.
+       finale des logs. -CompteService est transmis tel quel (issue #860) pour
+       que la ligne PATH reconstruite reste correcte — sans effet sur le compte
+       RÉEL du service (ObjectName), posé par ajouter_projet_ccw.ps1 et jamais
+       modifié ici.
     5. Résumé final clair reprenant le résultat de cette vérification.
 
   Prérequis : le projet doit AVOIR ÉTÉ CRÉÉ au préalable par ajouter_projet_ccw.ps1
@@ -45,7 +48,17 @@ param(
     [string]$NomProjet,
 
     # Racine de travail dédiée à CCW côté invité (comme ajouter_projet_ccw.ps1).
-    [string]$RepCCW = 'C:\CCW'
+    [string]$RepCCW = 'C:\CCW',
+
+    # Compte Windows sous lequel tourne le service du projet (NSSM ObjectName) —
+    # transmis à mettre_a_jour_tokens_ccw.ps1 pour reconstruire correctement la
+    # ligne PATH (.local\bin / WindowsApps de CE compte, issue #860). Par
+    # défaut, le compte qui lance CE script — correct tant que c'est le même
+    # compte que celui passé à -CompteService lors de ajouter_projet_ccw.ps1
+    # (cas normal, machine mono-utilisateur). À fournir explicitement sinon
+    # (ou -ConserverLocalSystem avait été utilisé à la création : la valeur
+    # par défaut reste alors correcte, voir ajouter_projet_ccw.ps1).
+    [string]$CompteService = $env:USERNAME
 )
 
 $ErrorActionPreference = 'Stop'
@@ -166,7 +179,7 @@ if (-not (Test-Path $scriptTokens)) {
 
 Info "Pose des tokens sur « $NomService » via mettre_a_jour_tokens_ccw.ps1…"
 Write-Host ''
-& $scriptTokens -NomService $NomService -RepDepot $RepDepot -NomLog $NomLog
+& $scriptTokens -NomService $NomService -RepDepot $RepDepot -NomLog $NomLog -CompteService $CompteService
 # Le call operator '&' isole le exit du script appelé : il fixe $LASTEXITCODE
 # et rend la main ici (0 = OK, 2 = à vérifier, 1 = abandon saisie).
 $codeTokens = $LASTEXITCODE

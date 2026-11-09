@@ -95,11 +95,16 @@ param(
     # Nombre de lignes de log à afficher pour confirmation.
     [int]$NbLignesLog = 10,
     # Compte Windows sous lequel tourne le service (NSSM ObjectName) — même
-    # défaut que provisionner.ps1. Utilisé pour reconstruire la ligne PATH de
-    # AppEnvironmentExtra (issue #658, point 1) : .local\bin et WindowsApps du
-    # compte de service, sans lesquels le service ne verrait ni claude.exe ni
-    # les autres exécutables per-user.
-    [string]$CompteService = 'AlainW'
+    # défaut que provisionner.ps1/ajouter_projet_ccw.ps1 : le compte qui lance
+    # CE script (issue #860, ne convient à aucune machine en particulier,
+    # contrairement à l'ancien défaut codé en dur 'AlainW'). Utilisé pour
+    # reconstruire la ligne PATH de AppEnvironmentExtra (issue #658, point 1) :
+    # .local\bin et WindowsApps du compte de service, sans lesquels le service
+    # ne verrait ni claude.exe ni les autres exécutables per-user. Correct tant
+    # que ce script tourne sous le MÊME compte que celui réellement posé en
+    # ObjectName (cas normal — ajouter_projet_ccw.ps1/provisionner.ps1
+    # utilisent le même défaut) ; sinon, le fournir explicitement.
+    [string]$CompteService = $env:USERNAME
 )
 
 $ErrorActionPreference = 'Stop'

@@ -2764,11 +2764,20 @@ def _traiter_creation_projet_ccw(numero: int, body: str, labels: list[str], dry_
             _echec(f"script attendu introuvable : {s} — clone Bridge_Agent incomplet ou en retard ?")
             return
 
+    # -ConserverLocalSystem (issue #860) : ce bootstrap tourne SANS console
+    # interactive (service CCW-Watcher natif, subprocess sans stdin connecté)
+    # — il ne peut pas répondre à l'invite de mot de passe masqué que le
+    # script demanderait par défaut pour poser le compte de service, ce qui
+    # bloquerait jusqu'à TIMEOUT_CREATION_CLONE. Ce flux (tokens GH_TOKEN +
+    # CLAUDE_CODE_OAUTH_TOKEN déchiffrés ci-dessus) ne crée que des projets
+    # Claude Code ; un projet nécessitant un compte de service nommé (ex.
+    # Vibe, trousseau Windows) se crée en lançant ajouter_projet_ccw.ps1
+    # -CompteService à la main sur le PC CCW.
     log.info(f"  Issue #{numero} : ajouter_projet_ccw.ps1 -NomProjet {nom_projet} -Depot {depot}…")
     try:
         res_ajouter = subprocess.run(
             ["powershell", "-ExecutionPolicy", "Bypass", "-File", str(script_ajouter),
-             "-NomProjet", nom_projet, "-Depot", depot],
+             "-NomProjet", nom_projet, "-Depot", depot, "-ConserverLocalSystem"],
             capture_output=True, text=True,
             encoding="utf-8", errors="replace", timeout=TIMEOUT_CREATION_CLONE,
         )

@@ -178,6 +178,15 @@ implémentation (`Get-Credential`), qui ouvrait une fenêtre graphique
 invisible et bloquait le script silencieusement, sans erreur visible, quand
 il était lancé depuis SSH (constaté le 27/09/2026).
 
+> **Compte de service par défaut (issue #860).** `-CompteService` vaut par
+> défaut le compte qui LANCE `provisionner.ps1` (`$env:USERNAME`), plus
+> aucun nom codé en dur — l'ancien défaut `'AlainW'` ne convenait qu'au PC
+> fixe d'Alain. Sur ce PC fixe, ce compte reste `AlainW` (compte interactif
+> habituel de la machine) ; sur une autre machine CCW, c'est automatiquement
+> le bon compte, pourvu que `provisionner.ps1` soit lancé sous le compte qui
+> doit faire tourner le service (voir aussi l'étape 7 ci-dessous pour les
+> services multi-projets, et le même constat côté Vibe/Mistral).
+
 À la fin de son exécution, le script termine par un résumé complet
 (logiciels installés + versions, service créé, `PATH` posé, étapes
 manuelles restantes) et un **rappel explicite** : un compte déjà ouvert
@@ -267,6 +276,25 @@ le service NSSM et ses tokens ne survivent pas.
 > `CCW-Watcher` (service de base, étapes 1-6) reste lui **toujours actif** —
 > aucun réglage à reproduire pour lui. Retour arrière pour un service donné :
 > `nssm set <service> AppExit 42 Restart`.
+
+> **Compte de service des projets dédiés — Vibe/Mistral et le trousseau
+> Windows (issue #860).** `ajouter_projet_ccw.ps1` pose désormais le compte
+> de service (NSSM `ObjectName`) sur `-CompteService` (par défaut le compte
+> qui lance le script, mot de passe en saisie masquée) au lieu de
+> `LocalSystem` — nécessaire pour un projet basculé sur Vibe : cet agent
+> range sa connexion dans le trousseau Windows (Credential Manager) du
+> compte utilisateur, invisible depuis `LocalSystem`. `-ConserverLocalSystem`
+> garde l'ancien comportement (toujours `LocalSystem`), nécessaire pour ne
+> pas casser un service Claude Code existant (qui n'a pas ce problème, ses
+> jetons étant posés en clair dans `AppEnvironmentExtra`). **Ce script-ci
+> (`creer_projet_ccw_complet.ps1`, flux Claude Code) passe automatiquement
+> `-ConserverLocalSystem`** — aucune invite de mot de passe supplémentaire
+> dans la boucle ci-dessous. Même chose pour le bouton **Ajouter un projet**
+> de l'onglet CCW et pour le bootstrap « Projet CCW » (issue #554) : ces deux
+> flux automatisés, exécutés sans console interactive, passent aussi
+> `-ConserverLocalSystem`. Pour un projet Vibe, lancer
+> `ajouter_projet_ccw.ps1 -NomProjet <Nom> -Depot <owner/repo> -CompteService
+> <compte>` directement (interactif, en admin sur le PC CCW).
 
 **Attention — ces fichiers ne survivent PAS à une réinstallation propre.**
 Les fichiers `.conf` de chaque projet (ex. `configs\alchess-ccw.conf`) ne

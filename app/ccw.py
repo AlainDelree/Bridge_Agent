@@ -532,8 +532,18 @@ def ccw_ajouter_projet():
             return jsonify(succes=False, erreur=_message_echec("copie du script", r))
         # nom/depot NE sont PAS des secrets (nom de projet + dépôt public) :
         # les passer en argument est sans risque, contrairement aux tokens.
+        #
+        # -ConserverLocalSystem (issue #860) : cette exécution à distance (SSH,
+        # BatchMode=yes, aucun pty) ne peut répondre à l'invite de mot de passe
+        # masqué que le script demanderait par défaut (Read-Host -AsSecureString)
+        # pour poser le compte de service — sans ce paramètre, l'appel resterait
+        # bloqué jusqu'à TIMEOUT_LONG. Ce bouton web ne crée que des projets
+        # Claude Code (flux automatisé) ; un projet nécessitant un compte de
+        # service nommé (ex. Vibe, trousseau Windows) se crée en lançant
+        # ajouter_projet_ccw.ps1 -CompteService à la main sur le PC CCW.
         r = _executer_ps(hote, utilisateur, cle_privee, script.name,
-                         ["-NomProjet", nom, "-Depot", depot], TIMEOUT_LONG)
+                         ["-NomProjet", nom, "-Depot", depot, "-ConserverLocalSystem"],
+                         TIMEOUT_LONG)
     except subprocess.TimeoutExpired:
         return jsonify(succes=False,
             erreur="Délai dépassé pendant l'ajout du projet (clone trop long ?).")
