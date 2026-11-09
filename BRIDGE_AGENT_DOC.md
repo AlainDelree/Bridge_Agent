@@ -515,11 +515,37 @@ hors périmètre même si l'issue le demande explicitement :
 
 ## 8. Sécurité
 
-Seul un auteur autorisé (`AUTEURS_AUTORISES` dans `watcher.py`, contient au
-minimum `AlainDelree`) peut faire traiter une issue — quel que soit le
-label posé dessus. Une issue par ailleurs éligible (bons labels) mais
-d'auteur non autorisé est ignorée, quel que soit le mode (lecture,
-écriture, bootstrap CCW).
+Seul un auteur autorisé (`auteurs_autorises()` dans `watcher.py`) peut faire
+traiter une issue — quel que soit le label posé dessus. Une issue par
+ailleurs éligible (bons labels) mais d'auteur non autorisé est ignorée, quel
+que soit le mode (lecture, écriture, bootstrap CCW).
+
+**Identifiant GitHub paramétrable (issue #859).** Bridge_Agent est pensé
+pour être installé par quelqu'un d'autre qu'Alain (compte GitHub différent) :
+`auteurs_autorises()` ne contient plus `AlainDelree` en dur, mais le compte
+renvoyé par `identite.compte_github()` — module `identite.py` à la racine du
+dépôt, SEULE source de vérité pour cette valeur (également utilisée comme
+propriétaire par défaut du dépôt dans `nouveau_projet.py`). Deux sources,
+dans cet ordre de priorité :
+1. `identite_locale.conf` à la racine du dépôt (gitignoré, jamais committé —
+   format `CLÉ = valeur` comme `configs/*.conf`, mais délibérément HORS de ce
+   dossier : §12 interdit à CCL/CCW toute écriture dans `configs/*.conf`, et
+   ce fichier doit pouvoir y échapper même par accident) :
+   `COMPTE_GITHUB = <login GitHub à utiliser>`.
+2. à défaut : le compte `gh` connecté localement (`gh api user --jq
+   .login`). Sur la machine d'Alain, c'est déjà `AlainDelree` —
+   comportement inchangé sans rien configurer de plus.
+
+Si aucune des deux sources ne fournit de valeur (ex. `gh` absent ou non
+authentifié, et aucun `identite_locale.conf`), `auteurs_autorises()` renvoie
+un ensemble **vide** — jamais `AlainDelree` par défaut ni « tout le monde » :
+le watcher refuse alors de démarrer (`verifier_identite_demarrage()` dans
+`main()`, `sys.exit` explicite) plutôt que de tourner en rejetant
+silencieusement chaque issue. Même principe pour l'utilisateur SSH par
+défaut du PC fixe CCW (`app/ccw.py`) : `identite.utilisateur_ssh_defaut()`
+lit `UTILISATEUR_SSH` dans `identite_locale.conf`, à défaut retombe sur le
+repli historique `AlainW` (seule installation existante à ce jour, sans
+équivalent auto-détectable comme `gh`).
 
 ---
 
@@ -863,11 +889,8 @@ estimation que celle déjà affichée, sans dupliquer ce calcul.
 
 ---
 
-*Dernière mise à jour : 8 novembre 2026 — §5, mode écriture : nouvelle puce
-documentant l'avertissement best-effort « Succès sans commit » (issues
-#764/#856) et son déclenchement exact (aucun commit propre à la tâche,
-sauvegarde du watcher exclue par hash seulement si elle existe réellement —
-jamais par position, corrigé pour les projets à `CMD_BACKUP` personnalisée
-comme alchess).*
+*Dernière mise à jour : 8 novembre 2026 — §8, sécurité : le compte GitHub
+autorisé et l'utilisateur SSH par défaut du PC fixe CCW ne sont plus codés
+en dur, voir `identite.py` (issue #859).*
 
 Historique complet : voir [`CHANGELOG.md`](CHANGELOG.md).

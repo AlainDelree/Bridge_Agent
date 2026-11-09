@@ -29,3 +29,9 @@ scripts/son_actif.txt
 # sessions survivent aux redémarrages fréquents de new_issue.py (issue #676) —
 # secrète, jamais committée, régénérée localement si absente.
 configs/secret_key.bin
+# Réglages propres à l'installation (compte GitHub, utilisateur SSH du PC
+# fixe CCW) — voir identite.py (issue #859). Volontairement HORS de
+# configs/ (interdit à l'écriture par CCL/CCW, §12) ; jamais committé, une
+# installation différente (autre compte GitHub, autre PC Windows) y met ses
+# propres valeurs sans toucher au code.
+identite_locale.conf

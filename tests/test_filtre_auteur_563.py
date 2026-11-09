@@ -6,10 +6,17 @@ Jusqu'ici, la seule protection contre une issue créée par un tiers était
 INDIRECTE (poser un label exige les droits d'écriture sur le dépôt). Ce test
 vérifie que `lister_issues()` :
 - laisse passer une issue correctement labellisée ET dont l'auteur figure
-  dans `AUTEURS_AUTORISES` (ex. AlainDelree) ;
+  dans `auteurs_autorises()` (ex. AlainDelree) ;
 - ignore une issue correctement labellisée mais dont l'auteur N'EST PAS dans
-  `AUTEURS_AUTORISES`, avec un `log.warning` explicite (pas un filtrage
+  `auteurs_autorises()`, avec un `log.warning` explicite (pas un filtrage
   silencieux, à la différence du filtre #477 sur les labels).
+
+Depuis l'issue #859, `auteurs_autorises()` se construit à partir de
+`identite.compte_github()` plutôt que d'une constante en dur — ce module est
+donc monkeypatché ici pour renvoyer "AlainDelree" de façon déterministe
+(sans dépendre de `gh` ni du réseau) : voir
+`tests/test_identite_859.py` pour les tests de `identite.py` lui-même
+(priorité fichier local/`gh`, refus quand indéterminable).
 
 `gh issue list` est simulé via un mock de `subprocess.run` (aucun accès
 réseau). Le champ `author` du JSON simulé suit le format réel de
@@ -74,7 +81,8 @@ def _executer_lister_issues(issues_brutes):
     capture.setLevel(logging.WARNING)
     watcher.log.addHandler(capture)
     try:
-        with mock.patch.object(watcher.subprocess, "run", return_value=fake_res):
+        with mock.patch.object(watcher.subprocess, "run", return_value=fake_res), \
+             mock.patch.object(watcher.identite, "compte_github", return_value="AlainDelree"):
             issues = watcher.lister_issues()
     finally:
         watcher.log.removeHandler(capture)
@@ -95,7 +103,7 @@ def scenario_auteur_autorise_passe():
 
 def scenario_auteur_non_autorise_ignoree_avec_log():
     """Une issue bien labellisée, mais dont l'auteur N'EST PAS dans
-    AUTEURS_AUTORISES : ignorée, ET un log.warning explicite est émis (pas un
+    auteurs_autorises() : ignorée, ET un log.warning explicite est émis (pas un
     simple non-match silencieux comme pour le filtre #477 sur les labels)."""
     brutes = [_issue_gh(101, "un_collaborateur_quelconque")]
     issues, warnings = _executer_lister_issues(brutes)

@@ -35,6 +35,7 @@ Sortie      :  code 0 si tous les scénarios passent, 1 sinon.
 import sys
 import tempfile
 from pathlib import Path
+from unittest import mock
 
 RACINE = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(RACINE))
@@ -45,6 +46,13 @@ import nouveau_projet as np  # noqa: E402
 from app import nouveau_projet as route_np  # noqa: E402
 
 APP_FLASK = flask.Flask(__name__)
+
+# Depuis l'issue #859, owner_defaut()/depot_defaut() lisent identite.compte_
+# github() (fichier local ou `gh` connecté) plutôt qu'une constante OWNER_
+# DEFAUT en dur. Ce test porte sur la CASSE reprise dans la proposition de
+# dépôt (#738), pas sur la résolution de l'identifiant (voir
+# tests/test_identite_859.py) : on fige donc le compte à "AlainDelree" pour
+# rester déterministe, sans dépendre de `gh` ni du réseau.
 
 
 # ─── casse_proposee / depot_defaut / rep_defaut ──────────────────────────────
@@ -272,6 +280,24 @@ def main() -> int:
          test_route_verifier_pas_avertissement_sans_homonyme),
     ]
     echecs = 0
+    pile = mock.patch.object(np.identite, "compte_github", return_value="AlainDelree")
+    pile.start()
+    try:
+        echecs = _executer_tests(tests)
+    finally:
+        pile.stop()
+    if echecs:
+        print(f"\n❌ {echecs} scénario(s) en échec.")
+        return 1
+    print("\n✅ Tous les scénarios passent.")
+    return 0
+
+
+def _executer_tests(tests) -> int:
+    """Exécute chaque (nom, fonction) de `tests`, affiche ✓/✗ par scénario,
+    renvoie le nombre d'échecs (le verdict global reste affiché par
+    l'appelant, main())."""
+    echecs = 0
     for nom, fn in tests:
         try:
             rap = fn()
@@ -282,12 +308,7 @@ def main() -> int:
         except Exception as e:  # noqa: BLE001
             echecs += 1
             print(f"  ✗ {nom} — erreur inattendue : {type(e).__name__}: {e}")
-
-    if echecs:
-        print(f"\n❌ {echecs} scénario(s) en échec.")
-        return 1
-    print("\n✅ Tous les scénarios passent.")
-    return 0
+    return echecs
 
 
 if __name__ == "__main__":

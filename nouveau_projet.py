@@ -27,6 +27,7 @@ import unicodedata
 from pathlib import Path
 
 import etat_configs_legitimes
+import identite
 import regenerer_tableaux_projets
 from labels_github import LABELS, creer_labels  # noqa: F401 (ré-exportés, voir plus bas)
 from palette import COULEURS_PROJETS_EXISTANTS, PALETTE_COULEURS
@@ -60,8 +61,22 @@ DOC = RACINE / "BRIDGE_AGENT_DOC.md"
 # à la main dans le .conf après génération (issue #489).
 MODELE_CCL_DEFAUT = "claude-sonnet-5"
 
-# Propriétaire GitHub par défaut pour le dépôt proposé (owner/Nom).
-OWNER_DEFAUT = "AlainDelree"
+# Propriétaire GitHub par défaut pour le dépôt proposé (owner/Nom) — voir
+# owner_defaut() ci-dessous (issue #859, plus de compte codé en dur ici).
+# Affiché seulement si identite.compte_github() n'a pu rien résoudre (ni
+# identite_locale.conf, ni compte `gh` connecté) : valeur délibérément non
+# plausible comme véritable compte GitHub, pour que l'utilisateur la
+# remplace avant de créer quoi que ce soit.
+OWNER_INDETERMINE = "votre-compte-github"
+
+
+def owner_defaut() -> str:
+    """Propriétaire GitHub par défaut proposé pour le dépôt (owner/Nom) —
+    voir identite.compte_github (issue #859). Jamais résolu avant le premier
+    appel réel (lazy) : importer ce module (route Flask app/nouveau_projet.py,
+    chargée au démarrage du serveur web) ne doit jamais déclencher à froid un
+    appel réseau `gh`."""
+    return identite.compte_github() or OWNER_INDETERMINE
 
 # Fichiers Specs MVC (§15) créés en plus de CONTEXTE.md quand l'option est active.
 FICHIERS_SPECS = ("CONTEXTE_VUE.md", "CONTEXTE_METIER.md", "CONTEXTE_PERSISTANCE.md")
@@ -206,8 +221,8 @@ def casse_proposee(nom_saisi: str) -> str:
 
 def depot_defaut(nom_saisi: str) -> str:
     """Dépôt GitHub proposé par défaut : owner + nom dans la casse saisie
-    (voir casse_proposee)."""
-    return f"{OWNER_DEFAUT}/{casse_proposee(nom_saisi)}"
+    (voir casse_proposee et owner_defaut)."""
+    return f"{owner_defaut()}/{casse_proposee(nom_saisi)}"
 
 
 def rep_defaut(nom_saisi: str) -> str:
