@@ -40,7 +40,7 @@ Fermer puis rouvrir PowerShell, puis vérifier : `git --version; gh --version; p
 git clone https://github.com/AlainDelree/Bridge_Agent.git C:\CCW\Bridge_Agent
 ```
 
-Le chemin `C:\CCW\Bridge_Agent` est celui que supposent l'alias `bridge` et les scripts (établi). Ne pas le changer sans lire `NEW_ISSUE_LOCAL_WINDOWS.md`.
+`C:\CCW\Bridge_Agent` est le chemin d'exemple utilisé dans ce guide ; **tout autre dossier sans espace convient** (lu dans le code : `installer_demarrage_session.ps1` et `provisionner_new_issue_local.ps1` calculent le chemin du dépôt depuis leur propre emplacement). Le seul endroit à adapter à la main est l'alias `bridge` du profil PowerShell (`NEW_ISSUE_LOCAL_WINDOWS.md` §2). Les scripts du rôle CCW (`provisionner.ps1`, `ajouter_projet_ccw.ps1`…) supposent l'ancien chemin, mais ne servent pas ici. À vérifier : le dossier où les projets sont créés.
 
 **Recevoir les mises à jour de l'outil (à vérifier).** Ce dossier est une copie de l'outil Bridge_Agent, publié par Alain ; les projets de l'utilisateur ont leurs propres dépôts, ailleurs. Quand Alain corrige ou améliore l'outil, ces changements arrivent sur GitHub mais pas dans cette copie. Sur le PC fixe d'Alain, un service CCW fait cette mise à jour seul avant chaque cycle ; cette installation n'a pas ce service, et aucun équivalent n'est confirmé. Il n'y a donc rien à faire au quotidien : **seulement quand Alain annonce une mise à jour**, lancer :
 
@@ -116,6 +116,7 @@ Puis, sans `-DryRun`, l'installation réelle : tâches planifiées à l'ouvertur
 - **Lecture seule avec Vibe** : pas de mode « lecture active » (établi).
 - **Fusion d'une issue terminée, sans Relecture_Bridge** (voir `WORKTREES.md`) : `git merge worktree-issue-<N>`, puis `python scripts\fusionner_changelog.py`, puis commit et `git push`. Le crochet de tests s'exécute au push.
 - **Notifications** : bulle et bip sous Windows, issue #863 (établi par les tests ; à vérifier en réel).
+- **Deux sortes d'issues, à ne pas confondre.** Une issue **pour un de ses projets** se dépose chez lui et se traite sur son PC, sans passer par Alain. Une issue **pour l'outil lui-même** (un défaut de Bridge_Agent, une amélioration) ne se traite pas chez lui : il demande à Mistral de la rédiger en fichier `.txt` et l'envoie à Alain, qui la relit, la lance de son côté et lui dit quand la correction est disponible (puis `git pull`, voir §3). Pour qu'Alain puisse corriger sans voir le PC : message d'erreur exact (copié, pas résumé), ce qui a été fait juste avant, ce qui était attendu, et le journal concerné dans `logs\`.
 
 ## 11. Premier essai
 
