@@ -896,6 +896,104 @@ test('mode moderne : si l\'écriture du rapport ÉCHOUE, le presse-papier reste 
     'l\'échec doit être signalé, jamais un faux succès');
 });
 
+// ─── Issue #865 : le presse-papier gardait l'ANCIEN contenu PENDANT la
+//     préparation, en mode moderne — défaut que #857 devait empêcher ────────
+// CAUSE (voir le commentaire de viderPressePapier dans resultats_coches.js,
+// réécrit par cette issue) : le vidage (chaîne vide) et l'écriture du
+// rapport (contenu différé) étaient engagés l'un après l'autre SANS ATTENDRE
+// la fin du premier — Firefox annule une écriture encore pendante dès qu'une
+// nouvelle est lancée avant qu'elle n'aboutisse (constat déjà établi par
+// #782) : le vidage était donc TOUJOURS annulé par l'écriture du rapport qui
+// le suivait, AVANT d'avoir pu remplacer l'ancien contenu. Tant que le
+// contenu du rapport n'est lui-même pas résolu, rien ne remplace donc
+// l'ancien contenu — qui reste en place pendant toute la préparation.
+//
+// Les tests #857 ci-dessus ne pouvaient pas détecter ce défaut : ils ne
+// vérifient que l'ORDRE des appels write() (le mock y répond toujours,
+// indépendamment d'une éventuelle annulation). Les tests suivants modélisent
+// au contraire le presse-papier RÉEL — ce qu'un COLLAGE obtiendrait à un
+// instant donné — avec la même règle d'annulation que
+// creerClipboardAvecAnnulationConcurrente ci-dessus (issue #858 point 3).
+//
+// LIMITE ASSUMÉE (à vérifier à la main dans Firefox, voir
+// VERIFICATIONS_MANUELLES.md) : ce modèle suppose que Firefox ne met à jour
+// le presse-papier RÉEL qu'une fois le contenu de l'écriture GAGNANTE
+// effectivement résolu, jamais avant — comportement cohérent avec le rendu
+// différé documenté par ailleurs dans ce fichier (#858), mais non
+// observable depuis Node.
+function creerPressePapierReelSimule(contenuInitial) {
+  let dernierAppel = 0;
+  let contenuReel = contenuInitial;
+  global.navigator = {
+    clipboard: {
+      write(items) {
+        const monAppel = ++dernierAppel;
+        return (async () => {
+          const blob = await items[0].data['text/plain'];
+          if (monAppel !== dernierAppel) {
+            throw Object.assign(new Error('Annulé par une écriture plus récente.'), { name: 'NotAllowedError' });
+          }
+          const texte = await blob.text();
+          if (monAppel !== dernierAppel) {
+            throw Object.assign(new Error('Annulé par une écriture plus récente.'), { name: 'NotAllowedError' });
+          }
+          contenuReel = texte;
+        })();
+      },
+    },
+  };
+  return { lire: () => contenuReel };
+}
+
+test('mode moderne (#865) : juste après le clic, puis pendant toute une préparation lente (encore en vol), le presse-papier RÉEL ne contient JAMAIS l\'ancien contenu — puis contient le rapport une fois la préparation débloquée', async () => {
+  fixerEnvironnement({ etatCommits: { etat: 'aucun', hashes: [] } });
+  const NUMERO = 865001;
+  const { debloquer } = intercepterFetchIssue(NUMERO);   // préparation bloquée : jamais « prête » durant cette boucle
+  const ANCIEN = 'Rapport de l\'issue précédente — ne doit jamais ressurgir au collage';
+  const pp = creerPressePapierReelSimule(ANCIEN);
+
+  resultatsCoches.copierReponseBadge(evenementBadge(), PROJET, NUMERO);
+
+  // Dix instants successifs, pendant toute cette fenêtre de préparation
+  // (jamais débloquée ici) : le presse-papier RÉEL ne doit à aucun moment
+  // contenir l'ancien rapport.
+  for (let i = 0; i < 10; i++) {
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    assert.notEqual(pp.lire(), ANCIEN,
+      `le presse-papier ne doit jamais contenir l'ancien rapport pendant la préparation (#865) — itération ${i}`);
+  }
+
+  debloquer();
+  assert.ok(await attendreQue(() => pp.lire().includes('Corps du rapport')),
+    'une fois la préparation terminée avec succès, le presse-papier doit contenir le rapport');
+  assert.match(pp.lire(), /Corps du rapport pour #787/);
+});
+
+test('mode moderne (#865) : si l\'écriture du rapport échoue, le presse-papier réel reste vide, jamais l\'ancien contenu', async () => {
+  fixerEnvironnement();
+  const ANCIEN = 'Rapport de l\'issue précédente — ne doit jamais ressurgir au collage';
+  let dernierAppel = 0;
+  let contenuReel = ANCIEN;
+  global.navigator = {
+    clipboard: {
+      write(items) {
+        const monAppel = ++dernierAppel;
+        return (async () => {
+          const blob = await items[0].data['text/plain'];
+          if (monAppel !== dernierAppel) throw Object.assign(new Error('Annulé'), { name: 'NotAllowedError' });
+          const texte = await blob.text();
+          if (monAppel !== dernierAppel) throw Object.assign(new Error('Annulé'), { name: 'NotAllowedError' });
+          if (texte.trim()) throw new Error('Erreur inattendue du presse-papier.');   // l'écriture du RAPPORT échoue toujours
+          contenuReel = texte;   // seul le vidage (chaîne vide) peut réussir
+        })();
+      },
+    },
+  };
+  resultatsCoches.copierReponseBadge(evenementBadge(), PROJET, 865002);
+  await attendreZoneSecours();   // l'échec déclenche bien la fenêtre de secours existante (#782)
+  assert.equal(contenuReel, '', 'le presse-papier doit rester vide après un échec, jamais l\'ancien contenu (#865)');
+});
+
 test('mode repli (execCommand) : le clic vide IMMÉDIATEMENT le presse-papier, avant même que le texte soit préchargé', async () => {
   fixerEnvironnement({ etatCommits: { etat: 'aucun', hashes: [] } });
   window.isSecureContext = false;

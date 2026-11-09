@@ -850,6 +850,14 @@ function copierExecCommand(texte) {
 // comportement documenté d'avant #782, mais pas re-reproduit en vrai
 // navigateur pour cette issue — voir l'essai ajouté à
 // VERIFICATIONS_MANUELLES.md.
+//
+// DEPUIS L'ISSUE #865 : copierModerne n'est plus appelée EXACTEMENT dans le
+// même tick synchrone que le clic, mais juste après la fin du vidage
+// immédiat du presse-papier (viderPressePapier, quelques millisecondes,
+// voir lancerCopie) — toujours dans la fenêtre d'activation du geste
+// (hypothèse reprise de l'issue #865, non re-vérifiée ici en vrai
+// navigateur, voir VERIFICATIONS_MANUELLES.md), mais plus littéralement
+// synchrone avec l'événement DOM.
 let generationCopieModerne = 0;
 
 // Vrai si la copie de génération `monGen` a été supplantée par une copie plus
@@ -1067,19 +1075,42 @@ const TEXTE_QUASI_VIDE = ' ';
 // copie du rapport aboutit ensuite, elle remplace ce contenu vide ; si elle
 // échoue, le presse-papier reste vide (la fenêtre de secours existante
 // s'ouvre toujours, issue #782).
-// Mode moderne (revu par l'issue #858) : écriture SYNCHRONE elle aussi,
-// directement — PLUS via chaineCopieModerne (abandonnée pour ce chemin, voir
-// plus haut) : l'écriture du rapport qui suit immédiatement (copierModerne,
-// engagée dans le MÊME geste, juste après) est elle-même désormais
-// synchrone ; la faire patienter derrière une file aurait inversé l'ordre
-// (le rapport se serait engagé AVANT son propre vidage). Si Firefox annule
-// ce vidage au profit de l'écriture du rapport qui le suit immédiatement
-// (même mécanisme que pour deux clics rapprochés sur des cases différentes,
-// voir copierModerne), ce n'est jamais grave : le contenu réellement confié
-// au presse-papier par copierModerne est LUI-MÊME déjà garanti résoudre vers
-// le rapport ou une chaîne vide (jamais l'ancien contenu, voir
-// `issuePreparation` dans copierModerne) ; ce vidage reste une protection
-// supplémentaire PENDANT la préparation, pas la seule.
+//
+// CAUSE DE L'ISSUE #865 (établie par relecture du code, pas une simple
+// hypothèse) : jusqu'ici, en mode moderne, cette écriture de vidage était
+// lancée SANS ATTENDRE sa fin, immédiatement suivie (même geste, lancerCopie
+// ci-dessous) de l'écriture du rapport — elle-même engagée SYNCHRONEMENT,
+// AVANT que la première n'ait eu la moindre chance de se résoudre. Or
+// Firefox annule une écriture encore PENDANTE dès qu'une nouvelle est
+// lancée avant qu'elle n'aboutisse (constat déjà établi par #782, réutilisé
+// ici) : ce vidage était donc TOUJOURS annulé par l'écriture du rapport qui
+// le suivait, avant même d'avoir pu remplacer l'ancien contenu. L'ancien
+// commentaire ci-dessous (avant #865) jugeait cela sans conséquence au
+// motif que l'écriture du rapport elle-même ne peut résoudre que vers le
+// rapport ou une chaîne vide — vrai, mais seulement une fois CETTE écriture
+// RÉSOLUE : tant que son contenu (`blobP` dans copierModerne) est encore en
+// préparation, rien ne remplace l'ancien contenu, qui reste donc en place
+// pendant TOUTE cette fenêtre — exactement le défaut que #857 devait
+// empêcher. Reproduit par un test Node (voir
+// static/js/tests/resultats_coches_variantes.test.js, issue #865) qui
+// modélise le presse-papier RÉEL (contenu à un instant donné, pas seulement
+// l'ordre des appels) ; le comportement RÉEL de Firefox (annulation d'une
+// écriture pendante par une plus récente, mise à jour différée jusqu'à
+// résolution du contenu) reste, lui, une hypothèse non vérifiable sous Node
+// — voir l'essai ajouté à VERIFICATIONS_MANUELLES.md.
+//
+// CORRECTIF (#865) : `lancerCopie` ATTEND désormais la fin RÉELLE de ce
+// vidage (cette fonction renvoie sa promesse) avant d'engager l'écriture du
+// rapport — un vidage prend quelques millisecondes, bien en deçà de la
+// fenêtre d'activation du clic qui a motivé #858 (l'engagement de l'écriture
+// du rapport reste donc largement dans cette fenêtre, juste décalé de
+// quelques ms). Peu importe que ce vidage réussisse ou soit lui-même annulé
+// par une AUTRE copie encore plus récente (plusieurs cases cochées très
+// vite, #858 point 3) : la promesse renvoyée se termine dans tous les cas
+// (voir le .catch ci-dessous), lancerCopie engage alors l'écriture du
+// rapport sans jamais attendre indéfiniment ni répéter le défaut de #782
+// (écritures qui s'annulent mutuellement) ou de #858 (écriture refusée pour
+// cause de geste expiré).
 // UNE SEULE tentative, SANS repli sur TEXTE_QUASI_VIDE en cas d'échec (à la
 // différence du mode repli ci-dessous) : un second appel à
 // navigator.clipboard.write() ICI serait lui-même une NOUVELLE écriture, qui
@@ -1089,21 +1120,25 @@ const TEXTE_QUASI_VIDE = ' ';
 // est donc simplement journalisé.
 // Mode repli (execCommand, synchrone) : inchangé, aucune file n'a jamais été
 // nécessaire, aucune écriture concurrente n'est possible pendant l'appel —
-// le repli sur TEXTE_QUASI_VIDE y reste donc sans danger.
+// le repli sur TEXTE_QUASI_VIDE y reste donc sans danger ; la promesse
+// renvoyée est déjà résolue (l'écriture a eu lieu avant le retour).
 function viderPressePapier() {
   if (modeCopie() === 'moderne') {
-    navigator.clipboard.write([new ClipboardItem({ 'text/plain': new Blob([''], { type: 'text/plain' }) })])
+    return navigator.clipboard.write([new ClipboardItem({ 'text/plain': new Blob([''], { type: 'text/plain' }) })])
       .catch((e) => {
         console.warn('resultats_coches : échec du vidage du presse-papier (chaîne vide refusée ou annulée).', e);
       });
-    return;
   }
   // Mode repli : chaîne vide d'abord, espace si le navigateur la refuse.
   if (!copierExecCommand('')) copierExecCommand(TEXTE_QUASI_VIDE);
+  return Promise.resolve();
 }
 
 // ─── Point d'entrée unique (issue #636, mode repli revu #782) ────────────────
-//   - moderne : voir copierModerne ci-dessus.
+//   - moderne : voir copierModerne ci-dessus. Le vidage est ATTENDU (issue
+//     #865, voir viderPressePapier) avant d'engager l'écriture du rapport,
+//     pour qu'il ne soit jamais annulé par elle avant d'avoir pu remplacer
+//     l'ancien contenu.
 //   - repli   : le texte doit déjà être préchargé et valide (textesPrepares,
 //     texteEstValide) → copie synchrone execCommand ; sinon feedback « en
 //     préparation » + préchargement (texte absent OU périmé, issue #832
@@ -1114,9 +1149,13 @@ function viderPressePapier() {
 // passent par ce point d'entrée (case à cocher, badges ✅/Diff/All) en
 // bénéficient donc tous, sans code dupliqué.
 function lancerCopie(projet, numero, producteur, feedback) {
-  viderPressePapier();
+  const videTermine = viderPressePapier();
   if (modeCopie() === 'moderne') {
-    copierModerne(projet, numero, producteur, feedback);
+    // Attend la fin RÉELLE du vidage (issue #865) avant d'engager l'écriture
+    // du rapport — videTermine ne rejette jamais (voir viderPressePapier),
+    // ce .then() est donc toujours atteint, que le vidage ait réussi,
+    // échoué ou ait lui-même été annulé par une copie encore plus récente.
+    videTermine.then(() => copierModerne(projet, numero, producteur, feedback));
     return;
   }
   const debut = Date.now();   // début de la copie (issue #824) : référence du délai de la ligne de détail
