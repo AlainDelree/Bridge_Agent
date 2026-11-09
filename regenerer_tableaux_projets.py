@@ -54,12 +54,47 @@ import sys
 from datetime import date
 from pathlib import Path
 
+import identite
 from palette import COULEUR_PROJET_INACTIF, couleur_affichee, generer_palette
 from watcher import lire_conf
 
 RACINE = Path(__file__).resolve().parent
 DOSSIER_CONFIGS = RACINE / "configs"
 DOC = RACINE / "BRIDGE_AGENT_DOC.md"
+
+# Fichier local de repli pour une copie non-propriétaire de l'outil (issue
+# #869, réglage COPIE_NON_PROPRIETAIRE de identite_locale.conf — voir
+# identite.copie_non_proprietaire()) : mêmes tableaux §2/§7 que
+# BRIDGE_AGENT_DOC.md, mais dans un fichier gitignoré (voir .gitignore),
+# jamais committé ni poussé. Donné tel quel par l'utilisateur à son
+# assistant pour qu'il connaisse les noms valides de ses projets.
+FICHIER_PROJETS_LOCAUX = RACINE / "PROJETS_LOCAUX.md"
+
+_SQUELETTE_PROJETS_LOCAUX = """# PROJETS_LOCAUX.md — Projets de cette installation
+
+Fichier **local, ignoré par git**, régénéré automatiquement par
+`nouveau_projet.py`/`supprimer_projet.py` à chaque création/suppression de
+projet sur cette machine (réglage `COPIE_NON_PROPRIETAIRE` de
+`identite_locale.conf`, issue #869) — à la place de `BRIDGE_AGENT_DOC.md`,
+qui reste la doc de l'outil, propriété d'Alain, jamais touchée par une copie
+non-propriétaire. Donne ce fichier tel quel à ton assistant pour qu'il
+connaisse les noms valides de tes projets.
+
+Ne JAMAIS éditer ce fichier à la main : tout le contenu entre les marqueurs
+ci-dessous est remplacé en entier à chaque régénération.
+
+*Dernière mise à jour : (jamais encore régénéré) —*
+
+## Projets actifs
+
+<!-- DEBUT:TABLEAU_PROJETS_ACTIFS (généré automatiquement par regenerer_tableaux_projets.py, ne pas éditer à la main) -->
+<!-- FIN:TABLEAU_PROJETS_ACTIFS -->
+
+## Périmètre par projet
+
+<!-- DEBUT:TABLEAU_PERIMETRE_PROJETS (généré automatiquement par regenerer_tableaux_projets.py, ne pas éditer à la main) -->
+<!-- FIN:TABLEAU_PERIMETRE_PROJETS -->
+"""
 
 # Timeouts (secondes) des appels git de committer_pousser_doc() (issue #645) :
 # même logique que TIMEOUT_GIT_LOCAL/TIMEOUT_GIT_PUSH de nouveau_projet.py —
@@ -312,6 +347,25 @@ def regenerer(doc_path: Path = DOC, dossier_configs: Path = DOSSIER_CONFIGS) -> 
             "n_projets": len(projets), "projets": projets}
 
 
+def regenerer_local(doc_path: Path = FICHIER_PROJETS_LOCAUX,
+                    dossier_configs: Path = DOSSIER_CONFIGS) -> dict:
+    """Variante de `regenerer()` pour une copie non-propriétaire de l'outil
+    (issue #869, voir `identite.copie_non_proprietaire()`) : RÉUTILISE tel
+    quel tout le mécanisme de régénération (`lire_projets`,
+    `_remplacer_entre_marqueurs`, `_bump_date`) sur un fichier LOCAL distinct
+    (par défaut `PROJETS_LOCAUX.md`, gitignoré), jamais sur
+    `BRIDGE_AGENT_DOC.md`. Ce fichier n'est ensuite jamais committé ni
+    poussé (à la différence de `committer_pousser_doc()`, qui ne doit jamais
+    être appelée pour ce fichier).
+
+    Crée le fichier avec un squelette minimal (mêmes marqueurs que
+    BRIDGE_AGENT_DOC.md) s'il n'existe pas encore — seul ajout par rapport à
+    `regenerer()`, qui renvoie `{"existe": False}` sans rien créer."""
+    if not doc_path.exists():
+        doc_path.write_text(_SQUELETTE_PROJETS_LOCAUX, encoding="utf-8")
+    return regenerer(doc_path, dossier_configs)
+
+
 def _git_doc(racine: Path, *args: str,
             timeout: float = TIMEOUT_GIT_DOC_LOCAL) -> subprocess.CompletedProcess:
     try:
@@ -400,19 +454,24 @@ def committer_pousser_doc(message: str, doc_path: Path = DOC) -> dict:
 
 
 def main() -> int:
-    resultat = regenerer()
+    local = identite.copie_non_proprietaire()
+    cible = FICHIER_PROJETS_LOCAUX if local else DOC
+    resultat = regenerer_local() if local else regenerer()
     if not resultat["existe"]:
-        print(f"⚠️  {DOC.name} introuvable — rien à faire.")
+        print(f"⚠️  {cible.name} introuvable — rien à faire.")
         return 1
     if resultat["erreur"]:
         print(f"⚠️  {resultat['erreur']}")
         return 1
     noms = ", ".join(p["nom"] for p in resultat["projets"])
     print(f"{resultat['n_projets']} projet(s) trouvé(s) dans configs/*.conf : {noms}")
+    if local:
+        print(f"   (copie non-propriétaire — COPIE_NON_PROPRIETAIRE : écrit dans "
+              f"{cible.name}, {DOC.name} jamais touché.)")
     if resultat["modifie"]:
-        print(f"✓ {DOC.name} mis à jour (§2/§7 régénérés).")
+        print(f"✓ {cible.name} mis à jour (§2/§7 régénérés).")
     else:
-        print(f"= {DOC.name} déjà à jour — aucune modification.")
+        print(f"= {cible.name} déjà à jour — aucune modification.")
     return 0
 
 

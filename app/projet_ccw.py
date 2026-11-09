@@ -63,6 +63,7 @@ DOSSIER_SCRIPT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(DOSSIER_SCRIPT))
 
 import etat_configs_legitimes  # noqa: E402
+import identite  # noqa: E402
 import regenerer_tableaux_projets  # noqa: E402
 
 # Cache local de la clé publique de bootstrap (voir décision en tête de
@@ -462,10 +463,16 @@ def bootstrap_projet_ccw():
     #    pour ne jamais toucher BRIDGE_AGENT_DOC.md sans raison.
     chemin_ccw = f"{RACINE_CLONES_CCW}\\{nom}"
     if _ecrire_rep_travail_ccw(nom, chemin_ccw):
-        resultat_doc = regenerer_tableaux_projets.regenerer()
-        if resultat_doc["modifie"]:
-            regenerer_tableaux_projets.committer_pousser_doc(
-                f"Ajout du clone CCW de {nom} (§2)")
+        # Copie non-propriétaire (issue #869) : PROJETS_LOCAUX.md à la place
+        # de BRIDGE_AGENT_DOC.md, jamais commité/poussé — même garde-fou que
+        # app/nouveau_projet.py / supprimer_projet.py.
+        if identite.copie_non_proprietaire():
+            regenerer_tableaux_projets.regenerer_local()
+        else:
+            resultat_doc = regenerer_tableaux_projets.regenerer()
+            if resultat_doc["modifie"]:
+                regenerer_tableaux_projets.committer_pousser_doc(
+                    f"Ajout du clone CCW de {nom} (§2)")
 
     # 5. Démarrage automatique du watcher for-linux de bridge_agent (même
     #    logique que app.issues.envoyer pour toute issue for-linux, issue

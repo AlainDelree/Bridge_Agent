@@ -35,3 +35,9 @@ configs/secret_key.bin
 # installation différente (autre compte GitHub, autre PC Windows) y met ses
 # propres valeurs sans toucher au code.
 identite_locale.conf
+# Tableaux des projets d'une copie non-propriétaire de l'outil (réglage
+# COPIE_NON_PROPRIETAIRE ci-dessus, issue #869) : même contenu que les
+# tableaux §2/§7 de BRIDGE_AGENT_DOC.md, mais régénéré localement sans
+# jamais toucher à la doc de l'outil — à donner tel quel à son propre
+# assistant, jamais committé.
+PROJETS_LOCAUX.md

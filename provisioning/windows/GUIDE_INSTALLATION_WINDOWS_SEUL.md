@@ -1,6 +1,6 @@
 # GUIDE_INSTALLATION_WINDOWS_SEUL — Bridge_Agent sur un PC Windows seul, avec Mistral Vibe
 
-Dernière mise à jour : 9 novembre 2026 (§3, réglage `MAJ_AUTO_DEPOT`, issue #868). Version de travail : à corriger après la première installation réelle.
+Dernière mise à jour : 9 novembre 2026 (§8, réglage `COPIE_NON_PROPRIETAIRE`, issue #869). Version de travail : à corriger après la première installation réelle.
 
 Ce guide ne répète pas ce que disent déjà les autres documents du dépôt : il donne l'ordre des étapes, renvoie vers le bon document pour le détail, et signale les pièges déjà rencontrés.
 
@@ -98,6 +98,14 @@ Par défaut, les fichiers d'issues se déposent dans `issues_inbox\` du dépôt.
 
 ## 8. Créer le premier projet
 
+**Avant de créer le premier projet, activer le réglage `COPIE_NON_PROPRIETAIRE` (établi, issue #869).** Cette copie de l'outil appartient à Alain, pas à l'ami qui l'utilise ici : sans ce réglage, la création (et la suppression) d'un projet réécrirait les tableaux §2/§7 de `BRIDGE_AGENT_DOC.md` avec les seuls projets de l'ami, créerait un commit local qui ferait diverger la copie de celle d'Alain (le `git pull --ff-only` du §3 serait alors systématiquement refusé), puis tenterait un push qui échouerait — ou écraserait la doc d'Alain si les droits d'écriture étaient accordés par erreur. Ajouter dans `identite_locale.conf` (même fichier que `MAJ_AUTO_DEPOT`, §3) :
+
+```
+COPIE_NON_PROPRIETAIRE = oui
+```
+
+Avec ce réglage, créer ou supprimer un projet n'écrit, ne committe ni ne pousse plus jamais `BRIDGE_AGENT_DOC.md` : les mêmes informations (tableaux §2/§7) sont écrites dans `PROJETS_LOCAUX.md`, fichier local gitignoré, régénéré automatiquement à chaque création/suppression — à donner tel quel à Mistral Vibe pour qu'il connaisse les noms valides des projets de l'ami. Le résultat de la création l'annonce clairement (ex. « liste des projets écrite dans PROJETS_LOCAUX.md, doc de l'outil inchangée »), sans jamais afficher « push échoué » dans ce cas. **Ne pas pousser `BRIDGE_AGENT_DOC.md` à la main** après une création/suppression avec ce réglage actif : il n'a pas été modifié, il n'y a rien à pousser.
+
 Dans l'interface, bouton « Nouveau projet », **sans** cocher « Projet CCW » (cette case suppose une seconde machine ; elle échoue proprement avec un message explicite, établi). Le code de création n'a rien de spécifique à Linux (établi), mais n'a jamais été exécuté sur un Windows seul : **à vérifier**.
 
 Ensuite, dans `configs\<projet>.conf` :
@@ -106,7 +114,7 @@ Ensuite, dans `configs\<projet>.conf` :
 - **modifier ce fichier uniquement quand aucune issue en écriture ne tourne** (sur n'importe quel projet), sinon la modification est annulée à la fin de cette issue (garde-fou #318, constaté) ; puis relancer le watcher du projet, qui ne lit son `.conf` qu'au démarrage ;
 - versionner `consignes\projet_<nom>.md` s'il existe, sinon la fusion d'une branche est refusée.
 
-Piège connu de la création (constaté chez Alain, dépend d'un crochet de tests au `pre-push`) : le push du commit de documentation a un délai de 60 s ; si un crochet lent est installé, la création affiche « push échoué ». Vérifier avec `git fetch` puis `git log origin/master..master`, et pousser à la main. Un correctif est prévu.
+Piège connu de la création **sans le réglage `COPIE_NON_PROPRIETAIRE`** (constaté chez Alain, dépend d'un crochet de tests au `pre-push`) : le push du commit de documentation a un délai de 60 s ; si un crochet lent est installé, la création affiche « push échoué ». Vérifier avec `git fetch` puis `git log origin/master..master`, et pousser à la main. Un correctif est prévu. **Ne concerne pas** une copie avec `COPIE_NON_PROPRIETAIRE` actif : aucun push n'est jamais tenté sur `BRIDGE_AGENT_DOC.md` dans ce cas.
 
 ## 9. Démarrage automatique
 

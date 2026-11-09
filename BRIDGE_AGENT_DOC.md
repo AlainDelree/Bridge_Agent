@@ -637,6 +637,62 @@ de session Windows) et exposé dans l'interface elle-même, en bandeau
 message rappelle explicitement que les watchers déjà démarrés tournent
 encore sur l'ancien code tant qu'ils ne sont pas relancés.
 
+### 8.2 Copie non-propriétaire du dépôt de l'outil (issue #869)
+
+Sur la machine d'Alain, créer ou supprimer un projet (`nouveau_projet.py`,
+`supprimer_projet.py`, bootstrap CCW) régénère les tableaux §2/§7 de
+**ce document** depuis `configs/*.conf`, puis les committe et les pousse
+automatiquement sur le dépôt Bridge_Agent (`regenerer_tableaux_projets.
+committer_pousser_doc()`, issue #645) — voulu : Alain est propriétaire de ce
+dépôt.
+
+Sur une copie de l'outil tenue à jour par `git pull --ff-only` (§8.1,
+`MAJ_AUTO_DEPOT`) chez un tiers sans droits d'écriture sur ce dépôt (ex. ami
+sur PC Windows seul, issue #868), ce même comportement aurait trois effets
+indésirables : les tableaux seraient réécrits avec les seuls projets du
+tiers (perdant ceux d'Alain) ; un commit local créerait une divergence
+d'historique qui casserait tous les `git pull --ff-only` suivants
+(fast-forward impossible) ; et le push échouerait — ou, pire, écraserait la
+doc d'Alain si les droits d'écriture étaient accordés par erreur.
+
+**Réglage facultatif, désactivé par défaut**, dans `identite_locale.conf`
+(racine du dépôt, gitignoré — §8 ci-dessus) :
+```
+COPIE_NON_PROPRIETAIRE = oui   # active le réglage (absent/toute autre valeur
+                                # = désactivé, comportement STRICTEMENT
+                                # inchangé pour les installations d'Alain)
+```
+
+**Comportement, une fois activé** (`identite.copie_non_proprietaire()`,
+consulté par `nouveau_projet.mettre_a_jour_doc()`, `supprimer_projet.
+mettre_a_jour_doc()` et le bootstrap CCW, `app/projet_ccw.py`) : plus aucune
+écriture dans `BRIDGE_AGENT_DOC.md`, plus aucun commit ni push de ce
+document. À la place, les tableaux des projets de CETTE machine (mêmes
+informations que les tableaux §2/§7, générées depuis les mêmes
+`configs/*.conf`) sont écrits dans `PROJETS_LOCAUX.md`, fichier **local,
+gitignoré, jamais committé** (`regenerer_tableaux_projets.
+regenerer_local()`, réutilise tel quel le mécanisme de régénération de
+`regenerer()` — `lire_projets`/marqueurs HTML/bump de date — sur ce fichier
+distinct plutôt que de le dupliquer). Ce fichier peut être donné tel quel à
+l'assistant de l'utilisateur (Mistral Vibe, Claude…) pour qu'il connaisse
+les noms valides de ses projets.
+
+**Rien n'est présenté comme une erreur** : le résultat de la création/
+suppression d'un projet annonce l'écriture du fichier local en une ligne
+(étape « Documentation », ex. « liste des projets écrite dans
+PROJETS_LOCAUX.md, doc de l'outil inchangée (COPIE_NON_PROPRIETAIRE) ») —
+jamais de « push échoué » ni d'étape « Commit doc Bridge_Agent » (absente
+dans ce cas). La copie reste identique à celle d'Alain, et `MAJ_AUTO_DEPOT`
+(§8.1) continue de fonctionner.
+
+**Garde-fou général envisagé, pas implémenté (issue #869)** : refuser tout
+push de `BRIDGE_AGENT_DOC.md` vers un dépôt distant dont l'utilisateur
+n'est pas propriétaire, sans dépendre d'un réglage explicite — nécessiterait
+de déterminer de façon fiable le propriétaire du remote `origin` (ex.
+comparer `identite.compte_github()`/le compte `gh` connecté à l'organisation/
+utilisateur du remote), ce qui dépasse une petite modification ; laissé en
+l'état, à discuter séparément.
+
 ---
 
 ## 9. Accès externe
@@ -1022,13 +1078,15 @@ estimation que celle déjà affichée, sans dupliquer ce calcul.
 
 ---
 
-*Dernière mise à jour : 9 novembre 2026 — §8.1 (nouvelle sous-section) :
-mise à jour automatique FACULTATIVE du dépôt de l'outil au lancement de
-`new_issue.py` (réglage `MAJ_AUTO_DEPOT` dans `identite_locale.conf`,
-désactivé par défaut), pour les installations locales sans service CCW
-(ex. poste Windows seul, issue #868) — réutilise `rafraichir_depot()`
-(#185) sans le dupliquer, délai court, renonce si le dépôt contient la
-moindre modification non enregistrée, résultat toujours visible (sortie
-standard + bandeau de l'interface, jamais silencieux).*
+*Dernière mise à jour : 9 novembre 2026 — §8.2 (nouvelle sous-section) :
+réglage FACULTATIF `COPIE_NON_PROPRIETAIRE` dans `identite_locale.conf`
+(désactivé par défaut, comportement STRICTEMENT inchangé pour les
+installations d'Alain), pour une copie de l'outil qui n'appartient pas à
+Alain (ex. ami sur PC Windows seul, issue #869, suite de #868) — une fois
+actif, création/suppression de projet n'écrit, ne committe ni ne pousse
+plus jamais `BRIDGE_AGENT_DOC.md` ; les tableaux §2/§7 sont régénérés dans
+`PROJETS_LOCAUX.md` (fichier local gitignoré, `regenerer_tableaux_projets.
+regenerer_local()`) à la place, annoncé en une ligne, jamais comme une
+erreur.*
 
 Historique complet : voir [`CHANGELOG.md`](CHANGELOG.md).

@@ -520,18 +520,33 @@ def initialiser_git(rep: str, depot: str) -> dict:
 
 
 def mettre_a_jour_doc() -> dict:
-    """Régénère les tableaux §2/§7 de BRIDGE_AGENT_DOC.md depuis
-    configs/*.conf (délègue à regenerer_tableaux_projets — issue #571). Le
-    .conf du nouveau projet est déjà écrit sur disque à ce stade (étape 2
-    de creer_projet), donc la régénération depuis le disque le voit déjà —
-    sauf garde-fou (issue #739) : si AUCUN .conf n'est trouvé (cas d'un
-    worktree isolé, sans configs/ rempli), la régénération est annulée et
-    `erreur` porte le message explicite, sans toucher au document.
-    Renvoie {existe, ok2, ok7, ok_date, erreur}."""
+    """Régénère les tableaux §2/§7 depuis configs/*.conf (délègue à
+    regenerer_tableaux_projets — issue #571). Le .conf du nouveau projet est
+    déjà écrit sur disque à ce stade (étape 2 de creer_projet), donc la
+    régénération depuis le disque le voit déjà — sauf garde-fou (issue
+    #739) : si AUCUN .conf n'est trouvé (cas d'un worktree isolé, sans
+    configs/ rempli), la régénération est annulée et `erreur` porte le
+    message explicite, sans toucher au document.
+
+    Copie non-propriétaire (issue #869, identite.copie_non_proprietaire()) :
+    régénère PROJETS_LOCAUX.md (fichier local gitignoré) à la place de
+    BRIDGE_AGENT_DOC.md — jamais d'écriture sur la doc de l'outil pour une
+    copie qui n'appartient pas à Alain. `local`/`fichier_local` signalent ce
+    cas à l'appelant, qui ne doit alors jamais tenter de committer/pousser.
+
+    Renvoie {existe, ok2, ok7, ok_date, erreur, local, fichier_local}."""
+    if identite.copie_non_proprietaire():
+        resultat = regenerer_tableaux_projets.regenerer_local()
+        ok = resultat["existe"] and resultat["erreur"] is None
+        return {"existe": resultat["existe"], "ok2": ok, "ok7": ok,
+                "ok_date": resultat["modifie"], "erreur": resultat["erreur"],
+                "local": True,
+                "fichier_local": str(regenerer_tableaux_projets.FICHIER_PROJETS_LOCAUX)}
     resultat = regenerer_tableaux_projets.regenerer()
     ok = resultat["existe"] and resultat["erreur"] is None
     return {"existe": resultat["existe"], "ok2": ok, "ok7": ok,
-            "ok_date": resultat["modifie"], "erreur": resultat["erreur"]}
+            "ok_date": resultat["modifie"], "erreur": resultat["erreur"],
+            "local": False, "fichier_local": None}
 
 
 def creer_projet(nom: str, depot: str = "", rep: str = "", perimetre: str = "",
@@ -632,14 +647,24 @@ def creer_projet(nom: str, depot: str = "", rep: str = "", perimetre: str = "",
     etapes.append({"etape": "Dépôt git local", "ok": git_res["ok"],
                    "detail": git_res["detail"]})
 
-    # 6. Mise à jour de BRIDGE_AGENT_DOC.md (§2, §7, date).
+    # 6. Mise à jour de BRIDGE_AGENT_DOC.md (§2, §7, date) — ou, sur une copie
+    # non-propriétaire de l'outil (issue #869), de PROJETS_LOCAUX.md.
     doc = mettre_a_jour_doc()
     doc_commit = None
     if not doc["existe"]:
+        nom_doc = Path(doc["fichier_local"]).name if doc.get("local") else DOC.name
         etapes.append({"etape": "Documentation", "ok": False,
-                       "detail": "BRIDGE_AGENT_DOC.md introuvable — non mis à jour."})
+                       "detail": f"{nom_doc} introuvable — non mis à jour."})
     elif doc["erreur"]:
         etapes.append({"etape": "Documentation", "ok": False, "detail": doc["erreur"]})
+    elif doc.get("local"):
+        # Copie non-propriétaire (COPIE_NON_PROPRIETAIRE dans
+        # identite_locale.conf) : aucune écriture/commit/push sur
+        # BRIDGE_AGENT_DOC.md — annoncé clairement, pas comme une erreur.
+        etapes.append({"etape": "Documentation", "ok": True,
+                       "detail": f"liste des projets écrite dans "
+                                 f"{Path(doc['fichier_local']).name}, doc de l'outil "
+                                 "inchangée (COPIE_NON_PROPRIETAIRE)."})
     else:
         ok_doc = doc["ok2"] and doc["ok7"]
         etapes.append({"etape": "Documentation", "ok": ok_doc,
@@ -904,6 +929,17 @@ def etape_git(depot: str, rep: str) -> dict:
 
 def etape_doc() -> bool:
     titre("9. Mise à jour de BRIDGE_AGENT_DOC.md")
+    if identite.copie_non_proprietaire():
+        # Copie non-propriétaire (issue #869) : PROJETS_LOCAUX.md à la place
+        # de BRIDGE_AGENT_DOC.md, jamais touché — voir mettre_a_jour_doc().
+        resultat = regenerer_tableaux_projets.regenerer_local()
+        nom_fichier = regenerer_tableaux_projets.FICHIER_PROJETS_LOCAUX.name
+        if resultat["erreur"]:
+            print(f"   ⚠️  {resultat['erreur']}")
+            return False
+        print(f"   liste des projets écrite dans {nom_fichier}, "
+              f"{DOC.name} inchangée (COPIE_NON_PROPRIETAIRE).")
+        return True
     resultat = regenerer_tableaux_projets.regenerer()
     if not resultat["existe"]:
         print(f"   ⚠️  {DOC.name} introuvable — mise à jour ignorée.")
@@ -1033,7 +1069,14 @@ def main() -> None:
     else:
         print("   Dépôt git local : NON initialisé — le projet est inutilisable "
               "en l'état")
-    print(f"   Documentation   : {'§2/§7/date mis à jour' if doc_ok else 'à vérifier'}")
+    if identite.copie_non_proprietaire():
+        if doc_ok:
+            print(f"   Documentation   : {regenerer_tableaux_projets.FICHIER_PROJETS_LOCAUX.name} "
+                  f"mis à jour, {DOC.name} inchangée (COPIE_NON_PROPRIETAIRE).")
+        else:
+            print("   Documentation   : à vérifier")
+    else:
+        print(f"   Documentation   : {'§2/§7/date mis à jour' if doc_ok else 'à vérifier'}")
 
     print("\n\033[1mReste à faire manuellement :\033[0m")
     print(f"   Côté projet {nom} créé :")
@@ -1057,8 +1100,12 @@ def main() -> None:
           f"python3 watcher.py --config configs/{nom}.conf")
     print("   • (Optionnel) Piloter le watcher depuis l'interface new_issue.py.")
     print(f"   Côté dépôt Bridge_Agent (distinct du projet {nom}) :")
-    print("   • Vérifier puis committer/pousser BRIDGE_AGENT_DOC.md (§2/§7) — "
-          "configs/*.conf est gitignoré, jamais committable.")
+    if identite.copie_non_proprietaire():
+        print(f"   • Rien à committer/pousser ici : {regenerer_tableaux_projets.FICHIER_PROJETS_LOCAUX.name} "
+              f"est local et gitignoré (COPIE_NON_PROPRIETAIRE) ; {DOC.name} n'a pas été touché.")
+    else:
+        print("   • Vérifier puis committer/pousser BRIDGE_AGENT_DOC.md (§2/§7) — "
+              "configs/*.conf est gitignoré, jamais committable.")
 
     rappel_projet_claude(nom)
 

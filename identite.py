@@ -109,3 +109,32 @@ def utilisateur_ssh_defaut() -> str:
     UTILISATEUR_SSH_HISTORIQUE ("AlainW", comportement inchangé pour
     l'installation d'Alain)."""
     return _lire_identite_locale().get("UTILISATEUR_SSH") or UTILISATEUR_SSH_HISTORIQUE
+
+
+# Valeurs considérées comme "actif" pour un réglage booléen de
+# identite_locale.conf — même ensemble que celui déjà utilisé en dur par
+# watcher.tenter_maj_auto_demarrage() pour MAJ_AUTO_DEPOT (issue #868), repris
+# ici tel quel pour COPIE_NON_PROPRIETAIRE plutôt que dupliqué sans nom.
+VALEURS_VRAIES = ("true", "1", "oui", "yes", "vrai")
+
+
+def copie_non_proprietaire() -> bool:
+    """True si `identite_locale.conf` déclare cette copie de l'outil comme
+    n'appartenant pas à Alain (`COPIE_NON_PROPRIETAIRE = oui`, issue #869) —
+    toute autre valeur, ou absence de la clé, renvoie False : comportement
+    STRICTEMENT INCHANGÉ pour les installations d'Alain (ThinkPad, PC fixe),
+    dont `BRIDGE_AGENT_DOC.md` reste la référence des tableaux de projets.
+
+    Pensé pour une copie tenue à jour par `git pull --ff-only` (issue #868,
+    `MAJ_AUTO_DEPOT`) chez un tiers sans droits d'écriture sur le dépôt
+    d'Alain (ex. ami sur PC Windows seul) : sans ce réglage, créer ou
+    supprimer un projet dessus réécrirait les tableaux §2/§7 avec les seuls
+    projets de ce tiers, créerait un commit local faisant diverger la copie
+    de celle d'Alain (tous les `git pull --ff-only` suivants refusés), puis
+    tenterait un push qui échouerait — ou, pire, écraserait la doc d'Alain
+    si les droits d'écriture étaient accordés. Voir
+    `regenerer_tableaux_projets.regenerer_local()` pour l'effet concret de
+    ce réglage (tableaux écrits dans `PROJETS_LOCAUX.md`, fichier local
+    gitignoré, à la place de `BRIDGE_AGENT_DOC.md` — jamais d'écriture, de
+    commit ni de push sur la doc de l'outil dans ce cas)."""
+    return _lire_identite_locale().get("COPIE_NON_PROPRIETAIRE", "").strip().lower() in VALEURS_VRAIES

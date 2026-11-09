@@ -32,6 +32,7 @@ from pathlib import Path
 import etat_cases_cochees
 import etat_configs_legitimes
 import etat_son_issue
+import identite
 import regenerer_tableaux_projets
 from nouveau_projet import DOSSIER_CONFIGS
 from watcher import lire_conf
@@ -129,12 +130,27 @@ def _supprimer_conf(chemin: Path) -> dict:
 def mettre_a_jour_doc() -> dict:
     """Même mécanisme que nouveau_projet.mettre_a_jour_doc() (issue #571) :
     à cet instant le .conf du projet est déjà retiré du disque, la
-    régénération le fait donc disparaître de §2/§7. Renvoie {existe, ok,
-    modifie, erreur}."""
+    régénération le fait donc disparaître de §2/§7.
+
+    Copie non-propriétaire (issue #869, identite.copie_non_proprietaire()) :
+    régénère PROJETS_LOCAUX.md (fichier local gitignoré) à la place de
+    BRIDGE_AGENT_DOC.md — voir nouveau_projet.mettre_a_jour_doc(), même
+    logique. `local`/`fichier_local` signalent ce cas à l'appelant, qui ne
+    doit alors jamais tenter de committer/pousser.
+
+    Renvoie {existe, ok, modifie, erreur, local, fichier_local}."""
+    if identite.copie_non_proprietaire():
+        resultat = regenerer_tableaux_projets.regenerer_local()
+        ok = resultat["existe"] and resultat["erreur"] is None
+        return {"existe": resultat["existe"], "ok": ok,
+                "modifie": resultat["modifie"], "erreur": resultat["erreur"],
+                "local": True,
+                "fichier_local": str(regenerer_tableaux_projets.FICHIER_PROJETS_LOCAUX)}
     resultat = regenerer_tableaux_projets.regenerer()
     ok = resultat["existe"] and resultat["erreur"] is None
     return {"existe": resultat["existe"], "ok": ok,
-            "modifie": resultat["modifie"], "erreur": resultat["erreur"]}
+            "modifie": resultat["modifie"], "erreur": resultat["erreur"],
+            "local": False, "fichier_local": None}
 
 
 def supprimer_projet(nom: str, dry_run: bool = False) -> dict:
@@ -176,9 +192,15 @@ def supprimer_projet(nom: str, dry_run: bool = False) -> dict:
             {"etape": "Fichier .conf", "ok": True,
              "detail": f"{apercu['conf']} serait supprimé."},
             {"etape": "Documentation", "ok": True,
-             "detail": "§2/§7 de BRIDGE_AGENT_DOC.md seraient régénérés depuis "
-                       "configs/*.conf, sans ce projet, puis commités/poussés "
-                       "automatiquement sur le dépôt Bridge_Agent."},
+             "detail": (
+                 f"liste des projets serait réécrite dans "
+                 f"{regenerer_tableaux_projets.FICHIER_PROJETS_LOCAUX.name} (sans ce "
+                 "projet), doc de l'outil non touchée (COPIE_NON_PROPRIETAIRE)."
+                 if identite.copie_non_proprietaire() else
+                 "§2/§7 de BRIDGE_AGENT_DOC.md seraient régénérés depuis "
+                 "configs/*.conf, sans ce projet, puis commités/poussés "
+                 "automatiquement sur le dépôt Bridge_Agent."
+             )},
             {"etape": "Cases cochées (état serveur, issue #629)", "ok": True,
              "detail": (f"{len(etat_cases_cochees.lire_cases_cochees(nom))} "
                         "case(s) cochée(s) seraient retirées.")},
@@ -221,10 +243,19 @@ def supprimer_projet(nom: str, dry_run: bool = False) -> dict:
     doc = mettre_a_jour_doc()
     doc_commit = None
     if not doc["existe"]:
+        nom_doc = Path(doc["fichier_local"]).name if doc.get("local") else "BRIDGE_AGENT_DOC.md"
         etapes.append({"etape": "Documentation", "ok": False,
-                       "detail": "BRIDGE_AGENT_DOC.md introuvable — non mis à jour."})
+                       "detail": f"{nom_doc} introuvable — non mis à jour."})
     elif doc["erreur"]:
         etapes.append({"etape": "Documentation", "ok": False, "detail": doc["erreur"]})
+    elif doc.get("local"):
+        # Copie non-propriétaire (COPIE_NON_PROPRIETAIRE dans
+        # identite_locale.conf) : aucune écriture/commit/push sur
+        # BRIDGE_AGENT_DOC.md — annoncé clairement, pas comme une erreur.
+        etapes.append({"etape": "Documentation", "ok": True,
+                       "detail": f"liste des projets écrite dans "
+                                 f"{Path(doc['fichier_local']).name} (projet retiré), "
+                                 "doc de l'outil inchangée (COPIE_NON_PROPRIETAIRE)."})
     else:
         etapes.append({"etape": "Documentation", "ok": True,
                        "detail": "§2/§7/date régénérés (projet retiré)."
@@ -277,7 +308,11 @@ def main() -> int:
           + (f" ({apercu['nb_fichiers']} élément(s))" if apercu["rep_existe"] else " (déjà absent)"))
     print(f"   Dépôt git local       : {'présent, sera supprimé' if apercu['git_local'] else 'absent'}")
     print(f"   Fichier configs/{nom}.conf : sera supprimé")
-    print("   BRIDGE_AGENT_DOC.md (§2/§7) : sera régénéré")
+    if identite.copie_non_proprietaire():
+        print(f"   {regenerer_tableaux_projets.FICHIER_PROJETS_LOCAUX.name} : sera régénéré "
+              "(BRIDGE_AGENT_DOC.md non touché — COPIE_NON_PROPRIETAIRE)")
+    else:
+        print("   BRIDGE_AGENT_DOC.md (§2/§7) : sera régénéré")
     print(f"   Cases cochées (état serveur, issue #629) : "
           f"{len(etat_cases_cochees.lire_cases_cochees(nom))} seront retirées")
 
