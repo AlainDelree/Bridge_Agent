@@ -121,3 +121,6 @@
   première ligne, mais ne t'y fie pas : une tâche pourtant terminée a déjà
   été classée à tort en échec, puis retentée trois fois en pure perte,
   faute de cette ligne autonome (issue #777).
+
+## Ne pas créer d'issue GitHub de suivi
+Une issue GitHub portant le label `for-linux` ou `for-windows` est traitée automatiquement par un watcher, sans le label de mode que la tâche d'origine demandait. Ne crée donc aucune issue de suivi sur GitHub de ta propre initiative, même si la tâche parle d'« issues à ouvrir ensuite » : décris-les dans ton rapport. Seule exception : une issue `for-windows` que la tâche te demande expressément de créer.
