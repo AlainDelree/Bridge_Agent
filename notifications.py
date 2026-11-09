@@ -23,6 +23,8 @@ jamais l'appelant — une notification qui échoue ne doit jamais casser un cycl
 """
 
 import logging
+import os
+import platform
 import subprocess
 import time
 from pathlib import Path
@@ -72,11 +74,72 @@ def bip(script_bip: Path, fois: int = 1, projet: str | None = None, numero=None,
         time.sleep(0.3)
 
 
+# Bulle Windows (issue #863) : enveloppe System.Windows.Forms.NotifyIcon via
+# PowerShell — déjà présent sur tout Windows avec .NET Framework (pas de
+# dépendance Python supplémentaire, pas de module PowerShell externe comme
+# BurntToast). Titre/message passés par variables d'environnement du
+# sous-processus (jamais interpolés dans le texte du script PowerShell) pour
+# exclure toute injection, quel que soit leur contenu.
+_PS_BULLE_WINDOWS = (
+    "Add-Type -AssemblyName System.Windows.Forms;"
+    "Add-Type -AssemblyName System.Drawing;"
+    "$icone = New-Object System.Windows.Forms.NotifyIcon;"
+    "$icone.Icon = [System.Drawing.SystemIcons]::Information;"
+    "$icone.BalloonTipIcon = [System.Windows.Forms.ToolTipIcon]$env:BRIDGE_NOTIF_ICONE;"
+    "$icone.BalloonTipTitle = $env:BRIDGE_NOTIF_TITRE;"
+    "$icone.BalloonTipText = $env:BRIDGE_NOTIF_MESSAGE;"
+    "$icone.Visible = $true;"
+    "$icone.ShowBalloonTip(5000);"
+    "Start-Sleep -Milliseconds 5200;"
+    "$icone.Dispose();"
+)
+
+_ICONE_PAR_URGENCE = {"critical": "Error", "low": "None"}  # repli 'Info' sinon
+
+
+def _notifier_bureau_windows(nom_projet: str, titre: str, message: str,
+                              urgence: str, log: logging.Logger):
+    """Bulle de notification bureau sous Windows (issue #863), sans aucune
+    dépendance Python supplémentaire : PowerShell + l'assembly .NET
+    System.Windows.Forms, présente sur tout Windows avec .NET Framework.
+    Best-effort — toute erreur (PowerShell absent, timeout) est journalisée
+    et avalée, jamais propagée. Si le watcher tourne en SERVICE Windows sans
+    session de bureau ouverte, la bulle ne peut physiquement pas s'afficher
+    (pas de « Session 0 » interactive) : ce cas se traduit ici par un timeout
+    ou une erreur PowerShell, journalisé avec un rappel que le canal ntfy
+    (`notif_gsm`/`notif_tous`) reste lui disponible indépendamment."""
+    env = os.environ.copy()
+    env["BRIDGE_NOTIF_TITRE"] = titre
+    env["BRIDGE_NOTIF_MESSAGE"] = message
+    env["BRIDGE_NOTIF_ICONE"] = _ICONE_PAR_URGENCE.get(urgence, "Info")
+    try:
+        subprocess.run(
+            ["powershell.exe", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden",
+             "-Command", _PS_BULLE_WINDOWS],
+            capture_output=True, timeout=10, env=env,
+        )
+    except FileNotFoundError:
+        log.warning("powershell.exe introuvable — notification bureau Windows ignorée "
+                     "(le canal ntfy, notif_gsm/notif_tous, reste disponible).")
+    except subprocess.TimeoutExpired:
+        log.warning("powershell.exe n'a pas répondu à temps pour la bulle de bureau — "
+                     "possible watcher en SERVICE Windows sans session de bureau ouverte "
+                     "(le canal ntfy, notif_gsm/notif_tous, reste disponible dans ce cas).")
+    except Exception as e:
+        log.error(f"Erreur notification bureau Windows : {e}")
+
+
 def notifier_bureau(nom_projet: str, titre: str, message: str,
                     urgence: str = "normal", log: logging.Logger = _log_defaut):
-    """Bulle de notification bureau via notify-send.
-    urgence : 'low', 'normal', 'critical'. 'critical' reste affichée jusqu'à
-    clic (utile pour les échecs)."""
+    """Bulle de notification bureau : notify-send sous Linux (comportement
+    historique, inchangé), PowerShell/NotifyIcon sous Windows (issue #863).
+    urgence : 'low', 'normal', 'critical'. Sous Linux, 'critical' reste
+    affichée jusqu'à clic (utile pour les échecs) ; sous Windows, la bulle
+    s'efface après un délai fixe quel que soit l'urgence (limite de
+    NotifyIcon, voir _notifier_bureau_windows)."""
+    if platform.system() == "Windows":
+        _notifier_bureau_windows(nom_projet, titre, message, urgence, log)
+        return
     try:
         subprocess.run(
             ["notify-send", "-a", f"Bridge {nom_projet}", "-u", urgence, titre, message],

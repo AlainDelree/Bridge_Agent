@@ -308,6 +308,51 @@ lignes distinctes.
 > Sans label `notif_pc` / `notif_gsm` / `notif_tous`, aucune notification
 > sonore ou push n'est déclenchée. Le bip est strictement opt-in.
 
+### 4.1 Notifications — canaux et plateformes (issue #863)
+
+Trois canaux, tous best-effort (un échec ne bloque et ne fait jamais échouer
+une issue, seulement journalisé) : le **bip** (`scripts/traitement_fin.py`,
+toujours émis si un label `notif_*` est posé), la **bulle de bureau**
+(`notifications.py::notifier_bureau`, `notif_pc`/`notif_tous`) et **ntfy**
+(push téléphone, `notif_gsm`/`notif_tous`, indépendant de la plateforme —
+simple requête HTTP via `curl`).
+
+- **Linux (CCL, ThinkPad)** : bip via `aplay`, bulle via `notify-send`
+  (paquet `libnotify-bin`) — comportement historique, inchangé par #863.
+- **Windows (CCW)** : depuis #863, un chemin natif existe pour les deux
+  canaux locaux, sans aucune dépendance Python supplémentaire :
+  - bip → module `winsound` de la bibliothèque standard Python (disponible
+    uniquement sous Windows, aucun paquet à installer) ;
+  - bulle → une commande PowerShell pilotant l'assembly .NET
+    `System.Windows.Forms.NotifyIcon` (balloon tip), déjà présente sur tout
+    Windows avec .NET Framework — pas de module PowerShell externe (type
+    BurntToast) ni de paquet Python (type `win10toast`) à installer.
+  - Si `aplay`/`winsound` ou `notify-send`/PowerShell sont introuvables, ou
+    échouent (timeout, erreur), le canal est simplement ignoré et journalisé
+    — cela ne peut plus faire échouer la fin de traitement d'une issue
+    (correctif #863 : auparavant, une exception dans la lecture du bip
+    pouvait interrompre `traitement_fin.py` avant le POST SSE de fin
+    d'issue vers `new_issue.py`).
+- **Watcher Windows en SERVICE, sans session de bureau ouverte** : la bulle
+  et le bip ne peuvent physiquement pas s'afficher/s'entendre (pas de
+  bureau interactif en « Session 0 »). Ce cas n'est pas détecté a priori
+  (aucune dépendance supplémentaire pour l'interroger) : il se traduit par
+  un timeout ou une erreur PowerShell/`winsound`, journalisée comme tout
+  autre échec de ces deux canaux. **Le canal ntfy reste disponible dans ce
+  cas** (requête HTTP sortante, aucun lien avec une session de bureau) : sur
+  une telle installation, préférer `notif_gsm`/`notif_tous` à `notif_pc`
+  seul.
+- **Notification locale sur une machine Windows SEULE** (pas de ThinkPad
+  CCL lançant `new_issue.py` pour centraliser) : le réglage `NOTIFIER_LOCAL`
+  du `.conf` (défaut `true`, clé lue par `watcher.py`) doit rester à `true`
+  côté CCW pour que ce watcher émette lui-même bip/bulle/ntfy à la fin de
+  chaque issue. Sur une installation à deux postes (ThinkPad CCL + PC CCW),
+  `NOTIFIER_LOCAL=false` est au contraire recommandé côté CCW, pour laisser
+  `new_issue.py` (lancé sur le ThinkPad) centraliser toutes les
+  notifications sans doublon ntfy — voir §16 et `app/notifications_poller.py`.
+  Rappel : CCL/CCW ne modifie jamais `configs/*.conf` lui-même (ce réglage
+  est réservé à Alain, voir §11).
+
 > `mode_scratch` (lecture active, voir §5) a longtemps manqué de cette
 > provision automatique (introduit par #327, oublié de `nouveau_projet.LABELS`
 > jusqu'à #785) : sur un dépôt où le label n'a jamais été créé à la main,
@@ -889,8 +934,11 @@ estimation que celle déjà affichée, sans dupliquer ce calcul.
 
 ---
 
-*Dernière mise à jour : 8 novembre 2026 — §8, sécurité : le compte GitHub
-autorisé et l'utilisateur SSH par défaut du PC fixe CCW ne sont plus codés
-en dur, voir `identite.py` (issue #859).*
+*Dernière mise à jour : 9 novembre 2026 — §4.1 (nouveau), notifications :
+chemin Windows natif pour la bulle de bureau (PowerShell/NotifyIcon) et le
+bip (`winsound`), sans dépendance Python supplémentaire ; une notification
+qui échoue (outil absent, watcher en service sans session de bureau) ne
+peut plus faire échouer la fin de traitement d'une issue, sous aucun
+système (issue #863).*
 
 Historique complet : voir [`CHANGELOG.md`](CHANGELOG.md).
