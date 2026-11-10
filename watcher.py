@@ -4113,6 +4113,35 @@ _CLAUSE_SOUS_AGENTS_VIBE = """4. Si tu délègues une partie du travail à un so
    tardive, ton rapport final reste celui déjà émis.
 """
 
+# Clause « bash refusé » propre à Vibe (issue #873) : un essai réel (Vibe
+# 3.1.1, Windows, --agent bridge_ecriture donc approbation automatique non
+# utilisée) a montré deux commandes bash refusées faute de quelqu'un pour les
+# approuver en session non interactive — une substitution de commande
+# ($(date ...)) combinée à une redirection (>), et un `date /T` final pris à
+# tort pour un chemin de disque ("outside workdir: T:\\"). bridge_ecriture.toml
+# déclare bash en permission "always" (débloque l'OUTIL), mais cela ne couvre
+# pas ces SYNTAXES jugées risquées par Vibe lui-même (confirmé par la
+# documentation Mistral citée dans l'issue #873) — la seule protection fiable
+# est donc de ne jamais produire ces syntaxes, d'où cette clause de prompt
+# plutôt qu'un réglage de profil (voir provisioning/vibe/README.md pour
+# l'examen de pistes côté profil, non appliquées). Après le premier refus, le
+# modèle avait retenté la même commande telle quelle : la clause le proscrit
+# explicitement.
+_CLAUSE_BASH_VIBE = """5. Crée ou modifie des fichiers avec tes outils de fichiers (`write_file`,
+   `edit`) plutôt que par une commande bash (`echo`, heredoc, `cat >
+   fichier`...) — ton profil non interactif refuse toute commande bash jugée
+   risquée, sans personne pour l'approuver. Dans les commandes bash que tu
+   lances malgré tout (git, listing...) : N'UTILISE JAMAIS de substitution de
+   commande (`$(...)`, accents graves) ni de redirection (`>`, `>>`, `<`,
+   `|`) — ce sont des motifs de refus systématique. Ne fais JAMAIS précéder
+   une commande d'un `cd` vers ton dossier de travail : tu y es déjà
+   (`--workdir`). Préfère des commandes simples et littérales (`git add
+   <fichier>`, `git commit -m "message littéral, sans substitution"`...). Si
+   une commande est refusée, NE LA RETENTE PAS sous la même forme : change
+   d'approche (un outil de fichier, une commande plus simple) ou signale ce
+   refus dans ton rapport final plutôt que d'insister.
+"""
+
 
 class ModeAgentIndisponible(Exception):
     """Levée par un callable `construire_cmd` (issue #761) quand le MODE
@@ -4122,6 +4151,20 @@ class ModeAgentIndisponible(Exception):
     et convertie en échec ordinaire de la tentative (comme
     FileNotFoundError ci-dessous) plutôt que de laisser l'exception remonter
     et interrompre le traitement de l'issue."""
+
+
+class PromptTropLong(Exception):
+    """Levée par un callable `construire_cmd` (issue #873) quand le prompt
+    construit dépasse la limite de ligne de commande Windows, marge de
+    sécurité incluse — voir `LIMITE_CAR_PROMPT_VIBE_WINDOWS` dans
+    `_construire_cmd_vibe`. Même esprit que `ModeAgentIndisponible` ci-dessus
+    (capturée dans `lancer_claude`, convertie en échec ordinaire de la
+    tentative) : mieux vaut un message clair dans le rapport de clôture
+    qu'un échec obscur côté `vibe` (troncature silencieuse ou erreur
+    d'encodage de la ligne de commande, jamais observé directement — cette
+    issue n'a lancé aucune session vibe réelle — mais le même plafond de
+    32767 caractères est déjà documenté pour `gh issue comment --body`, voir
+    `commenter_issue`, issue #237)."""
 
 
 def _construire_cmd_claude(mode: str, modele: str, prompt: str, cwd: Path) -> list[str]:
@@ -4154,6 +4197,16 @@ def _construire_cmd_claude(mode: str, modele: str, prompt: str, cwd: Path) -> li
     if mode == MODE_LECTURE:
         cmd += ["--allowedTools", ",".join(OUTILS_LECTURE_AUTORISES)]
     return cmd
+
+
+# Garde-fou de longueur de prompt pour vibe sous Windows (issue #873) — voir
+# le docstring de `_construire_cmd_vibe` pour le détail du raisonnement.
+# 32767 caractères de marge CreateProcess, moins ~2700 caractères de marge de
+# sécurité pour le reste de l'argv transmis par `_construire_cmd_vibe`
+# (`--agent bridge_ecriture --workdir <chemin> --prompt --max-turns ... etc.`,
+# jamais aussi long que le prompt lui-même) et l'échappement de guillemets
+# appliqué par `list2cmdline()` de Python.
+LIMITE_CAR_PROMPT_VIBE_WINDOWS = 30000
 
 
 def _construire_cmd_vibe(mode: str, modele: str, prompt: str, cwd: Path) -> list[str]:
@@ -4218,7 +4271,41 @@ def _construire_cmd_vibe(mode: str, modele: str, prompt: str, cwd: Path) -> list
     #781) : valeurs centralisées dans `AGENTS_CONNUS["vibe"]
     ["plafonds_session"]` — voir ce dictionnaire pour la justification des
     valeurs et le choix de ne PAS dupliquer le délai (`--time-limit`), déjà
-    géré par le watcher lui-même (`timeout=` de `proc.communicate`)."""
+    géré par le watcher lui-même (`timeout=` de `proc.communicate`).
+
+    Garde-fou de longueur (issue #873) : `--prompt` transmet le prompt sur la
+    LIGNE DE COMMANDE (pas sur stdin) — Windows plafonne CreateProcess à
+    32767 caractères au total (même plafond déjà rencontré pour
+    `gh issue comment --body`, voir `commenter_issue`, issue #237), et
+    `list2cmdline()` de Python reconstruit tout l'argv, prompt compris, en
+    une seule ligne avant de la transmettre. Un prompt réel observé fait
+    environ 12 000 caractères, mais rien ne borne aujourd'hui sa taille
+    (CONTEXTE + CONSIGNES + corps d'issue injectés par l'appelant) : plutôt
+    que de laisser `vibe` échouer obscurément (troncature silencieuse ou
+    erreur d'encodage de ligne de commande, jamais observé directement —
+    aucune session vibe réelle n'a été lancée pour cette issue), lève
+    `PromptTropLong` au-delà de `LIMITE_CAR_PROMPT_VIBE_WINDOWS` ; capturée
+    par `lancer_claude`, qui la convertit en échec propre de la tentative,
+    avec un message exploitable dans le rapport de clôture. Posé uniquement
+    sous Windows (`os.name == "nt"`) : Linux (ARG_MAX de plusieurs centaines
+    de Ko) n'a pas cette contrainte, ce garde-fou ne doit jamais se déclencher
+    sur CCL. Aucun autre moyen de transmission sûr établi par lecture du code
+    / de la documentation installée pour cette issue (stdin notamment : non
+    exploré, `--prompt` reste la seule option documentée par `vibe --help`
+    pour le mode programmatique `-p` déjà utilisé ici) — à revoir si une
+    future version de vibe en expose un."""
+    if os.name == "nt" and len(prompt) > LIMITE_CAR_PROMPT_VIBE_WINDOWS:
+        raise PromptTropLong(
+            f"Mistral Vibe : prompt trop long pour la ligne de commande "
+            f"Windows ({len(prompt)} caractères, limite "
+            f"{LIMITE_CAR_PROMPT_VIBE_WINDOWS} caractères avec marge — "
+            f"CreateProcess plafonne à 32767 caractères au total, voir "
+            f"issue #237 pour le même plafond déjà rencontré côté `gh`). "
+            f"Raccourcis le CONTEXTE/les CONSIGNES injectés dans le prompt, "
+            f"ou confie cette issue à un autre agent (ex. claude) tant "
+            f"qu'aucun moyen de transmission alternatif n'est confirmé côté "
+            f"vibe."
+        )
     if mode == MODE_LECTURE_ACTIVE:
         raise ModeAgentIndisponible(
             "Mistral Vibe : MODE_LECTURE_ACTIVE (lecture active/scratch) "
@@ -4363,6 +4450,13 @@ AGENTS_CONNUS = {
         "verifier_preflight": verifier_preflight_cle_api_vibe,
         "msg_binaire_introuvable": "Mistral Vibe introuvable (vibe non trouvé dans PATH)",
         "clause_sous_agents": _CLAUSE_SOUS_AGENTS_VIBE,
+        # Issue #873 : consigne de prompt contre les commandes bash refusées
+        # en session non interactive (substitution de commande, redirection,
+        # `cd` superflu) — voir _CLAUSE_BASH_VIBE et
+        # provisioning/vibe/README.md pour le contexte complet. Absente pour
+        # "claude" (clé non définie, .get() renvoie "" dans lancer_claude) :
+        # ce défaut n'a aucun équivalent connu côté Claude Code.
+        "clause_bash": _CLAUSE_BASH_VIBE,
         "signatures_erreur_bloquante": SIGNATURES_ERREUR_BLOQUANTE_VIBE,
         # Issue #779 (incident chesscoach #126) : Vibe choisit son interface
         # par défaut (CLI Python historique vs nouvelle TUI Rust, encore en
@@ -4859,6 +4953,9 @@ le travail déjà fait par cette tentative précédente. Dans ce cas :
         # Code (outil Task/Agent) — pilotée par AGENTS_CONNUS[CFG.agent] plutôt
         # qu'en dur (issue #759). Vide pour un agent sans cette notion.
         clause_sous_agents = AGENTS_CONNUS[CFG.agent].get("clause_sous_agents", "")
+        # Clause « bash refusé » (issue #873) — même mécanisme par agent que
+        # clause_sous_agents ci-dessus, voir _CLAUSE_BASH_VIBE.
+        clause_bash = AGENTS_CONNUS[CFG.agent].get("clause_bash", "")
         # Ligne des commits du gabarit de rapport (issue #767) : la décision
         # entre "vrais hash" et "aucun" dépend uniquement du MODE, déjà connu
         # ICI par le watcher — donc résolue une fois pour toutes à la
@@ -4898,7 +4995,7 @@ Instructions :
 1. Lis attentivement la tâche demandée
 2. Effectue le travail demandé (dans les limites du mode ci-dessus)
 3. Si tu dois créer une issue for-windows, utilise : gh issue create --repo {CFG.depot} --label "bridge,for-windows" ...
-{clause_sous_agents}
+{clause_sous_agents}{clause_bash}
 Réponds avec ce format exact, sans rien ajouter avant ni après — remplis
 "py_compile" avec le résultat réel (OK, ou le message d'échec) si tu as
 modifié au moins un fichier Python, "N/A" sinon :
@@ -4941,7 +5038,7 @@ Si la tâche échoue, remplace la toute première ligne par {MARQUEUR_VERDICT_EC
     # fait vibe (--workdir) ; _construire_cmd_claude l'ignore délibérément.
     try:
         cmd = AGENTS_CONNUS[CFG.agent]["construire_cmd"](mode, modele, prompt, cwd_effectif)
-    except ModeAgentIndisponible as e:
+    except (ModeAgentIndisponible, PromptTropLong) as e:
         return False, str(e)
 
     # Popen (plutôt que subprocess.run) pour garder la main sur le PID : le
