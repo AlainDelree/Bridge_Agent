@@ -39,7 +39,7 @@ Puis, une fois le résultat de la simulation relu, la même commande **sans** `-
 **Avant même d'avoir cloné quoi que ce soit** (à vérifier), une seule commande télécharge ce fichier et l'exécute pour la session en cours, sans jamais modifier la politique d'exécution de la machine :
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -Command "iwr https://raw.githubusercontent.com/AlainDelree/Bridge_Agent/master/provisioning/windows/installer_windows_seul.ps1 -OutFile `"$env:TEMP\installer_windows_seul.ps1`"; & `"$env:TEMP\installer_windows_seul.ps1`" -DryRun"
+powershell -NoProfile -ExecutionPolicy Bypass -Command "iwr -UseBasicParsing https://raw.githubusercontent.com/AlainDelree/Bridge_Agent/master/provisioning/windows/installer_windows_seul.ps1 -OutFile '$env:TEMP\installer_windows_seul.ps1'; & '$env:TEMP\installer_windows_seul.ps1' -DryRun"
 ```
 
 **Risque à connaître avant de lancer cette commande : elle exécute du code téléchargé depuis Internet.** Avant de retirer `-DryRun` : vérifier que l'adresse commence bien par `https://raw.githubusercontent.com/AlainDelree/Bridge_Agent/` (dépôt officiel, pas une copie), et lire le fichier téléchargé avant de l'exécuter pour de vrai — `notepad $env:TEMP\installer_windows_seul.ps1`, ou l'ouvrir dans un navigateur à la même adresse. `-ExecutionPolicy Bypass` ne s'applique qu'à cette seule invocation de PowerShell, jamais à la machine. Une fois relu et simulé, relancer la même commande en retirant `-DryRun`.
@@ -68,15 +68,15 @@ git clone https://github.com/AlainDelree/Bridge_Agent.git "$env:USERPROFILE\Brid
 
 Le dossier conseillé est `Bridge_Agent` dans le dossier personnel de l'utilisateur (`$env:USERPROFILE`, par exemple `C:\Users\<nom>\Bridge_Agent`) : il n'exige aucun droit d'administrateur. **Ne pas utiliser `C:\Program Files`** (protégé : le clonage échoue avec `Permission denied`, constaté) ni `C:\CCW`, dossier du rôle CCW délégué, absent ici. Le bloc rouge « NativeCommandError » qui s'affiche pendant le clonage n'est que la façon dont PowerShell présente les messages de progression de git : ce n'est pas une erreur (constaté).
 
-Créer tout de suite le fichier de réglages local `identite_locale.conf` de la copie (ignoré par git, voir §4), avec les deux réglages utiles à une copie de l'outil qui n'appartient pas à son utilisateur :
+Créer tout de suite le fichier de réglages local `identite_locale.conf` de la copie (ignoré par git, voir §4), avec les trois réglages (`COPIE_NON_PROPRIETAIRE`, `MAJ_AUTO_DEPOT`, `MACHINE_SEULE`, voir §8) utiles à une copie de l'outil qui n'appartient pas à son utilisateur :
 
 ```powershell
-Set-Content -Path identite_locale.conf -Value "COPIE_NON_PROPRIETAIRE = oui`nMAJ_AUTO_DEPOT = oui" -Encoding ascii; git status --short
+Set-Content -Path identite_locale.conf -Value "COPIE_NON_PROPRIETAIRE = oui`nMAJ_AUTO_DEPOT = oui`nMACHINE_SEULE = oui" -Encoding ascii; git status --short
 ```
 
-`git status --short` ne doit rien afficher (preuve que le fichier est bien ignoré). Le codage `ascii` évite le marqueur invisible que l'option `utf8` de PowerShell 5 ajoute en début de fichier. **`COPIE_NON_PROPRIETAIRE` doit être posé avant de créer le premier projet** (§8). Vérification de la lecture du fichier : `python -c "import identite; print(identite.copie_non_proprietaire(), repr(identite.valeur_locale('MAJ_AUTO_DEPOT')))"` doit afficher `True 'oui'`.
+`git status --short` ne doit rien afficher (preuve que le fichier est bien ignoré). Le codage `ascii` évite le marqueur invisible que l'option `utf8` de PowerShell 5 ajoute en début de fichier. **`COPIE_NON_PROPRIETAIRE` et `MACHINE_SEULE` doivent être posés avant de créer le premier projet** (§8). Vérification de la lecture du fichier : `python -c "import identite; print(identite.copie_non_proprietaire(), repr(identite.valeur_locale('MAJ_AUTO_DEPOT')))"` doit afficher `True 'oui'`.
 
-Ce dossier est une copie de l'outil ; **tout autre dossier sans espace et accessible en écriture convient** (lu dans le code : `installer_demarrage_session.ps1` et `provisionner_new_issue_local.ps1` calculent le chemin du dépôt depuis leur propre emplacement). Le seul endroit à adapter à la main est l'alias `bridge` du profil PowerShell (`NEW_ISSUE_LOCAL_WINDOWS.md` §2). Les scripts du rôle CCW (`provisionner.ps1`, `ajouter_projet_ccw.ps1`…) supposent `C:\CCW\Bridge_Agent`, mais ne servent pas ici. À vérifier : le dossier où les projets sont créés.
+Ce dossier est une copie de l'outil ; **tout autre dossier sans espace et accessible en écriture convient** (lu dans le code : `installer_demarrage_session.ps1` et `provisionner_new_issue_local.ps1` calculent le chemin du dépôt depuis leur propre emplacement). Le raccourci `bridge` du §5 est généré par le script pour le dossier choisi à ce moment-là. Les scripts du rôle CCW (`provisionner.ps1`, `ajouter_projet_ccw.ps1`…) supposent `C:\CCW\Bridge_Agent`, mais ne servent pas ici.
 
 **Recevoir les mises à jour de l'outil (établi, issue #868).** Ce dossier est une copie de l'outil Bridge_Agent, publié par Alain ; les projets de l'utilisateur ont leurs propres dépôts, ailleurs. Quand Alain corrige ou améliore l'outil, ces changements arrivent sur GitHub mais pas dans cette copie. Sur le PC fixe d'Alain, un service CCW fait cette mise à jour seul avant chaque cycle ; cette installation n'a pas ce service, mais `new_issue.py` peut désormais faire l'équivalent tout seul à son lancement — réglage **facultatif, désactivé par défaut**, à ajouter dans `identite_locale.conf` (racine du dépôt, gitignoré, voir §4 ci-dessous) :
 
@@ -84,7 +84,7 @@ Ce dossier est une copie de l'outil ; **tout autre dossier sans espace et access
 MAJ_AUTO_DEPOT = oui
 ```
 
-Avec ce réglage, chaque lancement de `new_issue.py` tente un `git pull --ff-only` (30 secondes maximum par défaut, réglable — voir plus bas — jamais bloquant durablement) avant d'ouvrir l'interface : rien n'est écrasé si la copie a été personnalisée (modification non enregistrée) ou si son historique a divergé de celui d'Alain (ex. un correctif local pas encore poussé) — la tentative est alors simplement ignorée, sans toucher au dépôt. Le résultat (à jour, mis à jour avec la liste des fichiers changés, ignoré ou en échec, avec sa raison) s'affiche à la fois dans la console de `new_issue.py` (capturée dans `logs\new_issue-session.log` sous l'installeur de démarrage de session, §9) et dans un bandeau de l'interface elle-même. **Un rappel important accompagne toute mise à jour réussie** : les watchers déjà démarrés continuent de tourner sur l'ancien code tant qu'ils ne sont pas relancés — penser à les relancer (§9 ou boutons de l'onglet Infrastructure) après une mise à jour signalée.
+Avec ce réglage, chaque lancement de `new_issue.py` tente un `git pull --ff-only` (30 secondes maximum par défaut, réglable — voir plus bas — jamais bloquant durablement) avant d'ouvrir l'interface : rien n'est écrasé si la copie a été personnalisée (modification non enregistrée) ou si son historique a divergé de celui d'Alain (ex. un correctif local pas encore poussé) — la tentative est alors simplement ignorée, sans toucher au dépôt. Le résultat (à jour, mis à jour avec la liste des fichiers changés, ignoré ou en échec, avec sa raison) s'affiche à la fois dans la console de `new_issue.py` (capturée dans `logs\new_issue-session.log` sous l'installeur de démarrage de session, §9) et dans un bandeau de l'interface elle-même. **Un rappel important accompagne toute mise à jour réussie** : les watchers déjà démarrés continuent de tourner sur l'ancien code tant qu'ils ne sont pas relancés — penser à les relancer (§9, ou bouton « Relancer le watcher » de l'interface) après une mise à jour signalée.
 
 Deux clés facultatives supplémentaires, `MAJ_AUTO_DEPOT_REMOTE` et `MAJ_AUTO_DEPOT_BRANCHE`, permettent de suivre un dépôt distant/une branche différents de ceux déjà configurés dans le dépôt — utile si cette copie est elle-même personnalisée sur sa propre branche mais doit malgré tout continuer à suivre celle d'Alain (voir §8.1 de `BRIDGE_AGENT_DOC.md`).
 
@@ -138,7 +138,7 @@ Détail complet : `provisioning/vibe/README.md`. Étapes constatées sur le PC f
 5. Vérifier depuis un dossier de projet : `vibe --prompt "réponds ok"`. Le résultat attendu est `ok`, précédé de la ligne « Reading API keys from the system keyring » : c'est le signe que la connexion par compte est bien lue (constaté).
 6. Dossiers de confiance (`~\.vibe\trusted_folders.toml`) : **probablement inutile**. La documentation de Mistral indique que le mode non interactif ne demande jamais de confiance de dossier. Pendant l'essai, ce fichier a été renseigné (dossier du projet et dossier des worktrees) avant le premier succès : son effet n'a pas été isolé. À essayer seulement en cas de blocage inexpliqué.
 
-**Refus de commandes `bash` (constaté, à surveiller).** En mode non interactif, Vibe refuse automatiquement les commandes `bash` qui contiennent une substitution de commande (`$(…)`) ou une redirection (`>`), et prend une option Windows comme `date /T` pour un chemin hors du dossier de travail ; le profil `bridge_ecriture` ne les autorise pas (la permission « always » ne couvre pas ces cas). Une tâche peut ainsi échouer ou rester sans réponse selon la manière dont le modèle écrit ses commandes. Une consigne dédiée à l'agent Vibe est prévue. En attendant, un message de clôture parlant de commande refusée n'indique pas une panne de l'installation.
+**Refus de commandes `bash` (constaté, à surveiller).** En mode non interactif, Vibe refuse automatiquement les commandes `bash` qui contiennent une substitution de commande (`$(…)`) ou une redirection (`>`), et prend une option Windows comme `date /T` pour un chemin hors du dossier de travail ; le profil `bridge_ecriture` ne les autorise pas (la permission « always » ne couvre pas ces cas). Une tâche peut ainsi échouer ou rester sans réponse selon la manière dont le modèle écrit ses commandes. Une consigne dédiée à l'agent Vibe est désormais injectée dans son prompt (issue #873, non validée par un essai réel). Un message de clôture parlant de commande refusée n'indique pas une panne de l'installation.
 
 **Compte sous lequel tout tourne.** La connexion de Vibe est dans le trousseau Windows de l'utilisateur. Un programme qui tourne sous un autre compte ne la voit pas : c'est pourquoi les watchers démarrent dans la session de l'utilisateur (§9). Constaté sur un service CCW, qui a échoué sous `LocalSystem` puis réussi sous le compte de l'utilisateur.
 
@@ -156,7 +156,7 @@ COPIE_NON_PROPRIETAIRE = oui
 
 Avec ce réglage, créer ou supprimer un projet n'écrit, ne committe ni ne pousse plus jamais `BRIDGE_AGENT_DOC.md` : les mêmes informations (tableaux §2/§7) sont écrites dans `PROJETS_LOCAUX.md`, fichier local gitignoré, régénéré automatiquement à chaque création/suppression — à donner tel quel à Mistral Vibe pour qu'il connaisse les noms valides des projets de l'ami. Le résultat de la création l'annonce clairement (ex. « liste des projets écrite dans PROJETS_LOCAUX.md, doc de l'outil inchangée »), sans jamais afficher « push échoué » dans ce cas — ni, depuis #870, le faux encadré orange « Action requise » qui s'affichait encore à tort juste après (établi, corrigé). **Ne pas pousser `BRIDGE_AGENT_DOC.md` à la main** après une création/suppression avec ce réglage actif : il n'a pas été modifié, il n'y a rien à pousser.
 
-**Également avant de créer le premier projet, poser le réglage `MACHINE_SEULE` (établi, issue #870)** : cette installation n'a pas de second poste Windows délégué (rôle CCW, §8) ; sans ce réglage, l'onglet « CCW » de la barre d'onglets et la case « Projet CCW » du formulaire de nouveau projet restent visibles, sans aucune utilité et avec un risque de piège (label `for-windows` posé par erreur, voir `provisioning/windows/ROUTAGE_LABELS_POSTE_SEUL.md`). Ajouter, dans le même `identite_locale.conf` :
+**Également avant de créer le premier projet, poser le réglage `MACHINE_SEULE` (établi, issue #870)** : cette installation n'a pas de second poste Windows délégué (rôle CCW, §0) ; sans ce réglage, l'onglet « CCW » de la barre d'onglets et la case « Projet CCW » du formulaire de nouveau projet restent visibles, sans aucune utilité et avec un risque de piège (label `for-windows` posé par erreur, voir `provisioning/windows/ROUTAGE_LABELS_POSTE_SEUL.md`). Ajouter, dans le même `identite_locale.conf` :
 
 ```
 MACHINE_SEULE = oui
@@ -202,7 +202,7 @@ Une issue minuscule, en mode écriture, sans étiquette `for-windows`, par exemp
 
 ## 12. Déroulé de la visite
 
-1. Prérequis, clonage, `gh auth login`, dépendances, alias (§2 à §5), à la main sur son PC.
+1. Prérequis, clonage, `gh auth login`, dépendances, raccourci `bridge` (§2 à §5), avec le script du §2 ou à la main, sur son PC.
 2. Vibe, connexion par compte (§6).
 3. Premier projet et `AGENT = vibe` (§8) ; simulation puis installation du démarrage (§9) ; issue de test (§11).
 4. Si Alain pilote le PC depuis son portable en SSH : serveur OpenSSH et `configurer_ssh_ccw.ps1`, **clé SSH dédiée** à la visite, retirée de `administrators_authorized_keys` à la fin, et configuration d'origine remise côté portable (sauvegarder `configs/ccw_ssh.conf` avant). Non indispensable pour ce guide : tout se fait localement sur le PC.
@@ -220,8 +220,8 @@ Une issue minuscule, en mode écriture, sans étiquette `for-windows`, par exemp
 | `gh auth login` (§4) | OK | Le code à 8 caractères s'affiche dans la console, pas sur la page web | Voir §4 |
 | Interface (§5) | OK | Le script `provisionner_new_issue_local.ps1` exige l'administrateur et le pare-feu (`--lan`) | Inutile en local : `pip install -r requirements.txt` puis `python new_issue.py` ; aucun mot de passe sans `--lan` |
 | Vibe (§6) | OK au bout de plusieurs essais | `vibe --setup` : « Interactive mode needs a terminal » ; première issue bloquée plus de huit minutes avec la 3.1.1 | Version figée à 3.1.0 : issue suivante traitée en 74 s (cause du blocage non isolée) |
-| Refus de commandes (§6) | Constaté dans le journal de session de Vibe | `bash` avec `$(…)` et `>` refusé en mode non interactif | Consigne dédiée prévue |
-| Projet (§8) | OK | Deux encadrés « Action requise » faux ; onglet CCW et case « Projet CCW » inutiles | À ignorer ; correction prévue |
+| Refus de commandes (§6) | Constaté dans le journal de session de Vibe | `bash` avec `$(…)` et `>` refusé en mode non interactif | Consigne dédiée injectée dans le prompt (issue #873) — à valider par un essai réel |
+| Projet (§8) | OK | Deux encadrés « Action requise » faux ; onglet CCW et case « Projet CCW » inutiles | Corrigé (issue #870, réglage `MACHINE_SEULE`) — à revérifier en vrai |
 | Démarrage de session (§9) | OK, y compris après déconnexion et reconnexion | Journaux de session vides tant que les programmes tournent ; faux « échec » de 8 s pour la mise à jour | Voir les pièges du §9 ; faux « échec » de 8 s corrigé (issue #872, délai 30 s + détection d'avancée malgré délai dépassé) — **à revérifier en vrai sur Windows**, non testable depuis l'environnement Linux de l'agent qui a fait la correction |
 | Notification (§10) | OK | — | — |
 
