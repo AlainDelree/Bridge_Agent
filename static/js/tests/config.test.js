@@ -78,6 +78,16 @@ test('messageStatutCommitDoc : statut inconnu ou absent → succès automatique'
   assert.match(messageStatutCommitDoc('ok', null), /committé et poussé automatiquement/);
 });
 
+// Copie non-propriétaire (COPIE_NON_PROPRIETAIRE, issue #870) : aucun commit
+// n'est JAMAIS tenté sur BRIDGE_AGENT_DOC.md dans ce cas — avant #870, le
+// statut valait `undefined`/`null` côté serveur et tombait dans le cas par
+// défaut ci-dessus, affirmant à TORT qu'un commit/push automatique avait eu
+// lieu. 'non_applicable' doit renvoyer une chaîne vide : l'étape
+// « Documentation » du compte-rendu l'a déjà annoncé correctement.
+test("messageStatutCommitDoc : non_applicable (copie non-propriétaire) → aucun message ajouté", () => {
+  assert.equal(messageStatutCommitDoc('non_applicable', null), '');
+});
+
 // ─── construireOptionsModeleCCL (issue #656) ───────────────────────────────
 
 test('construireOptionsModeleCCL : MODELE_CCL vide → option vide + 4 modèles triés, aucune inconnue', () => {

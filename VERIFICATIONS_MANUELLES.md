@@ -651,6 +651,30 @@ plus d'`onclick=`/`onchange=`/`oninput=` inline.)*
 
 - [ ] Bouton « + Nouveau projet » ouvre la modale ; validations nom/dépôt/
       couleur ; création ; rappels git ; bootstrap CCW le cas échéant.
+- [ ] (issue #870, comportement par défaut d'Alain — SANS `identite_locale.conf`
+      ni réglage posé) **inchangé** : créer puis supprimer un projet affiche
+      toujours l'encadré « Action requise — dépôt Bridge_Agent » en cas
+      d'échec RÉEL de commit/push (simulable en coupant le réseau avant un
+      push), et l'encadré « Action requise — relancer le hook de relecture »
+      s'affiche après une création réussie (présent sur cette machine :
+      `~/Relecture_Bridge/installer.sh`).
+- [ ] (issue #870, `COPIE_NON_PROPRIETAIRE = oui` dans `identite_locale.conf`,
+      cf. #869 — **à essayer à la main sur la copie de test Windows seul**)
+      créer puis supprimer un projet : le compte-rendu annonce
+      « liste des projets écrite dans PROJETS_LOCAUX.md, doc de l'outil
+      inchangée » et **aucun** encadré orange « Action requise — dépôt
+      Bridge_Agent » ne doit apparaître (ni après création, ni après
+      suppression) — c'était le faux message d'échec corrigé par #870.
+- [ ] (issue #870, machine sans `~/Relecture_Bridge/installer.sh` — **à
+      essayer à la main sur la copie Windows seul**, qui n'a pas cet outil)
+      créer un projet : l'encadré « Action requise — relancer le hook de
+      relecture » ne doit PAS apparaître (comportement inchangé si l'outil
+      est bien présent, comme sur les machines d'Alain).
+- [ ] (issue #870, `MACHINE_SEULE = oui` dans `identite_locale.conf` — **à
+      essayer à la main**) l'onglet « CCW » de la barre d'onglets et la case
+      « Projet CCW » du formulaire de nouveau projet sont masqués ; sans ce
+      réglage (défaut, installations d'Alain), les deux restent visibles et
+      inchangés.
 
 ## Bandeaux globaux et cycle de vie
 

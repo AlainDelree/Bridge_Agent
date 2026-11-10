@@ -179,6 +179,14 @@ export function messageStatutCommitDoc(statut, commandeManuelle) {
     return ' ⚠ Le commit automatique de BRIDGE_AGENT_DOC.md a échoué — '
          + 'à committer/pousser toi-même : ' + (commandeManuelle || '') + '.';
   }
+  // Copie non-propriétaire (COPIE_NON_PROPRIETAIRE, issue #870) : aucun
+  // commit n'est JAMAIS tenté sur BRIDGE_AGENT_DOC.md dans ce cas — l'étape
+  // « Documentation » du compte-rendu ci-dessus l'annonce déjà clairement
+  // (PROJETS_LOCAUX.md écrit à la place) ; répéter ici affirmerait à tort
+  // qu'un commit/push a eu lieu.
+  if (statut === 'non_applicable') {
+    return '';
+  }
   return ' BRIDGE_AGENT_DOC.md (§2) a été committé et poussé automatiquement.';
 }
 

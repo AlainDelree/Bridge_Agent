@@ -3324,8 +3324,16 @@ async function soumettreNouveauProjet() {
     // Rappel du hook de relecture Relecture_Bridge (issue #578) : un nouveau
     // projet n'est détecté par installer.sh qu'au prochain lancement manuel
     // (celui-ci lit la liste des projets depuis BRIDGE_AGENT_DOC.md §2,
-    // #571) — rien ne le rappelait spontanément, facile à oublier.
-    afficherRappelInstaller();
+    // #571) — rien ne le rappelait spontanément, facile à oublier. Affiché
+    // SEULEMENT si l'outil est effectivement présent sur cette machine
+    // (res.relecture_disponible, détecté côté serveur par
+    // identite.relecture_disponible()) : cet outil appartient à la
+    // configuration d'Alain, absent sur la machine d'un tiers (issue #870).
+    if (res.relecture_disponible) {
+      afficherRappelInstaller();
+    } else {
+      document.getElementById('np-rappel-installer').style.display = 'none';
+    }
     // Rappels propres au PROJET créé (dépôt distinct de Bridge_Agent) : issue
     // #257 — sans eux l'encart ci-dessus, seul affiché jusque-là, laissait
     // croire à tort que rien d'autre n'était à faire.
@@ -3358,9 +3366,13 @@ async function soumettreNouveauProjet() {
 // sélectionne tout le bloc pour un copier-coller immédiat. Pas de
 // persistance : l'encart n'a de sens que pour la création qui vient d'avoir
 // lieu et disparaît à la prochaine ouverture du modal (issue #118).
+// "non_applicable" (copie non-propriétaire, COPIE_NON_PROPRIETAIRE, issue
+// #870) : aucun commit n'est JAMAIS tenté sur BRIDGE_AGENT_DOC.md dans ce
+// cas — l'étape « Documentation » du compte-rendu ci-dessus l'annonce déjà
+// clairement, ce n'est pas un échec et cet encart n'a pas lieu d'être.
 function afficherRappelGit(nom, statutDoc, commandeManuelle) {
   const box = document.getElementById('np-rappel-git');
-  if (statutDoc === 'ok' || statutDoc === 'rien_a_faire') {
+  if (statutDoc === 'ok' || statutDoc === 'rien_a_faire' || statutDoc === 'non_applicable') {
     box.style.display = 'none';
     return;
   }

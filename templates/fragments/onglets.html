@@ -20,7 +20,14 @@
     </div>
     <div class="onglet" data-onglet="journal">Journal watcher</div>
     <div class="onglet" data-onglet="config">Configuration</div>
-    <div class="onglet" data-onglet="ccw">CCW</div>
+    <!-- Onglet CCW masqué sur une machine sans second poste délégué
+         (identite_locale.conf, MACHINE_SEULE = oui, issue #870) — garde
+         l'élément dans le DOM (display:none en CSS plutôt qu'une
+         condition Jinja qui le retirerait) : le JS (onglets.js, app.js)
+         le référence sans jamais vérifier son existence, le retirer
+         casserait ces appels. Comportement inchangé sans ce réglage
+         (installations d'Alain). -->
+    <div class="onglet" data-onglet="ccw" {% if machine_seule %}style="display:none"{% endif %}>CCW</div>
     <!-- Réglage de COMPTE (issue #766), pas d'un projet : onglet propre,
          distinct de « Configuration » (qui édite le .conf d'un projet). -->
     <div class="onglet" data-onglet="vibe">Agent Vibe</div>

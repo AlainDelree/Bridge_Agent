@@ -138,3 +138,37 @@ def copie_non_proprietaire() -> bool:
     gitignoré, à la place de `BRIDGE_AGENT_DOC.md` — jamais d'écriture, de
     commit ni de push sur la doc de l'outil dans ce cas)."""
     return _lire_identite_locale().get("COPIE_NON_PROPRIETAIRE", "").strip().lower() in VALEURS_VRAIES
+
+
+def relecture_disponible() -> bool:
+    """True si l'outil de relecture (`Relecture_Bridge`, issue #578) est
+    effectivement présent sur CETTE machine — détection la plus simple et la
+    plus fiable après lecture de son usage ci-dessous : l'existence du
+    script `installer.sh` que l'encart de rappel de l'interface invite à
+    relancer (static/js/app.js::afficherRappelInstaller). Ce chemin
+    (`~/Relecture_Bridge/installer.sh`) est propre à l'installation d'Alain
+    — absent sur la machine d'un tiers (copie non-propriétaire ou non),
+    d'où cette vérification plutôt qu'un affichage inconditionnel de
+    l'encart (issue #870). Comportement inchangé sur la machine d'Alain,
+    où ce chemin existe réellement."""
+    return (Path.home() / "Relecture_Bridge" / "installer.sh").exists()
+
+
+def machine_seule() -> bool:
+    """True si `identite_locale.conf` déclare cette machine comme jouant
+    TOUS les rôles, sans second poste CCW délégué (`MACHINE_SEULE = oui`,
+    issue #870) — toute autre valeur, ou absence de la clé, renvoie False :
+    comportement STRICTEMENT INCHANGÉ pour les installations d'Alain
+    (ThinkPad, PC fixe CCW), où ce réglage n'est pas posé.
+
+    Nom repris de la « solution de fond » déjà évoquée (non implémentée) au
+    §16.1 de `BRIDGE_AGENT_DOC.md` et au §4 de
+    `provisioning/windows/ROUTAGE_LABELS_POSTE_SEUL.md` (issue #866/#867) —
+    mais son PÉRIMÈTRE ici est volontairement plus étroit : seulement
+    masquer, côté interface web, l'onglet « CCW » et la case « Projet CCW »
+    du formulaire de nouveau projet (qui n'ont aucune utilité, et induisent
+    en erreur, sur un poste qui n'a pas de second poste joignable). Le
+    routage effectif des labels `for-linux`/`for-windows` décrit dans ces
+    deux documents (issue #867) reste hors périmètre — ce réglage ne
+    l'implémente PAS, il ne fait que masquer ces deux éléments d'interface."""
+    return _lire_identite_locale().get("MACHINE_SEULE", "").strip().lower() in VALEURS_VRAIES

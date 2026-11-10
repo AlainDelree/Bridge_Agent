@@ -6,6 +6,7 @@ route index() qui rend le gabarit principal de l'interface.
 
 from flask import render_template
 
+import identite
 from app.projets import lister_projets
 from app.issues import formats_image_acceptes
 from app.jetons_annuaire import etat_jetons_annuaire
@@ -19,4 +20,5 @@ def index():
                            formats_image=formats_image_acceptes(),
                            jetons_annuaire=etat_jetons_annuaire(),
                            maj_auto_depot=etat.get("MAJ_AUTO_DEPOT"),
-                           agent_par_defaut=AGENT_PAR_DEFAUT)
+                           agent_par_defaut=AGENT_PAR_DEFAUT,
+                           machine_seule=identite.machine_seule())

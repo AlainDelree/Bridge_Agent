@@ -242,6 +242,12 @@ def supprimer_projet(nom: str, dry_run: bool = False) -> dict:
     #    retiré du disque (sans quoi le projet réapparaîtrait dans §2/§7).
     doc = mettre_a_jour_doc()
     doc_commit = None
+    # Statut explicite (plutôt que None par défaut) pour le cas
+    # COPIE_NON_PROPRIETAIRE ci-dessous : None était interprété à tort comme
+    # un échec par les consommateurs (app.js afficherRappelGit, config.js
+    # messageStatutCommitDoc) — aucun commit n'étant JAMAIS tenté sur une
+    # copie non-propriétaire, ce n'en est pas un (issue #870).
+    doc_commit_statut = None
     if not doc["existe"]:
         nom_doc = Path(doc["fichier_local"]).name if doc.get("local") else "BRIDGE_AGENT_DOC.md"
         etapes.append({"etape": "Documentation", "ok": False,
@@ -256,6 +262,7 @@ def supprimer_projet(nom: str, dry_run: bool = False) -> dict:
                        "detail": f"liste des projets écrite dans "
                                  f"{Path(doc['fichier_local']).name} (projet retiré), "
                                  "doc de l'outil inchangée (COPIE_NON_PROPRIETAIRE)."})
+        doc_commit_statut = "non_applicable"
     else:
         etapes.append({"etape": "Documentation", "ok": True,
                        "detail": "§2/§7/date régénérés (projet retiré)."
@@ -266,6 +273,7 @@ def supprimer_projet(nom: str, dry_run: bool = False) -> dict:
         # sans qu'aucun message n'invite Alain à la committer/pousser.
         doc_commit = regenerer_tableaux_projets.committer_pousser_doc(
             f"Retrait du projet {nom} (§2)")
+        doc_commit_statut = doc_commit["statut"]
         etapes.append({"etape": "Commit doc Bridge_Agent",
                        "ok": doc_commit["statut"] in ("rien_a_faire", "ok"),
                        "detail": doc_commit["detail"]})
@@ -280,7 +288,7 @@ def supprimer_projet(nom: str, dry_run: bool = False) -> dict:
 
     return {"succes": True, "nom": nom, "dry_run": False,
             "depot": infos["depot"], "etapes": etapes, "erreur": None,
-            "doc_commit_statut": doc_commit["statut"] if doc_commit else None,
+            "doc_commit_statut": doc_commit_statut,
             "doc_commit_commande_manuelle": doc_commit["commande_manuelle"] if doc_commit else None}
 
 
