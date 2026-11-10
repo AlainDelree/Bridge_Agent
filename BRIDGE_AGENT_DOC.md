@@ -609,6 +609,7 @@ MAJ_AUTO_DEPOT          = oui        # active la fonctionnalité (absent/toute
                                       # existantes d'Alain)
 MAJ_AUTO_DEPOT_REMOTE   = <remote>   # facultatif, défaut : celui du dépôt
 MAJ_AUTO_DEPOT_BRANCHE  = <branche>  # facultatif, défaut : celle du dépôt
+MAJ_AUTO_DEPOT_DELAI    = <secondes> # facultatif, défaut : 30 (issue #872)
 ```
 `MAJ_AUTO_DEPOT_REMOTE`/`MAJ_AUTO_DEPOT_BRANCHE` permettent à un ami qui
 personnalise sa propre copie, sur sa propre branche, de malgré tout suivre
@@ -618,14 +619,40 @@ les mises à jour d'Alain sans toucher à sa branche de travail (ex.
 **Comportement, une fois activé** (`watcher.tenter_maj_auto_demarrage()`,
 appelé par `new_issue.py` juste avant de démarrer le serveur Flask) :
 réutilise `rafraichir_depot()` — même sécurité par construction
-(`--ff-only`, jamais rien écrasé) — avec deux garanties supplémentaires
-propres à ce contexte de démarrage : délai court (8 s, ne retarde jamais
-durablement l'ouverture de l'interface) et **renonce sans même tenter le
-pull si le dépôt contient la moindre modification non enregistrée**, même
-dans les cas où le pull resterait lui-même sans danger — une copie
-personnalisée par un tiers ne doit jamais être altérée. Une divergence
-d'historique (commit local non poussé) est elle aussi ignorée proprement
-(fast-forward impossible).
+(`--ff-only`, jamais rien écrasé) — avec des garanties supplémentaires
+propres à ce contexte de démarrage : **renonce sans même tenter le pull si
+le dépôt contient la moindre modification non enregistrée**, même dans les
+cas où le pull resterait lui-même sans danger — une copie personnalisée par
+un tiers ne doit jamais être altérée. Une divergence d'historique (commit
+local non poussé) est elle aussi ignorée proprement (fast-forward
+impossible).
+
+**Révisé par l'issue #872** (faux « échec : délai dépassé (8 s) sur git
+pull » constaté sur un PC Windows au démarrage de session, alors que le
+dépôt avait en réalité bien avancé) :
+- le délai du `git pull` passe de 8 s (bien trop court à l'ouverture de
+  session : réseau, antivirus et autres tâches de démarrage ralentissent
+  probablement `git` à ce moment précis — SUPPOSÉ, cohérent avec
+  l'observation mais jamais confirmé faute de pouvoir reproduire depuis un
+  environnement Linux) à **30 s par défaut**, réglable via
+  `MAJ_AUTO_DEPOT_DELAI` ;
+- en cas de délai dépassé, tout l'arbre de process du `git pull` (pas
+  seulement son process de tête — limite documentée de
+  `subprocess.run(timeout=…)`) est arrêté proprement (`_arreter_arbre_pull`),
+  puis HEAD est comparé avant/après : **si le dépôt a malgré tout avancé, le
+  résultat est annoncé comme une mise à jour réussie**, jamais comme un
+  échec — fin du faux « échec » constaté ;
+- si rien n'a avancé, le statut dépend de la sûreté de l'état du dépôt :
+  état propre et sans verrou résiduel (cas normal, « réseau lent ») →
+  ignoré, sans alarme ; un `index.lock` résiduel n'est supprimé QUE si
+  l'arrêt du process qui l'a posé est CONFIRMÉ (jamais par simple ancienneté
+  supposée, et jamais un verrou déjà présent AVANT la tentative) — sinon le
+  résultat reste un échec explicite, pour ne jamais masquer un état
+  incertain ;
+- si l'échec est jugé transitoire (délai dépassé ou réseau indisponible),
+  `tenter_maj_auto_demarrage()` retente automatiquement une fois, après une
+  courte pause — utile si le réseau devient disponible quelques secondes
+  après le premier essai, cas typique d'un démarrage de session.
 
 **Rien n'est silencieux** : le résultat de chaque tentative (à jour, mis à
 jour avec la liste des fichiers changés, ignoré avec sa raison, échec avec
@@ -1111,7 +1138,18 @@ estimation que celle déjà affichée, sans dupliquer ce calcul.
 
 ---
 
-*Dernière mise à jour : 10 novembre 2026 — issue #870, copie de l'outil sur
+*Dernière mise à jour : 10 novembre 2026 — issue #872, délai de la mise à
+jour automatique du dépôt (#868) adapté au démarrage de session, fin du faux
+« échec » : §8.1, délai par défaut 8 s → 30 s (réglable, `MAJ_AUTO_DEPOT_
+DELAI`), arrêt propre de tout l'arbre de process du `git pull` en cas de
+dépassement (pas seulement son process de tête), détection d'une avancée
+malgré le délai dépassé (annoncée comme une réussite, plus jamais comme un
+échec),
+nettoyage d'un `index.lock` résiduel UNIQUEMENT si l'arrêt du process qui
+l'a posé est confirmé, et nouvelle tentative automatique après une courte
+pause pour les échecs jugés transitoires (réseau).*
+
+*Mise à jour précédente : 10 novembre 2026 — issue #870, copie de l'outil sur
 un poste seul (suite de #866/#869) : §8.2, correctif du faux message
 d'échec de commit/push de `BRIDGE_AGENT_DOC.md` affiché à tort quand
 `COPIE_NON_PROPRIETAIRE` est actif (`doc_commit_statut` vaut désormais

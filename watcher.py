@@ -1183,6 +1183,108 @@ def _fichiers_modifies_par_pull(rep: Path, sha_avant: str, sha_apres: str, timeo
     return [l for l in res.stdout.splitlines() if l.strip()]
 
 
+def _chemin_verrou_index_git(rep: Path) -> Path:
+    """Chemin réel du verrou d'index git (`index.lock`) pour `rep` — résolu
+    via `git rev-parse --git-dir` plutôt que `rep/.git/index.lock` en dur,
+    pour rester correct si `rep` est un worktree lié (l'index y vit sous
+    `.git/worktrees/<nom>/`, pas sous `.git/` directement). Repli best-effort
+    sur `rep/.git/index.lock` si la commande échoue (issue #872) — ne lève
+    jamais."""
+    try:
+        res = subprocess.run(
+            ["git", "rev-parse", "--git-dir"],
+            cwd=rep, capture_output=True, text=True,
+            encoding="utf-8", errors="replace", timeout=10,
+        )
+        if res.returncode == 0 and res.stdout.strip():
+            git_dir = Path(res.stdout.strip())
+            if not git_dir.is_absolute():
+                git_dir = rep / git_dir
+            return git_dir / "index.lock"
+    except (OSError, subprocess.SubprocessError):
+        pass
+    return rep / ".git" / "index.lock"
+
+
+def _arreter_arbre_pull(proc: subprocess.Popen) -> bool:
+    """Arrête PROPREMENT tout l'arbre de process d'un `git pull` ayant dépassé
+    son délai (issue #872), plutôt que son seul process de tête : d'après la
+    documentation Python (établi), `subprocess.run(..., timeout=…)` ne tue
+    QUE le process qu'il a lui-même lancé via `Popen.kill()` — tout
+    sous-process que `git pull` aurait engendré (assistant d'identification,
+    transport HTTPS/SSH séparé) n'est PAS visé et peut continuer à tourner,
+    voire terminer le fetch/fast-forward après coup. C'est l'explication la
+    plus plausible du faux « échec » constaté sur un PC Windows alors que le
+    dépôt avait bien avancé (SUPPOSÉ : jamais confirmé faute de pouvoir
+    reproduire ce cas depuis cet environnement Linux). `_lancer_git_pull`
+    ci-dessous lance donc `git` dans un groupe de process dédié
+    (`start_new_session` POSIX / `CREATE_NEW_PROCESS_GROUP` Windows), pour
+    que cette fonction puisse cibler tout le groupe et pas seulement son PID
+    de tête.
+
+    Retourne True si l'arrêt du groupe est CONFIRMÉ (tué avec succès, ou déjà
+    mort au moment de l'appel) — seul cas où l'appelant peut ensuite
+    considérer un `index.lock` laissé par CETTE tentative comme périmé avec
+    certitude plutôt que par simple supposition d'ancienneté. False si
+    l'arrêt n'a pas pu être confirmé (droits refusés, `taskkill` en échec) :
+    l'appelant doit alors s'abstenir de toucher à un verrou résiduel."""
+    pid = proc.pid
+    confirme = False
+    try:
+        if os.name == "nt":
+            res = subprocess.run(
+                ["taskkill", "/PID", str(pid), "/T", "/F"],
+                capture_output=True, text=True, timeout=10,
+            )
+            confirme = res.returncode == 0
+        else:
+            try:
+                os.killpg(pid, signal.SIGKILL)
+                confirme = True
+            except ProcessLookupError:
+                confirme = True  # déjà mort entre le TimeoutExpired et cet appel
+            except PermissionError as e:
+                log.warning(f"  [pull] os.killpg refusé pour l'arbre du pull (PID {pid}) : {e}")
+    except (OSError, subprocess.SubprocessError) as e:
+        log.warning(f"  [pull] arrêt de l'arbre du pull (PID {pid}) : exception inattendue ({e}).")
+    try:
+        proc.wait(timeout=5)
+    except Exception:
+        try:
+            proc.kill()
+            proc.wait(timeout=5)
+        except Exception:
+            pass
+    return confirme
+
+
+def _lancer_git_pull(cmd: list[str], rep: Path, timeout: int) -> tuple[subprocess.CompletedProcess, bool, bool]:
+    """Lance `cmd` (`git pull …`) dans `rep` via `Popen` plutôt que
+    `subprocess.run(timeout=…)`, pour garder la main sur le process en cas de
+    dépassement de délai et pouvoir arrêter tout son arbre proprement (issue
+    #872, voir `_arreter_arbre_pull`). Retourne (résultat, délai_dépassé,
+    arret_confirme) : `arret_confirme` vaut toujours True si `délai_dépassé`
+    est False (aucun arrêt forcé n'a eu lieu)."""
+    kwargs = dict(cwd=rep, text=True, encoding="utf-8", errors="replace",
+                  stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    if os.name == "nt":
+        kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
+    else:
+        kwargs["start_new_session"] = True
+    proc = subprocess.Popen(cmd, **kwargs)
+    try:
+        stdout, stderr = proc.communicate(timeout=timeout)
+        return subprocess.CompletedProcess(cmd, proc.returncode, stdout, stderr), False, True
+    except subprocess.TimeoutExpired:
+        arret_confirme = _arreter_arbre_pull(proc)
+        try:
+            stdout, stderr = proc.communicate(timeout=5)
+        except Exception:
+            stdout, stderr = "", ""
+        code = proc.returncode if proc.returncode is not None else -1
+        return subprocess.CompletedProcess(cmd, code, stdout, stderr), True, arret_confirme
+
+
 def rafraichir_depot(rep: Path, dry_run: bool = False, remote: str | None = None,
                       branche: str | None = None, timeout: int = 60,
                       exiger_propre: bool = False,
@@ -1225,25 +1327,51 @@ def rafraichir_depot(rep: Path, dry_run: bool = False, remote: str | None = None
         par un rafraîchissement réel (git diff --name-only) — coût
         supplémentaire négligeable, seulement payé quand demandé.
 
+    Comportement revu par l'issue #872 (faux « échec » constaté sur un PC
+    Windows au démarrage de session alors que le dépôt avait bien avancé) :
+      • un `index.lock` déjà présent AVANT la tentative (opération git
+        concurrente, ou résidu non nettoyé d'un lancement précédent) fait
+        renoncer sans tenter le pull — comme `exiger_propre` ci-dessus,
+        jamais de nettoyage de ce qu'on n'a pas soi-même posé ;
+      • si le délai est dépassé mais que HEAD a malgré tout avancé (constaté
+        possible, voir `_arreter_arbre_pull`), le statut renvoyé est "maj",
+        pas "echec" — plus de fausse alarme pour une mise à jour réussie ;
+      • si le délai est dépassé SANS avancée et qu'un `index.lock` subsiste,
+        il n'est supprimé QUE si `_arreter_arbre_pull` a confirmé l'arrêt du
+        process qui l'a posé (donc forcément CETTE tentative, puisqu'aucun
+        verrou ne préexistait) — jamais par simple ancienneté supposée ;
+      • le dict retourné porte désormais toujours une clé "cause" (None si
+        sans objet) parmi "propre"/"divergence"/"verrou"/"reseau"/
+        "verrou_incertain"/"etat_incertain"/"autre" — "reseau" signale aux
+        appelants (`tenter_maj_auto_demarrage`) un échec jugé transitoire,
+        qui vaut la peine d'être retenté.
+
     Retourne désormais toujours un dict structuré — {"statut": …, "message":
-    …} au minimum, "fichiers"/"sha_avant"/"sha_apres" en plus pour "maj" —
-    ignoré par l'appel historique (watcher.py) mais exploité par
+    …, "cause": …} au minimum, "fichiers"/"sha_avant"/"sha_apres" en plus pour
+    "maj" — ignoré par l'appel historique (watcher.py) mais exploité par
     `tenter_maj_auto_demarrage()` pour l'affichage dans l'interface."""
     if not rep.is_dir():
-        return {"statut": "echec", "message": f"{rep} n'existe pas."}
+        return {"statut": "echec", "message": f"{rep} n'existe pas.", "cause": "chemin"}
     if not _est_depot_git(rep):
         log.debug(f"  [pull] {rep} n'est pas un dépôt git — rafraîchissement ignoré.")
-        return {"statut": "ignore", "message": f"{rep} n'est pas un dépôt git."}
+        return {"statut": "ignore", "message": f"{rep} n'est pas un dépôt git.", "cause": None}
 
     if dry_run:
         log.info(f"  [DRY-RUN] [pull] git pull --ff-only serait lancé dans {rep}.")
-        return {"statut": "ignore", "message": "dry-run : aucune action."}
+        return {"statut": "ignore", "message": "dry-run : aucune action.", "cause": None}
 
     if exiger_propre:
         propre, raison = _depot_est_propre(rep)
         if not propre:
             log.info(f"  [pull] {rep} : ignoré — {raison}. Poursuite sur le code local.")
-            return {"statut": "ignore", "message": raison}
+            return {"statut": "ignore", "message": raison, "cause": "propre"}
+
+    verrou = _chemin_verrou_index_git(rep)
+    if verrou.exists():
+        message = (f"verrou git ({verrou.name}) déjà présent dans {rep} — opération git "
+                    "concurrente ou précédente non terminée, aucune tentative.")
+        log.info(f"  [pull] {rep} : ignoré — {message} Poursuite sur le code local.")
+        return {"statut": "ignore", "message": message, "cause": "verrou"}
 
     tete_avant = _tete_git(rep)
 
@@ -1254,18 +1382,58 @@ def rafraichir_depot(rep: Path, dry_run: bool = False, remote: str | None = None
             cmd.append(branche)
 
     try:
-        res = subprocess.run(
-            cmd,
-            cwd=rep, capture_output=True, text=True,
-            encoding="utf-8", errors="replace", timeout=timeout,
-        )
-    except subprocess.TimeoutExpired:
-        message = f"délai dépassé ({timeout}s) sur git pull dans {rep} (réseau lent ?)"
-        log.warning(f"  [pull] échoué : délai dépassé sur git pull dans {rep} (réseau lent ?) — poursuite sur le code local.")
-        return {"statut": "echec", "message": message}
+        res, delai_depasse, arret_confirme = _lancer_git_pull(cmd, rep, timeout)
     except Exception as e:
         log.warning(f"  [pull] échoué : {e} — poursuite sur le code local.")
-        return {"statut": "echec", "message": str(e)}
+        return {"statut": "echec", "message": str(e), "cause": "autre"}
+
+    if delai_depasse:
+        # Délai dépassé : comparer HEAD avant/après plutôt que de conclure
+        # trop vite à un échec — le process arrêté a pu laisser le dépôt
+        # avancé malgré tout (issue #872, voir _arreter_arbre_pull).
+        tete_apres = _tete_git(rep)
+        if tete_avant and tete_apres and tete_avant != tete_apres:
+            log.info(f"  [pull] {rep} mis à jour malgré le délai dépassé ({timeout}s) : "
+                     f"{tete_avant[:7]} → {tete_apres[:7]}.")
+            fichiers = (_fichiers_modifies_par_pull(rep, tete_avant, tete_apres)
+                        if avec_liste_fichiers else [])
+            return {"statut": "maj",
+                    "message": f"{tete_avant[:7]} → {tete_apres[:7]}, malgré un délai de {timeout}s dépassé",
+                    "fichiers": fichiers, "sha_avant": tete_avant, "sha_apres": tete_apres, "cause": None}
+
+        if verrou.exists():
+            if not arret_confirme:
+                log.warning(f"  [pull] {rep} : verrou {verrou.name} résiduel après délai dépassé, "
+                            "arrêt du process NON confirmé — laissé en l'état.")
+                return {"statut": "echec",
+                        "message": (f"délai dépassé ({timeout}s) sur git pull, verrou {verrou.name} résiduel "
+                                    "sans confirmation que le process git est bien arrêté — vérifier "
+                                    "manuellement avant de retenter."),
+                        "cause": "verrou_incertain"}
+            try:
+                verrou.unlink()
+                log.warning(f"  [pull] {rep} : verrou {verrou.name} résiduel de cette tentative "
+                            "supprimé — arrêt du process confirmé, aucun verrou ne préexistait.")
+            except OSError as e:
+                log.warning(f"  [pull] {rep} : suppression du verrou {verrou.name} résiduel impossible ({e}).")
+                return {"statut": "echec",
+                        "message": (f"délai dépassé ({timeout}s) sur git pull, verrou {verrou.name} résiduel "
+                                    f"non supprimable ({e}) — vérifier/nettoyer à la main avant de retenter."),
+                        "cause": "verrou_incertain"}
+            propre_apres, raison_sale = _depot_est_propre(rep)
+            if not propre_apres:
+                log.warning(f"  [pull] {rep} : état incertain après arrêt du pull en délai dépassé "
+                            f"({raison_sale}).")
+                return {"statut": "echec",
+                        "message": (f"délai dépassé ({timeout}s) sur git pull, arbre de travail modifié de "
+                                    f"façon incertaine après l'arrêt ({raison_sale}) — vérifier à la main "
+                                    "avant de retenter."),
+                        "cause": "etat_incertain"}
+
+        message = f"délai dépassé ({timeout}s) sur git pull dans {rep} (réseau lent ?), aucune avancée, dépôt resté propre."
+        log.warning(f"  [pull] {rep} : délai dépassé sans avancée (réseau lent ?) — dépôt resté propre, "
+                    "poursuite sur le code local.")
+        return {"statut": "ignore", "message": message, "cause": "reseau"}
 
     if res.returncode == 0:
         # Détection avancement locale-indépendante : comparer HEAD avant/après
@@ -1276,10 +1444,10 @@ def rafraichir_depot(rep: Path, dry_run: bool = False, remote: str | None = None
             fichiers = (_fichiers_modifies_par_pull(rep, tete_avant, tete_apres)
                         if avec_liste_fichiers else [])
             return {"statut": "maj", "message": f"{tete_avant[:7]} → {tete_apres[:7]}",
-                    "fichiers": fichiers, "sha_avant": tete_avant, "sha_apres": tete_apres}
+                    "fichiers": fichiers, "sha_avant": tete_avant, "sha_apres": tete_apres, "cause": None}
         else:
             log.debug(f"  [pull] {rep} déjà à jour.")
-            return {"statut": "a_jour", "message": "déjà à jour."}
+            return {"statut": "a_jour", "message": "déjà à jour.", "cause": None}
 
     # Échec : distinguer la cause pour un message clair et actionnable.
     err = (res.stderr + "\n" + res.stdout).strip()
@@ -1289,21 +1457,62 @@ def rafraichir_depot(rep: Path, dry_run: bool = False, remote: str | None = None
                     "backup/fix en attente de revue ?)")
         log.info("  [pull] ignoré : commits locaux non poussés (fast-forward impossible — "
                  "backup/fix en attente de revue ?) — pensez à git push. Poursuite sur le code local.")
-        return {"statut": "ignore", "message": message}
+        return {"statut": "ignore", "message": message, "cause": "divergence"}
     elif ("could not resolve host" in err_bas or "connection" in err_bas
           or "unable to access" in err_bas or "timed out" in err_bas
           or "network is unreachable" in err_bas):
+        # Rien n'a avancé mais rien n'a été touché non plus (échec immédiat,
+        # avant toute écriture) : état sûr, donc "ignore" plutôt que "echec"
+        # (issue #872) — et cause "reseau", pour que tenter_maj_auto_demarrage
+        # retente après une courte pause plutôt que de l'enterrer.
         premiere = err.splitlines()[0] if err else "réseau indisponible"
-        log.warning(f"  [pull] échoué : réseau indisponible ({premiere}) — poursuite sur le code local.")
-        return {"statut": "echec", "message": f"réseau indisponible ({premiere})"}
+        log.warning(f"  [pull] ignoré : réseau indisponible ({premiere}) — poursuite sur le code local.")
+        return {"statut": "ignore", "message": f"réseau indisponible ({premiere})", "cause": "reseau"}
     else:
         premiere = err.splitlines()[0] if err else "erreur inconnue"
         log.warning(f"  [pull] échoué : {premiere} — poursuite sur le code local.")
-        return {"statut": "echec", "message": premiere}
+        return {"statut": "echec", "message": premiere, "cause": "autre"}
 
 
-TIMEOUT_MAJ_AUTO_DEMARRAGE = 8  # secondes — délai court, ne doit jamais retarder
-                                 # durablement le démarrage de new_issue.py (issue #868)
+TIMEOUT_MAJ_AUTO_DEMARRAGE = 30  # secondes — défaut si MAJ_AUTO_DEPOT_DELAI
+# est absent/invalide dans identite_locale.conf (issue #872). Remplace
+# l'ancien délai fixe de 8s (issue #868), bien trop court : constaté sur un
+# PC Windows, à l'ouverture de session, un délai de 8s déclenchait un faux
+# « échec » alors que git pull avait le temps de terminer juste après —
+# réseau, antivirus et autres tâches de démarrage ralentissent probablement
+# git à ce moment précis (SUPPOSÉ, cohérent avec l'observation mais non
+# vérifié directement). Reste réglable (MAJ_AUTO_DEPOT_DELAI) pour qui a
+# besoin d'un délai différent.
+
+TENTATIVES_MAJ_AUTO_DEMARRAGE = 2  # une nouvelle tentative après la première
+# (issue #872), uniquement si l'échec est jugé transitoire (cause "reseau" —
+# délai dépassé ou réseau indisponible) : au démarrage de session, le réseau
+# peut devenir disponible quelques secondes après le premier essai.
+
+PAUSE_RETENTATIVE_MAJ_AUTO_DEMARRAGE = 5  # secondes d'attente avant de retenter.
+
+
+def _delai_maj_auto_demarrage() -> int:
+    """Délai (s) du `git pull` de `tenter_maj_auto_demarrage`, lu dans
+    `MAJ_AUTO_DEPOT_DELAI` de `identite_locale.conf` (issue #872) — à défaut,
+    ou si la valeur n'est pas un entier strictement positif, repli sur
+    `TIMEOUT_MAJ_AUTO_DEMARRAGE` (30s), journalisé en warning dans ce dernier
+    cas pour signaler un réglage mal formé plutôt que de l'ignorer en
+    silence."""
+    brut = identite.valeur_locale("MAJ_AUTO_DEPOT_DELAI", "").strip()
+    if not brut:
+        return TIMEOUT_MAJ_AUTO_DEMARRAGE
+    try:
+        valeur = int(brut)
+    except ValueError:
+        log.warning(f"MAJ_AUTO_DEPOT_DELAI={brut!r} dans identite_locale.conf n'est pas un entier — "
+                    f"{TIMEOUT_MAJ_AUTO_DEMARRAGE}s (défaut) utilisé.")
+        return TIMEOUT_MAJ_AUTO_DEMARRAGE
+    if valeur <= 0:
+        log.warning(f"MAJ_AUTO_DEPOT_DELAI={valeur} dans identite_locale.conf doit être positif — "
+                    f"{TIMEOUT_MAJ_AUTO_DEMARRAGE}s (défaut) utilisé.")
+        return TIMEOUT_MAJ_AUTO_DEMARRAGE
+    return valeur
 
 
 def tenter_maj_auto_demarrage(rep: Path | None = None) -> dict:
@@ -1327,15 +1536,24 @@ def tenter_maj_auto_demarrage(rep: Path | None = None) -> dict:
         simple : si l'une des deux clés est renseignée, la commande devient
         `git pull --ff-only <remote ou "origin"> <branche>` (branche omise si
         seule MAJ_AUTO_DEPOT_REMOTE est renseignée) plutôt que le `git pull
-        --ff-only` sans argument utilisé par défaut.
+        --ff-only` sans argument utilisé par défaut ;
+      • `MAJ_AUTO_DEPOT_DELAI` (facultatif, issue #872) : délai (s) du `git
+        pull`, 30 par défaut (`TIMEOUT_MAJ_AUTO_DEMARRAGE`) — voir
+        `_delai_maj_auto_demarrage`.
 
     Réutilise rafraichir_depot() ci-dessus sans dupliquer sa logique, avec
-    deux réglages supplémentaires propres à ce contexte de démarrage
+    des réglages supplémentaires propres à ce contexte de démarrage
     d'interface (plutôt qu'à un cycle de watcher) : `exiger_propre=True` (une
     copie personnalisée ne doit JAMAIS être altérée, y compris dans les cas
-    où le pull resterait lui-même sans danger) et un délai court
-    (`TIMEOUT_MAJ_AUTO_DEMARRAGE`) pour ne jamais retarder durablement le
-    démarrage.
+    où le pull resterait lui-même sans danger) et le délai de
+    `_delai_maj_auto_demarrage` ci-dessus.
+
+    Nouveau en #872 : jusqu'à `TENTATIVES_MAJ_AUTO_DEMARRAGE` essais, avec une
+    pause de `PAUSE_RETENTATIVE_MAJ_AUTO_DEMARRAGE` entre deux, mais
+    UNIQUEMENT quand le résultat porte la cause "reseau" (délai dépassé ou
+    réseau indisponible, jugés transitoires au démarrage de session) — jamais
+    retenté pour une modification locale, une divergence ou un verrou, qui ne
+    changeront pas d'un essai à l'autre.
 
     Retourne toujours un dict (jamais d'exception) — {"statut": "desactive",
     "message": None} si le réglage est absent/désactivé, sinon le dict
@@ -1350,12 +1568,22 @@ def tenter_maj_auto_demarrage(rep: Path | None = None) -> dict:
 
     remote = identite.valeur_locale("MAJ_AUTO_DEPOT_REMOTE").strip() or None
     branche = identite.valeur_locale("MAJ_AUTO_DEPOT_BRANCHE").strip() or None
+    delai = _delai_maj_auto_demarrage()
 
-    return rafraichir_depot(
-        rep, remote=remote, branche=branche,
-        timeout=TIMEOUT_MAJ_AUTO_DEMARRAGE, exiger_propre=True,
-        avec_liste_fichiers=True,
-    )
+    resultat = {}
+    for tentative in range(1, TENTATIVES_MAJ_AUTO_DEMARRAGE + 1):
+        resultat = rafraichir_depot(
+            rep, remote=remote, branche=branche,
+            timeout=delai, exiger_propre=True,
+            avec_liste_fichiers=True,
+        )
+        if resultat.get("cause") != "reseau" or tentative == TENTATIVES_MAJ_AUTO_DEMARRAGE:
+            break
+        log.info(f"  [maj auto démarrage] tentative {tentative}/{TENTATIVES_MAJ_AUTO_DEMARRAGE} "
+                 f"ignorée ({resultat.get('message')}) — nouvel essai dans "
+                 f"{PAUSE_RETENTATIVE_MAJ_AUTO_DEMARRAGE}s (réseau pas encore prêt ?).")
+        time.sleep(PAUSE_RETENTATIVE_MAJ_AUTO_DEMARRAGE)
+    return resultat
 
 
 def _lister_worktrees_secondaires(rep_travail: Path = None) -> list[dict]:

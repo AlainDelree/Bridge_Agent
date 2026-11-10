@@ -130,20 +130,46 @@ def scenario_divergence():
 
 
 def scenario_delai_depasse():
+    """Depuis l'issue #872, un délai dépassé SANS avancée et sans verrou
+    résiduel n'est plus un "echec" (trop alarmant pour un cas en fait sans
+    risque) mais un "ignore" de cause "reseau" — voir
+    tests/test_maj_auto_depot_872.py pour le reste du nouveau comportement
+    (avancée malgré le délai, verrou résiduel, nouvelle tentative)."""
     with tempfile.TemporaryDirectory() as tmp:
         _origine, clone = _init_origine_et_clone(Path(tmp))
 
-        vrai_run = subprocess.run
+        class _PopenDelaiDepasse:
+            def __init__(self, cmd, **kwargs):
+                self.cmd = cmd
+                self.pid = 999999999
+                self.returncode = None
 
-        def _run_mock(cmd, **kwargs):
+            def communicate(self, timeout=None):
+                raise subprocess.TimeoutExpired(self.cmd, timeout)
+
+            def wait(self, timeout=None):
+                self.returncode = -9
+
+            def kill(self):
+                pass
+
+        vrai_popen = subprocess.Popen
+
+        def _popen_mock(cmd, **kwargs):
+            # Seul le git pull lui-même est simulé en délai dépassé — tout
+            # autre appel Popen (y compris ceux internes à subprocess.run,
+            # utilisés par _est_depot_git/_tete_git/etc.) doit continuer à
+            # fonctionner normalement.
             if cmd[:2] == ["git", "pull"]:
-                raise subprocess.TimeoutExpired(cmd, kwargs.get("timeout"))
-            return vrai_run(cmd, **kwargs)
+                return _PopenDelaiDepasse(cmd, **kwargs)
+            return vrai_popen(cmd, **kwargs)
 
-        with mock.patch.object(watcher.subprocess, "run", side_effect=_run_mock):
+        with mock.patch.object(watcher.subprocess, "Popen", side_effect=_popen_mock), \
+             mock.patch.object(watcher.os, "killpg", side_effect=ProcessLookupError):
             resultat = watcher.rafraichir_depot(clone, exiger_propre=True, timeout=3)
 
-    assert resultat["statut"] == "echec", resultat
+    assert resultat["statut"] == "ignore", resultat
+    assert resultat["cause"] == "reseau", resultat
     assert "délai dépassé" in resultat["message"], resultat
     assert "3" in resultat["message"], resultat
 
@@ -179,19 +205,18 @@ def scenario_reglage_actif_remote_branche_personnalises():
         )
 
         commandes = []
-        vrai_run = subprocess.run
+        vrai_popen = subprocess.Popen
 
-        def _run_espion(cmd, **kwargs):
+        def _popen_espion(cmd, **kwargs):
             commandes.append(cmd)
-            if cmd[:2] == ["git", "pull"]:
-                # Le remote "upstream"/branche "main" n'existent pas dans ce
-                # clone minimal : on s'attend à un échec, seule la commande
-                # construite nous intéresse ici.
-                return subprocess.CompletedProcess(cmd, returncode=1, stdout="", stderr="fatal: 'upstream' does not appear to be a git repository")
-            return vrai_run(cmd, **kwargs)
+            # Le remote "upstream"/branche "main" n'existent pas dans ce
+            # clone minimal : le pull réel échoue (cause "autre", pas
+            # "reseau" — pas de nouvelle tentative), seule la commande
+            # construite nous intéresse ici.
+            return vrai_popen(cmd, **kwargs)
 
         with mock.patch.object(identite, "FICHIER_IDENTITE_LOCALE", chemin_identite), \
-             mock.patch.object(watcher.subprocess, "run", side_effect=_run_espion):
+             mock.patch.object(watcher.subprocess, "Popen", side_effect=_popen_espion):
             watcher.tenter_maj_auto_demarrage(clone)
 
     appels_pull = [c for c in commandes if c[:2] == ["git", "pull"]]
