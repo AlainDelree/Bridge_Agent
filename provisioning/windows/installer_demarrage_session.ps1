@@ -65,10 +65,29 @@
   dossier) : redémarrage automatique en cas d'arrêt INATTENDU, pas de
   redémarrage sur un arrêt PROPRE (code 0, ou 42 pour watcher.py —
   auto-extinction par inactivité, voir watcher.py::EXIT_INACTIVITE), une
-  seule instance par watcher (fichier PID vérifié avant tout lancement).
-  Journaux dans <dépôt>\logs\ : watcher-<nom>.log (watcher.py lui-même) +
-  watcher-<nom>-session.log (superviseur, ce qui échapperait au premier) ;
-  watcher_issues_inbox-session.log ; new_issue-session.log.
+  seule instance par watcher (fichier PID vérifié avant tout lancement),
+  sortie standard/erreur recopiée EN CONTINU (pas seulement à l'arrêt) vers
+  le journal du superviseur. Journaux dans <dépôt>\logs\ : watcher-<nom>.log
+  (watcher.py lui-même) + watcher-<nom>-session.log (superviseur, ce qui
+  échapperait au premier) ; watcher_issues_inbox-session.log ;
+  new_issue-session.log.
+
+  -DelaiDemarrageWatchersSec (défaut 20, issue #871, point 2) : les watchers
+  de projet et le watcher du dépôt d'issues (issues_inbox) attendent ce
+  nombre de secondes avant leur tout premier lancement — L'INTERFACE WEB,
+  elle, démarre SANS attendre, puisque c'est elle qui fait la mise à jour
+  automatique du dépôt (`git pull`) au lancement (voir
+  provisionner_new_issue_local.ps1 / NEW_ISSUE_LOCAL_WINDOWS.md). Démarrés en
+  même temps qu'elle (0 s, avant #871), les watchers pouvaient charger
+  l'ANCIEN code du dépôt avant la fin de cette mise à jour. Le délai
+  s'applique UNIQUEMENT au tout premier lancement (pas aux redémarrages
+  après plantage, déjà espacés par -DelaiRedemarrageSec du superviseur) —
+  voir surveiller_processus_session.ps1 -DelaiDemarrageSec, qui porte la
+  logique réelle (un Start-Sleep en tête de CE script, pas une propriété
+  de déclencheur de tâche planifiée : cette dernière ne s'appliquerait pas
+  au Start-ScheduledTask immédiat fait plus bas par CE script après chaque
+  enregistrement — voir le commentaire de surveiller_processus_session.ps1
+  pour le détail).
 
   Idempotent : relançable sans dommage — une tâche déjà enregistrée pour un
   projet encore demandé est simplement mise à jour (Register-ScheduledTask
@@ -113,6 +132,9 @@
     # Sans l'interface web (déjà lancée autrement, ex. par provisionner_new_issue_local) :
     .\installer_demarrage_session.ps1 -Projets scrabble -SansInterfaceWeb
 
+    # Délai de démarrage des watchers porté à 40 s (machine lente) :
+    .\installer_demarrage_session.ps1 -Projets scrabble -DelaiDemarrageWatchersSec 40
+
     # Mode service NSSM (option secondaire — bulle/son indisponibles, mot de
     # passe du compte demandé en saisie masquée), console ADMINISTRATEUR :
     .\installer_demarrage_session.ps1 -Projets scrabble -ModeService
@@ -143,6 +165,13 @@ param(
     # exposer sur le réseau local : -ArgsInterfaceWeb --lan,--no-browser
     # (nécessite un mot de passe déjà configuré, voir new_issue.py --set-password).
     [string[]]$ArgsInterfaceWeb = @('--no-browser'),
+
+    # Délai (secondes) avant le tout premier lancement des watchers (projets
+    # + issues_inbox), PAS de l'interface web — voir l'encadré en tête de
+    # fichier (issue #871, point 2). 0 = aucun délai (comportement d'avant
+    # #871). Ajuster à la hausse sur une machine lente où le `git pull`
+    # automatique de l'interface prend plus que quelques secondes.
+    [int]$DelaiDemarrageWatchersSec = 20,
 
     # Compte Windows sous lequel tourne le démarrage automatique — le compte
     # qui lance ce script par défaut (cohérent avec provisionner.ps1/
@@ -324,6 +353,7 @@ Info "Mode        : $(if ($ModeService) { 'service NSSM (secondaire)' } else { '
 Info "Projets     : $(if ($ProjetsValides.Count -gt 0) { $ProjetsValides -join ', ' } else { '(aucun)' })"
 Info "Issues_inbox: $(if ($SansIssuesInbox) { 'non' } else { 'oui' })"
 Info "Interface web: $(if ($SansInterfaceWeb) { 'non' } else { "oui ($($ArgsInterfaceWeb -join ' '))" })"
+Info "Délai watchers: ${DelaiDemarrageWatchersSec}s avant leur 1er lancement (interface web : sans délai)"
 Write-Host ''
 
 # ---------------------------------------------------------------------------
@@ -331,13 +361,15 @@ Write-Host ''
 # service), commande + arguments du process surveillé, fichier journal du
 # superviseur, fichier PID (garde-fou « une seule instance »).
 # ---------------------------------------------------------------------------
-function Decrire-Composant([string]$Id, [string[]]$ArgsEnfant, [string]$NomLogSession, [string]$NomPid) {
+function Decrire-Composant([string]$Id, [string[]]$ArgsEnfant, [string]$NomLogSession, [string]$NomPid,
+                            [int]$DelaiDemarrageSec = 0) {
     [PSCustomObject]@{
-        Id             = $Id
-        NomComplet     = "$PrefixeTache$Id"
-        ArgsEnfant     = $ArgsEnfant
-        FichierJournal = Join-Path $RepLogs $NomLogSession
-        FichierPid     = Join-Path $RepLogs $NomPid
+        Id                = $Id
+        NomComplet        = "$PrefixeTache$Id"
+        ArgsEnfant        = $ArgsEnfant
+        FichierJournal    = Join-Path $RepLogs $NomLogSession
+        FichierPid        = Join-Path $RepLogs $NomPid
+        DelaiDemarrageSec = $DelaiDemarrageSec
     }
 }
 
@@ -345,15 +377,17 @@ $Composants = @()
 foreach ($p in $ProjetsValides) {
     $cheminConf = Join-Path $RepConfigs "$p.conf"
     $Composants += Decrire-Composant "Watcher-$p" @($CheminWatcher, '--config', $cheminConf) `
-        "watcher-$p-session.log" "watcher-$p.pid"
+        "watcher-$p-session.log" "watcher-$p.pid" $DelaiDemarrageWatchersSec
 }
 if (-not $SansIssuesInbox) {
     $argsInbox = @($CheminIssuesInbox)
     if (Test-Path $CheminConfInbox) { $argsInbox += @('--config', $CheminConfInbox) }
     $Composants += Decrire-Composant 'IssuesInbox' $argsInbox `
-        'watcher_issues_inbox-session.log' 'watcher_issues_inbox.pid'
+        'watcher_issues_inbox-session.log' 'watcher_issues_inbox.pid' $DelaiDemarrageWatchersSec
 }
 if (-not $SansInterfaceWeb) {
+    # Pas de délai ici : c'est CE composant qui fait la mise à jour
+    # automatique du dépôt (git pull) que les watchers ci-dessus attendent.
     $Composants += Decrire-Composant 'InterfaceWeb' (@($CheminNewIssue) + $ArgsInterfaceWeb) `
         'new_issue-session.log' 'new_issue.pid'
 }
@@ -396,7 +430,8 @@ function Construire-LigneArguments($composant) {
         '-FichierJournal', (Quoter $composant.FichierJournal),
         '-FichierPid', (Quoter $composant.FichierPid),
         '-CodesSansRedemarrage', '0,42',
-        '-DelaiRedemarrageSec', '10'
+        '-DelaiRedemarrageSec', '10',
+        '-DelaiDemarrageSec', $composant.DelaiDemarrageSec
     ) + ($composant.ArgsEnfant | ForEach-Object { Quoter $_ })
     return $elements -join ' '
 }
@@ -550,7 +585,8 @@ Write-Host '  RÉSUMÉ' -ForegroundColor Cyan
 Write-Host '========================================================================' -ForegroundColor Cyan
 if ($DryRun) { Avert 'Mode -DryRun : AUCUNE action listée ci-dessus n''a été exécutée réellement.' }
 foreach ($composant in $Composants) {
-    Info "- $($composant.NomComplet) — journal : $($composant.FichierJournal)"
+    $suffixeDelai = if ($composant.DelaiDemarrageSec -gt 0) { " (démarrage différé de $($composant.DelaiDemarrageSec)s)" } else { '' }
+    Info "- $($composant.NomComplet) — journal : $($composant.FichierJournal)$suffixeDelai"
 }
 if ($Composants.Count -eq 0) {
     Info '(aucun composant demandé — ni projet, ni issues_inbox, ni interface web)'

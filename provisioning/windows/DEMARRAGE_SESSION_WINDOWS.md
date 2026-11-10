@@ -27,6 +27,14 @@ Chaque `configs\<nom>.conf` des projets listés doit **déjà exister** — ce
 script ne crée **jamais** de fichier `.conf` (règle générale du dépôt,
 BRIDGE_AGENT_DOC.md §11).
 
+Les watchers de projet et le watcher `issues_inbox` attendent
+`-DelaiDemarrageWatchersSec` (20 s par défaut, réglable) avant leur tout
+premier lancement — **pas** l'interface web, qui démarre sans attendre
+puisque c'est elle qui fait la mise à jour automatique du dépôt (`git
+pull`) à son lancement (voir §2 bis). Ce délai ne s'applique **qu'au tout
+premier lancement**, jamais aux redémarrages après plantage (déjà
+espacés par le délai de redémarrage du superviseur, 10 s).
+
 ## 2. Pourquoi une tâche de session, pas un service, par défaut
 
 Un service Windows tourne en session 0, hors de la session graphique de
@@ -47,6 +55,40 @@ session (cas jugé marginal sur un PC personnel).
 `-ModeService` (option secondaire, voir §5) existe pour qui veut malgré
 tout un vrai service NSSM (démarrage sans ouverture de session), au prix
 d'un mot de passe et de la perte de la bulle/du son.
+
+## 2 bis. Délai de démarrage des watchers (issue #871)
+
+À l'ouverture de session, les trois tâches (watchers de projet,
+`issues_inbox`, interface web) se déclenchent **en même temps**. Or
+l'interface web tente, à chaque lancement, un `git pull --ff-only` du
+dépôt (quelques secondes maximum, voir `NEW_ISSUE_LOCAL_WINDOWS.md`) —
+sans précaution, un watcher démarré exactement en même temps pouvait
+charger l'**ancien** code du dépôt avant la fin de cette mise à jour.
+
+`-DelaiDemarrageWatchersSec` (20 s par défaut) fait attendre les watchers
+(projets + `issues_inbox`) ce nombre de secondes avant leur tout premier
+lancement, pour laisser l'interface web terminer sa mise à jour en
+premier. L'interface web elle-même n'attend jamais (0 s, non réglable :
+c'est elle que les autres attendent).
+
+Ce délai est posé dans `surveiller_processus_session.ps1`
+(`-DelaiDemarrageSec`, un simple `Start-Sleep` avant le tout premier
+lancement), **pas** comme propriété « Delay » du déclencheur de la tâche
+planifiée (`New-ScheduledTaskTrigger -AtLogOn`) : cette dernière option
+existe bien sous Windows, mais ne s'appliquerait qu'aux déclenchements
+futurs **par la session** — pas au `Start-ScheduledTask` que ce script
+exécute lui-même, immédiatement, juste après avoir enregistré chaque
+tâche (pour démarrer sans attendre la prochaine ouverture de session).
+Un délai posé côté déclencheur serait donc incohérent entre une
+installation/mise à jour (démarrage immédiat, sans délai) et une
+reconnexion ultérieure (délai respecté) — poser le délai dans le
+superviseur lui-même l'applique uniformément dans les deux cas, et
+fonctionne aussi bien en `-ModeService` (NSSM relance ce même
+superviseur).
+
+Augmenter cette valeur sur une machine lente où le `git pull`
+automatique dépasserait 20 s ; la mettre à `0` retrouve le comportement
+démarrage simultané d'avant #871.
 
 ## 3. Utilisation
 
@@ -124,6 +166,22 @@ soit configuré), ainsi que chaque démarrage/arrêt/code de sortie horodaté �
 pour `issues_inbox` et l'interface web, qui n'écrivent eux-mêmes que sur
 la sortie standard, ce journal devient leur **seule** trace persistante.
 
+**Écriture en continu (issue #871)** : la sortie standard/erreur du
+process surveillé est recopiée dans ce journal toutes les ~2 secondes
+**pendant qu'il tourne encore**, pas seulement à son arrêt — avant #871,
+elle n'était recopiée qu'à la fin (process arrêté), donc invisible
+pendant tout le fonctionnement, et perdue en cas d'arrêt brutal de la
+session (le fichier temporaire intermédiaire restait alors dans `%TEMP%`,
+jamais recopié). Au pire, un arrêt brutal exactement entre deux copies
+peut encore manquer quelques secondes de sortie — contre la totalité
+depuis le dernier démarrage, auparavant. `$env:PYTHONUNBUFFERED=1` est
+posé avant chaque lancement pour que Python (watcher.py, `new_issue.py`,
+`watcher_issues_inbox.py`) n'ajoute pas son **propre** tampon interne
+par-dessus : sans ce réglage, Python retient sa sortie en mémoire par
+blocs dès qu'elle n'est pas un terminal (donc dans toute redirection vers
+un fichier), et la copie périodique ci-dessus ne verrait rien de neuf
+tant que ce tampon ne se vide pas de lui-même.
+
 ## 7. Prérequis (non couverts par ce script)
 
 - Python (avec pip) installé et sur le PATH — `provisionner.ps1` (fonction
@@ -167,6 +225,20 @@ Ce script a été écrit et relu sous Linux, où il ne peut pas être exécuté
 9. Bulle de notification et bip sonore (watcher.py) : fonctionnent en mode
    tâche de session (§2) ; vérifier qu'ils restent muets en `-ModeService`
    (comportement attendu, documenté dans l'aide du script).
+10. **(issue #871)** Pendant que `watcher-scrabble.log` tourne, ouvrir
+    `logs\watcher-scrabble-session.log` dans un éditeur qui suit les
+    ajouts (ex. `Get-Content -Wait`) : du texte apparaît par petits
+    paquets au fil du fonctionnement, pas seulement à l'arrêt. Couper le
+    courant/tuer la session en plein milieu d'une activité du watcher :
+    au plus quelques secondes de sortie manquent à la reprise, jamais la
+    totalité depuis le dernier démarrage.
+11. **(issue #871)** Avec `-DelaiDemarrageWatchersSec` laissé à sa valeur
+    par défaut (20 s), ouvrir une session : `logs\new_issue-session.log`
+    affiche son `[DEMARRAGE]` immédiatement, alors que
+    `logs\watcher-scrabble-session.log` affiche le sien ~20 s plus tard
+    (ligne `[ATTENTE] démarrage différé de 20 s…` visible juste avant).
+    Avec `-DelaiDemarrageWatchersSec 0`, vérifier que les deux démarrent
+    au même instant (comportement d'avant #871).
 
 ## Voir aussi
 
