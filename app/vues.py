@@ -21,4 +21,5 @@ def index():
                            jetons_annuaire=etat_jetons_annuaire(),
                            maj_auto_depot=etat.get("MAJ_AUTO_DEPOT"),
                            agent_par_defaut=AGENT_PAR_DEFAUT,
-                           machine_seule=identite.machine_seule())
+                           machine_seule=identite.machine_seule(),
+                           diagnostic_copie=identite.diagnostic_copie())

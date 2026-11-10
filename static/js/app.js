@@ -903,6 +903,13 @@ function construireLigneIssueDOM(it) {
   ligne.className = 'ligne-issue';
   ligne.dataset.projet = it.projet;
   ligne.dataset.numero = numero;
+  // Horodatage de CETTE construction (issue #878, journal de diagnostic de
+  // la copie presse-papier) : lu par static/js/resultats_coches.js pour
+  // savoir si la ligne a été (re)dessinée depuis moins de quelques secondes
+  // au moment d'un clic sur sa case — corrélation avec un clic resté sans
+  // effet, sans rapport avec le choix de remplacer ou non la ligne (voir les
+  // gardes de remplacerLigneIssue/rendreListeIssues ci-dessous).
+  ligne.dataset.redessineeA = String(Date.now());
   // Case à cocher libre (issue #154) : repère visuel personnel d'Alain, SANS
   // aucune signification métier. État persisté côté navigateur uniquement
   // (localStorage), jamais envoyé au serveur. On lit l'état mémorisé pour
@@ -1098,8 +1105,43 @@ function brancherEvenementsLigneIssue(ligne, it) {
   };
 }
 
+// Garde (issue #878) : étend aux deux reconstructions ci-dessous
+// (rendreListeIssues/remplacerLigneIssue) la garde posée par #462/#463 dans
+// restaurerCasesCocheesResultats (« ne jamais toucher la case sur laquelle
+// l'utilisateur est EN TRAIN d'agir »). Un checkbox reçoit le FOCUS au
+// mousedown, AVANT que le navigateur ne déclenche `click` puis `change` —
+// si le nœud lui-même est détruit et remplacé entre ces deux instants (par
+// un événement /stream `fin_issue` en plein redessin de la ligne qui vient
+// de se terminer, ou par la resynchronisation complète de la liste après un
+// long retour d'onglet/une reconnexion SSE), le navigateur n'a plus de cible
+// vivante à qui livrer `click`/`change` : le clic n'a ALORS AUCUN EFFET, ni
+// `basculerCocheResultat` ni donc la copie ne s'exécutent (issue #878 —
+// mécanisme établi par relecture du code : remplacerLigneIssue/
+// rendreListeIssues remplaçaient jusqu'ici la case SANS AUCUNE garde,
+// contrairement à restaurerCasesCocheesResultats). Renvoie l'élément
+// `.coche-resultat` actif s'il est dans `racine`, sinon null.
+function coucheResultatEnInteraction(racine) {
+  const actif = document.activeElement;
+  if (!actif || !actif.classList || !actif.classList.contains('coche-resultat')) return null;
+  if (racine && racine.contains && !racine.contains(actif)) return null;
+  return actif;
+}
+
 function rendreListeIssues(reset) {
   const zone = document.getElementById('liste-issues');
+  // Garde #878 (voir coucheResultatEnInteraction ci-dessus) : une
+  // resynchronisation complète (retour d'onglet après ≥30s masqué, ou
+  // reconnexion SSE — static/js/resultats.js::surOuvertureSse) détruirait
+  // TOUTES les cases, y compris celle sur laquelle l'utilisateur vient de
+  // cliquer à l'instant du retour. Reporté au `focusout` de cette case
+  // (qui survient dès que `change` a fait son effet ou que le focus part
+  // ailleurs) plutôt que sauté : la liste reste à jour, juste pas EN PLEIN
+  // GESTE.
+  const cocheActive = coucheResultatEnInteraction(zone);
+  if (cocheActive) {
+    cocheActive.addEventListener('focusout', () => rendreListeIssues(reset), { once: true });
+    return;
+  }
   zone.innerHTML = '';
   if (!listeIssuesResultats.length) {
     zone.innerHTML = '<div class="issue-vide">Aucune issue à afficher</div>';
@@ -1175,7 +1217,24 @@ function trouverLigneIssue(projet, numero) {
 // Remplace intégralement la ligne DOM d'une issue par une version reconstruite
 // à partir des données fraîches `it` — même rendu et mêmes gestes (clic/double-
 // clic) qu'un ↻ manuel global, mais restreint à cette seule ligne (issue #334).
+// Appelée en direct depuis l'événement /stream `fin_issue`/`debut_issue`
+// (static/js/resultats.js, via window.__resultatsRemplacerLigne) — c'est-à-dire
+// potentiellement AU MOMENT MÊME où Alain clique la case de l'issue qui vient
+// de se terminer (issue #878, voir coucheResultatEnInteraction ci-dessus).
 function remplacerLigneIssue(ligneAncienne, it) {
+  const cocheActive = coucheResultatEnInteraction(ligneAncienne);
+  if (cocheActive) {
+    // Reporté au `focusout` : relit les données les PLUS FRAÎCHES connues
+    // pour cette issue à cet instant (pas celles, potentiellement périmées,
+    // de cet appel différé) — même lecture que window.__resultatsRemplacerLigne.
+    cocheActive.addEventListener('focusout', () => {
+      const fraiche = listeIssuesResultats.find(
+        (x) => x.projet === it.projet && String(x.number) === String(it.number));
+      const ligneActuelle = trouverLigneIssue(it.projet, String(it.number));
+      if (fraiche && ligneActuelle) remplacerLigneIssue(ligneActuelle, fraiche);
+    }, { once: true });
+    return;
+  }
   const nouvelle = construireLigneIssueDOM(it);
   brancherEvenementsLigneIssue(nouvelle, it);
   if (ligneAncienne.classList.contains('selectionnee')) nouvelle.classList.add('selectionnee');

@@ -25,6 +25,13 @@
  */
 export function creerCanalSse(url, gestionnaires = {}, opts = {}) {
   let source = null;
+  // Horodatage du dernier événement reçu (tout type confondu) OU de la
+  // dernière (ré)ouverture — issue #878, journal de diagnostic de la copie
+  // presse-papier : un clic « sans effet » suivant une longue inactivité
+  // d'onglet coïncide-t-il avec un flux resté silencieux longtemps ? Lecture
+  // SEULE (etat()/depuisDerniereActiviteMs() ci-dessous) : ne décide jamais
+  // d'une reconnexion, EventSource s'en charge nativement.
+  let derniereActiviteMs = null;
 
   // optsAppel.onOuvert (issue #705) : surcharge opts.onOuvert pour CET appel —
   // permet à un module appelant (ex. resultats.js) de réagir aux reconnexions
@@ -36,13 +43,17 @@ export function creerCanalSse(url, gestionnaires = {}, opts = {}) {
     }
     source = new EventSource(url);
     for (const [nom, handler] of Object.entries(gestionnaires)) {
-      if (nom === 'message') source.onmessage = handler;
-      else source.addEventListener(nom, handler);
+      const handlerAvecActivite = (e) => { derniereActiviteMs = Date.now(); handler(e); };
+      if (nom === 'message') source.onmessage = handlerAvecActivite;
+      else source.addEventListener(nom, handlerAvecActivite);
     }
     // EventSource se reconnecte nativement après une coupure ; on n'ajoute de
     // logique manuelle que via opts.onErreur si un canal en a besoin.
     const onOuvert = optsAppel.onOuvert || opts.onOuvert;
-    if (onOuvert) source.onopen = onOuvert;
+    source.onopen = (e) => {
+      derniereActiviteMs = Date.now();
+      if (onOuvert) onOuvert(e);
+    };
     if (opts.onErreur) source.onerror = opts.onErreur;
     return source;
   }
@@ -51,7 +62,17 @@ export function creerCanalSse(url, gestionnaires = {}, opts = {}) {
     if (source) { source.close(); source = null; }
   }
 
-  return { connecter, fermer };
+  // État readyState du canal (0 CONNECTING / 1 OPEN / 2 CLOSED), ou null
+  // avant toute connexion — issue #878.
+  function etat() { return source ? source.readyState : null; }
+
+  // Millisecondes depuis le dernier événement/ouverture, ou null si aucune
+  // activité n'a encore eu lieu — issue #878.
+  function depuisDerniereActiviteMs(maintenant = Date.now()) {
+    return derniereActiviteMs == null ? null : maintenant - derniereActiviteMs;
+  }
+
+  return { connecter, fermer, etat, depuisDerniereActiviteMs };
 }
 
 // ─── Contrôleur applicatif — canal /stream préconfiguré ──────────────────────
