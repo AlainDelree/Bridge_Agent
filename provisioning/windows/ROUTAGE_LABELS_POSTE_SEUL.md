@@ -59,7 +59,10 @@ La case **« Projet CCW »** de la modale de création de projet
 elle exige d'ailleurs deux tokens et une clé publique de bootstrap
 récupérée en SSH, ce qui échoue proprement (message d'erreur explicite)
 si aucun second poste n'est joignable ; ce n'est donc pas un piège
-silencieux, juste une case à ne pas cocher.
+silencieux, juste une case à ne pas cocher. Depuis l'issue #870, le
+réglage `MACHINE_SEULE` (voir §4 ci-dessous) la masque purement et
+simplement, avec l'onglet « CCW » de la barre d'onglets — sans rien
+changer au piège des labels décrit ci-dessus.
 
 ## 3. À faire aujourd'hui, sans aucun changement de code
 
@@ -80,6 +83,15 @@ Un réglage machine dans `identite_locale.conf` (racine du dépôt, hors
 `configs/`, jamais committé — issue #859) indiquant que ce poste joue
 **tous les rôles**, pour que les deux labels soient traités localement
 sans SSH ni appel `nssm` distant. Comparée à deux autres pistes :
+
+**Précision (issue #870)** : le nom `MACHINE_SEULE` évoqué ci-dessous a été
+posé dans `identite_locale.conf`, mais seulement pour masquer l'onglet
+« CCW » et la case « Projet CCW » décrits au §2 ci-dessus (interface web
+uniquement) — PAS pour router les labels `for-linux`/`for-windows`. La
+« solution de fond » décrite dans cette section (modifier
+`watcher.py::lister_issues()` et les points de démarrage/relance cités en
+(b) ci-dessous) reste entièrement non implémentée ; le piège du §2 reste
+donc actif, seules les consignes du §3 y répondent pour l'instant.
 
 - **(a) Documenter seulement** (ce document) : coût nul, mais le piège
   reste actif — un oubli (champ `LABELS` mal rempli par Claude Chat ou

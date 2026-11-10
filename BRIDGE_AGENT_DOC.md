@@ -685,6 +685,18 @@ jamais de « push échoué » ni d'étape « Commit doc Bridge_Agent » (absente
 dans ce cas). La copie reste identique à celle d'Alain, et `MAJ_AUTO_DEPOT`
 (§8.1) continue de fonctionner.
 
+**Correctif du faux message d'échec (issue #870)** : jusque-là,
+`creer_projet()`/`supprimer_projet()` renvoyaient `doc_commit_statut = None`
+dans ce cas précis (aucun commit jamais tenté, donc aucun statut
+`committer_pousser_doc()` à rapporter) — mais les deux consommateurs côté
+interface (`afficherRappelGit` dans `static/js/app.js`, `messageStatutCommitDoc`
+dans `static/js/config.js`) traitaient `None` comme un échec, affichant un
+encadré orange « Action requise — dépôt Bridge_Agent » ou un message
+affirmant un commit/push automatique qui n'avait jamais eu lieu. Corrigé en
+renvoyant un statut explicite `doc_commit_statut = "non_applicable"` dans ce
+cas, désormais reconnu par les deux consommateurs (aucun encadré, aucun
+message de commit).
+
 **Garde-fou général envisagé, pas implémenté (issue #869)** : refuser tout
 push de `BRIDGE_AGENT_DOC.md` vers un dépôt distant dont l'utilisateur
 n'est pas propriétaire, sans dépendre d'un réglage explicite — nécessiterait
@@ -977,15 +989,36 @@ CCW » à la création d'un projet — laisser `LABELS` vide : `construire_
 labels()` pose alors `for-linux` par défaut, traité normalement par le
 watcher local.
 
-**Solution de fond, non implémentée** : un réglage machine dans
-`identite_locale.conf` (#859) indiquant que ce poste joue tous les
-rôles, pour que les deux labels soient traités localement sans SSH ni
-appel `nssm` distant — nécessite de modifier `watcher.py::lister_issues()`
-(interrogation GitHub par label) ainsi que les points de démarrage/
-relance à la demande (`app/issues.py`, `scripts/watcher_issues_inbox.py`
-×2, `app/interruption.py`) : trop de fichiers sensibles, dont le cœur du
-polling utilisé en continu par les deux machines d'Alain, pour cette
-issue — voir #867 pour l'implémentation détaillée.
+**Réglage `MACHINE_SEULE`, masquage d'interface seulement (issue #870)** :
+dans `identite_locale.conf` (racine du dépôt, gitignoré — §8) :
+```
+MACHINE_SEULE = oui   # active le réglage (absent/toute autre valeur =
+                       # désactivé, comportement STRICTEMENT inchangé pour
+                       # les installations d'Alain)
+```
+Une fois actif (`identite.machine_seule()`, lu par `app/vues.py::index()`),
+masque l'onglet « CCW » de la barre d'onglets et la case « Projet CCW » du
+formulaire de nouveau projet (`templates/fragments/onglets.html` /
+`modale_nouveau_projet.html`, `display:none` CSS — les deux éléments
+restent dans le DOM, `static/js/app.js` les référence sans jamais vérifier
+leur existence). **Ne règle PAS le piège lui-même** : le routage réel des
+labels `for-linux`/`for-windows` sans second poste (`watcher.py::
+lister_issues()` et les points de démarrage/relance cités ci-dessous)
+reste non implémenté — ce réglage évite seulement qu'un onglet et une case
+sans aucune utilité sur un poste seul n'induisent en erreur ou échouent
+(case « Projet CCW », qui exige un second poste joignable).
+
+**Solution de fond du routage lui-même, toujours non implémentée** : le
+nom `MACHINE_SEULE` ci-dessus anticipe la solution déjà évoquée à l'issue
+#866 (indiquer que ce poste joue tous les rôles, pour que les deux labels
+soient traités localement sans SSH ni appel `nssm` distant) — mais
+l'implémenter réellement nécessite de modifier `watcher.py::
+lister_issues()` (interrogation GitHub par label) ainsi que les points de
+démarrage/relance à la demande (`app/issues.py`, `scripts/
+watcher_issues_inbox.py` ×2, `app/interruption.py`) : trop de fichiers
+sensibles, dont le cœur du polling utilisé en continu par les deux
+machines d'Alain, pour une petite modification — voir #867 pour
+l'implémentation détaillée, toujours hors périmètre de #870.
 
 Détail complet et historique de l'audit :
 `provisioning/windows/ROUTAGE_LABELS_POSTE_SEUL.md`.
@@ -1078,15 +1111,18 @@ estimation que celle déjà affichée, sans dupliquer ce calcul.
 
 ---
 
-*Dernière mise à jour : 9 novembre 2026 — §8.2 (nouvelle sous-section) :
-réglage FACULTATIF `COPIE_NON_PROPRIETAIRE` dans `identite_locale.conf`
-(désactivé par défaut, comportement STRICTEMENT inchangé pour les
-installations d'Alain), pour une copie de l'outil qui n'appartient pas à
-Alain (ex. ami sur PC Windows seul, issue #869, suite de #868) — une fois
-actif, création/suppression de projet n'écrit, ne committe ni ne pousse
-plus jamais `BRIDGE_AGENT_DOC.md` ; les tableaux §2/§7 sont régénérés dans
-`PROJETS_LOCAUX.md` (fichier local gitignoré, `regenerer_tableaux_projets.
-regenerer_local()`) à la place, annoncé en une ligne, jamais comme une
-erreur.*
+*Dernière mise à jour : 10 novembre 2026 — issue #870, copie de l'outil sur
+un poste seul (suite de #866/#869) : §8.2, correctif du faux message
+d'échec de commit/push de `BRIDGE_AGENT_DOC.md` affiché à tort quand
+`COPIE_NON_PROPRIETAIRE` est actif (`doc_commit_statut` vaut désormais
+`"non_applicable"`, jamais `None`, reconnu par `static/js/app.js`/
+`config.js`) ; §16.1, réglage FACULTATIF `MACHINE_SEULE` dans
+`identite_locale.conf` (désactivé par défaut, comportement STRICTEMENT
+inchangé pour les installations d'Alain) masquant l'onglet « CCW » et la
+case « Projet CCW » sur un poste sans second poste délégué — n'implémente
+PAS le routage des labels for-linux/for-windows (#867, toujours hors
+périmètre). Également : l'encadré de rappel du hook de relecture
+(Relecture_Bridge) ne s'affiche plus que si cet outil est effectivement
+présent sur la machine (`identite.relecture_disponible()`).*
 
 Historique complet : voir [`CHANGELOG.md`](CHANGELOG.md).

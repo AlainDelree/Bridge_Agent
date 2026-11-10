@@ -1,6 +1,6 @@
 # GUIDE_INSTALLATION_WINDOWS_SEUL — Bridge_Agent sur un PC Windows seul, avec Mistral Vibe
 
-Dernière mise à jour : 9 novembre 2026 (§8, réglage `COPIE_NON_PROPRIETAIRE`, issue #869). Version de travail : à corriger après la première installation réelle.
+Dernière mise à jour : 10 novembre 2026 (§0 et §8, détection automatique de Relecture_Bridge + réglage `MACHINE_SEULE`, faux encadré « Action requise » corrigé, issue #870). Version de travail : à corriger après la première installation réelle.
 
 Ce guide ne répète pas ce que disent déjà les autres documents du dépôt : il donne l'ordre des étapes, renvoie vers le bon document pour le détail, et signale les pièges déjà rencontrés.
 
@@ -15,7 +15,7 @@ Aucune étape de ce guide ne demande de coller un secret dans une conversation.
 
 Une seule machine Windows fait tout : l'interface web (`new_issue.py`), le dépôt d'issues par fichiers, les watchers des projets, et l'agent d'exécution, qui est Mistral Vibe (abonnement Mistral, connexion par compte). Il n'y a ni ThinkPad Linux, ni second PC (rôle « CCW »). Le rôle CCW délégué par SSH n'est **pas** utilisé ici (établi).
 
-Ce qui n'existe pas dans cette installation : l'outil de relecture Relecture_Bridge (la fusion se fait à la main, voir §10), le mode « lecture active » avec Vibe (établi, limite de Vibe).
+Ce qui n'existe pas dans cette installation : l'outil de relecture Relecture_Bridge (la fusion se fait à la main, voir §10), le mode « lecture active » avec Vibe (établi, limite de Vibe). Son absence est détectée automatiquement (établi, issue #870) : l'encadré de rappel « relancer le hook de relecture », propre à la machine d'Alain, ne s'affiche donc jamais ici après la création d'un projet.
 
 ## 1. Avant de venir (préparation côté Alain)
 
@@ -104,9 +104,17 @@ Par défaut, les fichiers d'issues se déposent dans `issues_inbox\` du dépôt.
 COPIE_NON_PROPRIETAIRE = oui
 ```
 
-Avec ce réglage, créer ou supprimer un projet n'écrit, ne committe ni ne pousse plus jamais `BRIDGE_AGENT_DOC.md` : les mêmes informations (tableaux §2/§7) sont écrites dans `PROJETS_LOCAUX.md`, fichier local gitignoré, régénéré automatiquement à chaque création/suppression — à donner tel quel à Mistral Vibe pour qu'il connaisse les noms valides des projets de l'ami. Le résultat de la création l'annonce clairement (ex. « liste des projets écrite dans PROJETS_LOCAUX.md, doc de l'outil inchangée »), sans jamais afficher « push échoué » dans ce cas. **Ne pas pousser `BRIDGE_AGENT_DOC.md` à la main** après une création/suppression avec ce réglage actif : il n'a pas été modifié, il n'y a rien à pousser.
+Avec ce réglage, créer ou supprimer un projet n'écrit, ne committe ni ne pousse plus jamais `BRIDGE_AGENT_DOC.md` : les mêmes informations (tableaux §2/§7) sont écrites dans `PROJETS_LOCAUX.md`, fichier local gitignoré, régénéré automatiquement à chaque création/suppression — à donner tel quel à Mistral Vibe pour qu'il connaisse les noms valides des projets de l'ami. Le résultat de la création l'annonce clairement (ex. « liste des projets écrite dans PROJETS_LOCAUX.md, doc de l'outil inchangée »), sans jamais afficher « push échoué » dans ce cas — ni, depuis #870, le faux encadré orange « Action requise » qui s'affichait encore à tort juste après (établi, corrigé). **Ne pas pousser `BRIDGE_AGENT_DOC.md` à la main** après une création/suppression avec ce réglage actif : il n'a pas été modifié, il n'y a rien à pousser.
 
-Dans l'interface, bouton « Nouveau projet », **sans** cocher « Projet CCW » (cette case suppose une seconde machine ; elle échoue proprement avec un message explicite, établi). Le code de création n'a rien de spécifique à Linux (établi), mais n'a jamais été exécuté sur un Windows seul : **à vérifier**.
+**Également avant de créer le premier projet, poser le réglage `MACHINE_SEULE` (établi, issue #870)** : cette installation n'a pas de second poste Windows délégué (rôle CCW, §8 de `BRIDGE_AGENT_DOC.md`) — sans ce réglage, l'onglet « CCW » de la barre d'onglets et la case « Projet CCW » du formulaire de nouveau projet restent visibles, sans aucune utilité et avec un risque de piège (label `for-windows` posé par erreur, voir `provisioning/windows/ROUTAGE_LABELS_POSTE_SEUL.md`). Ajouter, dans le même `identite_locale.conf` :
+
+```
+MACHINE_SEULE = oui
+```
+
+Avec ce réglage, l'onglet « CCW » et la case « Projet CCW » sont masqués dans l'interface (établi). **Ne règle pas** le piège du label `for-windows` lui-même (routage, issue #867, toujours non implémenté) : laisser quand même le champ `LABELS` vide à la création d'une issue, comme indiqué dans `ROUTAGE_LABELS_POSTE_SEUL.md`.
+
+Dans l'interface, bouton « Nouveau projet » : sans `MACHINE_SEULE`, **sans** cocher « Projet CCW » (cette case suppose une seconde machine ; elle échoue proprement avec un message explicite, établi) — avec `MACHINE_SEULE` posé ci-dessus, la case n'apparaît même plus. Le code de création n'a rien de spécifique à Linux (établi), mais n'a jamais été exécuté sur un Windows seul : **à vérifier**.
 
 Ensuite, dans `configs\<projet>.conf` :
 - ajouter une ligne `AGENT = vibe` ;

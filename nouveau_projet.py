@@ -651,6 +651,12 @@ def creer_projet(nom: str, depot: str = "", rep: str = "", perimetre: str = "",
     # non-propriétaire de l'outil (issue #869), de PROJETS_LOCAUX.md.
     doc = mettre_a_jour_doc()
     doc_commit = None
+    # Statut explicite (plutôt que None par défaut) pour le cas
+    # COPIE_NON_PROPRIETAIRE ci-dessous : None était interprété à tort comme
+    # un échec par les consommateurs (app.js afficherRappelGit, config.js
+    # messageStatutCommitDoc) — aucun commit n'étant JAMAIS tenté sur une
+    # copie non-propriétaire, ce n'en est pas un (issue #870).
+    doc_commit_statut = None
     if not doc["existe"]:
         nom_doc = Path(doc["fichier_local"]).name if doc.get("local") else DOC.name
         etapes.append({"etape": "Documentation", "ok": False,
@@ -665,6 +671,7 @@ def creer_projet(nom: str, depot: str = "", rep: str = "", perimetre: str = "",
                        "detail": f"liste des projets écrite dans "
                                  f"{Path(doc['fichier_local']).name}, doc de l'outil "
                                  "inchangée (COPIE_NON_PROPRIETAIRE)."})
+        doc_commit_statut = "non_applicable"
     else:
         ok_doc = doc["ok2"] and doc["ok7"]
         etapes.append({"etape": "Documentation", "ok": ok_doc,
@@ -676,6 +683,7 @@ def creer_projet(nom: str, depot: str = "", rep: str = "", perimetre: str = "",
         # sans qu'aucun message n'invite Alain à la committer/pousser.
         doc_commit = regenerer_tableaux_projets.committer_pousser_doc(
             f"Ajout du projet {nom} (§2)")
+        doc_commit_statut = doc_commit["statut"]
         etapes.append({"etape": "Commit doc Bridge_Agent",
                        "ok": doc_commit["statut"] in ("rien_a_faire", "ok"),
                        "detail": doc_commit["detail"]})
@@ -687,8 +695,9 @@ def creer_projet(nom: str, depot: str = "", rep: str = "", perimetre: str = "",
             "git_push_ok": git_res["push_ok"],
             "git_contenu_preexistant": git_res["contenu_preexistant"],
             "git_commande_manuelle": git_res["commande_manuelle"],
-            "doc_commit_statut": doc_commit["statut"] if doc_commit else None,
-            "doc_commit_commande_manuelle": doc_commit["commande_manuelle"] if doc_commit else None}
+            "doc_commit_statut": doc_commit_statut,
+            "doc_commit_commande_manuelle": doc_commit["commande_manuelle"] if doc_commit else None,
+            "relecture_disponible": identite.relecture_disponible()}
 
 
 def etape_nom() -> tuple[str, str]:

@@ -70,8 +70,20 @@
          n'existe pas encore, #560). Une fois le dépôt confirmé créé, le bloc
          #np-ccw-post-bloc ci-dessous apparaît avec le nom RÉEL du dépôt et le
          bouton dédié « Finaliser le bootstrap CCW » (qui, lui, appelle
-         /projet-ccw/bootstrap). -->
-    <label style="display:block;font-size:13px;color:#333;margin-bottom:8px">
+         /projet-ccw/bootstrap).
+         Masquée sur une machine sans second poste délégué
+         (identite_locale.conf, MACHINE_SEULE = oui, issue #870) : elle n'a
+         aucune utilité sur un poste seul et échoue de toute façon (pas de
+         second poste joignable, voir ROUTAGE_LABELS_POSTE_SEUL.md §1).
+         L'élément reste dans le DOM (display:none en CSS plutôt qu'une
+         condition Jinja qui le retirerait) : app.js (ouvrirNouveauProjet,
+         npCcwFinaliser…) le référence par getElementById sans jamais
+         vérifier son existence, le retirer casserait ces appels.
+         Comportement inchangé sans ce réglage (installations d'Alain) — la
+         case reste décochée par défaut, donc ccwActif reste faux et le bloc
+         étape 2 ci-dessous (#np-ccw-post-bloc) ne s'affiche jamais
+         spontanément. -->
+    <label style="{% if machine_seule %}display:none{% else %}display:block{% endif %};font-size:13px;color:#333;margin-bottom:8px">
       <input type="checkbox" id="np-ccw" onchange="npCcwToggle()">
       Projet CCW — provisionner aussi un service CCW dédié (Windows)
     </label>
