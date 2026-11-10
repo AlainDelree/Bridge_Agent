@@ -58,6 +58,15 @@
   │ 4. Avant de lancer une seconde fois l'interface web, le lanceur teste si │
   │    elle répond déjà sur 127.0.0.1:5100 (cas où les tâches de démarrage   │
   │    de session, §9 du guide, tournent déjà) — sinon conflit de port.      │
+  │ 5. (issue #876) `new_issue.py` est démarré avec `--no-browser` : c'est   │
+  │    le lanceur, pas `new_issue.py`, qui ouvre le navigateur — une seule   │
+  │    fois, après avoir attendu (jusqu'à ~60 s) que le port réponde          │
+  │    vraiment. Avant #876, le lanceur attendait 2 s fixes puis ouvrait son │
+  │    propre onglet ET laissait `new_issue.py` ouvrir le sien : sur une mise│
+  │    à jour automatique plus longue que 2 s (§3 du guide), le premier      │
+  │    onglet tombait sur « Unable to connect ». La console de              │
+  │    `new_issue.py` reste VISIBLE (pas -WindowStyle Hidden) : voir le      │
+  │    commentaire dans `bridge_lanceur.ps1` généré, même raison.            │
   └─────────────────────────────────────────────────────────────────────────┘
 
   Idempotent : relançable sans dommage. `identite_locale.conf` n'est jamais
@@ -80,11 +89,12 @@
     # Simulation complète (rien n'est modifié) :
     powershell -NoProfile -ExecutionPolicy Bypass -File .\installer_windows_seul.ps1 -DryRun
 
-    # Installation standard (sans Vibe, à faire soi-même ensuite si besoin) :
+    # Installation standard (Mistral Vibe ET le garde-fou anti-push sont
+    # ACTIFS PAR DÉFAUT depuis l'issue #876) :
     powershell -NoProfile -ExecutionPolicy Bypass -File .\installer_windows_seul.ps1
 
-    # Avec Mistral Vibe (version figée du guide) et le garde-fou anti-push :
-    powershell -NoProfile -ExecutionPolicy Bypass -File .\installer_windows_seul.ps1 -AvecVibe -ProtegerPush
+    # Sans Mistral Vibe, et sans le garde-fou anti-push (déconseillé) :
+    powershell -NoProfile -ExecutionPolicy Bypass -File .\installer_windows_seul.ps1 -SansVibe -SansProtegerPush
 
     # Dossier différent du défaut ($env:USERPROFILE\Bridge_Agent) :
     powershell -NoProfile -ExecutionPolicy Bypass -File .\installer_windows_seul.ps1 -Dossier D:\Outils\Bridge_Agent
@@ -105,15 +115,20 @@ param(
 
     # Règle l'URL de PUSH du dépôt (PAS de fetch) sur une valeur invalide :
     # cette copie ne pourra alors jamais pousser vers le dépôt d'origine,
-    # même par erreur (ex. commande lancée dans le mauvais dossier).
-    [switch]$ProtegerPush,
+    # même par erreur (ex. commande lancée dans le mauvais dossier). ACTIF
+    # PAR DÉFAUT depuis l'issue #876 : cette installation (réglage
+    # COPIE_NON_PROPRIETAIRE) ne doit jamais pousser vers le dépôt d'Alain.
+    # -SansProtegerPush désactive ce garde-fou (déconseillé).
+    [switch]$SansProtegerPush,
 
     # Installe en plus Mistral Vibe (uv + mistral-vibe, version figée) et le
     # profil d'écriture bridge_ecriture.toml — §6 du guide. La connexion par
-    # compte (`vibe --setup`) reste manuelle (console réelle requise).
-    [switch]$AvecVibe,
+    # compte (`vibe --setup`) reste manuelle (console réelle requise). ACTIF
+    # PAR DÉFAUT depuis l'issue #876 : Vibe est l'agent de toute cette
+    # installation. -SansVibe l'ignore (à faire soi-même plus tard si besoin).
+    [switch]$SansVibe,
 
-    # Version figée de mistral-vibe installée par -AvecVibe — JAMAIS
+    # Version figée de mistral-vibe installée (sauf -SansVibe) — JAMAIS
     # "latest" (voir §6 du guide : la 3.1.1 a bloqué une première issue plus
     # de 8 minutes, cause non isolée). Ne changer que volontairement.
     [string]$VersionVibe = '3.1.0',
@@ -148,9 +163,35 @@ function Etape($n, $titre) {
     Write-Host "=== Étape $n : $titre ===" -ForegroundColor Magenta
 }
 
-# Suivi pour le résumé final (§12 de l'issue) : ce qui a été fait, ce qui a
-# été ignoré (déjà en place), les étapes manuelles qui restent — DANS L'ORDRE.
+# Invoke-CommandeNativeSansArret — exécute une commande EXTERNE (gh, winget,
+# vibe, python…) dont la sortie d'erreur ne doit JAMAIS arrêter ce script,
+# même sous $ErrorActionPreference = 'Stop' (issue #876) : sous PowerShell
+# 5.1, fusionner la sortie d'erreur d'une commande native avec `2>&1`
+# transforme CHAQUE ligne de cette sortie en erreur TERMINANTE
+# (NativeCommandError) dès que $ErrorActionPreference vaut 'Stop' — même
+# quand il ne s'agit que d'un simple message (ex. gh pas encore connecté),
+# sans aucun échec réel. Remède : remettre $ErrorActionPreference à
+# 'Continue' pendant CET appel précis seulement, puis le restaurer — jamais
+# de façon globale ni persistante. Un vrai échec reste détectable par
+# l'appelant via le code de sortie renvoyé (.CodeSortie).
+function Invoke-CommandeNativeSansArret {
+    param([Parameter(Mandatory)][scriptblock]$Commande)
+    $precedent = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        $sortie = (& $Commande 2>&1 | Out-String)
+        return [PSCustomObject]@{ Sortie = $sortie; CodeSortie = $LASTEXITCODE }
+    } finally {
+        $ErrorActionPreference = $precedent
+    }
+}
+
+# Suivi pour le résumé final (§12 de l'issue) : ce qui a été fait (mode réel),
+# ce qui SERAIT fait (mode -DryRun, jamais confondu avec ce qui précède —
+# issue #876), ce qui a été ignoré (déjà en place), les étapes manuelles qui
+# restent — DANS L'ORDRE.
 $script:ActionsFaites    = @()
+$script:ActionsPrevues   = @()
 $script:ActionsIgnorees  = @()
 $script:EtapesManuelles  = @()
 
@@ -178,7 +219,12 @@ if ($RetirerRaccourciBridge) {
             }
         }
     }
-    if ($retire) { Ok "Raccourci 'bridge' retiré." } else { Info "Raccourci 'bridge' absent — rien à retirer." }
+    if ($retire) {
+        if ($DryRun) { Info "Mode -DryRun : rien n'a été supprimé réellement — voir ce qui serait supprimé ci-dessus." }
+        else { Ok "Raccourci 'bridge' retiré." }
+    } else {
+        Info "Raccourci 'bridge' absent — rien à retirer."
+    }
     Info "$RepBinUtilisateur reste dans le PATH utilisateur (peut être partagé avec d'autres outils, ex. uv) — non retiré."
     return
 }
@@ -226,8 +272,8 @@ Etape 2 'Git, GitHub CLI, Python (winget)'
 
 function Test-WingetInstalle([string]$Id) {
     if (-not $WingetDisponible) { return $false }
-    $sortie = (& winget list --id $Id -e --accept-source-agreements 2>&1 | Out-String)
-    return ($sortie -match [regex]::Escape($Id))
+    $resultat = Invoke-CommandeNativeSansArret { winget list --id $Id -e --accept-source-agreements }
+    return ($resultat.Sortie -match [regex]::Escape($Id))
 }
 
 function Installer-SiAbsent([string]$Id, [string]$Nom) {
@@ -242,6 +288,7 @@ function Installer-SiAbsent([string]$Id, [string]$Nom) {
     }
     if ($DryRun) {
         Info "[DRY-RUN] Installerait $Nom via : winget install --id $Id -e --source winget --accept-package-agreements --accept-source-agreements"
+        $script:ActionsPrevues += "$Nom serait installé (winget)"
         return
     }
     Info "Installation de $Nom ($Id) via winget…"
@@ -280,8 +327,8 @@ Etape 3 'Python utilisable dans cette session'
 function Resoudre-PythonReel {
     $cmd = Get-Command python -ErrorAction SilentlyContinue
     if ($cmd -and ($cmd.Source -notmatch 'WindowsApps')) {
-        $version = (& $cmd.Source --version) 2>&1
-        if ($LASTEXITCODE -eq 0 -and "$version" -match 'Python \d') {
+        $resultat = Invoke-CommandeNativeSansArret { & $cmd.Source --version }
+        if ($resultat.CodeSortie -eq 0 -and $resultat.Sortie -match 'Python \d') {
             return $cmd.Source
         }
     }
@@ -366,6 +413,7 @@ if (Test-Path $CheminGit) {
     }
     if ($DryRun) {
         Info "[DRY-RUN] Lancerait : git clone $Depot `"$Dossier`""
+        $script:ActionsPrevues += "Dépôt cloné dans $Dossier"
     } else {
         Info "Clonage de $Depot dans $Dossier…"
         git clone $Depot $Dossier
@@ -390,6 +438,7 @@ if (Test-Path $CheminIdentite) {
     Info "[DRY-RUN]   COPIE_NON_PROPRIETAIRE = oui"
     Info "[DRY-RUN]   MAJ_AUTO_DEPOT = oui"
     Info "[DRY-RUN]   MACHINE_SEULE = oui"
+    $script:ActionsPrevues += "identite_locale.conf serait créé (COPIE_NON_PROPRIETAIRE, MAJ_AUTO_DEPOT, MACHINE_SEULE)"
 } else {
     $Lignes = @('COPIE_NON_PROPRIETAIRE = oui', 'MAJ_AUTO_DEPOT = oui', 'MACHINE_SEULE = oui')
     Set-Content -Path $CheminIdentite -Value $Lignes -Encoding ascii
@@ -406,7 +455,7 @@ if (Test-Path $CheminIdentite) {
     Push-Location $Dossier
     try {
         $ScriptPy = "import identite; print(identite.copie_non_proprietaire(), identite.machine_seule(), repr(identite.valeur_locale('MAJ_AUTO_DEPOT')))"
-        $Resultat = (& $PythonExe -c $ScriptPy) 2>&1
+        $Resultat = (Invoke-CommandeNativeSansArret { & $PythonExe -c $ScriptPy }).Sortie
     } finally {
         Pop-Location
     }
@@ -418,11 +467,17 @@ if (Test-Path $CheminIdentite) {
 }
 
 # ---------------------------------------------------------------------------
-# Étape 6 — -ProtegerPush : URL de push de origin réglée sur une valeur
-# invalide (fetch inchangé).
+# Étape 6 — Garde-fou anti-push : URL de push de origin réglée sur une valeur
+# invalide (fetch inchangé). ACTIF PAR DÉFAUT depuis l'issue #876 — cette
+# installation (réglage COPIE_NON_PROPRIETAIRE) ne doit jamais pousser vers
+# le dépôt d'origine. -SansProtegerPush le désactive (déconseillé).
 # ---------------------------------------------------------------------------
-if ($ProtegerPush) {
-    Etape 6 'Garde-fou anti-push (-ProtegerPush)'
+Etape 6 'Garde-fou anti-push'
+if ($SansProtegerPush) {
+    Avert ("Garde-fou anti-push DÉSACTIVÉ (-SansProtegerPush demandé) — cette copie reste capable de pousser " +
+           "vers le dépôt d'origine. Déconseillé pour une installation COPIE_NON_PROPRIETAIRE.")
+    $script:ActionsIgnorees += "Garde-fou anti-push désactivé (-SansProtegerPush)"
+} else {
     $UrlPushInvalide = 'DESACTIVE-NE-JAMAIS-POUSSER-voir-installer_windows_seul.ps1'
     $UrlPushActuelle = (git -C $Dossier remote get-url --push origin 2>$null)
     if ($UrlPushActuelle -eq $UrlPushInvalide) {
@@ -430,6 +485,7 @@ if ($ProtegerPush) {
         $script:ActionsIgnorees += "Garde-fou anti-push déjà actif"
     } elseif ($DryRun) {
         Info "[DRY-RUN] Réglerait l'URL de push de origin sur une valeur invalide ($UrlPushInvalide)."
+        $script:ActionsPrevues += "Garde-fou anti-push serait activé (URL de push de origin invalidée)"
     } else {
         git -C $Dossier remote set-url --push origin $UrlPushInvalide
         Ok "URL de push de origin réglée sur une valeur invalide — cette copie ne pourra jamais pousser vers le dépôt d'origine."
@@ -447,8 +503,8 @@ if (-not (Get-Command gh -ErrorAction SilentlyContinue)) {
     Avert "gh (GitHub CLI) introuvable — installez-le (étape 2), puis relancez ce script."
     $script:EtapesManuelles += "Installer GitHub CLI, puis : gh auth login"
 } else {
-    gh auth status 2>&1 | Out-Null
-    if ($LASTEXITCODE -eq 0) {
+    $resultatGhAuth = Invoke-CommandeNativeSansArret { gh auth status }
+    if ($resultatGhAuth.CodeSortie -eq 0) {
         Info "gh déjà authentifié pour cette session Windows."
         $script:ActionsIgnorees += "gh déjà authentifié"
     } else {
@@ -466,6 +522,7 @@ Etape 8 'Dépendances de l''interface web'
 $CheminRequirements = Join-Path $Dossier 'requirements.txt'
 if ($DryRun) {
     Info "[DRY-RUN] Lancerait : `"$PythonExe`" -m pip install -r `"$CheminRequirements`""
+    $script:ActionsPrevues += "Dépendances requirements.txt seraient installées"
 } else {
     if (-not (Test-Path $CheminRequirements)) {
         throw "requirements.txt introuvable ($CheminRequirements) — dépôt incomplet ou -Dossier inattendu."
@@ -482,12 +539,17 @@ if ($DryRun) {
 }
 
 # ---------------------------------------------------------------------------
-# Étape 9 — -AvecVibe : uv, mistral-vibe (version figée), profil
-# bridge_ecriture.toml. La connexion par compte (vibe --setup) reste
-# manuelle (console réelle requise, §6 du guide).
+# Étape 9 — Mistral Vibe (uv, mistral-vibe version figée, profil
+# bridge_ecriture.toml) : ACTIF PAR DÉFAUT depuis l'issue #876 (Vibe est
+# l'agent de toute cette installation) ; -SansVibe l'ignore. La connexion par
+# compte (vibe --setup) reste manuelle (console réelle requise, §6 du guide).
 # ---------------------------------------------------------------------------
-if ($AvecVibe) {
-    Etape 9 'Mistral Vibe (-AvecVibe)'
+if ($SansVibe) {
+    Etape 9 'Mistral Vibe — IGNORÉ (-SansVibe)'
+    Info "Mistral Vibe non installé (-SansVibe demandé) — à faire soi-même plus tard si besoin (§6 du guide)."
+    $script:ActionsIgnorees += "Mistral Vibe non installé (-SansVibe)"
+} else {
+    Etape 9 'Mistral Vibe'
 
     $RepUvBin = Join-Path $env:USERPROFILE '.local\bin'
     $UvCmd = Get-Command uv -ErrorAction SilentlyContinue
@@ -501,6 +563,7 @@ if ($AvecVibe) {
         $script:ActionsIgnorees += "uv déjà installé"
     } elseif ($DryRun) {
         Info "[DRY-RUN] Installerait uv : powershell -ExecutionPolicy Bypass -Command `"irm https://astral.sh/uv/install.ps1 | iex`""
+        $script:ActionsPrevues += "uv serait installé"
     } else {
         Info "Installation de uv…"
         powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://astral.sh/uv/install.ps1 | iex"
@@ -517,8 +580,8 @@ if ($AvecVibe) {
         $VersionActuelle = $null
         $VibeCmd = Get-Command vibe -ErrorAction SilentlyContinue
         if ($VibeCmd) {
-            $sortieVersion = (& vibe --version) 2>&1
-            if ("$sortieVersion" -match '(\d+\.\d+\.\d+)') { $VersionActuelle = $Matches[1] }
+            $resultatVibeVersion = Invoke-CommandeNativeSansArret { vibe --version }
+            if ($resultatVibeVersion.Sortie -match '(\d+\.\d+\.\d+)') { $VersionActuelle = $Matches[1] }
         }
         if ($VersionActuelle -eq $VersionVibe) {
             Info "mistral-vibe $VersionVibe déjà installé — ignoré."
@@ -526,6 +589,7 @@ if ($AvecVibe) {
         } elseif ($DryRun) {
             $depuis = if ($VersionActuelle) { $VersionActuelle } else { 'aucune' }
             Info "[DRY-RUN] Installerait mistral-vibe==$VersionVibe via uv tool install (version actuelle : $depuis)."
+            $script:ActionsPrevues += "mistral-vibe==$VersionVibe serait installé"
         } else {
             Info "Installation de mistral-vibe==$VersionVibe (version figée, jamais 'latest')…"
             if ($VersionActuelle) {
@@ -544,6 +608,7 @@ if ($AvecVibe) {
     $SourceProfilVibe = Join-Path $Dossier 'provisioning\vibe\agents\bridge_ecriture.toml'
     if ($DryRun) {
         Info "[DRY-RUN] Copierait $SourceProfilVibe vers $CibleProfilVibe."
+        $script:ActionsPrevues += "Profil bridge_ecriture.toml serait copié"
     } else {
         if (-not (Test-Path $SourceProfilVibe)) {
             Avert "Profil $SourceProfilVibe introuvable — dépôt incomplet ou -Dossier inattendu, profil non copié."
@@ -556,6 +621,18 @@ if ($AvecVibe) {
     }
 
     $script:EtapesManuelles += "vibe --setup, dans une VRAIE console (pas ISE) — connexion par COMPTE, pas par clé API (voir §6 du guide)"
+}
+
+# ---------------------------------------------------------------------------
+# Étape manuelle — Créer le premier projet : toujours APRÈS la connexion
+# GitHub et celle de Vibe (dont elle dépend pour AGENT = vibe), toujours
+# AVANT le démarrage automatique (qui dépend à son tour d'au moins un projet
+# créé) — ordre corrigé par l'issue #876, voir §12 du guide.
+# ---------------------------------------------------------------------------
+if ($SansVibe) {
+    $script:EtapesManuelles += "Créer le premier projet dans l'interface (bouton 'Nouveau projet', §8 du guide) — pas d'AGENT = vibe dans configs\<projet>.conf (installation sans Vibe, -SansVibe)"
+} else {
+    $script:EtapesManuelles += "Créer le premier projet dans l'interface (bouton 'Nouveau projet', §8 du guide), puis ajouter AGENT = vibe dans configs\<projet>.conf"
 }
 
 # ---------------------------------------------------------------------------
@@ -585,6 +662,7 @@ if (Test-DossierDansPathUtilisateur $RepBinUtilisateur) {
           "que la commande 'bridge' soit trouvée dans un NOUVEAU terminal.")
     if ($DryRun) {
         Info "[DRY-RUN] Ajouterait $RepBinUtilisateur au PATH utilisateur."
+        $script:ActionsPrevues += "$RepBinUtilisateur serait ajouté au PATH utilisateur"
     } else {
         $pathActuel = [Environment]::GetEnvironmentVariable('Path', 'User')
         $nouveauPath = if ($pathActuel) { "$pathActuel;$RepBinUtilisateur" } else { $RepBinUtilisateur }
@@ -600,10 +678,21 @@ if (($env:Path -split ';' | ForEach-Object { $_.TrimEnd('\') }) -notcontains $Re
 $ContenuLanceur = @"
 # bridge_lanceur.ps1 — généré par installer_windows_seul.ps1 (ne pas modifier
 # à la main ; relancer l'installeur pour régénérer avec de nouveaux chemins).
+#
+# CHOIX DE CONCEPTION — console de new_issue.py laissée VISIBLE (issue
+# #876) : Start-Process ci-dessous n'utilise PAS -WindowStyle Hidden.
+# 'bridge' est lancé depuis un terminal déjà ouvert par l'utilisateur (pas
+# un double-clic ni une tâche planifiée, voir §9 du guide pour ce cas-là,
+# qui masque sa fenêtre séparément) : la console de new_issue.py reste la
+# seule source directe des messages de mise à jour automatique (MAJ_AUTO_
+# DEPOT, §3 du guide, qui peut dépasser la minute d'attente ci-dessous) et
+# de toute erreur de démarrage — la masquer rendrait justement invisible le
+# défaut que ce correctif vise à signaler clairement.
 `$ErrorActionPreference = 'Stop'
 `$DossierDepot = '$Dossier'
 `$CheminPython = '$PythonExe'
 `$Port = 5100
+`$DelaiMaxDemarrageSec = 60
 
 function Test-PortOuvert(`$NomHote, `$Port, `$DelaiMs = 300) {
     `$client = New-Object System.Net.Sockets.TcpClient
@@ -618,13 +707,24 @@ function Test-PortOuvert(`$NomHote, `$Port, `$DelaiMs = 300) {
     }
 }
 
-if (Test-PortOuvert '127.0.0.1' `$Port) {
-    Start-Process "http://127.0.0.1:`$Port"
-} else {
-    Start-Process -FilePath `$CheminPython -ArgumentList 'new_issue.py' -WorkingDirectory `$DossierDepot
-    Start-Sleep -Seconds 2
-    Start-Process "http://127.0.0.1:`$Port"
+if (-not (Test-PortOuvert '127.0.0.1' `$Port)) {
+    # --no-browser : c'est CE script qui ouvre le navigateur, une seule fois,
+    # seulement une fois le port confirmé ouvert (sinon new_issue.py ouvrirait
+    # lui-même un premier onglet trop tôt, pendant sa mise à jour automatique
+    # au démarrage — « Unable to connect » constaté, issue #876).
+    Start-Process -FilePath `$CheminPython -ArgumentList 'new_issue.py', '--no-browser' -WorkingDirectory `$DossierDepot
+    `$Attendu = 0
+    while (-not (Test-PortOuvert '127.0.0.1' `$Port) -and `$Attendu -lt `$DelaiMaxDemarrageSec) {
+        Start-Sleep -Seconds 1
+        `$Attendu++
+    }
+    if (-not (Test-PortOuvert '127.0.0.1' `$Port)) {
+        Write-Host "[bridge] L'interface web ne répond toujours pas sur 127.0.0.1:`$Port après `$DelaiMaxDemarrageSec s. Vérifiez la console de new_issue.py ouverte à côté (erreur ? mise à jour automatique anormalement longue ?), ou lancez-la à la main : `"`$CheminPython`" new_issue.py" -ForegroundColor Red
+        exit 1
+    }
 }
+
+Start-Process "http://127.0.0.1:`$Port"
 "@
 
 $ContenuCmd = @"
@@ -634,6 +734,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0bridge_lanceur.ps1"
 
 if ($DryRun) {
     Info "[DRY-RUN] Écrirait $CheminBridgeLanceur et $CheminBridgeCmd (dossier dépôt : $Dossier ; python : $PythonExe)."
+    $script:ActionsPrevues += "Raccourci 'bridge' serait installé"
 } else {
     Set-Content -Path $CheminBridgeLanceur -Value $ContenuLanceur -Encoding UTF8
     Set-Content -Path $CheminBridgeCmd -Value $ContenuCmd -Encoding ascii
@@ -657,18 +758,28 @@ if ($ProposerDemarrage) {
 $script:EtapesManuelles += "Démarrage automatique (installer_demarrage_session.ps1 -Projets <...>, §9 du guide) — après avoir créé au moins un projet"
 
 # ---------------------------------------------------------------------------
-# Étape 12 — Résumé final.
+# Étape 12 — Résumé final. En mode -DryRun, ce résumé ne doit JAMAIS laisser
+# croire qu'une action a été réellement faite (issue #876) : rubrique
+# « Fait » remplacée par « Serait fait (simulation) », listant ce qui a été
+# accumulé dans $script:ActionsPrevues au fil des étapes ci-dessus.
 # ---------------------------------------------------------------------------
 Write-Host ''
 Write-Host '========================================================================' -ForegroundColor Cyan
 Write-Host '  RÉSUMÉ' -ForegroundColor Cyan
 Write-Host '========================================================================' -ForegroundColor Cyan
-if ($DryRun) { Avert "Mode -DryRun : AUCUNE action listée ci-dessus n'a été exécutée réellement." }
 
-Write-Host ''
-Write-Host 'Fait :' -ForegroundColor Green
-if ($script:ActionsFaites.Count -eq 0) { Info '(rien de nouveau — tout était déjà en place)' }
-foreach ($a in $script:ActionsFaites) { Ok "- $a" }
+if ($DryRun) {
+    Avert "Mode -DryRun : AUCUNE action n'a été faite réellement. Ce qui suit n'est qu'un aperçu."
+    Write-Host ''
+    Write-Host 'Serait fait (simulation) :' -ForegroundColor Green
+    if ($script:ActionsPrevues.Count -eq 0) { Info '(rien à faire — tout semble déjà en place)' }
+    foreach ($a in $script:ActionsPrevues) { Info "- $a" }
+} else {
+    Write-Host ''
+    Write-Host 'Fait :' -ForegroundColor Green
+    if ($script:ActionsFaites.Count -eq 0) { Info '(rien de nouveau — tout était déjà en place)' }
+    foreach ($a in $script:ActionsFaites) { Ok "- $a" }
+}
 
 Write-Host ''
 Write-Host 'Ignoré (déjà en place) :' -ForegroundColor Cyan
@@ -682,7 +793,6 @@ foreach ($a in $script:EtapesManuelles) {
     Avert "$n. $a"
     $n++
 }
-Avert "$n. Créer le premier projet dans l'interface (bouton 'Nouveau projet', §8 du guide), puis ajouter AGENT = vibe dans configs\<projet>.conf si -AvecVibe a été utilisé."
 
 Write-Host ''
 Info "Interface web : lancez 'bridge' dans un NOUVEAU terminal (après ce script), ou directement : `"$PythonExe`" `"$Dossier\new_issue.py`""
