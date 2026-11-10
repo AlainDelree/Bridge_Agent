@@ -13,13 +13,35 @@ reste une action manuelle, décrite en bas de ce document.
 
 ## 1. Profil d'agent en écriture (`agents/bridge_ecriture.toml`)
 
-Vibe n'a pas d'option en ligne de commande équivalente à
-`--dangerously-skip-permissions` de Claude Code (constaté par essai manuel) :
-l'écriture se débloque outil par outil via un profil décrit en TOML, désigné
-ensuite par son nom (`--agent bridge_ecriture`). `watcher.py` construit déjà
-cette commande pour le mode écriture (voir
-`AGENTS_CONNUS["vibe"]["construire_cmd"]`) — encore faut-il que le fichier
-existe réellement à l'emplacement que Vibe va chercher.
+**Correction (issue #873) : l'affirmation ci-dessous (« Vibe n'a pas
+d'option... ») était FAUSSE**, contredite par simple lecture de `vibe
+--help` (version 2.26.1 installée localement, CONSTATÉ directement, sans
+lancer de session) : `--auto-approve`/`--yolo` (« Approves all tool calls
+without prompting for the selected agent ») est bien un équivalent de
+`--dangerously-skip-permissions` côté Claude Code, et `--smart-approve`
+(« Classify each tool call and auto-run the safe ones, prompting only for
+risky ones ») offre un palier intermédiaire. De même, sans `--agent` du
+tout, l'approbation suit le `default_agent` de la config (`vibe --help` :
+« Defaults to the 'default_agent' config setting... »), qui peut lui-même
+valoir un agent d'auto-approbation — cohérent avec ce que rapporte l'issue
+#873 (« le mode non interactif sans `--agent` retombe sur l'approbation
+automatique, selon la documentation Mistral »).
+
+**Décision inchangée malgré cette correction (issue #873, consigne
+explicite) : ne PAS retirer `--agent bridge_ecriture`, ne PAS basculer sur
+`--auto-approve`/`--yolo` ni sur l'absence de `--agent`.** C'est une
+décision d'Alain, pas un correctif automatique — les conséquences de
+sécurité sont réelles : `--auto-approve` lève TOUTE barrière (y compris les
+syntaxes bash refusées qui motivent la clause de prompt du §9 ci-dessous),
+alors que le profil `bridge_ecriture.toml` reste un allow-list explicite,
+versionné et relu. Option documentée ici pour mémoire, non appliquée.
+
+Profil TOML décrit ci-dessous (ancien texte, toujours valable pour la partie
+qu'il décrit vraiment) : l'écriture se débloque outil par outil via un
+profil décrit en TOML, désigné ensuite par son nom (`--agent
+bridge_ecriture`). `watcher.py` construit déjà cette commande pour le mode
+écriture (voir `AGENTS_CONNUS["vibe"]["construire_cmd"]`) — encore faut-il
+que le fichier existe réellement à l'emplacement que Vibe va chercher.
 
 Le périmètre (`REP_TRAVAIL` du projet, ou le worktree en cours) est transmis
 explicitement via `--workdir` (issue #761) — Vibe refuse d'écrire hors de ce
@@ -49,6 +71,60 @@ redéploie avec la même commande — jamais l'inverse (éditer directement
 `~/.vibe/agents/bridge_ecriture.toml` ferait diverger silencieusement la
 copie réellement utilisée de celle du dépôt).
 
+### 1.1. Permissions plus fines : commandes précises en liste (examiné, PAS appliqué — issue #873)
+
+Un essai réel (Vibe 3.1.1, Windows, `--agent bridge_ecriture`) a vu deux
+commandes bash refusées malgré `[tools.bash] permission = "always"` (§1
+ci-dessus) : une substitution de commande + une redirection (motif affiché
+« shell syntax requiring approval: command substitution, redirection »), et
+un `date /T` final pris pour un chemin de disque (« outside workdir: T:\\ »).
+L'issue #873 demandait d'examiner, par lecture seule, si le profil peut
+autoriser des commandes PRÉCISES plutôt que l'outil `bash` en entier, et si
+cela éviterait ce genre de refus.
+
+**Réponse (établie par lecture de ce dépôt et de `vibe --help`, version
+2.26.1 installée localement — AUCUNE session vibe lancée) : NON, et même si
+le schéma le permettait, cela n'aurait pas empêché les deux refus observés.**
+
+- Le format TOML réellement utilisé (`bridge_ecriture.toml`, §1) ne
+  déclare la permission qu'au niveau de l'OUTIL entier (`[tools.bash]
+  permission = "always"`) — aucune syntaxe de motif/commande plus fine n'a
+  été trouvée dans ce dépôt ni dans `vibe --help`.
+- `vibe --help` (2.26.1) expose bien `--enabled-tools`/`--disabled-tools`
+  avec motifs glob/regex (« Can use exact names, glob patterns (e.g.,
+  'bash*'), or regex with 're:' prefix ») — mais ces motifs matchent des
+  NOMS D'OUTILS (ex. `bash*` désignerait plusieurs outils nommés `bash...`,
+  pas des commandes `bash` précises), pas le contenu d'une commande.
+  Confirme la même granularité « outil entier » que le TOML, pas plus fine.
+- **Point décisif, indépendant de l'existence ou non d'une telle liste** :
+  les deux refus observés ne sont PAS des refus de « telle commande
+  nommée », mais des refus de CLASSES DE SYNTAXE (substitution, redirection)
+  et d'une heuristique de détection de chemin (`/T` pris pour `T:\`) —
+  d'après la documentation Mistral citée par l'issue #873, ce classement
+  s'applique en session non interactive indépendamment de la permission
+  accordée à l'outil `bash` lui-même (renforcé par le correctif de sécurité
+  de septembre 2026, avis MAI-2026-003). Une liste de commandes précises
+  autorisées (`git commit`, `ls`...) n'aurait donc rien changé à CES deux
+  refus : le vrai correctif est le changement de PROMPT (§9 ci-dessous), pas
+  une permission de profil plus large.
+- Non vérifié ici (aucun accès réseau, aucune session réelle) : si une
+  version future de Vibe expose un jour un motif de commande plus fin (ex.
+  un sous-champ `[tools.bash.allow]`), à revérifier avant de le supposer.
+
+**Pistes proposées pour mémoire, NON appliquées à `bridge_ecriture.toml`**
+(si un tel mécanisme venait à exister) — risque par commande, pour une
+future décision d'Alain :
+
+| Commande candidate                                  | Risque proposé |
+|------------------------------------------------------|----------------|
+| `git status`, `git diff`, `git log`, `git show`      | nul (lecture)  |
+| `ls`, `pwd`, `cat <fichier>`                          | nul (lecture)  |
+| `git add <chemin>`                                    | faible (réversible, `git reset`) |
+| `git commit -m "<message littéral>"`                  | faible (local, jamais de push, réversible par `git revert`/`reset --soft`) |
+| `mkdir -p <sous-dossier relatif>`                      | faible (création dans le périmètre `--workdir`) |
+| toute commande avec substitution (`$(...)`, backticks) ou redirection (`>`, `>>`, `<`, `\|`) | **à ne jamais autoriser** — précisément la classe que Mistral elle-même juge risquée ; la réponse est le prompt (§9), pas une permission plus large |
+| `rm -rf`, `git reset --hard`, `git clean -fd`, `git push` | **à ne jamais autoriser** — déjà proscrites partout ailleurs dans ce dépôt (irréversibilité) |
+
 ## 2. Dossiers de confiance (`trusted_folders.toml`)
 
 Vibe tient une liste de dossiers de travail approuvés
@@ -76,6 +152,32 @@ parent que `REP_TRAVAIL`) hérite normalement de la confiance accordée au
 dossier parent — à vérifier lors de la première bascule réelle d'un projet
 utilisant la parallélisation `mode_write` sur Vibe ; si ce n'est pas le cas,
 ajouter aussi le chemin du worktree.
+
+**Mise à jour (issue #873) — à nuancer, non tranché :**
+- **Établi par la documentation Mistral** (citée par l'issue #873) : le mode
+  non interactif ne demande JAMAIS de confiance de dossier — ce paragraphe
+  entier pourrait donc ne plus être nécessaire pour un agent lancé par
+  `watcher.py` (toujours non interactif).
+- **Constaté directement** (lecture de `vibe --help`, version 2.26.1
+  installée localement, AUCUNE session lancée) : un drapeau `--trust`
+  existe, décrit littéralement comme fait pour ce cas : « Trust the working
+  directory for this invocation only (not persisted to
+  `trusted_folders.toml`). Skips the trust prompt. **Use this for
+  non-interactive automation.** ». Son existence même suggère qu'au moins
+  une version de Vibe a pu avoir besoin de ce rappel explicite — en
+  tension avec le point précédent (« jamais de prompt »), sans qu'on sache
+  laquelle des deux affirmations est la plus à jour. `_construire_cmd_vibe`
+  ne pose actuellement PAS `--trust` : non appliqué par cette issue
+  (changement de commande non demandé par l'issue #873 ; candidat pour une
+  future issue, à valider par un essai réel).
+- **Supposé, non vérifié** : la pré-approbation via `trusted_folders.toml`
+  documentée ci-dessus reste donc, en l'état, une mesure défensive qui
+  pourrait être redondante (doc Mistral) ou insuffisante seule (existence de
+  `--trust` suggérant un besoin réel) — gardée telle quelle par prudence
+  tant qu'aucun essai réel ne tranche. L'essai réel de l'issue #873 (Windows,
+  Vibe 3.1.1) n'a lui-même rien isolé sur ce point précis : les deux refus
+  observés étaient de nature différente (syntaxe bash, chemin mal parsé —
+  voir §1.1 et §9), pas des refus de confiance de dossier.
 
 ## 3. Authentification
 
@@ -220,8 +322,31 @@ est lancé, sans qu'aucune revue n'ait eu lieu.
 **Déploiement** (sur chaque machine qui exécute Vibe pour ce watcher) :
 
 ```bash
-uv tool install --force "mistral-vibe==2.26.1"
+uv tool install --force "mistral-vibe==3.1.0"
 ```
+
+**Mise à jour du numéro (issue #873) :** établi par l'énoncé de cette
+tâche (essai réel sur le PC fixe d'Alain et sur un compte de test) — la
+version validée est désormais la **3.1.0**, pas 2.26.1 (ancien pin de
+l'issue #779, laissé ci-dessus jusqu'ici sans avoir été remis en cause).
+**Constaté directement sur la machine qui a traité l'issue #873 (CCL)** :
+`vibe --version` y rapporte encore `2.26.1`, et
+`~/.local/share/uv/tools/mistral-vibe/uv-receipt.toml` y est toujours figé
+sur ce numéro — cette machine n'a donc PAS été réalignée sur 3.1.0 par
+cette issue (aucune commande d'installation/mise à jour exécutée : ce
+README documente le pin à appliquer, il ne le déploie pas lui-même). À
+vérifier/aligner par Alain avant de confier un vrai projet à Vibe depuis
+cette machine précise.
+
+Par ailleurs (issue #873, observation non expliquée) : un essai réel sur
+la version **3.1.1** a vu des tentatives d'écriture dans un dossier de
+travail git (worktree) rester SANS AUCUNE RÉPONSE (ni refus, ni sortie, ni
+code de retour — simple silence), alors que la même opération a fonctionné
+sur la **3.1.0**. Cause non identifiée (aucune session réelle relancée
+pour investiguer, consigne de cette issue) : à surveiller si une future
+mise à jour du pin vise une version ≥ 3.1.1 — tester d'abord explicitement
+l'écriture dans un worktree avant de généraliser le nouveau pin à un projet
+réel utilisant la parallélisation `mode_write` (issue #337).
 
 Toute mise à jour future se fait en changeant ce numéro de version
 DÉLIBÉRÉMENT (jamais via `uv tool upgrade mistral-vibe` seul, qui ignorerait
@@ -229,3 +354,73 @@ le pin), après avoir vérifié que l'interface attendue par
 `_construire_cmd_vibe` (options `--agent`/`--workdir`/`--prompt` avec
 `VIBE_CLI=python`, §6 ci-dessus) est toujours celle produite par la nouvelle
 version.
+
+## 8. Clause de prompt contre les commandes bash refusées (issue #873)
+
+Un essai réel (Vibe 3.1.1, Windows, `--agent bridge_ecriture`, donc
+approbation automatique non utilisée) a vu deux commandes bash refusées
+faute de quelqu'un pour les approuver en session non interactive — voir
+§1.1 pour le détail des deux refus et pourquoi une permission de profil
+plus fine ne les aurait pas évités. Après le premier refus, le modèle avait
+retenté la même commande telle quelle.
+
+**Correctif appliqué (prompt, pas profil) :** `watcher.py` injecte
+désormais, pour l'agent `vibe` uniquement (`AGENTS_CONNUS["vibe"]
+["clause_bash"]`, constante `_CLAUSE_BASH_VIBE`), une consigne courte dans
+le prompt de chaque issue confiée à Vibe — même mécanisme et même
+emplacement que la clause « sous-agents » déjà existante
+(`clause_sous_agents`) : créer/modifier des fichiers avec `write_file`/
+`edit` plutôt que par bash, ne jamais utiliser de substitution de commande
+ni de redirection dans une commande bash, ne jamais faire précéder une
+commande d'un `cd` vers le dossier de travail (déjà le dossier courant via
+`--workdir`), préférer des commandes simples et littérales (`git add`,
+`git commit -m "message sans substitution"`), et ne jamais retenter une
+commande refusée sous la même forme (changer d'approche, ou le signaler
+dans le rapport). Absente du prompt pour l'agent `claude` (clé non
+déclarée) : ce dernier n'a pas ce problème.
+
+Non vérifié par un essai réel (consigne explicite de l'issue #873) : à
+confirmer que cette clause réduit effectivement les refus lors de la
+première bascule réelle d'un projet sur Vibe.
+
+## 9. Garde-fou de longueur de prompt sous Windows (issue #873)
+
+`--prompt` transmet le prompt sur la ligne de commande, pas sur stdin —
+Windows plafonne `CreateProcess` à 32767 caractères au total, et
+`list2cmdline()` de Python (utilisé par `subprocess.Popen` quand `args` est
+une liste) reconstruit tout l'argv, prompt compris, en une seule ligne
+avant de la transmettre. Même plafond déjà rencontré pour `gh issue comment
+--body` (voir `commenter_issue` dans `watcher.py`, issue #237, qui l'évite
+avec `--body-file`). Un prompt réel observé fait environ 12 000 caractères,
+mais rien ne borne aujourd'hui sa taille (CONTEXTE + CONSIGNES + corps
+d'issue injectés par `watcher.py`).
+
+**Correctif appliqué : garde-fou qui échoue proprement.**
+`_construire_cmd_vibe` lève `PromptTropLong` (nouvelle exception, même
+esprit que `ModeAgentIndisponible`) si `len(prompt) >
+LIMITE_CAR_PROMPT_VIBE_WINDOWS` (30 000 caractères, marge de sécurité sous
+32767 pour le reste de l'argv et l'échappement de guillemets) — posé
+UNIQUEMENT sous Windows (`os.name == "nt"`) : Linux (ARG_MAX de plusieurs
+centaines de Ko) n'a pas cette contrainte, ce garde-fou ne se déclenche
+jamais sur CCL. `lancer_claude` capture cette exception et retourne un
+échec ordinaire avec un message clair (longueur observée, limite, piste de
+correction) plutôt que de laisser passer un échec obscur côté `vibe`.
+
+**Moyen de transmission alternatif : établi par lecture, NON appliqué.**
+`vibe --help` (version 2.26.1 installée localement, aucune session lancée)
+documente `--prompt-file PATH` : « Run in programmatic mode with the prompt
+read from PATH, instead of -p TEXT or stdin. » — un fichier n'a aucune
+limite de taille comparable à une ligne de commande, ce qui éliminerait
+structurellement ce problème plutôt que de seulement le détecter. **Non
+appliqué par cette issue**, pour trois raisons : (1) seule la version
+2.26.1 (celle installée sur la machine CCL qui a traité l'issue #873) a été
+vérifiée — pas la 3.1.0/3.1.1 réellement visée (§7), (2) basculer `--prompt`
+vers `--prompt-file` demanderait de gérer le cycle de vie d'un fichier
+temporaire (création, encodage, suppression garantie même en cas de
+timeout/crash) dans `lancer_claude`, un changement plus large que le
+périmètre strict demandé par cette issue (« construction du prompt et de la
+commande Vibe », pas la gestion de fichiers temporaires côté watcher), (3)
+aucun essai réel n'a pu confirmer le comportement de `--prompt-file` (encodage
+UTF-8 notamment). Piste prête pour une future issue, avec la commande
+exacte ci-dessus comme point de départ, à valider par un essai réel sur la
+version réellement pinnée avant de remplacer le garde-fou actuel.
