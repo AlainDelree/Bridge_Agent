@@ -1,6 +1,6 @@
 # GUIDE_INSTALLATION_WINDOWS_SEUL — Bridge_Agent sur un PC Windows seul, avec Mistral Vibe
 
-Dernière mise à jour : 10 novembre 2026. Corrigé d'après un premier essai réel complet (compte de test sur le PC d'Alain, voir le journal au §13) ; §0 et §8 : réglages `COPIE_NON_PROPRIETAIRE` (issue #869) et `MACHINE_SEULE` (issue #870), détection automatique de Relecture_Bridge, faux encadré « Action requise » corrigé.
+Dernière mise à jour : 10 novembre 2026. Corrigé d'après un premier essai réel complet (compte de test sur le PC d'Alain, voir le journal au §13) ; §0 et §8 : réglages `COPIE_NON_PROPRIETAIRE` (issue #869) et `MACHINE_SEULE` (issue #870), détection automatique de Relecture_Bridge, faux encadré « Action requise » corrigé. §2/§3/§5 : script `installer_windows_seul.ps1` qui automatise ce que ces sections décrivent à la main, avec une commande de lancement avant même le clonage (issue #874, non testé sur un vrai Windows — à vérifier).
 
 Ce guide ne répète pas ce que disent déjà les autres documents du dépôt : il donne l'ordre des étapes, renvoie vers le bon document pour le détail, et signale les pièges déjà rencontrés.
 
@@ -26,7 +26,25 @@ Ce qui n'existe pas dans cette installation : l'outil de relecture Relecture_Bri
 
 ## 2. Prérequis Windows (PowerShell, utilisateur normal)
 
-Git, GitHub CLI et Python. Avec `winget` (inclus dans Windows 11 récent) :
+**Option : un seul script fait les §2 à §5 (établi, issue #874).** `provisioning/windows/installer_windows_seul.ps1` automatise tout ce que ce §2 et le §3 décrivent à la main (winget, contournement de l'alias Python, clonage, `identite_locale.conf`), sans droits d'administrateur, de façon relançable sans dommage (une simulation `-DryRun` affiche ce qui serait fait sans rien modifier). Son en-tête documente chaque étape et chaque option (`-AvecVibe`, `-ProtegerPush`, etc.) ; voir aussi son résumé final, qui liste ce qui a été fait, ce qui était déjà en place, et les étapes manuelles qui restent (connexion GitHub, connexion Vibe, premier projet, démarrage de session). Suite de ce §2 et §3 : description manuelle, utile pour comprendre ce qui se passe, dépanner un piège précis, ou installer pas à pas sans le script.
+
+Si le dépôt est déjà cloné (§3) :
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\provisioning\windows\installer_windows_seul.ps1 -DryRun
+```
+
+Puis, une fois le résultat de la simulation relu, la même commande **sans** `-DryRun`.
+
+**Avant même d'avoir cloné quoi que ce soit** (à vérifier), une seule commande télécharge ce fichier et l'exécute pour la session en cours, sans jamais modifier la politique d'exécution de la machine :
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -Command "iwr https://raw.githubusercontent.com/AlainDelree/Bridge_Agent/master/provisioning/windows/installer_windows_seul.ps1 -OutFile `"$env:TEMP\installer_windows_seul.ps1`"; & `"$env:TEMP\installer_windows_seul.ps1`" -DryRun"
+```
+
+**Risque à connaître avant de lancer cette commande : elle exécute du code téléchargé depuis Internet.** Avant de retirer `-DryRun` : vérifier que l'adresse commence bien par `https://raw.githubusercontent.com/AlainDelree/Bridge_Agent/` (dépôt officiel, pas une copie), et lire le fichier téléchargé avant de l'exécuter pour de vrai — `notepad $env:TEMP\installer_windows_seul.ps1`, ou l'ouvrir dans un navigateur à la même adresse. `-ExecutionPolicy Bypass` ne s'applique qu'à cette seule invocation de PowerShell, jamais à la machine. Une fois relu et simulé, relancer la même commande en retirant `-DryRun`.
+
+**Sans le script**, Git, GitHub CLI et Python. Avec `winget` (inclus dans Windows 11 récent) :
 
 ```powershell
 winget install --id Git.Git -e --source winget --accept-package-agreements --accept-source-agreements; winget install --id GitHub.cli -e --source winget --accept-package-agreements --accept-source-agreements; winget install --id Python.Python.3.12 -e --source winget --accept-package-agreements --accept-source-agreements
@@ -41,6 +59,8 @@ Fermer puis rouvrir PowerShell, puis vérifier : `git --version; gh --version; p
 **Deux règles pour toutes les commandes de ce guide (constaté).** Les écrire dans une vraie console : **Windows PowerShell** ou **Terminal**, ni « PowerShell ISE » (qui ne gère pas les programmes interactifs : `vibe --setup` y répond « Interactive mode needs a terminal », cause supposée, non confirmée), ni la fenêtre « (x86) ». Et lancer les scripts `.ps1` du dépôt par `powershell -NoProfile -ExecutionPolicy Bypass -File <script>` : Windows bloque par défaut les scripts d'un compte neuf, et cette forme ne change aucun réglage de la machine.
 
 ## 3. Récupérer Bridge_Agent
+
+Si `installer_windows_seul.ps1` a déjà été lancé via la commande du §2 (avec ou sans `-DryRun` pour le seul aperçu), le dépôt est déjà cloné et `identite_locale.conf` déjà créé — passer directement à la vérification (`git status --short`) plus bas ; relancer le clonage ci-dessous ne fait alors que confirmer, sans rien écraser (`git pull --ff-only`, établi).
 
 ```powershell
 git clone https://github.com/AlainDelree/Bridge_Agent.git "$env:USERPROFILE\Bridge_Agent"; Set-Location "$env:USERPROFILE\Bridge_Agent"
@@ -94,7 +114,9 @@ Pour une machine seule, **ne pas utiliser** `provisionner_new_issue_local.ps1` :
 python -m pip install -r requirements.txt
 ```
 
-Puis lancer l'interface (`python new_issue.py`, ou la tâche de démarrage du §9, qui la lance avec `--no-browser`) et ouvrir **`http://127.0.0.1:5100`** dans le navigateur. Constaté : en mode local (sans `--lan`), l'interface s'ouvre **sans mot de passe**. Pour un alias `bridge`, voir `NEW_ISSUE_LOCAL_WINDOWS.md` §2 en retirant `--lan` et en adaptant le dossier (`"$env:USERPROFILE\Bridge_Agent"`) ; non essayé ici (**à vérifier**).
+Puis lancer l'interface (`python new_issue.py`, ou la tâche de démarrage du §9, qui la lance avec `--no-browser`) et ouvrir **`http://127.0.0.1:5100`** dans le navigateur. Constaté : en mode local (sans `--lan`), l'interface s'ouvre **sans mot de passe**.
+
+**Raccourci `bridge` (établi, lu dans le code — issue #874).** Si `installer_windows_seul.ps1` a été utilisé (§2), il pose déjà `bridge` : un petit lanceur `bridge.cmd` (+ `bridge_lanceur.ps1` à côté) dans `$env:USERPROFILE\.local\bin`, ajouté au PATH **utilisateur**, utilisable aussi bien dans PowerShell que dans l'invite de commandes classique — **pas** une fonction du profil PowerShell (`$PROFILE`), contrairement à l'ancien alias de `NEW_ISSUE_LOCAL_WINDOWS.md` §2 (toujours valable pour l'usage `--lan` de ce document, mais non retenu ici) : une fonction de profil ne se charge pas si la politique d'exécution par défaut d'un compte neuf bloque les scripts, et changer cette politique est un réglage de la machine, exclu ici. `bridge.cmd` invoque PowerShell avec `-ExecutionPolicy Bypass` pour ce seul appel (comme toutes les commandes `.ps1` de ce guide), sans jamais modifier la politique de la machine. Avant de relancer l'interface, le lanceur teste d'abord si elle répond déjà sur `127.0.0.1:5100` (cas où les tâches de démarrage du §9 tournent déjà) : si oui, il ouvre seulement le navigateur ; sinon il la démarre depuis le dossier du dépôt. Utilisable dans un **nouveau** terminal (celui qui a lancé l'installeur ne voit le PATH mis à jour qu'après réouverture). **À vérifier** : tout ce paragraphe, jamais testé sur un vrai Windows.
 
 **Mot de passe de l'interface — uniquement si le mode réseau `--lan` est utilisé** (constaté chez Alain) :
 - `python new_issue.py --set-password` (saisie invisible, deux fois) affiche une ligne à mettre dans `configs\bridge_agent.conf`.
