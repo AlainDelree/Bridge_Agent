@@ -188,6 +188,8 @@ Avant l'installation réelle : arrêter l'interface si elle tourne dans une autr
 
 À savoir : la bulle de bureau et le son ne fonctionnent que dans la session de l'utilisateur (établi) ; le mode service en option ne les affiche pas.
 
+**Plusieurs comptes Windows sur le même PC (issue #877).** Un nom de tâche planifiée est unique pour toute la machine, pas par compte — avec deux comptes (ou plusieurs essais d'installation successifs), le second enregistrement échouait auparavant avec `Access is denied` (`0x80070005`) sur une tâche déjà créée par le premier compte, et l'installeur s'arrêtait net sans toucher aux autres composants demandés (constaté en essai réel, voir §13). Chaque nom de tâche/service inclut désormais le compte (`BridgeAgent-Session-<compte>-<Id>`) : détail du nommage, de la transition automatique depuis l'ancien nom et des messages d'erreur dans `DEMARRAGE_SESSION_WINDOWS.md` §4 bis ; **à revérifier en vrai sur Windows avec deux comptes**, non testable depuis l'environnement Linux de l'agent qui a fait la correction.
+
 ## 10. Travailler au quotidien
 
 - **Ne jamais écrire `for-windows` dans une issue.** Sur une machine seule, cette étiquette désigne un service CCW qui n'existe pas : l'issue reste ouverte sans que personne la traite et sans signal visible. L'étiquette normale est `for-linux` (nom trompeur, comportement correct), posée par défaut. Détail : `provisioning/windows/ROUTAGE_LABELS_POSTE_SEUL.md` (établi). Un réglage de fond est décrit mais pas implémenté.
@@ -223,6 +225,7 @@ Une issue minuscule, en mode écriture, sans étiquette `for-windows`, par exemp
 | Refus de commandes (§6) | Constaté dans le journal de session de Vibe | `bash` avec `$(…)` et `>` refusé en mode non interactif | Consigne dédiée injectée dans le prompt (issue #873) — à valider par un essai réel |
 | Projet (§8) | OK | Deux encadrés « Action requise » faux ; onglet CCW et case « Projet CCW » inutiles | Corrigé (issue #870, réglage `MACHINE_SEULE`) — à revérifier en vrai |
 | Démarrage de session (§9) | OK, y compris après déconnexion et reconnexion | Journaux de session vides tant que les programmes tournent ; faux « échec » de 8 s pour la mise à jour | Voir les pièges du §9 ; faux « échec » de 8 s corrigé (issue #872, délai 30 s + détection d'avancée malgré délai dépassé) — **à revérifier en vrai sur Windows**, non testable depuis l'environnement Linux de l'agent qui a fait la correction |
+| Démarrage de session, second compte (§9, issue #877) | Échec constaté | `Register-ScheduledTask : Access is denied` (`HRESULT 0x80070005`) sur `BridgeAgent-Session-IssuesInbox`, déjà créée par le premier compte — noms de tâche uniques pour toute la machine, pas par utilisateur ; installeur arrêté net, sans toucher aux autres composants demandés | Noms de tâche/service incluant désormais le compte (`BridgeAgent-Session-<compte>-<Id>`), transition automatique depuis l'ancien nommage pour un compte qui en avait déjà, message explicite en cas de refus d'accès — voir `DEMARRAGE_SESSION_WINDOWS.md` §4 bis — **à revérifier en vrai sur Windows avec deux comptes**, non testable depuis l'environnement Linux de l'agent qui a fait la correction |
 | Notification (§10) | OK | — | — |
 
 ### Visite chez l'ami (à compléter)

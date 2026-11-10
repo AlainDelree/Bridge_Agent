@@ -89,19 +89,43 @@
   enregistrement — voir le commentaire de surveiller_processus_session.ps1
   pour le détail).
 
+  Nommage (issue #877) : un nom de tâche planifiée/service est unique pour
+  TOUTE la machine, pas par utilisateur Windows — deux comptes sur le même
+  PC ne peuvent donc pas enregistrer chacun une tâche « BridgeAgent-Session-
+  IssuesInbox » (le second échoue avec Access is denied / 0x80070005, et
+  l'installeur s'arrêtait net avant #877). Chaque nom inclut donc désormais
+  le compte -CompteService : BridgeAgent-Session-<compte>-<Id> (ex.
+  BridgeAgent-Session-alain-IssuesInbox), le préfixe BridgeAgent-Session-
+  restant stable pour les commandes de la documentation qui filtrent sur ce
+  préfixe. Un compte qui avait déjà des tâches à l'ANCIEN nom (sans le
+  compte, ex. BridgeAgent-Session-IssuesInbox) voit celles-ci détectées (si
+  elles lui appartiennent réellement — vérifié par le Principal de la
+  tâche/StartName du service, jamais supposé depuis le nom seul) puis
+  remplacées automatiquement par le nouveau nom, avec un message explicite ;
+  une tâche à l'ancien nom appartenant à un AUTRE compte n'est, elle, jamais
+  touchée. Un échec d'enregistrement par refus d'accès affiche la cause
+  probable (collision de nom avec un autre compte, ou droits insuffisants)
+  et la marche à suivre, au lieu de l'erreur système brute — l'installation
+  continue avec les autres composants et le signale dans le résumé final
+  plutôt que de s'arrêter net.
+
   Idempotent : relançable sans dommage — une tâche déjà enregistrée pour un
   projet encore demandé est simplement mise à jour (Register-ScheduledTask
   -Force, jamais de doublon) ; un projet RETIRÉ de -Projets depuis la
   dernière exécution voit sa tâche désinstallée automatiquement (y compris
   -SansIssuesInbox / -SansInterfaceWeb pour les deux autres).
 
-  -Desinstaller : retire TOUT ce que ce script a pu enregistrer (tâches
-  planifiées ET, le cas échéant, services NSSM d'un -ModeService antérieur),
-  sans qu'il soit nécessaire de redonner -Projets — la recherche se fait par
-  préfixe de nom (BridgeAgent-Session-*), jamais par un nom générique de
-  process (cf. consigne « ne jamais arrêter par nom » : chaque arrêt cible
-  un identifiant de tâche/service ou un PID précis, lu depuis son propre
-  fichier).
+  -Desinstaller : retire TOUT ce que ce script a pu enregistrer pour LE
+  COMPTE -CompteService (tâches planifiées ET, le cas échéant, services
+  NSSM d'un -ModeService antérieur), sous les DEUX formes de nom (nouvelle
+  « BridgeAgent-Session-<compte>-* » et, si elle appartient à ce même
+  compte, ancienne « BridgeAgent-Session-* » pré-#877) — sans qu'il soit
+  nécessaire de redonner -Projets, la recherche se fait par préfixe de nom
+  puis par propriétaire réel pour l'ancienne forme, jamais par un nom
+  générique de process (cf. consigne « ne jamais arrêter par nom » : chaque
+  arrêt cible un identifiant de tâche/service ou un PID précis, lu depuis
+  son propre fichier). Une tâche/un service du même préfixe appartenant à un
+  AUTRE compte Windows n'est jamais retiré.
 
   Aucun mot de passe stocké (mode par défaut) : tout tourne sous le compte
   -CompteService via sa session déjà ouverte.
@@ -222,6 +246,73 @@ function ConvertFrom-SecureStringPlain([System.Security.SecureString]$secure) {
 
 $PrefixeTache = 'BridgeAgent-Session-'
 
+# Nettoie un nom de compte Windows des caractères interdits dans un nom de
+# tâche planifiée/service (\/:*?"<>|) — un compte de domaine (DOMAINE\user)
+# ou un UPN (user@domaine) reste informatif sans faire échouer
+# Register-ScheduledTask/nssm install sur le caractère '\' notamment.
+function Nettoyer-NomPourTache([string]$Nom) {
+    return ($Nom -replace '[\\/:*?"<>|]', '_')
+}
+
+# Suffixe de compte inclus dans CHAQUE nom de tâche/service depuis #877 : un
+# nom de tâche planifiée est unique pour TOUTE LA MACHINE, pas par compte
+# Windows — sans ce suffixe, un second compte sur le même PC ne peut pas
+# enregistrer la tâche déjà créée par le premier (Access is denied,
+# 0x80070005). Le préfixe $PrefixeTache seul reste le repère stable pour les
+# commandes de la documentation qui filtrent sur « BridgeAgent-Session-* ».
+$CompteSûr     = Nettoyer-NomPourTache $CompteService
+$PrefixeCompte = "$PrefixeTache$CompteSûr-"
+
+# ---------------------------------------------------------------------------
+# Détermination du PROPRIÉTAIRE réel d'une tâche/service déjà enregistré —
+# jamais déduit du nom seul (une ancienne tâche pré-#877, sans compte dans
+# son nom, peut appartenir à N'IMPORTE QUEL compte de la machine).
+# ---------------------------------------------------------------------------
+function Obtenir-ProprietaireTache([string]$Nom) {
+    $tache = Get-ScheduledTask -TaskName $Nom -ErrorAction SilentlyContinue
+    if ($tache -and $tache.Principal -and $tache.Principal.UserId) {
+        return $tache.Principal.UserId
+    }
+    $nomEchappe = $Nom -replace "'", "''"
+    try {
+        $service = Get-CimInstance -ClassName Win32_Service -Filter "Name='$nomEchappe'" -ErrorAction SilentlyContinue
+        if ($service -and $service.StartName) { return $service.StartName }
+    } catch {
+        # Droits WMI insuffisants ou autre échec de requête : propriétaire
+        # indéterminé, voir Comptes-Equivalents (prudence : jamais traité
+        # comme appartenant à CE compte dans ce cas).
+    }
+    return $null
+}
+
+# Compare deux identités de compte en ignorant le préfixe domaine/machine
+# (DOMAINE\alain ou .\alain -> alain) et la casse — approximatif par
+# nécessité (impossible de tester sous Linux, voir le rapport de clôture de
+# l'issue #877) mais prudent : une identité vide ou indéterminée n'est
+# JAMAIS considérée comme équivalente.
+function Normaliser-NomCompte([string]$Nom) {
+    if ([string]::IsNullOrWhiteSpace($Nom)) { return '' }
+    return (($Nom -replace '^.*\\', '').Trim().ToLowerInvariant())
+}
+function Comptes-Equivalents([string]$CompteA, [string]$CompteB) {
+    $a = Normaliser-NomCompte $CompteA
+    $b = Normaliser-NomCompte $CompteB
+    if ([string]::IsNullOrEmpty($a) -or [string]::IsNullOrEmpty($b)) { return $false }
+    return ($a -eq $b)
+}
+
+# Un nom « BridgeAgent-Session-* » appartient-il au compte -CompteService
+# courant ? Immédiat pour le nouveau schéma (le compte est DANS le nom) ;
+# pour l'ancien schéma (pré-#877, sans compte dans le nom), seul le
+# propriétaire réel (Principal/StartName) tranche — jamais une supposition
+# sur le nom, qui est partagé pour toute la machine.
+function Est-NomCeCompte([string]$Nom) {
+    if ($Nom.StartsWith($PrefixeCompte)) { return $true }
+    if (-not $Nom.StartsWith($PrefixeTache)) { return $false }
+    $proprietaire = Obtenir-ProprietaireTache $Nom
+    return (Comptes-Equivalents $proprietaire $CompteService)
+}
+
 $RepDepot          = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 $RepConfigs        = Join-Path $RepDepot 'configs'
 $RepLogs           = Join-Path $RepDepot 'logs'
@@ -277,17 +368,31 @@ function Desinstaller-Composant([string]$NomComplet) {
 # -Desinstaller : recherche par préfixe, indépendante de -Projets.
 # ---------------------------------------------------------------------------
 if ($Desinstaller) {
-    Info "=== Désinstallation de tout ce qui porte le préfixe « $PrefixeTache » ==="
+    Info "=== Désinstallation de tout ce qui porte le préfixe « $PrefixeTache » pour le compte « $CompteService » ==="
+    $nomsBrut = @()
+    $nomsBrut += (Get-ScheduledTask -TaskName "$PrefixeTache*" -ErrorAction SilentlyContinue | Select-Object -ExpandProperty TaskName)
+    $nomsBrut += (Get-Service -Name "$PrefixeTache*" -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Name)
+    $nomsBrut = $nomsBrut | Select-Object -Unique
+
+    # Scopé au compte -CompteService (issue #877) : les deux formes de nom
+    # de CE compte (nouvelle « BridgeAgent-Session-<compte>-* », et
+    # ancienne « BridgeAgent-Session-* » si elle lui appartient réellement,
+    # voir Est-NomCeCompte) — jamais une tâche/un service d'un AUTRE compte,
+    # même s'il partage le préfixe.
     $noms = @()
-    $noms += (Get-ScheduledTask -TaskName "$PrefixeTache*" -ErrorAction SilentlyContinue | Select-Object -ExpandProperty TaskName)
-    $noms += (Get-Service -Name "$PrefixeTache*" -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Name)
-    $noms = $noms | Select-Object -Unique
+    $nomsAutreCompte = @()
+    foreach ($n in $nomsBrut) {
+        if (Est-NomCeCompte $n) { $noms += $n } else { $nomsAutreCompte += $n }
+    }
 
     if ($noms.Count -eq 0) {
-        Info "Rien à désinstaller (aucune tâche ni service « $PrefixeTache* » trouvé)."
+        Info "Rien à désinstaller pour le compte « $CompteService » (aucune tâche ni service « $PrefixeTache* » de ce compte trouvé)."
     } else {
         foreach ($n in $noms) { Desinstaller-Composant $n | Out-Null }
-        Ok "Désinstallation terminée ($($noms.Count) composant(s))."
+        Ok "Désinstallation terminée pour le compte « $CompteService » ($($noms.Count) composant(s), ancien et/ou nouveau nommage)."
+    }
+    if ($nomsAutreCompte.Count -gt 0) {
+        Info "Ignoré(s) sans y toucher, $($nomsAutreCompte.Count) appartenant à un autre compte Windows : $($nomsAutreCompte -join ', ')"
     }
     Info "Les fichiers de configuration (configs\*.conf) et les journaux (logs\) sont conservés — rien n'est supprimé sur le disque."
     return
@@ -348,7 +453,7 @@ foreach ($p in $Projets) {
 
 Info "Dépôt       : $RepDepot"
 Info "Python      : $PythonExe"
-Info "Compte      : $CompteService"
+Info "Compte      : $CompteService$(if ($CompteSûr -ne $CompteService) { " (nom utilisé dans les tâches : $CompteSûr)" })"
 Info "Mode        : $(if ($ModeService) { 'service NSSM (secondaire)' } else { 'tâche de session (défaut)' })"
 Info "Projets     : $(if ($ProjetsValides.Count -gt 0) { $ProjetsValides -join ', ' } else { '(aucun)' })"
 Info "Issues_inbox: $(if ($SansIssuesInbox) { 'non' } else { 'oui' })"
@@ -359,13 +464,17 @@ Write-Host ''
 # ---------------------------------------------------------------------------
 # Description de chaque composant désiré : Id (suffixe du nom de tâche/
 # service), commande + arguments du process surveillé, fichier journal du
-# superviseur, fichier PID (garde-fou « une seule instance »).
+# superviseur, fichier PID (garde-fou « une seule instance »). NomComplet
+# inclut désormais le compte (issue #877) ; NomAncien est le nom pré-#877
+# (sans compte), conservé pour détecter et migrer une tâche existante de CE
+# compte à l'ancien nommage — jamais pour la recréer.
 # ---------------------------------------------------------------------------
 function Decrire-Composant([string]$Id, [string[]]$ArgsEnfant, [string]$NomLogSession, [string]$NomPid,
                             [int]$DelaiDemarrageSec = 0) {
     [PSCustomObject]@{
         Id                = $Id
-        NomComplet        = "$PrefixeTache$Id"
+        NomComplet        = "$PrefixeCompte$Id"
+        NomAncien         = "$PrefixeTache$Id"
         ArgsEnfant        = $ArgsEnfant
         FichierJournal    = Join-Path $RepLogs $NomLogSession
         FichierPid        = Join-Path $RepLogs $NomPid
@@ -398,20 +507,42 @@ if (-not (Test-Path $RepLogs)) {
 
 # ---------------------------------------------------------------------------
 # Nettoyage des composants obsolètes (projet retiré de -Projets, ou
-# -SansIssuesInbox/-SansInterfaceWeb nouvellement passé) : toute tâche/
-# service « BridgeAgent-Session-* » déjà enregistré mais absent de la liste
-# désirée ci-dessus est désinstallé.
+# -SansIssuesInbox/-SansInterfaceWeb nouvellement passé) ET transition de
+# nommage (issue #877) : toute tâche/service « BridgeAgent-Session-* »
+# appartenant à CE compte (nouveau nom déjà à son compte dans le nom, ancien
+# nom vérifié par propriétaire réel — voir Est-NomCeCompte) mais absent de
+# la liste désirée ci-dessus (qui ne contient QUE des noms nouveaux) est
+# désinstallé — ce qui couvre aussi bien un projet retiré qu'une ancienne
+# tâche pré-#877 encore présente pour un composant toujours désiré (elle
+# sera recréée juste après, sous le nouveau nom, par la boucle principale).
+# Une tâche/un service du même préfixe appartenant à un AUTRE compte n'est
+# JAMAIS listé ici ni touché.
 # ---------------------------------------------------------------------------
 $NomsDesires = $Composants | ForEach-Object { $_.NomComplet }
+$NomsExistantsBrut = @()
+$NomsExistantsBrut += (Get-ScheduledTask -TaskName "$PrefixeTache*" -ErrorAction SilentlyContinue | Select-Object -ExpandProperty TaskName)
+$NomsExistantsBrut += (Get-Service -Name "$PrefixeTache*" -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Name)
+$NomsExistantsBrut = $NomsExistantsBrut | Select-Object -Unique
+
 $NomsExistants = @()
-$NomsExistants += (Get-ScheduledTask -TaskName "$PrefixeTache*" -ErrorAction SilentlyContinue | Select-Object -ExpandProperty TaskName)
-$NomsExistants += (Get-Service -Name "$PrefixeTache*" -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Name)
-$NomsExistants = $NomsExistants | Select-Object -Unique
+$NomsAutreCompte = @()
+foreach ($n in $NomsExistantsBrut) {
+    if (Est-NomCeCompte $n) { $NomsExistants += $n } else { $NomsAutreCompte += $n }
+}
 $NomsObsoletes = $NomsExistants | Where-Object { $NomsDesires -notcontains $_ }
 
 foreach ($n in $NomsObsoletes) {
-    Info "Composant obsolète « $n » (plus dans la liste désirée) — désinstallation…"
+    $composantCorrespondant = $Composants | Where-Object { $_.NomAncien -eq $n } | Select-Object -First 1
+    if ($composantCorrespondant) {
+        Info ("Transition de nommage (issue #877) : ancienne tâche/service « $n » de CE compte " +
+              "($CompteService) détectée — remplacement par « $($composantCorrespondant.NomComplet) »…")
+    } else {
+        Info "Composant obsolète « $n » (plus dans la liste désirée) — désinstallation…"
+    }
     Desinstaller-Composant $n | Out-Null
+}
+if ($NomsAutreCompte.Count -gt 0) {
+    Info "Ignoré(s) sans y toucher, $($NomsAutreCompte.Count) appartenant à un autre compte Windows : $($NomsAutreCompte -join ', ')"
 }
 
 # ---------------------------------------------------------------------------
@@ -449,6 +580,37 @@ if ($ModeService -and $Composants.Count -gt 0 -and -not $DryRun) {
     $MotDePassePlain = ConvertFrom-SecureStringPlain $secMotDePasse
 }
 
+# ---------------------------------------------------------------------------
+# Diagnostic d'un échec d'enregistrement (issue #877) : un refus d'accès
+# (Access is denied, HRESULT 0x80070005) lors de Register-ScheduledTask/nssm
+# install signifie presque toujours qu'un nom IDENTIQUE existe déjà sous un
+# AUTRE compte Windows de la machine (les noms de tâche/service sont
+# uniques pour toute la machine) — cas déjà rencontré en essai réel avec
+# deux comptes. Affiche la cause probable et la marche à suivre plutôt que
+# l'erreur système brute ; le composant en échec est ensuite listé dans le
+# résumé final (voir plus bas) au lieu de laisser l'installation à moitié
+# faite sans le dire.
+# ---------------------------------------------------------------------------
+function Diagnostiquer-EchecEnregistrement([string]$NomComplet, $Exception) {
+    $msg = $Exception.Message
+    $estAccesRefuse = ($msg -match '0x80070005') -or ($msg -match '(?i)access is denied') -or ($msg -match '(?i)acc.s refus.')
+    if ($estAccesRefuse) {
+        return ("Accès refusé lors de l'enregistrement de « $NomComplet ». Cause la plus probable : une " +
+                "tâche/un service du MÊME nom existe déjà sous un AUTRE compte Windows de cette machine (les " +
+                "noms de tâche/service sont uniques pour TOUTE la machine, pas par utilisateur — issue #877). " +
+                "Vérifiez depuis une console PowerShell ADMINISTRATEUR (une fenêtre non élevée ne voit pas les " +
+                "tâches des autres comptes) : Get-ScheduledTask -TaskName '$NomComplet' | Select TaskName,@{" +
+                "n='Compte';e={`$_.Principal.UserId}}. Si elle appartient bien à un autre compte, ce script " +
+                "n'y touchera JAMAIS automatiquement : supprimez-la manuellement avec les droits de ce compte, " +
+                "ou choisissez un -CompteService différent si le nom affiché par $CompteService ci-dessus ne " +
+                "correspond pas au compte réel. Si elle appartient à CE compte ($CompteService) mais que cette " +
+                "console n'a pas les droits voulus sur elle, relancez cette installation depuis une console " +
+                "ADMINISTRATEUR.")
+    }
+    return "Échec de l'enregistrement de « $NomComplet » : $msg"
+}
+
+$Erreurs = @()
 try {
     foreach ($composant in $Composants) {
         $nomComplet = $composant.NomComplet
@@ -514,22 +676,28 @@ try {
                 Info "[DRY-RUN]   powershell.exe $ligneArgs"
                 Info "[DRY-RUN]   Compte : $CompteService (mot de passe demandé à l'exécution réelle)."
             } else {
-                Info "Enregistrement du service « $nomComplet » (NSSM)…"
-                nssm install $nomComplet 'powershell.exe'
-                nssm set $nomComplet AppParameters  $ligneArgs
-                nssm set $nomComplet AppDirectory   $RepDepot
-                nssm set $nomComplet Start          SERVICE_AUTO_START
-                nssm set $nomComplet AppExit Default Restart
-                nssm set $nomComplet AppRestartDelay 5000
                 try {
+                    Info "Enregistrement du service « $nomComplet » (NSSM)…"
+                    nssm install $nomComplet 'powershell.exe'
+                    if ($LASTEXITCODE -ne 0) { throw "nssm install a échoué (code $LASTEXITCODE)." }
+                    nssm set $nomComplet AppParameters  $ligneArgs
+                    nssm set $nomComplet AppDirectory   $RepDepot
+                    nssm set $nomComplet Start          SERVICE_AUTO_START
+                    nssm set $nomComplet AppExit Default Restart
+                    nssm set $nomComplet AppRestartDelay 5000
                     nssm set $nomComplet ObjectName ".\$CompteService" $MotDePassePlain
-                } finally {
                     # $MotDePassePlain reste nécessaire pour les composants
                     # suivants de CETTE boucle — effacé une seule fois après
                     # la boucle entière (bloc finally externe, plus bas).
+                    nssm start $nomComplet | Out-Null
+                    if ($LASTEXITCODE -ne 0) { throw "nssm start a échoué (code $LASTEXITCODE)." }
+                    Ok "Service « $nomComplet » démarré."
+                } catch {
+                    $diagnostic = Diagnostiquer-EchecEnregistrement $nomComplet $_.Exception
+                    Avert $diagnostic
+                    $Erreurs += [PSCustomObject]@{ NomComplet = $nomComplet; Message = $diagnostic }
+                    continue
                 }
-                nssm start $nomComplet | Out-Null
-                Ok "Service « $nomComplet » démarré."
             }
         } else {
             # -------------------------------------------------------------
@@ -549,22 +717,29 @@ try {
                 Info "[DRY-RUN] Enregistrerait la tâche planifiée « $nomComplet » (déclencheur : ouverture de session de $CompteService) :"
                 Info "[DRY-RUN]   powershell.exe $ligneArgs"
             } else {
-                $declencheur = New-ScheduledTaskTrigger -AtLogOn -User $CompteService
-                $action      = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument $ligneArgs -WorkingDirectory $RepDepot
-                $principalTache = New-ScheduledTaskPrincipal -UserId $CompteService -LogonType Interactive -RunLevel Limited
-                $reglages    = New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew `
-                    -ExecutionTimeLimit ([TimeSpan]::Zero) -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
+                try {
+                    $declencheur = New-ScheduledTaskTrigger -AtLogOn -User $CompteService
+                    $action      = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument $ligneArgs -WorkingDirectory $RepDepot
+                    $principalTache = New-ScheduledTaskPrincipal -UserId $CompteService -LogonType Interactive -RunLevel Limited
+                    $reglages    = New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew `
+                        -ExecutionTimeLimit ([TimeSpan]::Zero) -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
 
-                Info "Enregistrement de la tâche planifiée « $nomComplet »…"
-                Register-ScheduledTask -TaskName $nomComplet -Trigger $declencheur -Action $action `
-                    -Principal $principalTache -Settings $reglages -Force | Out-Null
+                    Info "Enregistrement de la tâche planifiée « $nomComplet »…"
+                    Register-ScheduledTask -TaskName $nomComplet -Trigger $declencheur -Action $action `
+                        -Principal $principalTache -Settings $reglages -Force | Out-Null
 
-                $etat = (Get-ScheduledTask -TaskName $nomComplet).State
-                if ($etat -ne 'Running') {
-                    Start-ScheduledTask -TaskName $nomComplet
-                    Ok "Tâche « $nomComplet » enregistrée et démarrée."
-                } else {
-                    Ok "Tâche « $nomComplet » mise à jour (une instance tournait déjà — non redémarrée)."
+                    $etat = (Get-ScheduledTask -TaskName $nomComplet).State
+                    if ($etat -ne 'Running') {
+                        Start-ScheduledTask -TaskName $nomComplet
+                        Ok "Tâche « $nomComplet » enregistrée et démarrée."
+                    } else {
+                        Ok "Tâche « $nomComplet » mise à jour (une instance tournait déjà — non redémarrée)."
+                    }
+                } catch {
+                    $diagnostic = Diagnostiquer-EchecEnregistrement $nomComplet $_.Exception
+                    Avert $diagnostic
+                    $Erreurs += [PSCustomObject]@{ NomComplet = $nomComplet; Message = $diagnostic }
+                    continue
                 }
             }
         }
@@ -585,12 +760,23 @@ Write-Host '  RÉSUMÉ' -ForegroundColor Cyan
 Write-Host '========================================================================' -ForegroundColor Cyan
 if ($DryRun) { Avert 'Mode -DryRun : AUCUNE action listée ci-dessus n''a été exécutée réellement.' }
 foreach ($composant in $Composants) {
+    if ($Erreurs | Where-Object { $_.NomComplet -eq $composant.NomComplet }) { continue }  # listé séparément ci-dessous
     $suffixeDelai = if ($composant.DelaiDemarrageSec -gt 0) { " (démarrage différé de $($composant.DelaiDemarrageSec)s)" } else { '' }
     Info "- $($composant.NomComplet) — journal : $($composant.FichierJournal)$suffixeDelai"
 }
 if ($Composants.Count -eq 0) {
     Info '(aucun composant demandé — ni projet, ni issues_inbox, ni interface web)'
 }
+if ($Erreurs.Count -gt 0) {
+    Write-Host ''
+    Avert ("INSTALLATION PARTIELLE : $($Erreurs.Count) composant(s) PAS enregistré(s) sur " +
+           "$($Composants.Count) demandé(s) :")
+    foreach ($e in $Erreurs) {
+        Write-Host "  - $($e.NomComplet)" -ForegroundColor Yellow
+        Write-Host "    $($e.Message)" -ForegroundColor Yellow
+    }
+}
 Write-Host ''
-Info "Pour vérifier : Get-ScheduledTask -TaskName '$PrefixeTache*'  (ou Get-Service si -ModeService)"
-Info "Pour désinstaller : .\installer_demarrage_session.ps1 -Desinstaller"
+Info "Pour vérifier (ce compte)  : Get-ScheduledTask -TaskName '$PrefixeCompte*'  (ou Get-Service si -ModeService)"
+Info "Pour vérifier (la machine) : Get-ScheduledTask -TaskName '$PrefixeTache*'  — console ADMINISTRATEUR pour voir les tâches des autres comptes"
+Info "Pour désinstaller (ce compte) : .\installer_demarrage_session.ps1 -Desinstaller -CompteService $CompteService"

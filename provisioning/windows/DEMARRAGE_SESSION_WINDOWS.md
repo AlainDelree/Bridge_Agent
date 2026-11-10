@@ -27,6 +27,11 @@ Chaque `configs\<nom>.conf` des projets listés doit **déjà exister** — ce
 script ne crée **jamais** de fichier `.conf` (règle générale du dépôt,
 BRIDGE_AGENT_DOC.md §11).
 
+Chaque tâche/service est nommé `BridgeAgent-Session-<compte>-<Id>` (ex.
+`BridgeAgent-Session-alain-IssuesInbox`) — le compte Windows qui lance le
+script (`-CompteService`) fait partie du nom depuis l'issue #877, voir §4
+bis pour le pourquoi et la transition depuis l'ancien nommage.
+
 Les watchers de projet et le watcher `issues_inbox` attendent
 `-DelaiDemarrageWatchersSec` (20 s par défaut, réglable) avant leur tout
 premier lancement — **pas** l'interface web, qui démarre sans attendre
@@ -124,11 +129,58 @@ désinstallée automatiquement (de même pour `-SansIssuesInbox` /
 .\installer_demarrage_session.ps1 -Desinstaller
 ```
 
-Retire **tout** ce que ce script a pu enregistrer (tâches planifiées et,
-le cas échéant, services NSSM d'un `-ModeService` antérieur) — recherche
-par préfixe de nom (`BridgeAgent-Session-*`), pas besoin de redonner
-`-Projets`. Les fichiers `configs\*.conf` et les journaux (`logs\`) sont
-conservés.
+Retire **tout** ce que ce script a pu enregistrer **pour le compte
+`-CompteService`** (tâches planifiées et, le cas échéant, services NSSM
+d'un `-ModeService` antérieur), sous ses **deux** formes de nom (nouveau
+nommage par compte, et ancien nommage pré-#877 si — et seulement si — il
+appartient réellement à ce même compte, voir §4 bis) — recherche par
+préfixe de nom (`BridgeAgent-Session-*`) puis par propriétaire réel pour
+départager les comptes, pas besoin de redonner `-Projets`. Une tâche/un
+service du même préfixe appartenant à un **autre** compte Windows n'est
+jamais retiré. Les fichiers `configs\*.conf` et les journaux (`logs\`)
+sont conservés.
+
+## 4 bis. Nommage par compte Windows (issue #877)
+
+Un nom de tâche planifiée (ou de service) est unique pour **toute la
+machine**, pas par utilisateur Windows. Avant l'issue #877, les trois
+tâches de ce script s'appelaient toujours `BridgeAgent-Session-
+InterfaceWeb`, `BridgeAgent-Session-IssuesInbox` et `BridgeAgent-Session-
+Watcher-<projet>` — sur un PC partagé par deux comptes (ou plusieurs essais
+d'installation du même ami d'Alain), le second compte à s'enregistrer
+échouait avec `Register-ScheduledTask : Access is denied` (`HRESULT
+0x80070005`) sur la tâche déjà créée par le premier, et l'installeur
+s'arrêtait net sans toucher aux autres composants demandés. Une fenêtre
+PowerShell non élevée ne voyant pas non plus les tâches des autres
+comptes, le diagnostic était difficile sur le moment.
+
+Chaque nom inclut donc désormais le compte `-CompteService` :
+`BridgeAgent-Session-<compte>-<Id>` (ex. `BridgeAgent-Session-alain-
+IssuesInbox`, `BridgeAgent-Session-alain-Watcher-scrabble`) — le préfixe
+`BridgeAgent-Session-` seul reste stable pour les commandes de ce document
+qui filtrent sur lui. Deux comptes sur le même PC obtiennent donc chacun
+leurs propres tâches, sans collision.
+
+**Transition** : un compte qui avait déjà des tâches à l'ancien nom (sans
+compte dans le nom) les voit détectées au prochain lancement du script —
+mais **uniquement si elles lui appartiennent réellement** (vérifié par le
+propriétaire réel de la tâche/du service, jamais supposé depuis le nom
+seul, qui est partagé pour toute la machine) — puis remplacées
+automatiquement par le nouveau nom, avec un message explicite
+(« Transition de nommage (issue #877) : ancienne tâche/service « … »
+détectée — remplacement par « … » »). Une ancienne tâche appartenant à un
+**autre** compte n'est, elle, jamais touchée (ni listée, ni supprimée).
+
+**Échec d'enregistrement** : si l'enregistrement d'un composant échoue par
+refus d'accès (le cas ci-dessus, ou tout autre `Access is denied`), le
+script affiche la cause probable et la marche à suivre (vérifier le
+propriétaire réel de la tâche en console administrateur, relancer en
+administrateur si elle appartient bien à ce compte, ou laisser la tâche de
+l'autre compte intacte) au lieu de l'erreur système brute — puis **continue
+avec les autres composants** demandés plutôt que de s'arrêter net. Le
+résumé final liste alors explicitement les composants qui n'ont PAS pu
+être enregistrés (« INSTALLATION PARTIELLE »), pour ne jamais laisser
+croire à une installation complète qui ne l'était pas.
 
 ## 5. Option secondaire : mode service (NSSM)
 
@@ -249,9 +301,9 @@ Ce script a été écrit et relu sous Linux, où il ne peut pas être exécuté
 (pas de PowerShell). À vérifier sur un PC Windows réel :
 
 1. `-Projets scrabble` (un projet réel déjà configuré) sans `-ModeService`
-   : la tâche `BridgeAgent-Session-Watcher-scrabble` apparaît dans le
-   Planificateur de tâches, démarre immédiatement, et un `logs\watcher-
-   scrabble.pid` + `logs\watcher-scrabble.log` apparaissent.
+   : la tâche `BridgeAgent-Session-<votre_compte>-Watcher-scrabble`
+   apparaît dans le Planificateur de tâches, démarre immédiatement, et un
+   `logs\watcher-scrabble.pid` + `logs\watcher-scrabble.log` apparaissent.
 2. Fermer puis rouvrir la session : les trois tâches (projet + issues_inbox
    + interface web) redémarrent automatiquement.
 3. Tuer le process `python.exe` du watcher à la main (Gestionnaire des
@@ -315,6 +367,35 @@ Ce script a été écrit et relu sous Linux, où il ne peut pas être exécuté
     sortie répétée côté process surveillé) : vérifier l'apparition de
     `logs\*-session.log.1` (puis `.2`, `.3`) et que le fichier actif reste
     sous quelques Mo.
+16. **(issue #877)** Avec un second compte Windows sur la même machine
+    (ou un compte de test) : lancer `.\installer_demarrage_session.ps1
+    -Projets scrabble` depuis la session de CE second compte alors que le
+    premier compte a déjà ses tâches `BridgeAgent-Session-<premier>-*` en
+    place. Vérifier que l'enregistrement réussit sans `Access is denied`
+    (tâches `BridgeAgent-Session-<second>-*` distinctes), et que
+    `Get-ScheduledTask -TaskName 'BridgeAgent-Session-<premier>-*'` montre
+    les tâches du premier compte intactes, non modifiées par cette seconde
+    installation.
+17. **(issue #877)** Transition : sur un compte qui a déjà des tâches à
+    l'ancien nom (ex. une installation d'avant ce correctif, ou renommées
+    à la main pour simuler), relancer `installer_demarrage_session.ps1`
+    avec les mêmes `-Projets` : vérifier le message « Transition de
+    nommage (issue #877) : ancienne tâche/service « … » détectée —
+    remplacement par « … » », que l'ancienne tâche a disparu, et que la
+    nouvelle (`BridgeAgent-Session-<compte>-*`) est bien enregistrée et
+    démarrée.
+18. **(issue #877)** `-Desinstaller` depuis le second compte ci-dessus (16)
+    : vérifier qu'il retire uniquement les tâches de CE compte
+    (`BridgeAgent-Session-<second>-*`) et laisse celles du premier compte
+    intactes.
+19. **(issue #877)** Provoquer un refus d'accès réel (ex. créer à la main,
+    avec les droits d'un AUTRE compte, une tâche `BridgeAgent-Session-
+    <ce_compte>-IssuesInbox`, puis relancer le script sous CE compte) :
+    vérifier que le message affiché explique la cause probable (collision
+    de nom avec un autre compte) et la marche à suivre, que les AUTRES
+    composants demandés (watchers de projet, interface web) s'enregistrent
+    normalement malgré cet échec isolé, et que le résumé final affiche
+    bien « INSTALLATION PARTIELLE » en listant le composant en échec.
 
 ## Voir aussi
 
