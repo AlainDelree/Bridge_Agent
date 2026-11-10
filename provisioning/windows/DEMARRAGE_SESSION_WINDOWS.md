@@ -271,6 +271,42 @@ propre (ex. l'auto-extinction par inactivité, code 42). Le code lu est
 maintenant toujours affiché — la valeur elle-même, ou `illisible` si sa
 lecture échoue malgré tout.
 
+**Garde-fou « une seule instance » (issue #880)** : `-FichierPid` enregistre
+désormais le numéro **et** l'heure de démarrage exacte du process surveillé
+(`PID,TicksDemarrage`), pas le numéro seul. Un essai réel (compte de test,
+déconnexion puis reconnexion rapide) a montré que le numéro seul ne suffit
+pas : à la déconnexion, le superviseur est arrêté sans que son bloc
+`finally` (qui efface `-FichierPid`) ait pu s'exécuter, et Windows réattribue
+ce numéro quelques secondes plus tard à un **tout autre** programme (observé
+: `SearchHost`) — à la reconnexion, l'ancien garde-fou voyait « un process
+avec ce numéro » et abandonnait à tort, sans rien lancer, avec le code de
+sortie 0, sans que personne ne soit prévenu. Désormais, un process trouvé
+sous ce numéro n'est considéré comme la MÊME instance que si son heure de
+démarrage exacte (`Get-Process -Id … | Select StartTime`, résolution native
+.NET, pas la seconde) correspond à celle enregistrée — deux process
+distincts ne peuvent jamais partager à la fois le même numéro et la même
+heure de démarrage. Si elle ne correspond pas (ou si aucun process ne porte
+ce numéro), le fichier est considéré **périmé**, supprimé, et le lancement
+se poursuit normalement — il n'empêche plus jamais un démarrage légitime.
+Un fichier à l'**ancien format** (numéro seul, écrit par une version
+antérieure, ou laissé par un arrêt brutal juste avant une mise à jour)
+reste lisible mais traité avec prudence : faute d'heure de démarrage à
+comparer, le nom de l'exécutable et le premier argument attendus sont
+recherchés dans la ligne de commande réelle du process (`Get-CimInstance
+Win32_Process`) avant de le considérer comme la même instance ; en cas de
+doute (vérification impossible ou non concluante), le fichier est traité
+comme périmé plutôt que de risquer un abandon à tort — exactement le sens
+dans lequel se trompait le défaut d'origine. Quand une instance est bien
+confirmée active, le journal détaille désormais le PID, le nom du process
+et son heure de démarrage (ligne `[ABANDON]`), jamais confondue avec un
+démarrage réussi (`[DEMARRAGE]`/`[SUPERVISEUR] démarré`) ; le code de
+sortie 0 dans ce cas reste volontaire (détecter qu'une instance légitime
+tourne déjà n'est pas un échec de ce lancement-ci), et n'est plus
+prononcé sur la seule foi d'un numéro réutilisé. Le nettoyage du fichier
+PID aux arrêts propres/échecs de lancement (bloc `finally` de la boucle
+principale) et le mode `-ModeService` (NSSM, qui relance ce même script
+tel quel) sont inchangés par cette correction.
+
 **Rotation par taille (issue #875)** : chaque `-FichierJournal` est limité
 à 2 Mo (3 archives `.1`/`.2`/`.3` conservées, les plus anciennes
 supprimées) — nécessaire depuis que la sortie y est recopiée en continu
@@ -396,6 +432,47 @@ Ce script a été écrit et relu sous Linux, où il ne peut pas être exécuté
     composants demandés (watchers de projet, interface web) s'enregistrent
     normalement malgré cet échec isolé, et que le résumé final affiche
     bien « INSTALLATION PARTIELLE » en listant le composant en échec.
+
+20. **(issue #880)** Arrêter brutalement le superviseur d'un watcher (ex.
+    tuer le process PowerShell `surveiller_processus_session.ps1` lui-même
+    dans le Gestionnaire des tâches, PAS le `python.exe` surveillé) de
+    sorte que son bloc `finally` ne s'exécute pas et que `logs\watcher-
+    <nom>.pid` reste sur disque avec l'ancien PID. Relancer la tâche
+    planifiée correspondante (`Start-ScheduledTask`) : vérifier dans
+    `logs\watcher-<nom>-session.log` que le superviseur détecte que le
+    process `python.exe` surveillé est TOUJOURS vivant (même PID, même
+    heure de démarrage que celle enregistrée) et abandonne avec une ligne
+    `[ABANDON]` qui cite le PID, le nom et l'heure de démarrage du process
+    — l'instance d'origine continue de tourner normalement, sans doublon.
+21. **(issue #880)** Provoquer un numéro de PID **réutilisé** : arrêter le
+    `python.exe` surveillé à la main (pas le superviseur) puis, AVANT que
+    le superviseur ne le relance (quelques secondes), lancer rapidement un
+    autre programme quelconque de sorte qu'il reçoive le même numéro de
+    process (difficile à provoquer à coup sûr — à défaut, modifier à la
+    main `logs\watcher-<nom>.pid` pour y mettre le PID d'un programme
+    actif sans rapport, ex. le Bloc-notes, en conservant le format
+    `PID,TicksDemarrage` avec un ticks qui ne correspond pas) : relancer la
+    tâche planifiée et vérifier dans le journal de session que le
+    superviseur NE prend PAS ce programme pour l'ancienne instance (ligne
+    `[INFO] fichier PID périmé supprimé`, qui cite le nom du programme
+    trouvé), supprime le fichier PID périmé, et démarre normalement une
+    nouvelle instance.
+22. **(issue #880)** Lancer deux fois la même tâche (ex. `Start-
+    ScheduledTask` deux fois de suite sur la même tâche de watcher, ou
+    exécuter `surveiller_processus_session.ps1` à la main avec les mêmes
+    paramètres pendant que la tâche planifiée tourne déjà) : vérifier qu'il
+    n'y a bien qu'**une seule** instance du process surveillé au final
+    (Gestionnaire des tâches), et que le journal de la seconde exécution
+    affiche la ligne `[ABANDON]` avec le PID/nom/heure de démarrage de la
+    première.
+23. **(issue #880)** Avec un `logs\watcher-<nom>.pid` à l'**ancien format**
+    (numéro seul, sans virgule — simuler en y écrivant juste le PID d'un
+    `python.exe` du watcher réellement en cours) : relancer la tâche et
+    vérifier que le superviseur reconnaît quand même cette instance comme
+    active (vérification de repli par nom + ligne de commande) sans la
+    dupliquer ; puis avec ce même fichier pointant vers un PID vivant mais
+    SANS RAPPORT (ex. Bloc-notes) : vérifier qu'il est au contraire jugé
+    périmé et supprimé.
 
 ## Voir aussi
 

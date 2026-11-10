@@ -14,11 +14,24 @@
       EXIT_INACTIVITE) n'est PAS relancé, exactement comme le gabarit
       systemd/watcher@.service déclare `SuccessExitStatus=42` ;
     - une seule instance : si -FichierPid est fourni et désigne déjà un
-      process vivant au démarrage de CE script, on abandonne sans rien
-      lancer (watcher.py n'a lui-même AUCUNE protection interne contre un
-      double lancement du même projet — c'est l'appelant, ici, qui doit
-      l'assurer, comme le fait normalement app.watchers.demarrer_watcher()
-      côté interface web via watcher_actif()).
+      process vivant au démarrage de CE script, ET que ce process est bien
+      CELUI qui avait été enregistré (même PID ET même heure de démarrage,
+      ou — fichier à l'ancien format — ligne de commande compatible, voir
+      le garde-fou plus bas), on abandonne sans rien lancer (watcher.py n'a
+      lui-même AUCUNE protection interne contre un double lancement du
+      même projet — c'est l'appelant, ici, qui doit l'assurer, comme le
+      fait normalement app.watchers.demarrer_watcher() côté interface web
+      via watcher_actif()). Un fichier PID qui ne correspond à AUCUNE
+      instance réelle (process absent, ou numéro réattribué par Windows à
+      un tout autre programme depuis — constaté en essai réel, issue #880)
+      est au contraire effacé comme périmé, puis le lancement se poursuit
+      normalement : SANS cette vérification de l'IDENTITÉ du process (pas
+      seulement de son numéro), un simple PID de l'ancienne instance
+      réattribué par Windows à un programme sans rapport (ex. SearchHost,
+      observé après une déconnexion/reconnexion rapide d'un compte de
+      test) suffisait à faire abandonner le superviseur à tort, sans rien
+      lancer et sans que personne ne soit prévenu (code de sortie 0,
+      silencieux).
 
   CE script est le MÊME, que l'appelant soit une tâche planifiée (mode par
   défaut) ou un service NSSM (-ModeService) — voir installer_demarrage_
@@ -276,15 +289,133 @@ function Purger-SortieVersJournal([string]$CheminTemp, [ref]$Position) {
 New-Item -ItemType Directory -Path (Split-Path $FichierJournal -Parent) -Force | Out-Null
 
 # ── Garde-fou « une seule instance » (voir en-tête) ──────────────────────────
+#
+# Format de -FichierPid (depuis l'issue #880) : « PID,TicksDemarrage » —
+# le numéro de process ET son heure de démarrage exacte ([DateTime]
+# .Ticks, résolution native .NET — pas une simple seconde), au lieu du
+# numéro seul. MÉTHODE RETENUE et pourquoi, par rapport à l'alternative
+# « comparer le nom + la ligne de commande » évoquée par l'issue :
+#   - Windows RÉATTRIBUE un numéro de process à un tout autre programme
+#     dès que l'ancien process se termine (quelques secondes seulement
+#     dans l'essai réel qui a révélé ce défaut : déconnexion/reconnexion
+#     rapide d'un compte de test, PID repris par SearchHost) — un numéro
+#     seul ne prouve donc RIEN sur l'identité du process, qu'il soit
+#     vivant ou non ;
+#   - en revanche, la paire (PID, heure de démarrage) EST l'identifiant
+#     que Windows utilise lui-même en interne pour distinguer deux
+#     process ayant pu partager le même numéro à des moments différents
+#     — deux process distincts ne peuvent, par construction, jamais
+#     partager à la fois le même numéro ET la même heure de démarrage à
+#     la résolution native du système ;
+#   - .StartTime est une propriété native de System.Diagnostics.Process,
+#     disponible tel quel depuis PowerShell 5.1 via Get-Process, SANS
+#     dépendance supplémentaire — contrairement à la ligne de commande
+#     complète, qui demande Win32_Process/CIM (Get-CimInstance), réservé
+#     ci-dessous au SEUL cas de repli (fichier à l'ancien format).
+#
+# Fichier à l'ANCIEN format (numéro seul, sans virgule — écrit par une
+# version antérieure à cette correction, ou laissé par un arrêt brutal
+# juste avant une mise à jour du dépôt) : reste LISIBLE, mais traité avec
+# PRUDENCE, exactement la demande de l'issue #880 — faute d'heure de
+# démarrage à comparer, le nom de l'exécutable ET le premier argument
+# attendus (-Commande, $ArgsEnfant[0] — en général le chemin du script,
+# le plus discriminant) sont recherchés dans la ligne de commande RÉELLE
+# du process (Get-CimInstance Win32_Process, repli silencieux si
+# indisponible, ex. service WMI arrêté) avant de le considérer comme la
+# même instance : un simple PID vivant, SEUL, ne suffit plus à conclure
+# quoi que ce soit. Si cette vérification échoue ou reste incertaine, le
+# choix délibéré est de NE PAS faire confiance au fichier (le supprimer,
+# puis lancer normalement) plutôt que d'abandonner à tort — c'est
+# exactement le sens dans lequel se trompait le défaut d'origine.
+#
+# Dans tous les cas où le fichier PID ne correspond PAS à une instance
+# réelle confirmée (process absent, numéro réattribué à un autre
+# programme, ancien format dont la ligne de commande ne correspond pas,
+# contenu illisible) : il est effacé ici comme périmé (issue #880, point
+# 2) plutôt que de continuer à y faire confiance, et le lancement se
+# poursuit normalement juste après.
+#
+# Code de sortie 0 en cas d'abandon confirmé (plus bas) : INCHANGÉ et
+# volontaire — une fois l'identité du process vérifiée de façon fiable
+# (ci-dessus), détecter qu'une instance légitime tourne déjà N'EST PAS un
+# échec de CE lancement-ci : l'invariant visé (une seule instance active)
+# est déjà satisfait, rien d'anormal ne s'est produit. Le risque du
+# défaut d'origine ne tenait pas au code 0 lui-même, mais au FAUX
+# positif qui y menait sans aucune preuve — la ligne [ABANDON]
+# ci-dessous reste de toute façon distincte des lignes [SUPERVISEUR]/
+# [DEMARRAGE], et détaille désormais le PID, le nom et l'heure de
+# démarrage du process trouvé : jamais de confusion possible avec un
+# démarrage réussi en relisant le journal.
+function Obtenir-LigneCommandeProcessus([int]$Id) {
+    try {
+        return (Get-CimInstance -ClassName Win32_Process -Filter "ProcessId = $Id" -ErrorAction Stop).CommandLine
+    } catch {
+        return $null
+    }
+}
+
 if ($FichierPid -and (Test-Path $FichierPid)) {
+    $lignePid = $null
+    try { $lignePid = (Get-Content -Path $FichierPid -ErrorAction Stop | Select-Object -First 1) } catch { }
+    $champsPid = @()
+    if ($lignePid) { $champsPid = $lignePid -split ',' }
     $ancienPid = $null
-    try { $ancienPid = [int](Get-Content -Path $FichierPid -ErrorAction Stop | Select-Object -First 1) } catch { }
-    if ($ancienPid) {
+    if ($champsPid.Count -ge 1) { try { $ancienPid = [int]($champsPid[0].Trim()) } catch { } }
+    $ancienTicks = $null
+    if ($champsPid.Count -ge 2) { try { $ancienTicks = [int64]($champsPid[1].Trim()) } catch { } }
+
+    if (-not $ancienPid) {
+        Ecrire-Journal "$(Horodate) [INFO] fichier PID illisible supprimé ($FichierPid)."
+        Remove-Item -Path $FichierPid -Force -ErrorAction SilentlyContinue
+    } else {
         $procExistant = Get-Process -Id $ancienPid -ErrorAction SilentlyContinue
+        $instanceConfirmee = $false
+        $preuve = "aucun processus actif avec le PID $ancienPid"
+
         if ($procExistant) {
-            Ecrire-Journal ("$(Horodate) [ABANDON] une instance (PID $ancienPid) semble déjà active " +
-                            "($FichierPid) — pas de second lancement.")
+            if ($ancienTicks) {
+                # Format actuel : comparaison exacte de l'heure de démarrage —
+                # voir le commentaire au-dessus de ce garde-fou.
+                $demarrageReel = $null
+                try { $demarrageReel = $procExistant.StartTime } catch { }
+                if ($demarrageReel -and $demarrageReel.Ticks -eq $ancienTicks) {
+                    $instanceConfirmee = $true
+                    $preuve = "PID $ancienPid, $($procExistant.ProcessName), démarré le $demarrageReel"
+                } else {
+                    $preuve = ("PID $ancienPid réattribué depuis — appartient maintenant à " +
+                               "$($procExistant.ProcessName)" + $(if ($demarrageReel) { " (démarré $demarrageReel)" } else { '' }) +
+                               ", pas à l'instance enregistrée")
+                }
+            } else {
+                # Ancien format (numéro seul) : vérification de repli par nom
+                # d'exécutable + premier argument de la ligne de commande
+                # réelle — voir le commentaire au-dessus de ce garde-fou.
+                $ligneCommandeReelle = Obtenir-LigneCommandeProcessus $ancienPid
+                $nomAttendu = [System.IO.Path]::GetFileName($Commande)
+                $correspond = $false
+                if ($ligneCommandeReelle -and $ligneCommandeReelle -like "*$nomAttendu*") {
+                    $correspond = ($ArgsEnfant.Count -eq 0) -or ($ligneCommandeReelle -like "*$($ArgsEnfant[0])*")
+                }
+                if ($correspond) {
+                    $instanceConfirmee = $true
+                    $preuve = ("PID $ancienPid, $($procExistant.ProcessName) — fichier PID à l'ancien format " +
+                               "(sans heure de démarrage), ligne de commande compatible")
+                } else {
+                    $preuve = ("PID $ancienPid correspond à $($procExistant.ProcessName) dont la ligne de " +
+                               "commande ne correspond pas à « $nomAttendu » attendu — fichier PID à " +
+                               "l'ancien format jugé périmé")
+                }
+            }
+        }
+
+        if ($instanceConfirmee) {
+            Ecrire-Journal ("$(Horodate) [ABANDON] une instance ($preuve) est déjà active ($FichierPid) — " +
+                            "pas de second lancement ici. Ceci n'est PAS un échec : l'instance déjà en " +
+                            "cours continue d'être gérée par son propre superviseur.")
             exit 0
+        } else {
+            Ecrire-Journal "$(Horodate) [INFO] fichier PID périmé supprimé ($FichierPid) — $preuve."
+            Remove-Item -Path $FichierPid -Force -ErrorAction SilentlyContinue
         }
     }
 }
@@ -343,7 +474,21 @@ while ($true) {
             # handle) compte.
             $null = $proc.Handle
 
-            if ($FichierPid) { Set-Content -Path $FichierPid -Value $proc.Id -Encoding ASCII }
+            # Heure de démarrage exacte, enregistrée aux côtés du PID (issue
+            # #880) — voir le garde-fou « une seule instance » plus haut pour
+            # le détail complet. .StartTime est lisible dès maintenant grâce
+            # à .Handle lu juste au-dessus (même raison que pour .ExitCode) ;
+            # $null en cas d'échec improbable fait retomber le fichier écrit
+            # ci-dessous sur l'ANCIEN format (numéro seul), lu avec prudence
+            # par le garde-fou au prochain démarrage plutôt que de risquer
+            # d'y écrire une heure fausse.
+            $demarrageTicks = $null
+            try { $demarrageTicks = $proc.StartTime.Ticks } catch { }
+
+            if ($FichierPid) {
+                $contenuPid = if ($demarrageTicks) { "$($proc.Id),$demarrageTicks" } else { "$($proc.Id)" }
+                Set-Content -Path $FichierPid -Value $contenuPid -Encoding ASCII
+            }
 
             # Purge PENDANT que le process tourne encore (issue #871), pas
             # seulement à son arrêt : WaitForExit(ms) sert ici à la fois
