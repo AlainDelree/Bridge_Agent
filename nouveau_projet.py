@@ -552,13 +552,20 @@ def mettre_a_jour_doc() -> dict:
 def creer_projet(nom: str, depot: str = "", rep: str = "", perimetre: str = "",
                  topic: str = "", avec_specs: bool = False,
                  creer_depot_si_absent: bool = True, couleur: str = "",
-                 public: bool = True) -> dict:
+                 public: bool | None = None) -> dict:
     """Orchestrateur non interactif appelé par la route Flask. Enchaîne les
     mêmes étapes que le script CLI (dépôt, .conf, labels, contexte, doc) et
     renvoie un compte-rendu structuré : {succes, nom, depot, rep, perimetre,
     depot_existait, etapes:[{etape, ok, detail}], erreur}. `public` (issue
     #528) détermine la visibilité du dépôt s'il doit être créé ; sans effet
-    si le dépôt existe déjà (sa visibilité n'est alors pas modifiée)."""
+    si le dépôt existe déjà (sa visibilité n'est alors pas modifiée). `None`
+    (valeur par défaut, utilisée seulement si l'appelant omet complètement ce
+    paramètre — la route Flask passe toujours un booléen explicite, reflet de
+    la case cochée ou non) se résout en `identite.depot_public_par_defaut()`
+    plutôt qu'un `True` codé en dur, pour respecter COPIE_NON_PROPRIETAIRE /
+    DEPOT_PRIVE_PAR_DEFAUT même pour un appel qui ne préciserait pas `public`
+    (issue #879)."""
+    public = identite.depot_public_par_defaut() if public is None else bool(public)
     nom_saisi = (nom or "").strip()
     nom = nom_saisi.lower()
     if not nom:
@@ -690,6 +697,13 @@ def creer_projet(nom: str, depot: str = "", rep: str = "", perimetre: str = "",
 
     return {"succes": True, "nom": nom, "depot": depot, "rep": rep,
             "perimetre": perimetre, "depot_existait": depot_existait,
+            # Visibilité effectivement appliquée à la création (issue #879) —
+            # sans portée si depot_existait est True (visibilité du dépôt
+            # existant non modifiée, non connue ici). Le compte-rendu détaillé
+            # (étape "Dépôt GitHub" ci-dessus) l'indique déjà en toutes
+            # lettres ; exposée aussi ici en clé dédiée pour qui consomme ce
+            # résultat sans parser le texte des étapes.
+            "public": public,
             "couleur": couleur, "etapes": etapes, "erreur": None,
             "git_deja_git": git_res["deja_git"],
             "git_push_ok": git_res["push_ok"],
@@ -727,7 +741,9 @@ def etape_nom() -> tuple[str, str]:
 def etape_depot(nom: str, nom_saisi: str) -> tuple[str, bool]:
     """Renvoie (depot, existait_deja). Crée le dépôt s'il n'existe pas et que
     l'utilisateur confirme — public ou privé selon son choix (issue #528),
-    défaut public pour rester cohérent avec le comportement historique."""
+    défaut proposé = identite.depot_public_par_defaut() (public, sauf
+    COPIE_NON_PROPRIETAIRE/DEPOT_PRIVE_PAR_DEFAUT, issue #879) pour rester
+    cohérent avec le formulaire web."""
     titre("2. Dépôt GitHub cible")
     # Proposition par défaut : owner du dépôt courant + nom dans la casse
     # saisie (issue #738).
@@ -743,7 +759,8 @@ def etape_depot(nom: str, nom_saisi: str) -> tuple[str, bool]:
         print("   Abandon : impossible de continuer sans dépôt cible.")
         sys.exit(1)
 
-    public = demander_oui_non("Dépôt public (non = privé)", defaut=True)
+    public = demander_oui_non("Dépôt public (non = privé)",
+                               defaut=identite.depot_public_par_defaut())
     if not public:
         print("   ⚠️  Dépôt privé : vérifier que GH_TOKEN dispose des "
               "permissions nécessaires sur ce dépôt, sinon la création "

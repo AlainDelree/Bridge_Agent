@@ -2895,7 +2895,12 @@ function ouvrirNouveauProjet() {
   document.getElementById('np-specs').checked = false;
   document.getElementById('np-creer-depot').checked = true;
   document.getElementById('np-creer-depot-ligne').style.display = 'none';
-  document.getElementById('np-public').checked = true;
+  // Visibilité par défaut du dépôt à créer (issue #879) : suit
+  // window.DEPOT_PUBLIC_PAR_DEFAUT (fragments/scripts.html, depuis
+  // identite.depot_public_par_defaut() — COPIE_NON_PROPRIETAIRE /
+  // DEPOT_PRIVE_PAR_DEFAUT de identite_locale.conf), jamais un `true` codé
+  // en dur qui ignorerait ces réglages.
+  document.getElementById('np-public').checked = window.DEPOT_PUBLIC_PAR_DEFAUT !== false;
   document.getElementById('np-public-ligne').style.display = 'none';
   document.getElementById('np-avertissement-prive').style.display = 'none';
   document.getElementById('np-nom-msg').textContent = '';

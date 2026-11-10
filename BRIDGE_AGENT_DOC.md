@@ -744,6 +744,50 @@ comparer `identite.compte_github()`/le compte `gh` connecté à l'organisation/
 utilisateur du remote), ce qui dépasse une petite modification ; laissé en
 l'état, à discuter séparément.
 
+### 8.3 Visibilité par défaut du dépôt créé (issue #879)
+
+Le formulaire « Nouveau projet » propose une case « Dépôt public » (issue
+#528) pour choisir la visibilité du dépôt GitHub s'il doit être créé —
+historiquement **cochée par défaut** (dépôt public), un bon choix pour
+l'installation d'Alain. Sur une copie non-propriétaire de l'outil (§8.2
+ci-dessus, `COPIE_NON_PROPRIETAIRE = oui`), un dépôt public par défaut est en
+revanche risqué : le contenu d'un projet d'un tiers n'a pas à devenir public
+par simple oubli.
+
+**Réglage facultatif**, dans `identite_locale.conf`, qui PRIME sur
+`COPIE_NON_PROPRIETAIRE` dans les deux sens :
+```
+DEPOT_PRIVE_PAR_DEFAUT = oui   # privé par défaut, MÊME SANS COPIE_NON_PROPRIETAIRE
+                                # (ex. Alain, qui voudrait ce choix sur SA
+                                # propre installation)
+DEPOT_PRIVE_PAR_DEFAUT = non   # public par défaut, MÊME AVEC COPIE_NON_PROPRIETAIRE
+# absent (cas normal) : repli sur la règle de §8.2 — public par défaut, SAUF
+# sur une copie non-propriétaire (privé par défaut dans ce seul cas)
+```
+
+**Résolu par `identite.depot_public_par_defaut()`**, lu par
+`app/vues.py::index()` (variable de template `depot_public_par_defaut`,
+consommée par `templates/fragments/modale_nouveau_projet.html` — case
+cochée/décochée et libellé — et par `fragments/scripts.html` →
+`window.DEPOT_PUBLIC_PAR_DEFAUT`, repris par `ouvrirNouveauProjet()`
+dans `static/js/app.js` à chaque ouverture du modal) et par
+`nouveau_projet.creer_projet()` (quand son paramètre `public` est omis —
+la route Flask `POST /nouveau-projet`, elle, transmet toujours un booléen
+explicite reflet de la case).
+
+Le **libellé de la case est adapté à sa valeur par défaut** pour qu'il ne
+contredise jamais son état réel : « Dépôt public (décocher pour un dépôt
+privé) » quand cochée par défaut (comportement historique inchangé) ;
+« Dépôt public (cocher pour un dépôt public ; privé par défaut sur cette
+installation) » quand décochée par défaut — dans ce second cas,
+l'avertissement ⚠ sous la case (permissions GH_TOKEN requises sur un dépôt
+privé) est déjà visible sans action de l'utilisateur. La valeur
+effectivement envoyée au serveur et appliquée à la création (`gh repo
+create --public`/`--private`) suit toujours l'état réel de la case —
+jamais un défaut codé en dur qui l'ignorerait — et le compte-rendu de
+création (étape « Dépôt GitHub ») indique explicitement « créé (public) »
+ou « créé (privé) ».
+
 ---
 
 ## 9. Accès externe
@@ -1150,7 +1194,18 @@ estimation que celle déjà affichée, sans dupliquer ce calcul.
 
 ---
 
-*Dernière mise à jour : 10 novembre 2026 — issue #872, délai de la mise à
+*Dernière mise à jour : 10 novembre 2026 — issue #879, visibilité par défaut
+du dépôt créé par le formulaire « Nouveau projet » (§8.3) : la case « Dépôt
+public » reste cochée par défaut pour l'installation d'Alain, mais est
+désormais **décochée par défaut** sur une copie non-propriétaire de l'outil
+(`COPIE_NON_PROPRIETAIRE`, §8.2) — réglage facultatif `DEPOT_PRIVE_PAR_DEFAUT`
+dans `identite_locale.conf` (`identite.depot_public_par_defaut()`), qui PRIME
+sur `COPIE_NON_PROPRIETAIRE` dans les deux sens. Le libellé de la case est
+adapté à sa valeur par défaut pour ne jamais contredire son état réel ; le
+compte-rendu de création indique explicitement « créé (public) »/« créé
+(privé) ».*
+
+*Mise à jour précédente : 10 novembre 2026 — issue #872, délai de la mise à
 jour automatique du dépôt (#868) adapté au démarrage de session, fin du faux
 « échec » : §8.1, délai par défaut 8 s → 30 s (réglable, `MAJ_AUTO_DEPOT_
 DELAI`), arrêt propre de tout l'arbre de process du `git pull` en cas de
@@ -1160,19 +1215,5 @@ malgré le délai dépassé (annoncée comme une réussite, plus jamais comme un
 nettoyage d'un `index.lock` résiduel UNIQUEMENT si l'arrêt du process qui
 l'a posé est confirmé, et nouvelle tentative automatique après une courte
 pause pour les échecs jugés transitoires (réseau).*
-
-*Mise à jour précédente : 10 novembre 2026 — issue #870, copie de l'outil sur
-un poste seul (suite de #866/#869) : §8.2, correctif du faux message
-d'échec de commit/push de `BRIDGE_AGENT_DOC.md` affiché à tort quand
-`COPIE_NON_PROPRIETAIRE` est actif (`doc_commit_statut` vaut désormais
-`"non_applicable"`, jamais `None`, reconnu par `static/js/app.js`/
-`config.js`) ; §16.1, réglage FACULTATIF `MACHINE_SEULE` dans
-`identite_locale.conf` (désactivé par défaut, comportement STRICTEMENT
-inchangé pour les installations d'Alain) masquant l'onglet « CCW » et la
-case « Projet CCW » sur un poste sans second poste délégué — n'implémente
-PAS le routage des labels for-linux/for-windows (#867, toujours hors
-périmètre). Également : l'encadré de rappel du hook de relecture
-(Relecture_Bridge) ne s'affiche plus que si cet outil est effectivement
-présent sur la machine (`identite.relecture_disponible()`).*
 
 Historique complet : voir [`CHANGELOG.md`](CHANGELOG.md).

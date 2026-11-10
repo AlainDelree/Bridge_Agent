@@ -90,9 +90,14 @@ def creer_nouveau_projet():
         # revalide contre les couleurs encore libres (issue #121) : une valeur
         # vide ou déjà prise retombe sur la première disponible.
         couleur               = data.get("couleur", ""),
-        # Visibilité du dépôt s'il doit être créé (issue #528) ; défaut public,
-        # cohérent avec le comportement historique. Sans effet si le dépôt
-        # existe déjà.
-        public                = bool(data.get("public", True)),
+        # Visibilité du dépôt s'il doit être créé (issue #528) ; reflète la
+        # case cochée ou non côté formulaire (toujours présente dans ce
+        # payload — static/js/app.js::soumettreNouveauProjet). Le défaut
+        # ci-dessous (clé "public" absente du JSON) ne sert qu'en appel
+        # direct de l'API sans ce champ : il suit alors
+        # identite.depot_public_par_defaut() (COPIE_NON_PROPRIETAIRE /
+        # DEPOT_PRIVE_PAR_DEFAUT, issue #879) plutôt qu'un `True` codé en dur
+        # qui l'ignorerait. Sans effet si le dépôt existe déjà.
+        public                = bool(data.get("public", np_cli.identite.depot_public_par_defaut())),
     )
     return jsonify(resultat), (200 if resultat.get("succes") else 400)

@@ -675,6 +675,39 @@ plus d'`onclick=`/`onchange=`/`oninput=` inline.)*
       « Projet CCW » du formulaire de nouveau projet sont masqués ; sans ce
       réglage (défaut, installations d'Alain), les deux restent visibles et
       inchangés.
+- [ ] (issue #879, **comportement par défaut d'Alain — SANS
+      `identite_locale.conf` ni réglage posé**) **inchangé** : ouvrir la
+      modale « Nouveau projet » → la case « Dépôt public » est **cochée**,
+      libellé « Dépôt public (décocher pour un dépôt privé) » ; créer un
+      dépôt neuf sans toucher la case → le compte-rendu affiche bien
+      « … créé (public) », et le dépôt est effectivement public sur GitHub.
+- [ ] (issue #879, `COPIE_NON_PROPRIETAIRE = oui` dans
+      `identite_locale.conf` — **à essayer à la main sur la copie de test
+      Windows seul, comme pour #870**) ouvrir la modale : la case « Dépôt
+      public » est **décochée** par défaut, libellé « Dépôt public (cocher
+      pour un dépôt public ; privé par défaut sur cette installation) », et
+      l'avertissement ⚠ « Dépôt privé : GH_TOKEN doit avoir les permissions
+      nécessaires… » apparaît dès que le dépôt n'existe pas encore, SANS
+      avoir à décocher soi-même. Créer un dépôt neuf sans toucher la case →
+      le compte-rendu affiche « … créé (privé) », dépôt effectivement privé
+      sur GitHub. Cocher la case avant de créer → « … créé (public) », dépôt
+      effectivement public.
+- [ ] (issue #879, `DEPOT_PRIVE_PAR_DEFAUT = oui` dans
+      `identite_locale.conf`, SANS `COPIE_NON_PROPRIETAIRE` — **à essayer
+      sur la machine d'Alain**) même effet que le point précédent (case
+      décochée par défaut, libellé adapté) : ce réglage permet à Alain de
+      choisir le privé par défaut sur SA PROPRE installation, sans dépendre
+      de `COPIE_NON_PROPRIETAIRE`.
+- [ ] (issue #879, `DEPOT_PRIVE_PAR_DEFAUT = non` avec
+      `COPIE_NON_PROPRIETAIRE = oui` — **à essayer sur la copie de test
+      Windows seul**) la case reste **cochée** par défaut malgré
+      `COPIE_NON_PROPRIETAIRE` : ce réglage prime bien dans les deux sens.
+- [ ] (issue #879) **ré-ouvrir la modale plusieurs fois dans la même
+      session** (Fermer puis « + Nouveau projet » de nouveau) sans recharger
+      la page : l'état de la case à l'ouverture suit toujours le réglage
+      d'installation (pas figé à la valeur laissée par la fermeture
+      précédente) — vérifie que `ouvrirNouveauProjet()` relit bien
+      `window.DEPOT_PUBLIC_PAR_DEFAUT` à CHAQUE ouverture.
 
 ## Bandeaux globaux et cycle de vie
 

@@ -17,6 +17,12 @@
   // (TYPES_IMAGE_ACCEPTES). Utilisé comme garde-fou côté client dans
   // joindreImage() — évite de redupliquer la liste en dur dans app.js.
   window.MIMES_IMAGE_ACCEPTES = {{ formats_image.mimes | tojson }};
+  // Case « Dépôt public » du formulaire « Nouveau projet » cochée par
+  // défaut ou non (identite.depot_public_par_defaut(), issue #879) — lu par
+  // ouvrirNouveauProjet() (static/js/app.js) à chaque ouverture du modal, à
+  // la place d'un `true` codé en dur qui ignorait COPIE_NON_PROPRIETAIRE /
+  // DEPOT_PRIVE_PAR_DEFAUT.
+  window.DEPOT_PUBLIC_PAR_DEFAUT = {{ depot_public_par_defaut | tojson }};
 </script>
 <!-- Ancien code : script CLASSIQUE (PAS un module). Ses ~233 fonctions restent
      globales, appelées par les >70 gestionnaires inline du HTML. Versionné

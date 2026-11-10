@@ -140,6 +140,38 @@ def copie_non_proprietaire() -> bool:
     return _lire_identite_locale().get("COPIE_NON_PROPRIETAIRE", "").strip().lower() in VALEURS_VRAIES
 
 
+# Valeurs explicitement "non" pour un réglage booléen à trois états
+# (actif / inactif / absent), où l'absence de la clé a un sens DIFFÉRENT de
+# la valeur "non" explicite — utilisé uniquement par DEPOT_PRIVE_PAR_DEFAUT
+# (issue #879) ci-dessous. COPIE_NON_PROPRIETAIRE/MACHINE_SEULE n'en ont pas
+# besoin : pour eux, absent et "non" se comportent déjà pareil (False).
+VALEURS_FAUSSES = ("false", "0", "non", "no", "faux")
+
+
+def depot_public_par_defaut() -> bool:
+    """True si la case « Dépôt public » du formulaire de nouveau projet doit
+    être COCHÉE par défaut (dépôt créé public sauf décision contraire de
+    l'utilisateur) — issue #879. `DEPOT_PRIVE_PAR_DEFAUT` de
+    `identite_locale.conf` prime sur `copie_non_proprietaire()` ci-dessus,
+    dans les DEUX sens :
+      - DEPOT_PRIVE_PAR_DEFAUT = oui : privé par défaut (renvoie False), même
+        sans COPIE_NON_PROPRIETAIRE — pour qui veut ce choix sur SA PROPRE
+        installation (ex. Alain, sur la sienne).
+      - DEPOT_PRIVE_PAR_DEFAUT = non : public par défaut (renvoie True), même
+        avec COPIE_NON_PROPRIETAIRE actif.
+      - absent (cas normal, aucun des deux réglages ne s'en sert) : repli sur
+        `not copie_non_proprietaire()` — public par défaut comme aujourd'hui,
+        SAUF sur une copie non-propriétaire de l'outil (issue #869, ex. ami
+        sur PC Windows seul) où le contenu d'un projet n'a pas à devenir
+        public par simple oubli : privé par défaut dans ce seul cas."""
+    brut = _lire_identite_locale().get("DEPOT_PRIVE_PAR_DEFAUT", "").strip().lower()
+    if brut in VALEURS_VRAIES:
+        return False
+    if brut in VALEURS_FAUSSES:
+        return True
+    return not copie_non_proprietaire()
+
+
 def relecture_disponible() -> bool:
     """True si l'outil de relecture (`Relecture_Bridge`, issue #578) est
     effectivement présent sur CETTE machine — détection la plus simple et la

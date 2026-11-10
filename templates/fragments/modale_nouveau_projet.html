@@ -23,10 +23,26 @@
       Créer le dépôt s'il n'existe pas encore
     </label>
 
+    <!-- Visibilité du dépôt à créer (issue #528) : cochée par défaut
+         (public) sauf réglage contraire de identite_locale.conf, issue
+         #879 — `depot_public_par_defaut` (app/vues.py::index(), depuis
+         identite.depot_public_par_defaut()) PRIME sur COPIE_NON_PROPRIETAIRE
+         dans les deux sens via DEPOT_PRIVE_PAR_DEFAUT : sans ce réglage,
+         privé par défaut seulement sur une copie non-propriétaire de l'outil
+         (issue #869). Le libellé est adapté à la valeur par défaut pour que
+         le sens de la case ne contredise jamais ce qui est affiché — la
+         valeur initiale ci-dessous n'est qu'un repli avant chargement JS :
+         app.js (ouvrirNouveauProjet) réapplique le même réglage
+         (window.DEPOT_PUBLIC_PAR_DEFAUT, fragments/scripts.html) à chaque
+         ouverture du modal. -->
     <label id="np-public-ligne"
            style="display:none;font-size:13px;color:#333;margin-bottom:4px">
-      <input type="checkbox" id="np-public" checked onchange="npMajAvertissementPrive()">
+      <input type="checkbox" id="np-public" {% if depot_public_par_defaut %}checked{% endif %} onchange="npMajAvertissementPrive()">
+      {% if depot_public_par_defaut %}
       Dépôt public (décocher pour un dépôt privé)
+      {% else %}
+      Dépôt public (cocher pour un dépôt public ; privé par défaut sur cette installation)
+      {% endif %}
     </label>
     <div id="np-avertissement-prive"
          style="display:none;font-size:12px;color:#8a6d00;margin:0 0 12px 24px">
