@@ -33,6 +33,10 @@ import { api } from './socle/api.js';
 import { toasts } from './socle/toasts.js';
 import { appelerAncien } from './socle/pont.js';
 import * as persistance from './socle/persistance.js';
+import { sse } from './socle/sse.js';
+import {
+  diagnostiquer, rejouerFileEnAttente, diagnosticActif, ligneRedessineeRecemment,
+} from './socle/diagnostic_copie.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 1. LOGIQUE PURE (testée sous Node — voir static/js/tests/resultats_coches.test.js)
@@ -447,7 +451,7 @@ function basculer(event, projet, numero) {
   //    défaut est resté invisible deux mois tant que la reconnaissance des
   //    numéros de commit (#784) était cassée, texteAll ne trouvant alors jamais
   //    de diff à ajouter.
-  if (coche) lancerCopie(projet, numero, texteReponse, feedbackToast());
+  if (coche) lancerCopie(projet, numero, texteReponse, feedbackToastAvecDiagnostic(projet, numero, ligne, cb));
 
   // 2) Mise à jour optimiste : store + grisage + pastilles.
   const avant = etatCases();
@@ -1505,6 +1509,93 @@ function feedbackToast() {
   };
 }
 
+// ─── Journal de diagnostic de la copie (issue #878) ──────────────────────────
+// Contexte commun aux deux points d'observation ci-dessous (watchdog
+// mousedown/change ET résultat de l'écriture) — DÉSACTIVÉ PAR DÉFAUT, voir
+// static/js/socle/diagnostic_copie.js pour l'activation et le détail des
+// champs. `element` : le nœud DOM dont on veut savoir s'il est resté attaché
+// (document.contains), typiquement la case cliquée elle-même.
+function contexteDiagnosticCopie(projet, numero, ligne, element) {
+  const redessineeA = ligne ? Number(ligne.dataset.redessineeA) : NaN;
+  return {
+    date: new Date().toISOString(),
+    navigateur: (typeof navigator !== 'undefined' && navigator.userAgent)
+      ? detecterNavigateur(navigator.userAgent) : undefined,
+    projet,
+    numero: normaliserNumero(numero),
+    depuisDernierEvenementSseMs: sse.stream.depuisDerniereActiviteMs(),
+    etatSse: sse.stream.etat(),
+    elementDansDocument: element
+      ? (typeof document !== 'undefined' ? document.contains(element) : undefined)
+      : undefined,
+    ligneRedessineeRecemment: ligneRedessineeRecemment(redessineeA, Date.now()),
+  };
+}
+
+// Enveloppe feedbackToast() pour que le résultat RÉEL de l'écriture (succès,
+// vide, échec, non prêt — jamais un faux succès, même contrat que le reste
+// du moteur de copie) alimente aussi le journal de diagnostic, SANS changer
+// aucun des toasts existants ni leur ordre d'appel (un seul appel
+// supplémentaire AVANT de déléguer à l'original). NO-OP transparent si le
+// journal est désactivé (diagnostiquer() ne fait rien dans ce cas).
+function feedbackToastAvecDiagnostic(projet, numero, ligne, cb) {
+  const original = feedbackToast();
+  if (!diagnosticActif()) return original;
+  const ctx = (resultat) => ({ ...contexteDiagnosticCopie(projet, numero, ligne, cb), etape: 'ecriture', resultat });
+  return {
+    succes: () => { diagnostiquer(ctx('succes')); original.succes(); },
+    fichier: (message) => { diagnostiquer(ctx('fichier_telecharge')); original.fichier(message); },
+    echec: (e, texte, detail, messagePrincipal) => {
+      diagnostiquer(ctx('echec'));
+      original.echec(e, texte, detail, messagePrincipal);
+    },
+    vide: () => { diagnostiquer(ctx('vide')); original.vide(); },
+    nonPret: () => { diagnostiquer(ctx('non_pret')); original.nonPret(); },
+  };
+}
+
+// Délai au-delà duquel, faute du `change` attendu après un `mousedown` sur la
+// case, on considère le clic comme resté SANS EFFET (issue #878) — assez
+// court pour ne retarder qu'un simple log, assez long pour ne jamais se
+// déclencher sur un clic normal (y compris une préparation lente : le mode
+// moderne engage l'écriture AU CLIC depuis #858, `change` fire donc toujours
+// quasi immédiatement, que le rapport soit déjà prêt ou pas).
+export const DELAI_ATTENTE_CHANGE_MS = 1500;
+
+// Surveille, en DÉLÉGATION sur `document` (jamais remplacé, contrairement aux
+// lignes — issue #878), chaque `mousedown` sur une case de copie : si le
+// `change` attendu ne suit pas dans DELAI_ATTENTE_CHANGE_MS, le clic a été
+// perdu (nœud détruit entre le `mousedown` et le `click`/`change` — voir
+// static/js/app.js::coucheResultatEnInteraction pour le mécanisme). NO-OP si
+// le journal est désactivé (pas de minuteur posé du tout).
+function surMousedownCoucheCopie(event) {
+  if (!diagnosticActif()) return;
+  const cb = event && event.target && event.target.closest
+    ? event.target.closest('.coche-resultat') : null;
+  if (!cb) return;
+  const ligne = cb.closest ? cb.closest('.ligne-issue') : null;
+  const projet = ligne && ligne.dataset.projet;
+  const numero = ligne && ligne.dataset.numero;
+  let conclu = false;
+  const surChange = () => {
+    if (conclu) return;
+    conclu = true;
+    clearTimeout(minuteur);
+    diagnostiquer({ ...contexteDiagnosticCopie(projet, numero, ligne, cb), etape: 'change', resultat: 'declenche' });
+  };
+  cb.addEventListener('change', surChange, { once: true });
+  const minuteur = setTimeout(() => {
+    if (conclu) return;
+    conclu = true;
+    cb.removeEventListener('change', surChange);
+    diagnostiquer({
+      ...contexteDiagnosticCopie(projet, numero, ligne, cb),
+      etape: 'change',
+      resultat: 'aucun_changement_detecte',
+    });
+  }, DELAI_ATTENTE_CHANGE_MS);
+}
+
 // Badge de liste (✅/Diff/All) : ✓ bref sur succès, ⚠/∅ sur vide/aucun, toast sur échec.
 // `fichier` (issue #790, boutons Diff/All au-delà du seuil de lignes) : ⬇ bref
 // sur le badge + toast persistant détaillant le fichier téléchargé.
@@ -1569,6 +1660,15 @@ async function initialiser() {
     document.addEventListener('visibilitychange', () => {
       if (!document.hidden) { precharderVisibles(); majReperesVisibles(); }
     });
+  }
+  // 7) Journal de diagnostic de la copie (issue #878), DÉSACTIVÉ PAR DÉFAUT —
+  // voir static/js/socle/diagnostic_copie.js. Rejoue la file en attente d'une
+  // session précédente (serveur injoignable au moment du clic) et pose, en
+  // délégation sur `document` (jamais remplacé), le watchdog mousedown/change
+  // qui détecte un clic resté sans effet (surMousedownCoucheCopie ci-dessus).
+  rejouerFileEnAttente();
+  if (typeof document !== 'undefined' && document.addEventListener) {
+    document.addEventListener('mousedown', surMousedownCoucheCopie);
   }
 }
 

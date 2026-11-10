@@ -23,6 +23,12 @@
   // la place d'un `true` codé en dur qui ignorait COPIE_NON_PROPRIETAIRE /
   // DEPOT_PRIVE_PAR_DEFAUT.
   window.DEPOT_PUBLIC_PAR_DEFAUT = {{ depot_public_par_defaut | tojson }};
+
+  // Journal de diagnostic de la copie presse-papier (issue #878), désactivé
+  // par défaut — réglage DIAGNOSTIC_COPIE de identite_locale.conf (PAS un
+  // réglage navigateur : doit survivre aux rechargements, changements de
+  // navigateur, fermetures d'onglet). Voir static/js/socle/diagnostic_copie.js.
+  window.DIAGNOSTIC_COPIE = {{ diagnostic_copie | tojson }};
 </script>
 <!-- Ancien code : script CLASSIQUE (PAS un module). Ses ~233 fonctions restent
      globales, appelées par les >70 gestionnaires inline du HTML. Versionné

@@ -308,6 +308,79 @@
       précharge, issue #835 point 4), une série de préparation apparaît à
       l'**heure de la clôture** de l'issue — pas seulement à l'heure du retour
       sur l'onglet.
+- [ ] **Clic sans effet juste après la fin d'une issue, en plein redessin de
+      sa ligne (issue #878, situation 1)** : CAUSE établie par relecture du
+      code — `remplacerLigneIssue` (déclenchée par l'événement `/stream`
+      `fin_issue`) détruisait et reconstruisait intégralement le nœud DOM de
+      la ligne (donc de sa case), **sans aucune garde**, contrairement à
+      `restaurerCasesCocheesResultats` qui protège déjà (issues #462/#463) la
+      case sur laquelle l'utilisateur est **en train d'agir** (focus posé par
+      le navigateur au `mousedown`, avant `click`/`change`). Corrigé en
+      étendant cette même garde : la reconstruction est désormais **différée**
+      au `focusout` de la case plutôt qu'exécutée en plein geste. **Prouvé
+      sous Node** (`static/js/tests/app_redessin_878.test.js`) que la ligne
+      n'est plus détruite tant que sa case a le focus, et qu'elle est bien
+      reconstruite une fois le focus parti — **NON prouvable sous Node** (pas
+      de vrai moteur d'événements souris) : que Firefox livre réellement
+      `click`/`change` à la case d'une ligne qui vient d'être redessinée
+      JUSTE AVANT le `mousedown` (ce correctif ne protège QUE la fenêtre
+      après le `mousedown` — avant, remplacer la ligne est sans risque, la
+      nouvelle case reçoit alors normalement le geste).
+      **Essai précis** : lancer une issue dont on sait qu'elle va se
+      terminer dans les secondes qui suivent (ex. une issue `rapide` déjà en
+      cours côté watcher), rester sur l'onglet Résultats, et cliquer **le
+      plus vite possible** sur la case de cette issue dès qu'elle passe à
+      l'état fermé/terminé (répéter l'essai une dizaine de fois, en visant
+      des instants de clic légèrement différents par rapport au moment du
+      redessin). Résultat attendu à chaque fois : soit le clic copie bien le
+      rapport (toast de succès, presse-papier à jour), soit — si le clic est
+      arrivé sur l'ANCIENNE case juste avant son remplacement — la case
+      reste décochée et un second clic, immédiatement après, aboutit
+      normalement. **Jamais** un clic qui ne coche ni ne copie SANS qu'un
+      second clic immédiat ne corrige la situation.
+- [ ] **Clic sans effet au premier retour sur l'onglet après une longue
+      inactivité (issue #878, situation 2)** : CAUSE établie par relecture du
+      code — un retour au premier plan après ≥30 s de masquage
+      (`SEUIL_RESYNC_MASQUAGE_MS`, static/js/resultats.js) OU une
+      reconnexion du flux `/stream` après coupure déclenchent tous deux
+      `resynchroniserResultatsAuRetour` → `rendreListeIssues`, qui
+      reconstruisait **toute** la liste (donc **toutes** les cases) sans
+      aucune garde. Même correctif que la situation 1, appliqué cette fois à
+      la liste entière : la reconstruction complète est différée tant qu'une
+      case a le focus. **Essai précis** : ouvrir l'onglet Résultats dans
+      **Firefox**, puis basculer sur un **autre onglet/une autre fenêtre**
+      et y rester **plus de 30 secondes** (le plus simple : plusieurs
+      minutes, pour laisser aussi le temps à une éventuelle coupure/
+      reconnexion du flux `/stream` en arrière-plan). Revenir sur l'onglet
+      Bridge Agent et cliquer **IMMÉDIATEMENT**, sans attendre, sur la case
+      de la première issue visible. Résultat attendu : le clic coche et
+      copie normalement (toast de succès) — si un premier clic reste sans
+      effet (case non cochée, pas de toast), un second clic immédiatement
+      après doit, lui, aboutir.
+      **Si `DIAGNOSTIC_COPIE` est activé** (voir ci-dessous) : relever, pour
+      chacun des deux essais, la ou les lignes `logs/diagnostic_copie.log`
+      correspondant aux clics faits — en particulier `etatSse`,
+      `depuisDernierEvenementSse` et `ligneRedessineeRecemment` — et les
+      joindre à un commentaire sur l'issue si un clic reste malgré tout sans
+      effet après ce correctif.
+      **Activer le journal de diagnostic (issue #878)** : ajouter
+      `DIAGNOSTIC_COPIE = oui` dans `identite_locale.conf` (racine du
+      dépôt, créer le fichier s'il n'existe pas — voir `identite.py` pour le
+      format), puis relancer `python3 new_issue.py`. DÉSACTIVÉ PAR DÉFAUT :
+      sans ce réglage, aucun fichier n'est créé et rien n'est envoyé au
+      serveur. Une fois activé, chaque clic sur une case de copie écrit une
+      ligne dans **`logs/diagnostic_copie.log`** (gitignoré, taille bornée
+      avec rotation) ET dans la **console du navigateur** (F12, préfixe
+      `[diagnostic-copie]`) — champs à relever en priorité : `etatSse`
+      (connexion du flux /stream au moment du clic), `depuisDernierEvenementSse`
+      (silence du flux avant le clic), `elementDansDocument` (la case
+      cliquée existait-elle encore), `ligneRedessineeRecemment` (la ligne
+      vient-elle d'être reconstruite) et `resultat` (succès/vide/échec/non
+      prêt, ou `aucun_changement_detecte` si le `change` attendu n'a jamais
+      été livré — exactement le symptôme de cette issue). Si le serveur est
+      injoignable au moment du clic, la ligne n'est PAS perdue : elle reste
+      en file (`localStorage`) et est réenvoyée au chargement suivant de la
+      page.
 - [ ] **Pastilles ↔ « Cocher tout »** (issue #636) : avec plusieurs projets
       chargés, cliquer **« ✓ Cocher tout »** → **aucune pastille des projets
       actifs (filtrés) ne reste** (même après une longue coupure). Le périmètre

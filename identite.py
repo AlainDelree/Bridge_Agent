@@ -204,3 +204,29 @@ def machine_seule() -> bool:
     deux documents (issue #867) reste hors périmètre — ce réglage ne
     l'implémente PAS, il ne fait que masquer ces deux éléments d'interface."""
     return _lire_identite_locale().get("MACHINE_SEULE", "").strip().lower() in VALEURS_VRAIES
+
+
+def diagnostic_copie() -> bool:
+    """True si `identite_locale.conf` active le journal de diagnostic durable
+    de la copie presse-papier de l'onglet Résultats (`DIAGNOSTIC_COPIE = oui`,
+    issue #878) — toute autre valeur, ou absence de la clé, renvoie False :
+    DÉSACTIVÉ PAR DÉFAUT, comportement inchangé tant que ce réglage n'est pas
+    posé.
+
+    Enquête sur des clics « sans effet » sur la case à cocher de copie,
+    intermittents, juste après un redessin de ligne (fin d'issue en direct)
+    ou après une longue inactivité de l'onglet (reconnexion du flux /stream).
+    Lu UNE SEULE FOIS au démarrage du serveur (app/vues.py::index), transmis à
+    la page via `window.DIAGNOSTIC_COPIE` (templates/fragments/scripts.html)
+    — PAS un réglage côté navigateur (localStorage) : il doit survivre aux
+    rechargements, aux changements de navigateur et aux fermetures d'onglet,
+    ce qu'un réglage par onglet ne permettrait pas.
+
+    Pour l'activer : ajouter `DIAGNOSTIC_COPIE = oui` dans
+    `identite_locale.conf` (racine du dépôt) puis relancer `new_issue.py`.
+    Journal écrit par `app/diagnostic_copie.py` dans
+    `logs/diagnostic_copie.log` (gitignoré, taille bornée avec rotation) —
+    une ligne par clic sur une case de copie, voir ce module et
+    `static/js/socle/diagnostic_copie.js` pour le détail des champs et
+    `VERIFICATIONS_MANUELLES.md` (section issue #878) pour quoi y relever."""
+    return _lire_identite_locale().get("DIAGNOSTIC_COPIE", "").strip().lower() in VALEURS_VRAIES

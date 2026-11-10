@@ -22,4 +22,5 @@ def index():
                            maj_auto_depot=etat.get("MAJ_AUTO_DEPOT"),
                            agent_par_defaut=AGENT_PAR_DEFAUT,
                            machine_seule=identite.machine_seule(),
-                           depot_public_par_defaut=identite.depot_public_par_defaut())
+                           depot_public_par_defaut=identite.depot_public_par_defaut(),
+                           diagnostic_copie=identite.diagnostic_copie())
