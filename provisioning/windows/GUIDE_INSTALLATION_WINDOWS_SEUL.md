@@ -190,6 +190,31 @@ Avant l'installation réelle : arrêter l'interface si elle tourne dans une autr
 
 À savoir : la bulle de bureau et le son ne fonctionnent que dans la session de l'utilisateur (établi) ; le mode service en option ne les affiche pas.
 
+**Piège constaté — deux issues GitHub créées pour un seul fichier déposé
+(issue #881), corrigé.** Essai réel : `logs\issues_inbox.log` montrait deux
+lignes `OK` à la même seconde pour un même fichier (une seule mentionnant
+« watcher CCL démarré »), et la liste des process montrait bien deux
+`watcher_issues_inbox.py` — l'un descendant de la tâche planifiée
+`IssuesInbox` (démarrée `-DelaiDemarrageWatchersSec` après l'ouverture de
+session), l'autre ayant pour parent `new_issue.py` lui-même, relancé entre
+temps par sa propre tâche de session et qui a cru, à tort, qu'aucune
+instance ne tournait déjà. Cause établie par lecture du code : `logs\
+watcher-issues_inbox.pid` — le seul fichier consulté côté interface web pour
+savoir si le watcher spool est déjà actif — n'était écrit QUE quand le
+lancement passait par le bouton/l'auto-démarrage de `new_issue.py`, jamais
+par le script lui-même ; un lancement direct par la tâche planifiée (comme
+ici) ne le renseignait donc jamais. Corrigé depuis par deux mécanismes
+indépendants dans `scripts\watcher_issues_inbox.py` : (1) un verrou système
+posé au tout premier geste du script et tenu pendant toute sa durée de vie
+— un second lancement, quel qu'en soit le déclencheur, s'arrête
+immédiatement et proprement, sans rien traiter ; (2) une réclamation
+atomique du fichier avant tout traitement, qui garantit qu'un seul
+exemplaire de l'issue est créé même si, par accident, deux instances
+tournaient malgré tout. **À revérifier en vrai sur Windows** (essai
+volontaire décrit dans `DEMARRAGE_SESSION_WINDOWS.md` §8, point 20) — non
+testable depuis l'environnement Linux de l'agent qui a fait la correction,
+sinon par deux vrais process Linux séparés (vérifié).
+
 **Plusieurs comptes Windows sur le même PC (issue #877).** Un nom de tâche planifiée est unique pour toute la machine, pas par compte — avec deux comptes (ou plusieurs essais d'installation successifs), le second enregistrement échouait auparavant avec `Access is denied` (`0x80070005`) sur une tâche déjà créée par le premier compte, et l'installeur s'arrêtait net sans toucher aux autres composants demandés (constaté en essai réel, voir §13). Chaque nom de tâche/service inclut désormais le compte (`BridgeAgent-Session-<compte>-<Id>`) : détail du nommage, de la transition automatique depuis l'ancien nom et des messages d'erreur dans `DEMARRAGE_SESSION_WINDOWS.md` §4 bis ; **à revérifier en vrai sur Windows avec deux comptes**, non testable depuis l'environnement Linux de l'agent qui a fait la correction.
 
 ## 10. Travailler au quotidien
