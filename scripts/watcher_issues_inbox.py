@@ -105,7 +105,8 @@ from watcher import (charger_config, lire_conf, est_titre_chef,  # noqa: E402
                      LABEL_SANS_REDACTEUR,  # (issue #647)
                      LABEL_SANS_COMPLEXITE, complexite_reconnue,  # (issue #844)
                      PLANCHER_TIMEOUT_ECRITURE,  # (issue #752)
-                     valider_sous_dossier, valider_repo_cible)  # noqa: E402 (issue #567)
+                     valider_sous_dossier, valider_repo_cible,  # noqa: E402 (issue #567)
+                     forcer_utf8)  # (issue #698, étendue #875)
 from app.watchers import redemarrer_si_eteint  # noqa: E402 (issue #486, #600)
 from app.ccw import demarrer_service_ccw_arriere_plan  # noqa: E402 (issue #711, étape D — déjà
 # importé transitivement via app.interruption ci-dessous ; direct ici pour la lisibilité.
@@ -1882,6 +1883,15 @@ def traiter_dossier(cfg: ConfigInbox) -> None:
 # ─── Boucle principale ──────────────────────────────────────────────────────
 
 def configurer_logs() -> None:
+    # Ce watcher n'écrit QUE sur stdout (pas de fichier applicatif propre,
+    # voir en-tête du module) — sous le superviseur de session Windows
+    # (surveiller_processus_session.ps1), ce stdout est redirigé vers
+    # watcher_issues_inbox-session.log. Sans ce forçage, une ligne de log
+    # contenant une flèche/un symbole (ex. "Créée : ... → ..." plus bas, ou
+    # "⏻ Auto-extinction") fait planter StreamHandler.emit() avec une
+    # UnicodeEncodeError dès la console cp1252 par défaut de Windows (issue
+    # #875, même famille que #698 pour watcher.py). Inoffensif sous Linux.
+    forcer_utf8(sys.stdout)
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s [%(levelname)s] %(message)s",

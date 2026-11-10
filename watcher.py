@@ -778,7 +778,7 @@ class JournalRotatifDate(RotatingFileHandler):
                 pass
 
 
-def _forcer_utf8(flux):
+def forcer_utf8(flux):
     """Reconfigure un flux texte (stdout/stderr) en UTF-8 si possible.
 
     Sous Windows la console encode par défaut en cp1252 : les messages de log
@@ -787,7 +787,16 @@ def _forcer_utf8(flux):
     stdout est repris par NSSM). reconfigure() existe depuis Python 3.7 ; on le
     garde défensif (getattr) car certains flux redirigés ne l'exposent pas.
     Sous Linux, stdout est déjà en UTF-8 : l'appel est inoffensif (pas de
-    régression)."""
+    régression).
+
+    Fonction PUBLIQUE (issue #698, étendue #875) : réutilisée telle quelle par
+    new_issue.py et scripts/watcher_issues_inbox.py — mêmes symptômes
+    (UnicodeEncodeError sur un print()/log destiné à un stdout redirigé vers
+    un fichier sous le superviseur de session Windows, provisioning/windows/
+    surveiller_processus_session.ps1) que le cas CCW/NSSM traité ici à
+    l'origine. errors="replace" : un caractère malgré tout non encodable
+    (cas limite, improbable une fois le flux en UTF-8) devient '?' plutôt que
+    de faire planter l'appelant — jamais d'exception remontée."""
     reconfigure = getattr(flux, "reconfigure", None)
     if reconfigure is not None:
         try:
@@ -804,8 +813,8 @@ def configurer_logs(cfg: Config):
     # encoding="utf-8" à sa construction. Pas de StreamHandler ici (#698) :
     # il ferait doublon avec le FileHandler puisque stdout/stderr sont déjà
     # redirigés vers cfg.fichier_log par le process parent.
-    _forcer_utf8(sys.stdout)
-    _forcer_utf8(sys.stderr)
+    forcer_utf8(sys.stdout)
+    forcer_utf8(sys.stderr)
     handler_fichier = JournalRotatifDate(
         cfg.fichier_log,
         maxBytes=cfg.log_taille_max_mo * 1024 * 1024,

@@ -51,6 +51,43 @@
   tant que ce tampon interne ne se vide pas de lui-même. Sans effet sur
   un -Commande qui n'est pas Python.
 
+  $env:PYTHONUTF8=1 + $env:PYTHONIOENCODING=utf-8 (issue #875) : posés aux
+  côtés de PYTHONUNBUFFERED ci-dessus. Sans eux, la sortie Python redirigée
+  retombe sur l'encodage de la console Windows (cp1252), qui plante sur un
+  caractère absent de cp1252 (UnicodeEncodeError — un print() contenant une
+  flèche « → » arrêtait ainsi new_issue.py à CHAQUE mise à jour automatique
+  réussie du dépôt) et mutile les accents qu'il sait écrire (octets cp1252
+  mal relus comme de l'UTF-8 par Purger-SortieVersJournal plus bas,
+  « Mise à jour » → « Mise ? jour »). En second rempart, new_issue.py,
+  watcher.py et scripts/watcher_issues_inbox.py reconfigurent eux-mêmes
+  leur sortie en UTF-8 dès leur démarrage (watcher.forcer_utf8) : un
+  caractère malgré tout non encodable n'arrête donc plus jamais ces
+  programmes, même sans ces variables.
+
+  $env:BRIDGE_SOUS_SUPERVISEUR_SESSION=1 (issue #875) : indique à
+  new_issue.py qu'il tourne sous CE superviseur, pour qu'il filtre de son
+  propre journal d'accès werkzeug les requêtes répétitives (/heartbeat,
+  fichiers statiques) qui, sinon, grossissent -FichierJournal sans fin.
+  Sans effet sous Linux ni pour lancer_new_issue.sh (qui ne posent jamais
+  cette variable).
+
+  -FichierJournal est lui-même soumis à une rotation par taille (voir
+  Roter-JournalSiNecessaire, $TailleMaxJournalMo/$NbArchivesJournal —
+  issue #875) : au-delà du seuil, décalé en .1/.2/…, les plus anciens
+  supprimés — nécessaire depuis que la sortie y est recopiée EN CONTINU
+  (#871 ci-dessus) plutôt qu'une seule fois à l'arrêt.
+
+  Code de sortie du process surveillé (issue #875) : lu via $proc.ExitCode
+  juste après la boucle d'attente ci-dessous, dans son propre try/catch —
+  une exception à CE point précis (code de sortie illisible, PAS un échec
+  de lancement) est distinguée explicitement ($codeLisible = $false,
+  message « illisible » dans le journal) plutôt que de se confondre avec
+  un [ERREUR] lancement impossible. $proc.Handle est lu une fois, juste
+  après Start-Process -PassThru (effet de bord voulu, valeur ignorée) :
+  sans cet « attachement » précoce, .ExitCode peut lever une exception
+  une fois le process déjà terminé (comportement documenté de
+  System.Diagnostics.Process).
+
   -DelaiDemarrageSec (défaut 0, voir installer_demarrage_session.ps1
   -DelaiDemarrageWatchersSec) : attente, UNE SEULE FOIS avant le tout
   premier lancement (jamais répétée aux redémarrages suivants — ceux-ci
@@ -101,17 +138,96 @@ $ErrorActionPreference = 'Stop'
 # Sans effet sur un -Commande qui n'est pas Python — voir en-tête.
 $env:PYTHONUNBUFFERED = '1'
 
+# PYTHONUTF8 + PYTHONIOENCODING (issue #875) : la console Windows encode par
+# défaut en cp1252. Dès que la sortie d'un programme Python est redirigée
+# (ici vers un fichier temporaire, -RedirectStandardOutput/Error), Python
+# garde cet encodage cp1252 — un print() contenant un caractère absent de
+# cp1252 (ex. la flèche « → » du message de mise à jour automatique du dépôt
+# de new_issue.py) lève alors UnicodeEncodeError et ARRÊTE le programme en
+# plein affichage. Pire : les caractères accentués QUE cp1252 sait écrire
+# (é, è…) produisent des octets cp1252 recopiés tels quels dans
+# -FichierJournal, puis mal relus (StreamReader détecte l'absence de BOM et
+# retombe sur de l'UTF-8 par défaut — voir Purger-SortieVersJournal) :
+# « Mise à jour » devient « Mise ? jour ». PYTHONUTF8=1 force Python à
+# utiliser l'UTF-8 pour tous ses flux (mode PEP 540, indépendant de la
+# console) ; PYTHONIOENCODING=utf-8 le confirme explicitement pour
+# stdout/stderr (ceinture et bretelles, au cas où -Commande n'est pas la
+# même version de Python que celle qui a défini le défaut UTF8 mode). Une
+# fois la sortie réellement en UTF-8 (sans BOM, comme l'écrit nativement
+# l'encodeur "utf-8" de Python), elle est ensuite relue correctement par le
+# StreamReader par défaut ci-dessous (même repli UTF-8 sans BOM). Sans effet
+# sur un -Commande qui n'est pas Python.
+$env:PYTHONUTF8 = '1'
+$env:PYTHONIOENCODING = 'utf-8'
+
+# Repli DÉFENSIF en sus de PYTHONUTF8/PYTHONIOENCODING ci-dessus (issue
+# #875) : new_issue.py, watcher.py et scripts/watcher_issues_inbox.py
+# reconfigurent eux-mêmes sys.stdout/sys.stderr en UTF-8 avec
+# errors="replace" dès leur démarrage (voir watcher.forcer_utf8, issue
+# #698) — un caractère malgré tout non encodable ne doit donc JAMAIS arrêter
+# ces programmes, même si les variables ci-dessus étaient absentes
+# (lancement manuel hors de ce superviseur, par exemple).
+
+# Indique à new_issue.py qu'il tourne sous CE superviseur (issue #875, point
+# 3) : l'interface filtre alors de son propre journal d'accès werkzeug les
+# requêtes répétitives (/heartbeat sondé en continu par le navigateur,
+# fichiers statiques) avant qu'elles ne grossissent -FichierJournal — sans
+# effet sous Linux ni pour lancer_new_issue.sh, qui ne posent jamais cette
+# variable.
+$env:BRIDGE_SOUS_SUPERVISEUR_SESSION = '1'
+
 # Intervalle de purge de la sortie/erreur du process surveillé vers
 # -FichierJournal PENDANT qu'il tourne encore (voir Purger-SortieVersJournal
 # et la boucle principale plus bas) — pas un réglage fin, juste un filet de
 # sécurité contre la perte totale d'un arrêt brutal (issue #871).
 $IntervalleJournalMs = 2000
 
+# Rotation par taille de -FichierJournal (issue #875, point 4) : depuis que
+# la sortie du process surveillé y est recopiée EN CONTINU (#871), ce journal
+# grossit sans fin — en particulier celui de l'interface web, où chaque
+# requête HTTP (dont /heartbeat, sondé par le navigateur toutes les quelques
+# secondes) ajoute une ligne. Mêmes grandeurs que watcher.py::JournalRotatif
+# Date côté défaut (LOG_TAILLE_MAX_MO=1, LOG_ARCHIVES=5), légèrement
+# assoupli ici (2 Mo) car ce journal n'est qu'une COPIE brute de texte
+# (aucune structure à préserver) — voir Roter-JournalSiNecessaire plus bas.
+# Pas des paramètres du script : comme $IntervalleJournalMs, un simple filet
+# de sécurité, pas un réglage que l'appelant ait besoin d'ajuster.
+$TailleMaxJournalMo = 2
+$NbArchivesJournal = 3
+
 $CodesArret = $CodesSansRedemarrage -split ',' | ForEach-Object { [int]$_.Trim() }
 
 function Horodate { (Get-Date).ToString('yyyy-MM-dd HH:mm:ss') }
 
+# Rotation par taille de -FichierJournal (voir $TailleMaxJournalMo/
+# $NbArchivesJournal en tête de script) : décale .1 -> .2 … -> $NbArchives
+# Journal (supprimée), puis le fichier actif -> .1. Appelée en tête des deux
+# seules fonctions qui écrivent dans -FichierJournal (Ecrire-Journal et
+# Purger-SortieVersJournal), donc avant CHAQUE écriture — Get-Item sur un
+# simple chemin est peu coûteux face à l'intervalle de purge (2 s). Toute
+# exception (verrou transitoire) est avalée : au pire la rotation suivante
+# rattrape, jamais une interruption du superviseur pour ce seul confort.
+function Roter-JournalSiNecessaire {
+    try {
+        if (-not (Test-Path $FichierJournal)) { return }
+        if ((Get-Item $FichierJournal).Length -lt ($TailleMaxJournalMo * 1MB)) { return }
+        for ($i = $NbArchivesJournal; $i -ge 1; $i--) {
+            $cible = "$FichierJournal.$i"
+            if ($i -eq $NbArchivesJournal) {
+                Remove-Item -Path $cible -Force -ErrorAction SilentlyContinue
+            }
+            $source = if ($i -eq 1) { $FichierJournal } else { "$FichierJournal.$($i - 1)" }
+            if (Test-Path $source) {
+                Move-Item -Path $source -Destination $cible -Force -ErrorAction SilentlyContinue
+            }
+        }
+    } catch {
+        # Avalée volontairement — voir le commentaire ci-dessus.
+    }
+}
+
 function Ecrire-Journal([string]$Texte) {
+    Roter-JournalSiNecessaire
     Add-Content -Path $FichierJournal -Value $Texte -Encoding UTF8
 }
 
@@ -146,6 +262,7 @@ function Purger-SortieVersJournal([string]$CheminTemp, [ref]$Position) {
             $texte = $lecteur.ReadToEnd()
             $Position.Value = $flux.Position
             if ($texte) {
+                Roter-JournalSiNecessaire
                 Add-Content -Path $FichierJournal -Value $texte -Encoding UTF8 -NoNewline
             }
         } finally {
@@ -202,11 +319,29 @@ while ($true) {
     # de session : exactement l'arrêt inattendu SANS redémarrage que ce
     # script existe pour éviter.
     $code = -1
+    # Distinct de $code = -1 ci-dessus : -1 signifie « jamais démarré » (donc
+    # jamais arrivé jusqu'à l'essai de lecture du code ci-dessous), alors que
+    # $codeLisible = $false signifie « démarré, terminé, mais son code de
+    # sortie n'a pas pu être lu » (issue #875, point 2) — deux causes
+    # distinctes, deux messages distincts plus bas.
+    $codeLisible = $true
     try {
         try {
             $proc = Start-Process -FilePath $Commande -ArgumentList $ArgsEnfant `
                 -WorkingDirectory $RepTravail -NoNewWindow -PassThru `
                 -RedirectStandardOutput $tmpOut -RedirectStandardError $tmpErr
+
+            # Force .NET à ouvrir un handle natif du process (PROCESS_QUERY_
+            # INFORMATION) DÈS MAINTENANT, pendant qu'il est garanti vivant —
+            # hypothèse de l'issue #875 point 2, confirmée en relecture :
+            # sans lire .Handle une première fois juste après Start-Process,
+            # la propriété .ExitCode lue plus bas (une fois le process déjà
+            # terminé) peut lever "Process has not exited, or the Handle
+            # attribute has not been set" — contournement documenté de ce
+            # comportement de System.Diagnostics.Process. La valeur elle-même
+            # ($null ici) ne sert à rien, seul l'EFFET DE BORD (ouverture du
+            # handle) compte.
+            $null = $proc.Handle
 
             if ($FichierPid) { Set-Content -Path $FichierPid -Value $proc.Id -Encoding ASCII }
 
@@ -220,7 +355,18 @@ while ($true) {
                 Purger-SortieVersJournal $tmpErr ([ref]$positionErr)
                 $proc.WaitForExit($IntervalleJournalMs) | Out-Null
             }
-            $code = $proc.ExitCode
+            # Lecture du code de sortie isolée dans son PROPRE try/catch
+            # (issue #875, point 2) : si .Handle ci-dessus ne suffisait pas à
+            # garantir sa lisibilité (cas limite non exclu), cette exception
+            # ne doit pas être confondue avec un échec de LANCEMENT (catch
+            # externe, message "lancement impossible" — le process, lui, a
+            # bel et bien démarré et tourné).
+            try {
+                $code = $proc.ExitCode
+            } catch {
+                $codeLisible = $false
+                Ecrire-Journal "$(Horodate) [ERREUR] code de sortie illisible : $($_.Exception.Message)"
+            }
         } catch {
             Ecrire-Journal "$(Horodate) [ERREUR] lancement impossible : $($_.Exception.Message)"
         }
@@ -237,13 +383,17 @@ while ($true) {
         }
     }
 
-    Ecrire-Journal "$(Horodate) [ARRET] code de sortie : $code"
+    # Texte affiché dans les deux messages ci-dessous (issue #875, point 2) :
+    # le code lui-même s'il a pu être lu, sinon « illisible » — jamais une
+    # ligne vide, contrairement au symptôme constaté lors de l'essai réel.
+    $texteCode = if ($codeLisible) { "$code" } else { 'illisible' }
+    Ecrire-Journal "$(Horodate) [ARRET] code de sortie : $texteCode"
 
-    if ($CodesArret -contains $code) {
+    if ($codeLisible -and $CodesArret -contains $code) {
         Ecrire-Journal "$(Horodate) [FIN] arrêt propre (code $code dans « $CodesSansRedemarrage ») — pas de redémarrage."
         break
     }
 
-    Ecrire-Journal "$(Horodate) [REDEMARRAGE] code $code inattendu — nouvelle tentative dans $DelaiRedemarrageSec s…"
+    Ecrire-Journal "$(Horodate) [REDEMARRAGE] code $texteCode inattendu — nouvelle tentative dans $DelaiRedemarrageSec s…"
     Start-Sleep -Seconds $DelaiRedemarrageSec
 }

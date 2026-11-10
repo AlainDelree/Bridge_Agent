@@ -182,6 +182,56 @@ blocs dès qu'elle n'est pas un terminal (donc dans toute redirection vers
 un fichier), et la copie périodique ci-dessus ne verrait rien de neuf
 tant que ce tampon ne se vide pas de lui-même.
 
+**Encodage UTF-8 (issue #875)** : `$env:PYTHONUTF8=1` et `$env:PYTHONIO
+ENCODING=utf-8` sont posés aux côtés de `PYTHONUNBUFFERED` ci-dessus. Sans
+eux, la sortie Python redirigée retombe sur l'encodage de la console
+Windows (cp1252) : un caractère absent de cp1252 (ex. la flèche « → » du
+message de mise à jour automatique du dépôt de `new_issue.py`, §3 de
+`GUIDE_INSTALLATION_WINDOWS_SEUL.md`) levait une `UnicodeEncodeError` qui
+arrêtait le programme en plein affichage — le superviseur le relançait
+alors ~10 s plus tard, et le message de réussite (y compris dans le
+bandeau de l'interface) était perdu. Les caractères accentués que cp1252
+sait écrire (é, è…) n'arrêtaient rien mais produisaient des octets cp1252
+mal relus comme de l'UTF-8 par le superviseur (absence de marqueur BOM =
+UTF-8 par défaut pour `System.IO.StreamReader`) : « Mise à jour » devenait
+« Mise ? jour ». En second rempart, indépendant de ces deux variables,
+`new_issue.py`, `watcher.py` et `watcher_issues_inbox.py` reconfigurent
+eux-mêmes leur sortie en UTF-8 dès leur démarrage (`watcher.forcer_utf8`,
+issue #698) avec `errors="replace"` : un caractère malgré tout non
+encodable ne fait donc plus jamais planter ces programmes. Le journal du
+superviseur lui-même (`Ecrire-Journal`/`Purger-SortieVersJournal`) reste
+écrit avec `Add-Content -Encoding UTF8` — **avec** marqueur BOM : c'est le
+seul choix Unicode disponible pour `-Encoding` sous PowerShell 5.1 (la
+valeur `UTF8NoBOM`, elle, n'existe que depuis PowerShell 6/7 — même
+contrainte que la règle « tout `.ps1` accentué garde son BOM » de
+BRIDGE_AGENT_DOC.md §11) ; un seul BOM en tout début de fichier, jamais
+répété aux appels `Add-Content` suivants (qui ouvrent le fichier déjà
+existant).
+
+**Code de sortie lisible (issue #875)** : `$proc.Handle` est lu une fois,
+juste après le `Start-Process -PassThru` qui lance le process surveillé
+(valeur ignorée, seul l'effet de bord — « attacher » le process côté .NET
+— compte) : sans cela, `$proc.ExitCode` peut lever une exception une fois
+le process déjà terminé (comportement documenté de `System.Diagnostics.
+Process`), ce qui laissait la ligne `[ARRET] code de sortie :` vide et
+déclenchait un redémarrage « inattendu » même après un arrêt pourtant
+propre (ex. l'auto-extinction par inactivité, code 42). Le code lu est
+maintenant toujours affiché — la valeur elle-même, ou `illisible` si sa
+lecture échoue malgré tout.
+
+**Rotation par taille (issue #875)** : chaque `-FichierJournal` est limité
+à 2 Mo (3 archives `.1`/`.2`/`.3` conservées, les plus anciennes
+supprimées) — nécessaire depuis que la sortie y est recopiée en continu
+(ci-dessus) : sans rotation, le journal de l'interface web en particulier
+grossissait sans fin (chaque requête HTTP, dont `/heartbeat` sondé par le
+navigateur toutes les quelques secondes, y ajoutait une ligne). En
+complément, `new_issue.py` filtre désormais de son propre journal d'accès
+werkzeug les requêtes `/heartbeat` et les fichiers statiques (`/static/…`)
+lorsqu'il tourne sous ce superviseur (`$env:BRIDGE_SOUS_SUPERVISEUR_
+SESSION=1`, posée par `surveiller_processus_session.ps1`) — sans effet
+sous Linux ni pour `lancer_new_issue.sh`, qui ne posent jamais cette
+variable.
+
 ## 7. Prérequis (non couverts par ce script)
 
 - Python (avec pip) installé et sur le PATH — `provisionner.ps1` (fonction
@@ -239,6 +289,32 @@ Ce script a été écrit et relu sous Linux, où il ne peut pas être exécuté
     (ligne `[ATTENTE] démarrage différé de 20 s…` visible juste avant).
     Avec `-DelaiDemarrageWatchersSec 0`, vérifier que les deux démarrent
     au même instant (comportement d'avant #871).
+12. **(issue #875)** Reculer le dépôt de test d'un commit (`git reset
+    --hard HEAD~1` dans le dépôt de travail Windows — jamais depuis Linux),
+    ouvrir une session : `logs\new_issue-session.log` doit afficher le
+    message complet de mise à jour automatique réussie, flèche « → » et
+    accents lisibles (pas de `?` ni de plantage juste après), et le même
+    message doit apparaître dans le bandeau de l'interface web. Avant ce
+    correctif, `new_issue.py` plantait à cet instant précis
+    (`UnicodeEncodeError`) et le message de réussite était perdu.
+13. **(issue #875)** Après l'auto-extinction par inactivité d'un watcher
+    (code 42, ~20 min sans issue traitable) : vérifier dans
+    `logs\watcher-<nom>-session.log` que la ligne `[ARRET] code de sortie :`
+    affiche bien `42` (jamais vide), suivie de `[FIN] arrêt propre` et
+    **sans** redémarrage. Tuer le même watcher à la main (code non nul,
+    hors `0,42`) : vérifier que le code affiché est le bon et qu'un
+    redémarrage suit après ~10 s.
+14. **(issue #875)** Laisser l'interface web tourner un moment sous ce
+    superviseur (navigateur ouvert, `/heartbeat` actif) : vérifier que
+    `logs\new_issue-session.log` ne grossit pas ligne par ligne au rythme
+    du heartbeat — les requêtes `/heartbeat` et `/static/…` ne doivent plus
+    y apparaître (tout le reste du trafic applicatif, lui, reste journalisé
+    normalement).
+15. **(issue #875)** Produire artificiellement plus de 2 Mo dans un
+    `logs\*-session.log` (ex. laisser tourner longtemps, ou générer de la
+    sortie répétée côté process surveillé) : vérifier l'apparition de
+    `logs\*-session.log.1` (puis `.2`, `.3`) et que le fichier actif reste
+    sous quelques Mo.
 
 ## Voir aussi
 

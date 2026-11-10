@@ -664,6 +664,18 @@ de session Windows) et exposé dans l'interface elle-même, en bandeau
 message rappelle explicitement que les watchers déjà démarrés tournent
 encore sur l'ancien code tant qu'ils ne sont pas relancés.
 
+**Corrigé par l'issue #875** : le message de réussite contient une flèche
+« → » entre deux numéros de commit abrégés — sur un PC Windows, la console
+encode par défaut en cp1252, qui ne sait pas l'écrire ; redirigée vers
+`logs/new_issue-session.log` par le superviseur de session Windows
+(`provisioning/windows/surveiller_processus_session.ps1`), cette sortie
+levait une `UnicodeEncodeError` qui arrêtait `new_issue.py` en plein
+affichage, juste après cette mise à jour — perdant le message (et le
+bandeau) qu'elle venait précisément d'annoncer. Corrigé par un forçage
+UTF-8 de la sortie (variables d'environnement côté superviseur + repli
+défensif `watcher.forcer_utf8` dans `new_issue.py` lui-même, issue #698) —
+voir `provisioning/windows/DEMARRAGE_SESSION_WINDOWS.md` §6.
+
 ### 8.2 Copie non-propriétaire du dépôt de l'outil (issue #869)
 
 Sur la machine d'Alain, créer ou supprimer un projet (`nouveau_projet.py`,

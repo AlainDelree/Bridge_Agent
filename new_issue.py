@@ -20,6 +20,7 @@ vues, projets, tunnel).
 import argparse
 import getpass
 import hashlib
+import logging
 import os
 import signal
 import sys
@@ -37,10 +38,32 @@ from app.watchers import surveiller_redemarrages_differes
 from app.issues_inbox import (watcher_inbox_actif, demarrer_watcher_inbox,
                               arreter_watcher_inbox)
 from etat_cases_cochees import nettoyer_anciennes as nettoyer_cases_cochees
-from watcher import nettoyer_verrous_perimes, tenter_maj_auto_demarrage
+from watcher import nettoyer_verrous_perimes, tenter_maj_auto_demarrage, forcer_utf8
 from mesure_charge_interface import demarrer_echantillonnage
 
 DOSSIER_SCRIPT = Path(__file__).resolve().parent
+
+# Requêtes HTTP ignorées du journal d'accès werkzeug quand new_issue.py tourne
+# sous le superviseur de session Windows (issue #875, point 3) : le superviseur
+# recopie EN CONTINU stdout/stderr vers logs\new_issue-session.log (voir
+# surveiller_processus_session.ps1), donc CHAQUE requête — dont /heartbeat,
+# sondé par le navigateur toutes les quelques secondes, et les fichiers
+# statiques — y ajoutait une ligne sans jamais s'arrêter. Ne change rien sous
+# Linux ni pour lancer_new_issue.sh (ni l'un ni l'autre ne posent la variable
+# d'environnement ci-dessous) : seul le superviseur Windows l'active.
+_MOTIFS_REQUETES_SILENCIEUSES = ('"GET /heartbeat', '"GET /static/')
+
+
+class _FiltreRequetesBruyantes(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        message = record.getMessage()
+        return not any(motif in message for motif in _MOTIFS_REQUETES_SILENCIEUSES)
+
+
+def _filtrer_requetes_bruyantes_si_sous_superviseur() -> None:
+    if os.environ.get("BRIDGE_SOUS_SUPERVISEUR_SESSION"):
+        logging.getLogger("werkzeug").addFilter(_FiltreRequetesBruyantes())
+
 
 # Niveau de bandeau (classes CSS .bandeau-eval-windows existantes, issue
 # #741) associé à chaque statut de tenter_maj_auto_demarrage() (issue #868).
@@ -98,6 +121,20 @@ def _erreur_mot_de_passe_manquant(acces_reseau: bool, mot_de_passe: str) -> str 
 
 
 def main():
+    # Sous le superviseur de session Windows (provisioning/windows/
+    # surveiller_processus_session.ps1), stdout/stderr sont redirigés vers un
+    # fichier : sans ce forçage, la console Windows encode par défaut en
+    # cp1252, qui ne sait pas écrire les flèches/symboles (ex. « → » du
+    # message de mise à jour automatique du dépôt, plus bas) — UnicodeEncode
+    # Error qui arrêtait tout new_issue.py en plein `print()` (issue #875). Le
+    # superviseur pose lui-même PYTHONUTF8/PYTHONIOENCODING dans
+    # l'environnement du process avant de le lancer ; cet appel est une
+    # seconde protection, indépendante de l'environnement (utile aussi en
+    # lancement manuel depuis une console cp1252). Inoffensif sous Linux
+    # (stdout déjà en UTF-8) — voir watcher.forcer_utf8 (issue #698).
+    forcer_utf8(sys.stdout)
+    forcer_utf8(sys.stderr)
+
     parser = argparse.ArgumentParser(
         description="Interface web de création d'issues — Bridge Agent"
     )
@@ -296,6 +333,8 @@ def main():
     # jamais retarder le démarrage (démarrage du thread lui-même instantané,
     # la boucle ne fait rien avant sa première minute écoulée).
     demarrer_echantillonnage()
+
+    _filtrer_requetes_bruyantes_si_sous_superviseur()
 
     if not args.no_browser:
         Timer(1.2, lambda: webbrowser.open(f"{schema}://localhost:{args.port}")).start()
