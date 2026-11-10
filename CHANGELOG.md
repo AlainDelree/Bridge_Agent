@@ -9,6 +9,24 @@ milliers de caractères sur une seule ligne logique, coûteux à relire et
 
 Convention d'ajout : voir §10 de `BRIDGE_AGENT_DOC.md`.
 
+## 10 novembre 2026 — issue #879
+
+Répond à la question laissée ouverte par l'issue #876 (« faut-il rendre le dépôt créé privé par défaut quand `COPIE_NON_PROPRIETAIRE` est actif ? ») : oui, Alain confirme — sur une copie non propriétaire de l'outil (ex. ami sur PC Windows seul, #869), le contenu d'un projet n'a pas à devenir public par simple oubli.
+
+**Nouveau réglage `DEPOT_PRIVE_PAR_DEFAUT`** (`identite_locale.conf`, `identite.depot_public_par_defaut()`) : PRIME sur `COPIE_NON_PROPRIETAIRE` dans les deux sens — `oui` rend le dépôt privé par défaut même sans `COPIE_NON_PROPRIETAIRE` (Alain peut ainsi le choisir pour sa propre installation) ; `non` le rend public par défaut même avec `COPIE_NON_PROPRIETAIRE` actif. Absent (cas normal) : public par défaut sauf sur une copie non-propriétaire, où il devient privé par défaut.
+
+**Libellé adapté à la valeur par défaut** (`templates/fragments/modale_nouveau_projet.html`) : la case « Dépôt public » garde son libellé historique « (décocher pour un dépôt privé) » quand cochée par défaut ; quand décochée par défaut, le libellé devient « Dépôt public (cocher pour un dépôt public ; privé par défaut sur cette installation) » — le sens de la case ne peut plus jamais contredire ce qui est affiché. L'avertissement ⚠ (permissions GH_TOKEN requises sur un dépôt privé) apparaît déjà par défaut dans ce second cas, sans action de l'utilisateur.
+
+**Valeur effectivement appliquée** : `app/vues.py::index()` transmet `identite.depot_public_par_defaut()` au gabarit (case cochée/décochée au rendu + `window.DEPOT_PUBLIC_PAR_DEFAUT` dans `fragments/scripts.html`, repris par `ouvrirNouveauProjet()` dans `static/js/app.js` à chaque ouverture du modal, à la place d'un `true` codé en dur). Côté création, `nouveau_projet.creer_projet()` (paramètre `public` désormais résolu dynamiquement via `identite.depot_public_par_defaut()` quand omis, jamais un `True` figé) et la route `POST /nouveau-projet` (même résolution si la clé JSON `public` est absente) suivent toujours l'état réel de la case transmis par le formulaire. Le résultat de la création (étape « Dépôt GitHub » du compte-rendu, et nouvelle clé `public` du résultat) indique explicitement « créé (public) » ou « créé (privé) ». Le CLI interactif (`etape_depot()`) propose désormais le même défaut que le formulaire web, au lieu d'un `True` figé.
+
+**Tests** (`tests/test_depot_prive_par_defaut_879.py`) : `identite.depot_public_par_defaut()` dans les 6 combinaisons (absent/oui/non croisé avec `COPIE_NON_PROPRIETAIRE`), résolution du défaut dans `creer_projet()` et dans la route Flask quand `public` est omis, priorité d'un `public` explicite sur le réglage, et rendu Jinja de la case/libellé dans les deux configurations. Un rendu complet de `/` (via `app.test_client()`) a aussi été vérifié à la main dans les deux cas (`window.DEPOT_PUBLIC_PAR_DEFAUT` correct, case cochée/décochée correspondante).
+
+**Non vérifiable depuis l'environnement de l'agent (pas de navigateur)** : le rendu visuel réel du formulaire — à vérifier par Alain (voir le rapport de clôture pour le détail précis des manipulations, et `VERIFICATIONS_MANUELLES.md` § Nouveau projet pour la liste consolidée).
+
+**Documentation mise à jour** : `BRIDGE_AGENT_DOC.md` §8.3 (nouvelle sous-section) et ligne « Dernière mise à jour » ; `provisioning/windows/GUIDE_INSTALLATION_WINDOWS_SEUL.md` §8 (la case est désormais décochée par défaut sur une copie non-propriétaire, et comment la rendre publique malgré tout).
+
+**Hors périmètre, volontairement non traité (contrainte explicite de la tâche)** : `installer_windows_seul.ps1` n'a pas été modifié — le réglage `COPIE_NON_PROPRIETAIRE` qu'il écrit déjà suffit, combiné à ce correctif, à rendre le dépôt privé par défaut chez un utilisateur de l'installation Windows seul.
+
 # CHANGELOG-876 — fusionné ensuite dans CHANGELOG.md par scripts/fusionner_changelog.py
 
 ## 10 novembre 2026 — issue #876
