@@ -23,4 +23,5 @@ def index():
                            agent_par_defaut=AGENT_PAR_DEFAUT,
                            machine_seule=identite.machine_seule(),
                            depot_public_par_defaut=identite.depot_public_par_defaut(),
+                           gh_token_env_present=identite.token_github_env_present(),
                            diagnostic_copie=identite.diagnostic_copie())

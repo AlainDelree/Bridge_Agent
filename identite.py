@@ -30,6 +30,7 @@ compte_github() est mis en cache (une résolution par processus — un appel
 par défaut) et app/ccw.py (utilisateur SSH par défaut)."""
 
 import functools
+import os
 import subprocess
 from pathlib import Path
 
@@ -204,6 +205,36 @@ def machine_seule() -> bool:
     deux documents (issue #867) reste hors périmètre — ce réglage ne
     l'implémente PAS, il ne fait que masquer ces deux éléments d'interface."""
     return _lire_identite_locale().get("MACHINE_SEULE", "").strip().lower() in VALEURS_VRAIES
+
+
+def token_github_env_present() -> bool:
+    """True si `GH_TOKEN` ou `GITHUB_TOKEN` est présent (non vide) dans
+    l'environnement du PROCESSUS ACTUEL (celui de l'interface web,
+    `new_issue.py`) — issue #882. C'est un FAIT lu directement dans
+    `os.environ`, pas une supposition sur le mode d'authentification
+    réellement utilisé par `gh` : `gh` (CLI GitHub) donne TOUJOURS la
+    priorité à `GH_TOKEN`/`GITHUB_TOKEN` sur sa propre authentification
+    (`gh auth login`, jeton de trousseau) dès que l'une de ces deux
+    variables est présente dans son environnement — comportement documenté
+    de `gh` lui-même, pas une hypothèse de ce module.
+
+    Sert à décider si l'avertissement « Dépôt privé : GH_TOKEN doit avoir
+    les permissions nécessaires… » (`modale_nouveau_projet.html`, issue
+    #529) s'applique : sans l'une de ces deux variables, `gh repo create`
+    passe par le jeton de trousseau de `gh auth login`, qui a en général
+    déjà toutes les permissions nécessaires accordées à la connexion —
+    l'avertissement, pensé pour un jeton scopé étroitement (type
+    fine-grained, cf. `CREATION_GH_TOKEN` du bootstrap CCW, `app/ccw.py`),
+    ne le concerne pas dans ce cas. Sur l'installation d'Alain, où
+    `new_issue.py` tourne avec `GH_TOKEN` exporté dans son environnement,
+    cette fonction renvoie True et l'avertissement reste affiché, inchangé.
+
+    Volontairement PAS mise en cache (contrairement à compte_github()) :
+    lire deux variables d'environnement est gratuit, et ce fait pourrait en
+    théorie changer entre deux requêtes si le processus est relancé avec un
+    environnement différent."""
+    return bool((os.environ.get("GH_TOKEN") or "").strip()
+                or (os.environ.get("GITHUB_TOKEN") or "").strip())
 
 
 def diagnostic_copie() -> bool:
