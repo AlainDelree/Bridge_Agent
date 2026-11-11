@@ -40,6 +40,20 @@ pull`) à son lancement (voir §2 bis). Ce délai ne s'applique **qu'au tout
 premier lancement**, jamais aux redémarrages après plantage (déjà
 espacés par le délai de redémarrage du superviseur, 10 s).
 
+**Prise de relais du watcher `issues_inbox` (issue #883).** Ce délai de
+20 s fait que la tâche planifiée `…-IssuesInbox` perd presque toujours la
+course au verrou d'instance unique (#881) contre l'instance que l'interface
+web lance elle-même sans attendre — elle s'arrête alors proprement, et le
+superviseur ne la redémarre pas (arrêt « propre » voulu). Si l'interface
+s'arrête à son tour (bouton « Quitter », tâche coupée, plantage), elle
+arrête aussi son propre watcher spool : plus personne ne traite
+`issues_inbox\` jusqu'à son retour. Ce script passe donc désormais
+`--attendre-si-occupe` à CETTE instance (jamais à celle lancée par
+l'interface) : au lieu de quitter, elle se met en veille et prend le relais
+dès que le verrou de l'interface se libère — voir la docstring de module de
+`scripts/watcher_issues_inbox.py` et `BRIDGE_AGENT_DOC.md` §3.2 pour le
+détail complet. **À revérifier en vrai sur Windows** (§8, point 24).
+
 ## 2. Pourquoi une tâche de session, pas un service, par défaut
 
 Un service Windows tourne en session 0, hors de la session graphique de
@@ -495,6 +509,29 @@ Ce script a été écrit et relu sous Linux, où il ne peut pas être exécuté
     dupliquer ; puis avec ce même fichier pointant vers un PID vivant mais
     SANS RAPPORT (ex. Bloc-notes) : vérifier qu'il est au contraire jugé
     périmé et supprimé.
+24. **(issue #883, prise de relais)** Installation normale (`-Projets` +
+    issues_inbox + interface web), tout démarré et stabilisé (la tâche
+    `IssuesInbox` s'est déjà arrêtée proprement une première fois — ligne
+    `[FIN] arrêt propre` dans `watcher_issues_inbox-session.log` — car
+    l'interface a gagné la course au verrou). Déposer un fichier `.txt`
+    dans `issues_inbox\` : vérifier qu'il est traité normalement (une issue
+    créée) par l'instance de l'interface. Puis cliquer sur le bouton
+    « Quitter » de l'interface web (ou fermer sa fenêtre/tâche) : vérifier
+    dans `watcher_issues_inbox-session.log` qu'une ligne `[DEMARRAGE]`
+    réapparaît pour la tâche planifiée au plus tard `INTERVALLE_ATTENTE_
+    VERROU_S` secondes après (5 s par défaut), précédée des lignes « En
+    veille » puis « Prise de relais » dans sa sortie — PAS une simple
+    relance par le superviseur suite à un code d'erreur. Déposer alors un
+    SECOND fichier `.txt` **sans relancer l'interface** : vérifier qu'il
+    est traité (issue créée) dans un délai raisonnable, sans attendre le
+    retour de l'interface — c'est exactement le scénario qui échouait
+    avant ce correctif. Rouvrir enfin l'interface : vérifier qu'elle
+    démarre normalement malgré la tâche planifiée déjà active (elle perd à
+    nouveau la course au verrou, s'arrête proprement, aucune double
+    instance, aucun fichier traité deux fois). Non testable depuis
+    l'environnement Linux de l'agent qui a fait le correctif (comportement
+    Windows spécifique — superviseur PowerShell, tâche planifiée de
+    session) — **à vérifier en vrai sur Windows**.
 
 ## Voir aussi
 

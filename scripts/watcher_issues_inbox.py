@@ -109,10 +109,50 @@ registre en mémoire des créations EN COURS dans cette même instance
 fichiers distincts partageant le même titre, traités par la même instance
 avant qu'une requête `gh issue list` n'ait pu voir la première création.
 
+Prise de relais par le watcher de la tâche planifiée (issue #883) : sous
+Windows avec démarrage de session (#864), l'instance lancée par l'interface
+(`new_issue.py`, sans délai à son propre démarrage) gagne presque toujours le
+verrou ci-dessus avant la tâche planifiée `…-IssuesInbox` (démarrée ~20s plus
+tard, -DelaiDemarrageWatchersSec) — celle-ci s'arrête alors proprement
+(sys.exit(0)) comme prévu par #881. Mais `surveiller_processus_session.ps1`
+ne redémarre PAS sur un arrêt propre (code 0 dans -CodesSansRedemarrage,
+exactement comme #881 le voulait pour éviter un second lancement immédiat) :
+si l'interface s'arrête ensuite (bouton « Quitter », tâche de session
+coupée, plantage), elle arrête AUSSI le watcher qu'elle avait lancé
+(`arreter_watcher_inbox()`, new_issue.py) — plus aucune instance ne tourne,
+et la tâche planifiée, déjà `Ready` depuis son propre arrêt propre, ne la
+relance pas : un fichier déposé dans issues_inbox/ reste alors en attente
+jusqu'au retour de l'interface (essai réel confirmé, sans perte ni doublon).
+
+L'option `--attendre-si-occupe` change ce comportement UNIQUEMENT pour qui la
+passe explicitement (comportement par défaut strictement inchangé — arrêt
+immédiat sur verrou tenu, #881) : au lieu de quitter, le process se met EN
+VEILLE (aucun fichier examiné/traité tant que le verrou n'est pas acquis,
+voir attendre_prise_de_relais ci-dessous) et retente l'acquisition toutes les
+INTERVALLE_ATTENTE_VERROU_S secondes, sans écrire de ligne de log à chaque
+tentative — seulement à l'entrée en veille, puis à la PRISE DE RELAIS
+(verrou enfin acquis). Dès que l'interface (ou son watcher) s'arrête, son
+verrou système est libéré par l'OS (même mécanisme que #881, indépendant
+d'un arrêt propre ou brutal) : la tâche planifiée, en veille, le remarque au
+plus tard INTERVALLE_ATTENTE_VERROU_S secondes après et devient l'instance
+active — plus aucune fenêtre où seule l'interface ferait tourner ce watcher.
+Passée UNIQUEMENT par `installer_demarrage_session.ps1` à la tâche planifiée
+(voir ce script) ; le lancement par l'interface elle-même
+(`app.issues_inbox.demarrer_watcher_inbox`, boutons ▶/↺ du panneau
+Infrastructure) garde l'arrêt immédiat — y mettre une instance en veille
+n'aurait aucun sens (un redémarrage manuel attend déjà la fin de l'ancien
+process, voir demarrer_watcher_inbox) et resterait un second concurrent
+inutile si une tâche planifiée tournait déjà. Sous Linux (systemd), AUCUN
+service ne lance ce script (seul watcher.py, par projet, est géré par
+systemd/watcher@.service) — ce script n'y est démarré que par
+`new_issue.py`/le panneau Infrastructure, jamais en double : comportement
+JAMAIS concerné par cette option, ni avant ni après #883.
+
 Usage :
     python3 scripts/watcher_issues_inbox.py
     python3 scripts/watcher_issues_inbox.py --config configs/watcher_issues_inbox.conf
     python3 scripts/watcher_issues_inbox.py --once   # un seul cycle (tests)
+    python3 scripts/watcher_issues_inbox.py --attendre-si-occupe  # tâche planifiée (#883)
 
 Config (configs/watcher_issues_inbox.conf, optionnelle — voir charger_config_inbox
 ci-dessous) : NOM, REP_TRAVAIL, POLLING_INTERVAL, MAX_LOG_LINES, INBOX_DIR,
@@ -353,6 +393,40 @@ def acquerir_verrou_instance_unique():
     except OSError:
         pass   # best-effort : le verrou lui-même est déjà acquis, son contenu n'est qu'informatif
     return f
+
+
+# ─── Prise de relais par une instance en veille (issue #883) — voir la
+# docstring de module pour le scénario complet. Intervalle de retente
+# volontairement court (quelques secondes) : chaque tentative n'est qu'un
+# acquerir_verrou_instance_unique() non bloquant (un open() + un flock/
+# locking NON BLOQUANT, cf. ci-dessus) — coût négligeable même répété
+# indéfiniment, bien moins cher qu'un cycle de traitement normal
+# (ConfigInbox.polling_interval, 5 s par défaut lui aussi).
+INTERVALLE_ATTENTE_VERROU_S = 5
+
+
+def attendre_prise_de_relais(intervalle: int = INTERVALLE_ATTENTE_VERROU_S):
+    """Boucle JUSQU'À acquérir le verrou d'instance unique — appelée
+    uniquement quand --attendre-si-occupe est passé ET que le premier essai
+    (dans main()) a échoué. AUCUN fichier n'est examiné ni traité pendant
+    cette attente (boucle() n'est appelée qu'après le retour de cette
+    fonction, voir main()) : seule l'instance qui a RÉELLEMENT le verrou
+    ouvre jamais issues_inbox/, exactement comme avant #883.
+
+    Une seule ligne de log à l'ENTRÉE en veille, une seule à la PRISE DE
+    RELAIS (verrou enfin acquis) — jamais à chaque tentative intermédiaire,
+    pour ne pas noyer le journal alors que l'attente peut durer tant que
+    l'autre instance tourne (potentiellement des heures)."""
+    log.info(f"En veille : une autre instance tient déjà le verrou — nouvelle tentative "
+              f"toutes les {intervalle}s jusqu'à ce qu'il se libère, aucun fichier ne sera "
+              f"traité par CETTE instance avant (issue #883).")
+    while True:
+        time.sleep(intervalle)
+        verrou = acquerir_verrou_instance_unique()
+        if verrou is not None:
+            log.info("Prise de relais : le verrou vient de se libérer — cette instance "
+                      "devient l'instance active (issue #883).")
+            return verrou
 
 
 @dataclass
@@ -2253,6 +2327,13 @@ def main() -> None:
                         help="Un seul cycle de traitement puis quitte (tests)")
     parser.add_argument("--duree-min", type=int, default=0,
                         help="Auto-extinction après ce délai en minutes (0/absent = désactivé, tourne indéfiniment ; issue #485)")
+    parser.add_argument("--attendre-si-occupe", action="store_true",
+                        help="Si le verrou d'instance unique est déjà tenu, attendre en veille "
+                             "(nouvelle tentative toutes les quelques secondes) au lieu de "
+                             "quitter immédiatement — pour la tâche planifiée Windows, afin "
+                             "qu'elle prenne le relais dès que l'instance lancée par "
+                             "l'interface s'arrête (issue #883). Comportement par défaut "
+                             "(absent) inchangé : arrêt immédiat (#881).")
     args = parser.parse_args()
 
     configurer_logs()
@@ -2265,13 +2346,23 @@ def main() -> None:
     # redémarre que sur arrêt INATTENDU (ex. surveiller_processus_session.ps1,
     # codes 0/42) ne doit pas boucler à relancer un process qui se refuse
     # légitimement — voir docstring de module pour le détail complet.
+    #
+    # --attendre-si-occupe (issue #883) : plutôt que de quitter, se met en
+    # veille et retente — voir attendre_prise_de_relais(). Comportement par
+    # défaut (flag absent) STRICTEMENT inchangé par rapport à #881 : seule la
+    # tâche planifiée Windows (installer_demarrage_session.ps1) passe ce
+    # flag ; le lancement par l'interface (app.issues_inbox.
+    # demarrer_watcher_inbox) et le cas Linux à instance unique (aucun appel
+    # concurrent, systemd ne lance jamais ce script) gardent l'arrêt immédiat.
     verrou_instance = acquerir_verrou_instance_unique()
     if verrou_instance is None:
-        log.warning(f"Une autre instance de watcher_issues_inbox.py est déjà active "
-                    f"(verrou {CHEMIN_VERROU_INSTANCE} détenu par un autre process) — "
-                    f"arrêt immédiat de CETTE instance, aucun fichier ne sera traité "
-                    f"par elle (issue #881).")
-        sys.exit(0)
+        if not args.attendre_si_occupe:
+            log.warning(f"Une autre instance de watcher_issues_inbox.py est déjà active "
+                        f"(verrou {CHEMIN_VERROU_INSTANCE} détenu par un autre process) — "
+                        f"arrêt immédiat de CETTE instance, aucun fichier ne sera traité "
+                        f"par elle (issue #881).")
+            sys.exit(0)
+        verrou_instance = attendre_prise_de_relais()
 
     # Publication du PID par CE script lui-même (issue #881) — voir le
     # commentaire de CHEMIN_PID plus haut : seul le process qui a réellement
