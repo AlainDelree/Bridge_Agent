@@ -24,6 +24,15 @@
   // DEPOT_PRIVE_PAR_DEFAUT.
   window.DEPOT_PUBLIC_PAR_DEFAUT = {{ depot_public_par_defaut | tojson }};
 
+  // GH_TOKEN/GITHUB_TOKEN présent dans l'environnement du processus de
+  // l'interface (identite.token_github_env_present(), issue #882) — décide
+  // si l'avertissement « GH_TOKEN doit avoir les permissions nécessaires »
+  // d'un dépôt privé (modale_nouveau_projet.html) s'applique : lu par
+  // npMajAvertissementPrive() (static/js/app.js). En l'absence de cette
+  // variable, `gh` s'appuie sur son propre jeton de trousseau, hors du
+  // périmètre de cet avertissement.
+  window.GH_TOKEN_ENV_PRESENT = {{ gh_token_env_present | tojson }};
+
   // Journal de diagnostic de la copie presse-papier (issue #878), désactivé
   // par défaut — réglage DIAGNOSTIC_COPIE de identite_locale.conf (PAS un
   // réglage navigateur : doit survivre aux rechargements, changements de

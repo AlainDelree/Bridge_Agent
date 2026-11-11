@@ -758,13 +758,13 @@ plus d'`onclick=`/`onchange=`/`oninput=` inline.)*
       `identite_locale.conf` — **à essayer à la main sur la copie de test
       Windows seul, comme pour #870**) ouvrir la modale : la case « Dépôt
       public » est **décochée** par défaut, libellé « Dépôt public (cocher
-      pour un dépôt public ; privé par défaut sur cette installation) », et
-      l'avertissement ⚠ « Dépôt privé : GH_TOKEN doit avoir les permissions
-      nécessaires… » apparaît dès que le dépôt n'existe pas encore, SANS
-      avoir à décocher soi-même. Créer un dépôt neuf sans toucher la case →
-      le compte-rendu affiche « … créé (privé) », dépôt effectivement privé
-      sur GitHub. Cocher la case avant de créer → « … créé (public) », dépôt
-      effectivement public.
+      pour un dépôt public ; privé par défaut sur cette installation) ». Sur
+      cette copie (`gh auth login`, pas de `GH_TOKEN` exporté), l'avertissement
+      ⚠ « Dépôt privé : GH_TOKEN doit avoir les permissions nécessaires… » ne
+      doit **PLUS** apparaître (corrigé par #882 — voir ce point plus bas) ;
+      créer un dépôt neuf sans toucher la case → le compte-rendu affiche
+      « … créé (privé) », dépôt effectivement privé sur GitHub. Cocher la
+      case avant de créer → « … créé (public) », dépôt effectivement public.
 - [ ] (issue #879, `DEPOT_PRIVE_PAR_DEFAUT = oui` dans
       `identite_locale.conf`, SANS `COPIE_NON_PROPRIETAIRE` — **à essayer
       sur la machine d'Alain**) même effet que le point précédent (case
@@ -781,6 +781,36 @@ plus d'`onclick=`/`onchange=`/`oninput=` inline.)*
       d'installation (pas figé à la valeur laissée par la fermeture
       précédente) — vérifie que `ouvrirNouveauProjet()` relit bien
       `window.DEPOT_PUBLIC_PAR_DEFAUT` à CHAQUE ouverture.
+- [ ] (issue #882, **à essayer sur la machine d'Alain, pour les deux sens**)
+      ouvrir la modale « Nouveau projet » AVEC `GH_TOKEN` (ou `GITHUB_TOKEN`)
+      exporté dans l'environnement du processus `new_issue.py` (cas normal
+      sur cette machine) → décocher « Dépôt public » pour un dépôt qui
+      n'existe pas encore : l'avertissement ⚠ « Dépôt privé : GH_TOKEN doit
+      avoir les permissions nécessaires… » apparaît, texte inchangé. Arrêter
+      `new_issue.py`, relancer son processus SANS `GH_TOKEN` ni `GITHUB_TOKEN`
+      dans l'environnement (`env -u GH_TOKEN -u GITHUB_TOKEN python3
+      new_issue.py`, ou commenter temporairement leur export), recharger la
+      page, répéter la même manipulation de case : l'avertissement ne doit
+      plus apparaître. Remettre `GH_TOKEN` et relancer normalement ensuite.
+- [ ] (issue #882, **à essayer sur la copie de test Windows seul** — `gh auth
+      login`, aucune variable `GH_TOKEN`/`GITHUB_TOKEN`) ouvrir la modale,
+      décocher « Dépôt public » pour un dépôt absent : l'avertissement ⚠ ne
+      doit PAS apparaître (gh utilise son propre jeton de trousseau, qui a
+      déjà les permissions nécessaires) ; créer malgré tout le dépôt privé et
+      vérifier qu'il se crée bien sans erreur.
+- [ ] (issue #882, vérification en retard sur le champ « Dépôt GitHub ») dans
+      le champ « Dépôt GitHub », taper un nom de dépôt qui n'existe PAS sur
+      GitHub, PUIS continuer à taper pour le corriger en un AUTRE nom qui
+      n'existe pas non plus (ex. taper `votre-compte/Bridge`, laisser le
+      message « …/Bridge n'existe pas encore » apparaître, puis AVANT ou
+      juste APRÈS qu'il apparaisse, compléter en `votre-compte/Bridgebc`) :
+      le message final affiché doit TOUJOURS porter sur le nom qui est
+      effectivement dans le champ en ce moment (`…/Bridgebc`), jamais sur un
+      nom intermédiaire déjà remplacé — répéter l'essai plusieurs fois avec
+      des frappes à des vitesses différentes (y compris très rapide) pour
+      augmenter les chances de déclencher l'ordre d'arrivée réseau inversé
+      observé dans l'issue d'origine. Vérifier aussi sur GitHub qu'aucun
+      dépôt correspondant au nom intermédiaire n'a été créé par erreur.
 
 ## Bandeaux globaux et cycle de vie
 

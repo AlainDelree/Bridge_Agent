@@ -2944,6 +2944,13 @@ async function quitter() {
 
 let npDepotEdite = false, npRepEdite = false, npPerimetreEdite = false;
 let npTimerVerif = null;
+// Numéro incrémenté à chaque appel de npVerifier (issue #882) : une réponse
+// qui revient alors qu'un appel plus récent a déjà été lancé (nom/dépôt modifié
+// pendant que la requête précédente était encore en l'air) ne porte plus sur
+// la valeur actuelle des champs — elle est identifiée par ce numéro et
+// ignorée silencieusement (voir npVerifier) plutôt que d'écraser ou de
+// survivre à côté de l'affichage du nom réellement en cours.
+let npVerifNumero = 0;
 // Couleur d'accent choisie dans le modal (hex #RRGGBB). '' tant qu'aucune
 // pastille n'est rendue ou si la palette est épuisée (issue #121).
 let npCouleurChoisie = '';
@@ -3063,6 +3070,16 @@ async function npVerifier() {
   // proposer AnnuaireToken plutôt qu'Annuairetoken. r.nom (renvoyé par le
   // serveur, toujours en minuscules) sert ensuite pour les messages portant
   // sur la clé interne (ex. configs/<nom>.conf).
+  //
+  // Numéro de CETTE vérification (issue #882) : tout appel de npVerifier,
+  // qu'il vienne du débounce sur le nom ou du onchange sur le dépôt,
+  // incrémente npVerifNumero — AVANT même de lire les champs, pour
+  // invalider immédiatement toute requête encore en vol lancée par un appel
+  // précédent. Comparé à npVerifNumero après l'attente réseau : s'il a
+  // changé, une vérification plus récente a déjà été lancée pendant cette
+  // attente, la réponse ne porte plus sur la valeur actuelle des champs —
+  // ignorée silencieusement (pas d'affichage, pas de pré-remplissage).
+  const numero = ++npVerifNumero;
   const nomSaisi  = document.getElementById('np-nom').value.trim();
   const depotSaisi = document.getElementById('np-depot').value.trim();
   const nomMsg    = document.getElementById('np-nom-msg');
@@ -3072,18 +3089,27 @@ async function npVerifier() {
     document.getElementById('np-depot-msg').textContent = '';
     document.getElementById('np-rep-msg').textContent = '';
     ligneCreer.style.display = 'none';
+    document.getElementById('np-public-ligne').style.display = 'none';
+    document.getElementById('np-avertissement-prive').style.display = 'none';
     return;
   }
+  // Rien n'est affiché tant que CETTE vérification n'est pas arrivée : évite
+  // qu'un message portant sur un nom intermédiaire (ex. « …/Bridge » tapé
+  // avant « …/Bridgebc ») reste visible pendant que la frappe continue.
+  nomMsg.textContent = '';
+  document.getElementById('np-depot-msg').textContent = '';
   let r;
   try {
     const url = '/nouveau-projet/verifier?nom=' + encodeURIComponent(nomSaisi)
               + (depotSaisi ? '&depot=' + encodeURIComponent(depotSaisi) : '');
     r = await (await fetch(url)).json();
   } catch (e) {
+    if (numero !== npVerifNumero) return; // supplantée pendant la requête : ignorer même l'erreur réseau
     nomMsg.textContent = 'Erreur réseau : ' + e.message;
     nomMsg.style.color = '#a32d2d';
     return;
   }
+  if (numero !== npVerifNumero) return; // réponse en retard sur un nom qui n'est plus celui du champ (issue #882)
 
   if (!r.nom_valide) {
     nomMsg.textContent = '⚠ Format invalide (minuscules, chiffres, underscore ; commence par une lettre).';
@@ -3145,10 +3171,20 @@ function npAfficherEtatDepot(r) {
 }
 
 // Affiche le rappel GH_TOKEN sous la case publique/privée : visible
-// uniquement quand un dépôt privé est choisi (case décochée) — issue #529.
+// uniquement quand un dépôt privé est choisi (case décochée) — issue #529 —
+// ET que GH_TOKEN/GITHUB_TOKEN est effectivement présent dans l'environnement
+// du processus de l'interface (window.GH_TOKEN_ENV_PRESENT, depuis
+// identite.token_github_env_present() côté serveur, fragments/scripts.html) —
+// issue #882. Sans l'une de ces deux variables, `gh` utilise son propre
+// jeton de trousseau (`gh auth login`) : cet avertissement, pensé pour un
+// jeton fine-grained scopé étroitement, ne le concerne pas dans ce cas.
+// En cas de doute (réglage absent/indéterminé, valeur ni true ni false) on
+// GARDE l'avertissement — seule une valeur explicitement `false` le masque,
+// comportement inchangé là où il est justifié (installation d'Alain).
 function npMajAvertissementPrive() {
+  const prive = !document.getElementById('np-public').checked;
   document.getElementById('np-avertissement-prive').style.display =
-    document.getElementById('np-public').checked ? 'none' : 'block';
+    (prive && window.GH_TOKEN_ENV_PRESENT !== false) ? 'block' : 'none';
 }
 
 function npMsg(texte, type) {
