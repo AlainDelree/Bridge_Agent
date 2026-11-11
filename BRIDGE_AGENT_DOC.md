@@ -115,6 +115,25 @@ un seul fichier déposé, chaque instance l'ayant vu avant que l'autre n'ait
 terminé sa création (l'anti-doublon GitHub, basé sur `gh issue list`, ne
 pouvait pas voir à temps une création encore en cours ailleurs).
 
+**Prise de relais par la tâche planifiée (issue #883).** Sous Windows avec
+démarrage de session (`DEMARRAGE_SESSION_WINDOWS.md`), l'arrêt immédiat
+ci-dessus a un effet de bord : la tâche planifiée `…-IssuesInbox` démarre
+~20 s après l'interface web (qui, elle, lance sa propre instance sans
+délai) et perd donc presque toujours la course au verrou — elle s'arrête
+proprement (code 0) et le superviseur de session ne la redémarre pas (arrêt
+« propre », voulu). Si l'interface s'arrête ensuite (bouton « Quitter »,
+tâche de session coupée, plantage), elle arrête aussi le watcher qu'elle
+avait lancé : plus aucune instance ne traite `issues_inbox/` jusqu'à son
+retour. Corrigé en passant `--attendre-si-occupe` à la SEULE instance
+lancée par la tâche planifiée (`installer_demarrage_session.ps1`) : au lieu
+de quitter, elle se met en veille (aucun fichier examiné, nouvelle tentative
+d'acquisition du verrou toutes les `INTERVALLE_ATTENTE_VERROU_S` secondes,
+5 s par défaut, sans bruit de log à chaque tentative) et devient l'instance
+active dès que le verrou de l'interface se libère. Le lancement par
+l'interface elle-même (boutons ▶/↺ du panneau Infrastructure,
+auto-démarrage de `new_issue.py`) garde l'arrêt immédiat — comportement
+Linux (systemd ne lance jamais ce script) strictement inchangé.
+
 ### 3.3 Format attendu du fichier
 
 Un en-tête `| CHAMP | Valeur |` optionnel et une ligne `#Titre: ...`, dans
@@ -1225,7 +1244,19 @@ estimation que celle déjà affichée, sans dupliquer ce calcul.
 
 ---
 
-*Dernière mise à jour : 10 novembre 2026 — issue #881, instance unique et
+*Dernière mise à jour : 11 novembre 2026 — issue #883, prise de relais par
+le watcher de la tâche planifiée Windows (§3.2) : après #881, la tâche
+planifiée `…-IssuesInbox` (démarrée ~20 s après l'interface web) perdait
+presque toujours la course au verrou d'instance unique et s'arrêtait
+proprement — un essai réel a montré qu'arrêter ensuite l'interface (bouton
+« Quitter », tâche coupée, plantage) laissait alors `issues_inbox/` sans
+aucune instance active jusqu'au retour de l'interface. Corrigé en passant
+`--attendre-si-occupe` à cette SEULE instance (jamais à celle lancée par
+l'interface) : au lieu de quitter, elle se met en veille et retente
+l'acquisition du verrou à intervalle régulier, sans bruit de log, devenant
+l'instance active dès que le verrou se libère.*
+
+*Mise à jour précédente : 10 novembre 2026 — issue #881, instance unique et
 réclamation atomique pour le watcher `issues_inbox` (§3.2, §3.4) : un essai
 réel sous Windows avait produit deux issues GitHub identiques pour un seul
 fichier déposé (deux process `watcher_issues_inbox.py` vivants en même

@@ -489,7 +489,21 @@ foreach ($p in $ProjetsValides) {
         "watcher-$p-session.log" "watcher-$p.pid" $DelaiDemarrageWatchersSec
 }
 if (-not $SansIssuesInbox) {
-    $argsInbox = @($CheminIssuesInbox)
+    # --attendre-si-occupe (issue #883) : SEUL ce lancement par tâche
+    # planifiée le passe. L'interface web (new_issue.py) lance sa PROPRE
+    # instance sans ce flag (app.issues_inbox.demarrer_watcher_inbox,
+    # arrêt immédiat voulu, #881) et gagne presque toujours le verrou en
+    # premier (elle démarre sans délai, cette tâche-ci attend
+    # -DelaiDemarrageWatchersSec, 20 s par défaut). Sans ce flag, la tâche
+    # planifiée trouvait alors le verrou tenu, s'arrêtait proprement (code
+    # 0) et restait `Ready` pour le reste de la session : si l'interface
+    # s'arrêtait ensuite (bouton « Quitter », tâche coupée, plantage), elle
+    # arrêtait aussi le watcher qu'elle avait lancé, et plus personne ne
+    # traitait issues_inbox/ jusqu'à son retour. Avec ce flag, cette
+    # instance se met en veille au lieu de quitter et prend le relais dès
+    # que le verrou de l'interface se libère — voir la docstring de module
+    # de scripts/watcher_issues_inbox.py pour le détail complet.
+    $argsInbox = @($CheminIssuesInbox, '--attendre-si-occupe')
     if (Test-Path $CheminConfInbox) { $argsInbox += @('--config', $CheminConfInbox) }
     $Composants += Decrire-Composant 'IssuesInbox' $argsInbox `
         'watcher_issues_inbox-session.log' 'watcher_issues_inbox.pid' $DelaiDemarrageWatchersSec
