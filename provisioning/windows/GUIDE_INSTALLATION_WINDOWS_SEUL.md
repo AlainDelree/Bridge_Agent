@@ -28,7 +28,7 @@ Ce qui n'existe pas dans cette installation : l'outil de relecture Relecture_Bri
 
 **Option : un seul script fait les §2 à §5 (établi, issue #874, corrigé issue #876).** `provisioning/windows/installer_windows_seul.ps1` automatise tout ce que ce §2 et le §3 décrivent à la main (winget, contournement de l'alias Python, clonage, `identite_locale.conf`), sans droits d'administrateur, de façon relançable sans dommage (une simulation `-DryRun` affiche ce qui **serait** fait sans rien modifier — le résumé final le dit alors explicitement, sans jamais prétendre qu'une action a été faite). Mistral Vibe (version figée) et le garde-fou anti-push sont **installés/activés par défaut** (options `-SansVibe` et `-SansProtegerPush` pour les ignorer, déconseillé). Son en-tête documente chaque étape et chaque option ; voir aussi son résumé final, qui liste ce qui a été fait (ou serait fait, en simulation), ce qui était déjà en place, et les étapes manuelles qui restent, **dans l'ordre** : connexion GitHub, connexion Vibe, création du premier projet (avec `AGENT = vibe`), puis démarrage automatique. Un appel natif (`gh`, `winget`, `vibe`, `python`) dont la sortie d'erreur n'est qu'un simple message n'arrête plus le script à tort (issue #876 : `gh auth status` sur un compte pas encore connecté le bloquait avant le résumé). Suite de ce §2 et §3 : description manuelle, utile pour comprendre ce qui se passe, dépanner un piège précis, ou installer pas à pas sans le script.
 
-Si le dépôt est déjà cloné (§3) :
+Si le dépôt est déjà cloné (§3), la simulation est possible et sans danger :
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\provisioning\windows\installer_windows_seul.ps1 -DryRun
@@ -39,10 +39,16 @@ Puis, une fois le résultat de la simulation relu, la même commande **sans** `-
 **Avant même d'avoir cloné quoi que ce soit** (à vérifier), une seule commande télécharge ce fichier et l'exécute pour la session en cours, sans jamais modifier la politique d'exécution de la machine :
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -Command "iwr -UseBasicParsing https://raw.githubusercontent.com/AlainDelree/Bridge_Agent/master/provisioning/windows/installer_windows_seul.ps1 -OutFile '$env:TEMP\installer_windows_seul.ps1'; & '$env:TEMP\installer_windows_seul.ps1' -DryRun"
+powershell -NoProfile -ExecutionPolicy Bypass -Command "iwr -UseBasicParsing https://raw.githubusercontent.com/AlainDelree/Bridge_Agent/master/provisioning/windows/installer_windows_seul.ps1 -OutFile '$env:TEMP\installer_windows_seul.ps1'"
 ```
 
-**Risque à connaître avant de lancer cette commande : elle exécute du code téléchargé depuis Internet.** Avant de retirer `-DryRun` : vérifier que l'adresse commence bien par `https://raw.githubusercontent.com/AlainDelree/Bridge_Agent/` (dépôt officiel, pas une copie), et lire le fichier téléchargé avant de l'exécuter pour de vrai — `notepad $env:TEMP\installer_windows_seul.ps1`, ou l'ouvrir dans un navigateur à la même adresse. `-ExecutionPolicy Bypass` ne s'applique qu'à cette seule invocation de PowerShell, jamais à la machine. Une fois relu et simulé, relancer la même commande en retirant `-DryRun`.
+**Cette commande ne fait que télécharger le fichier, sans l'exécuter.** (Constaté : la simulation `-DryRun`, lancée avant le clonage, s'arrête à l'étape 6 avec une erreur de git, car le dossier n'existe pas encore ; défaut connu, à corriger. Pour l'instant, ne pas simuler avant le clonage.)
+
+**Risque à connaître avant de lancer cette commande : elle exécute du code téléchargé depuis Internet.** Avant de l'exécuter : vérifier que l'adresse commence bien par `https://raw.githubusercontent.com/AlainDelree/Bridge_Agent/` (dépôt officiel, pas une copie), et lire le fichier téléchargé avant de l'exécuter pour de vrai — `notepad $env:TEMP\installer_windows_seul.ps1`, ou l'ouvrir dans un navigateur à la même adresse. `-ExecutionPolicy Bypass` ne s'applique qu'à cette seule invocation de PowerShell, jamais à la machine. Une fois le fichier relu, l'exécuter, sans aucune option (Vibe et le garde-fou anti-push sont actifs par défaut) :
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File "$env:TEMP\installer_windows_seul.ps1"
+```
 
 **Sans le script**, Git, GitHub CLI et Python. Avec `winget` (inclus dans Windows 11 récent) :
 
