@@ -68,6 +68,47 @@ Après création réussie de l'issue, le watcher CCL du projet concerné
 s'il n'est pas déjà actif (issue #486, mode « dépose et oublie ») — via
 `redemarrer_si_eteint()` de app/watchers.py (issue #600), réutilisée telle quelle.
 
+Instance unique + réclamation atomique (issue #881) : un essai réel sous
+Windows a produit deux issues GitHub identiques pour un seul fichier déposé
+— deux process `watcher_issues_inbox.py` tournaient en même temps (l'un
+lancé par la tâche planifiée de session, l'autre par `new_issue.py` lui-même
+à son propre démarrage), parce que `logs/watcher-issues_inbox.pid` — le
+SEUL fichier consulté par `app.issues_inbox.watcher_inbox_actif()` — n'était
+écrit QUE par `app.issues_inbox.demarrer_watcher_inbox()` (le lanceur),
+jamais par ce script lui-même : un lancement direct (tâche planifiée) ne le
+renseignait donc jamais, rendant l'instance déjà active invisible. Deux
+correctifs indépendants, l'un n'excluant pas l'autre :
+1. `acquerir_verrou_instance_unique()` : verrou système (flock POSIX /
+   verrouillage de plage Windows via `msvcrt`) posé sur
+   `logs/watcher-issues_inbox.instance.lock`, tenu sur le DESCRIPTEUR OUVERT
+   pendant toute la durée de vie du process — libéré par l'OS dès que le
+   process se termine, proprement ou par un arrêt brutal, quel que soit le
+   futur PID réutilisé (contrairement à un simple fichier PID, jamais
+   fiable face à la réutilisation des numéros de processus). Posé dans
+   `main()` avant toute autre chose : un second lancement, détectant le
+   verrou déjà tenu, journalise un message clair et quitte proprement
+   (`sys.exit(0)`, jamais relancé par un superviseur qui ne redémarre pas
+   sur un arrêt propre). `CHEMIN_PID` est désormais aussi publié par CE
+   script lui-même dès l'acquisition du verrou (plus seulement par le
+   lanceur) — même principe que `watcher.py` pour les watchers de projet,
+   pour que `watcher_inbox_actif()` reconnaisse enfin toute instance, quel
+   que soit son mode de lancement.
+2. Réclamation atomique (`_reclamer_fichier`) : AVANT tout traitement,
+   chaque fichier est déplacé de `issues_inbox/` vers `issues_inbox/
+   en_cours/` sous son nom inchangé — seule l'instance dont ce déplacement
+   réussit (le nom n'existe pas déjà dans `en_cours/`) poursuit le
+   traitement ; belt-and-suspenders même si, par accident, deux instances
+   coexistaient malgré le verrou ci-dessus. Un fichier resté dans
+   `en_cours/` après un arrêt brutal (sidecar `.proprietaires/<nom>.pid`
+   dont le PID n'est plus vivant) est remis dans `issues_inbox/` au cycle
+   suivant par `recuperer_fichiers_en_cours_orphelins()` — jamais perdu, et
+   jamais retraité deux fois tant que son propriétaire est vivant.
+L'anti-doublon GitHub (`_issue_ouverte_meme_titre`) est complété par un
+registre en mémoire des créations EN COURS dans cette même instance
+(`_marquer_creation_en_cours`/`_demarquer_creation_en_cours`) — protège deux
+fichiers distincts partageant le même titre, traités par la même instance
+avant qu'une requête `gh issue list` n'ait pu voir la première création.
+
 Usage :
     python3 scripts/watcher_issues_inbox.py
     python3 scripts/watcher_issues_inbox.py --config configs/watcher_issues_inbox.conf
@@ -97,6 +138,20 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
+# Verrouillage système cross-plateforme (issue #881, voir
+# acquerir_verrou_instance_unique ci-dessous) : fcntl n'existe que sous
+# POSIX, msvcrt que sous Windows — un seul des deux est jamais disponible,
+# jamais les deux, jamais aucun hors plateforme exotique (repli journalisé
+# dans ce dernier cas).
+try:
+    import fcntl
+except ImportError:
+    fcntl = None
+try:
+    import msvcrt
+except ImportError:
+    msvcrt = None
+
 DOSSIER_SCRIPT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(DOSSIER_SCRIPT))
 
@@ -106,7 +161,8 @@ from watcher import (charger_config, lire_conf, est_titre_chef,  # noqa: E402
                      LABEL_SANS_COMPLEXITE, complexite_reconnue,  # (issue #844)
                      PLANCHER_TIMEOUT_ECRITURE,  # (issue #752)
                      valider_sous_dossier, valider_repo_cible,  # noqa: E402 (issue #567)
-                     forcer_utf8)  # (issue #698, étendue #875)
+                     forcer_utf8,  # (issue #698, étendue #875)
+                     _pid_vivant)  # (issue #881 — reprise après arrêt brutal)
 from app.watchers import redemarrer_si_eteint  # noqa: E402 (issue #486, #600)
 from app.ccw import demarrer_service_ccw_arriere_plan  # noqa: E402 (issue #711, étape D — déjà
 # importé transitivement via app.interruption ci-dessous ; direct ici pour la lisibilité.
@@ -220,13 +276,83 @@ log = logging.getLogger("watcher_issues_inbox")
 DEFAUT_CHEMIN_CONFIG = DOSSIER_SCRIPT / "configs" / "watcher_issues_inbox.conf"
 
 # Fichiers PID/échéance — mêmes chemins que app/issues_inbox.py::CHEMIN_PID /
-# CHEMIN_ECHEANCE (issue #485). Ce script ne les CRÉE jamais lui-même (c'est
-# le lanceur, app.issues_inbox.demarrer_watcher_inbox(), qui écrit le PID au
-# lancement — même logique que app/watchers.py::demarrer_watcher) ; il se
-# contente de les supprimer à sa propre auto-extinction, pour que l'interface
-# ne montre pas un PID orphelin.
+# CHEMIN_ECHEANCE (issue #485). Jusqu'à l'issue #881, ce script ne créait
+# JAMAIS CHEMIN_PID lui-même (seul le lanceur, app.issues_inbox.
+# demarrer_watcher_inbox(), l'écrivait au lancement — même logique que
+# app/watchers.py::demarrer_watcher) : un lancement DIRECT (tâche planifiée
+# Windows de session, terminal) ne le renseignait donc jamais, rendant
+# watcher_inbox_actif() aveugle à cette instance pourtant bien vivante —
+# cause racine de la double création observée (voir docstring de module).
+# Désormais publié par CE script lui-même dans main(), juste après
+# l'acquisition du verrou d'instance unique ci-dessous (donc seulement par
+# le process qui a réellement gagné le droit de tourner) — même principe que
+# watcher.py pour les watchers de projet, qui se publient déjà eux-mêmes
+# depuis toujours. Toujours supprimé à l'auto-extinction, pour que
+# l'interface ne montre pas un PID orphelin.
 CHEMIN_PID      = DOSSIER_SCRIPT / "logs" / "watcher-issues_inbox.pid"
 CHEMIN_ECHEANCE = DOSSIER_SCRIPT / "logs" / "watcher-issues_inbox.echeance"
+
+# ─── Instance unique, robuste à la réutilisation des PID (issue #881) ──────
+# Fichier PID seul (ci-dessus) : vulnérable PAR CONSTRUCTION à la
+# réutilisation d'un numéro de processus (un PID mort peut être repris par un
+# processus SANS RAPPORT avant qu'on ne le relise) et, comme on vient de le
+# voir, aveugle à toute instance qui ne l'écrit pas elle-même. Le verrou
+# ci-dessous répare les deux : un verrou SYSTÈME (flock POSIX non bloquant /
+# verrouillage de plage Windows via `msvcrt`, selon la plateforme détectée en
+# tête de fichier) posé sur le descripteur de CHEMIN_VERROU_INSTANCE et tenu
+# OUVERT pendant toute la durée de vie du process — l'OS le libère lui-même,
+# automatiquement, dès que ce descripteur se ferme (fin propre OU brutale du
+# process, y compris `kill -9`/coupure), quel que soit le PID qu'un AUTRE
+# processus réutilisera plus tard. Fichier distinct de CHEMIN_PID (lisible
+# par un humain, contenu non contractuel) : ce dernier reste la seule source
+# consultée par watcher_inbox_actif()/l'onglet web, le verrou ne servant qu'à
+# CE script pour refuser un second démarrage.
+CHEMIN_VERROU_INSTANCE = DOSSIER_SCRIPT / "logs" / "watcher-issues_inbox.instance.lock"
+
+
+def acquerir_verrou_instance_unique():
+    """Tente de poser le verrou d'instance unique. Retourne l'objet fichier
+    OUVERT (à conserver référencé — ne JAMAIS le fermer avant la fin du
+    process, sous peine de libérer le verrou prématurément) si acquis, ou
+    None si une AUTRE instance vivante le détient déjà.
+
+    `fcntl.flock(..., LOCK_EX | LOCK_NB)` (POSIX) et `msvcrt.locking(...,
+    LK_NBLCK, 1)` (Windows) sont tous deux des verrous NON BLOQUANTS : un
+    appel échoue immédiatement (au lieu d'attendre) si un autre process tient
+    déjà le verrou — comportement voulu (refuser le second lancement, pas
+    attendre que le premier libère). Aucun des deux mécanismes n'est
+    disponible → dégradé (verrou désactivé, instance unique NON garantie,
+    journalisé) plutôt que de refuser de démarrer sur toute plateforme
+    inconnue."""
+    CHEMIN_VERROU_INSTANCE.parent.mkdir(parents=True, exist_ok=True)
+    f = open(CHEMIN_VERROU_INSTANCE, "a+b")
+    try:
+        if f.seek(0, 2) == 0:
+            # Fichier tout juste créé (ou vidé) : au moins un octet, requis
+            # par msvcrt.locking pour verrouiller la plage [0, 1).
+            f.write(b"0")
+            f.flush()
+        f.seek(0)
+        if fcntl is not None:
+            fcntl.flock(f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        elif msvcrt is not None:
+            msvcrt.locking(f.fileno(), msvcrt.LK_NBLCK, 1)
+        else:
+            log.warning("Aucun mécanisme de verrouillage de fichier disponible sur cette "
+                        "plateforme (ni fcntl ni msvcrt) — instance unique NON garantie "
+                        "(issue #881).")
+            return f
+    except OSError:
+        f.close()
+        return None
+    try:
+        f.seek(0)
+        f.truncate()
+        f.write(f"pid={os.getpid()}\n".encode("utf-8"))
+        f.flush()
+    except OSError:
+        pass   # best-effort : le verrou lui-même est déjà acquis, son contenu n'est qu'informatif
+    return f
 
 
 @dataclass
@@ -250,6 +376,15 @@ class ConfigInbox:
         `REJECTED_DIR` : contrairement à ce dernier, rien ne justifie de
         pouvoir le déplacer ailleurs."""
         return self.inbox_dir / "en_attente"
+
+    @property
+    def en_cours_dir(self) -> Path:
+        """Sous-dossier `en_cours/` du dossier d'entrée (issue #881) —
+        réclamation atomique avant traitement, voir _reclamer_fichier/
+        recuperer_fichiers_en_cours_orphelins. Même principe que
+        `en_attente_dir` ci-dessus : toujours dérivé d'`inbox_dir`, jamais une
+        clé `.conf` séparée."""
+        return self.inbox_dir / "en_cours"
 
 
 def charger_config_inbox(chemin: Path) -> ConfigInbox:
@@ -1524,6 +1659,150 @@ def _fichier_pret(chemin: Path) -> bool:
         return False
 
 
+# ─── Réclamation atomique avant traitement (issue #881) ────────────────────
+# Même si, par accident, deux instances coexistaient malgré
+# acquerir_verrou_instance_unique() (plateforme sans fcntl/msvcrt, bug futur),
+# un fichier déposé ne doit être traité que par UNE SEULE d'entre elles —
+# belt-and-suspenders explicitement demandé par l'issue #881. `chemin.rename`
+# est une opération atomique UNIQUE (jamais d'état intermédiaire observable
+# en cas d'arrêt brutal, contrairement à un couple lien-dur+suppression) :
+# soit elle a eu lieu entièrement, soit pas du tout. Le nom du fichier n'est
+# JAMAIS modifié par cette réclamation (`en_cours_dir / chemin.name`, pas de
+# suffixe) : tout le reste du traitement (logs, notifications SSE, nom dans
+# rejected/) continue d'afficher le nom DÉPOSÉ, comportement strictement
+# inchangé pour un fichier traité par une instance unique.
+DOSSIER_PROPRIETAIRES = ".proprietaires"  # sidecar PID, même principe que DOSSIER_MOTIFS ci-dessus
+SUFFIXE_PROPRIETAIRE = ".pid"
+
+
+def _chemin_proprietaire(cfg: ConfigInbox, nom_fichier: str) -> Path:
+    return cfg.en_cours_dir / DOSSIER_PROPRIETAIRES / f"{nom_fichier}{SUFFIXE_PROPRIETAIRE}"
+
+
+def _ecrire_proprietaire(cfg: ConfigInbox, nom_fichier: str) -> None:
+    """Sidecar best-effort consignant le PID de l'instance qui vient de
+    réclamer `nom_fichier` — une panne d'écriture ne doit jamais faire
+    échouer la réclamation elle-même (déjà effective, le fichier est déjà
+    déplacé) : au pire, un sidecar absent est traité comme « propriétaire
+    mort » par _proprietaire_vivant ci-dessous (reprise immédiate plutôt que
+    blocage, cf. recuperer_fichiers_en_cours_orphelins)."""
+    try:
+        chemin = _chemin_proprietaire(cfg, nom_fichier)
+        chemin.parent.mkdir(parents=True, exist_ok=True)
+        chemin.write_text(str(os.getpid()), encoding="utf-8")
+    except OSError as e:
+        log.warning(f"Sidecar de propriétaire non écrit pour {nom_fichier} : {e}")
+
+
+def _supprimer_proprietaire(cfg: ConfigInbox, nom_fichier: str) -> None:
+    _chemin_proprietaire(cfg, nom_fichier).unlink(missing_ok=True)
+
+
+def _proprietaire_vivant(cfg: ConfigInbox, nom_fichier: str) -> bool:
+    """Faux si le sidecar est absent/illisible/invalide — un claim sans
+    propriétaire identifiable ne doit jamais bloquer indéfiniment une
+    reprise (voir recuperer_fichiers_en_cours_orphelins)."""
+    try:
+        pid = int(_chemin_proprietaire(cfg, nom_fichier).read_text(encoding="utf-8").strip())
+    except (OSError, ValueError):
+        return False
+    return _pid_vivant(pid)
+
+
+def _reclamer_fichier(cfg: ConfigInbox, chemin: Path) -> Path | None:
+    """Déplace `chemin` (dans issues_inbox/) vers issues_inbox/en_cours/ sous
+    son nom INCHANGÉ. Retourne le nouveau chemin si la réclamation réussit,
+    None si le nom est déjà occupé dans en_cours/ (réclamé par ailleurs —
+    `recuperer_fichiers_en_cours_orphelins`, appelée en tête de chaque cycle
+    par traiter_dossier, libère déjà les claims orphelins avant d'en arriver
+    là) : dans ce cas `chemin` reste INTACT dans issues_inbox/, retenté au
+    prochain cycle — jamais d'écrasement, sur aucune des deux plateformes
+    (`cible.exists()` vérifié explicitement, plutôt que de compter sur le
+    comportement de `os.rename` qui diverge entre POSIX — écrase
+    silencieusement une cible existante — et Windows — lève une exception)."""
+    cfg.en_cours_dir.mkdir(parents=True, exist_ok=True)
+    cible = cfg.en_cours_dir / chemin.name
+    if cible.exists():
+        return None
+    try:
+        chemin.rename(cible)
+    except OSError:
+        return None
+    _ecrire_proprietaire(cfg, cible.name)
+    return cible
+
+
+def recuperer_fichiers_en_cours_orphelins(cfg: ConfigInbox) -> int:
+    """Reprise après arrêt brutal (issue #881) : un fichier resté dans
+    issues_inbox/en_cours/ dont le propriétaire (sidecar .proprietaires/
+    <nom>.pid) n'est plus un process vivant a survécu à un arrêt brutal
+    (kill -9, coupure électrique) AVANT la fin de son traitement — remis dans
+    issues_inbox/ (nom disponible via _chemin_disponible — jamais sous le
+    même nom si une resoumission entre-temps l'occupe déjà) pour un
+    traitement normal au prochain passage de CETTE MÊME boucle, juste après
+    cet appel (voir traiter_dossier). Un fichier dont le propriétaire est
+    encore vivant n'est JAMAIS touché ici : traitement légitimement en cours,
+    que ce soit par cette instance (fenêtre normale entre la réclamation et
+    la fin du traitement) ou — cas accidentel que ce mécanisme couvre aussi —
+    par une autre. Retourne le nombre de fichiers récupérés (informatif,
+    utilisé par les tests)."""
+    if not cfg.en_cours_dir.is_dir():
+        return 0
+    nb = 0
+    for chemin in list(cfg.en_cours_dir.iterdir()):
+        if not chemin.is_file():
+            continue
+        if _proprietaire_vivant(cfg, chemin.name):
+            continue
+        cible = _chemin_disponible(cfg.inbox_dir, chemin.name)
+        try:
+            chemin.rename(cible)
+        except OSError as e:
+            log.warning(f"Reprise après arrêt brutal : déplacement de {chemin.name} impossible : {e}")
+            continue
+        _supprimer_proprietaire(cfg, chemin.name)
+        nb += 1
+        log.warning(f"Reprise après arrêt brutal (issue #881) : {chemin.name} (resté en cours "
+                    f"sans propriétaire vivant) remis dans issues_inbox/ sous le nom {cible.name}.")
+    return nb
+
+
+# ─── Anti-doublon — créations en cours dans CETTE instance (issue #881) ────
+# _issue_ouverte_meme_titre (import ci-dessus) interroge GitHub (`gh issue
+# list`) : fiable pour une issue déjà créée, mais aveugle à une création que
+# CETTE MÊME instance vient tout juste de lancer si `gh issue list` ne la
+# voit pas encore (latence de propagation côté GitHub). Registre en mémoire,
+# par dépôt, des titres dont la création est EN COURS dans ce process —
+# vérifié EN PLUS de _issue_ouverte_meme_titre (jamais à sa place : ce
+# registre ne couvre que la fenêtre de création elle-même, pas les issues
+# déjà créées par le passé, voir _demarquer_creation_en_cours). Protège deux
+# FICHIERS DISTINCTS partageant le même titre, traités l'un après l'autre
+# (lot, ou deux fichiers séparés) voire concurremment par cette instance.
+_titres_en_cours_creation: dict[str, set] = {}
+
+
+def _marquer_creation_en_cours(depot: str, titre: str) -> None:
+    _titres_en_cours_creation.setdefault(depot, set()).add(titre)
+
+
+def _demarquer_creation_en_cours(depot: str, titre: str) -> None:
+    """Retiré dès la FIN de la tentative de création (succès ou échec) —
+    jamais conservé plus longtemps : une fois l'appel `gh issue create`
+    terminé, soit l'issue existe réellement (une requête `gh issue list`
+    ultérieure la verra, _issue_ouverte_meme_titre reprend le relais), soit
+    il n'y a rien à protéger (échec, aucune issue créée). Conserver cette
+    marque indéfiniment bloquerait à tort une recréation légitime du même
+    titre après la fermeture de l'issue créée ici — hors de portée de ce
+    registre, qui ne concerne que les créations EN COURS."""
+    ensemble = _titres_en_cours_creation.get(depot)
+    if ensemble:
+        ensemble.discard(titre)
+
+
+def _creation_en_cours(depot: str, titre: str) -> bool:
+    return titre in _titres_en_cours_creation.get(depot, ())
+
+
 def _traiter_bloc(cfg: ConfigInbox, contenu_bloc: str):
     """Traite UN bloc — fichier mono-issue entier, ou un des blocs d'un lot
     multi-issues (issue #508) : validation, anti-doublon, création via `gh`,
@@ -1569,9 +1848,22 @@ def _traiter_bloc(cfg: ConfigInbox, contenu_bloc: str):
                 f"doublon : une issue #{doublon} portant ce titre est déjà ouverte", "",
                 None, None)
 
+    # Complément en mémoire (issue #881) : voir le commentaire de
+    # _titres_en_cours_creation plus haut — couvre la fenêtre où _creer_issue
+    # est en train de créer CETTE MÊME issue (depuis cette même instance),
+    # avant qu'une requête gh issue list ultérieure ne puisse la voir.
+    if _creation_en_cours(cfg_projet.depot, champs["titre"]):
+        return (False, champs["titre"], champs["projet"],
+                "doublon : une création est déjà en cours pour ce titre dans cette même instance",
+                "", None, None)
+
     labels = construire_labels(champs)
     body, info_timeout = construire_body(champs, cfg_projet)
-    succes, resultat, labels_omis = _creer_issue(cfg, cfg_projet, champs["titre"], labels, body)
+    _marquer_creation_en_cours(cfg_projet.depot, champs["titre"])
+    try:
+        succes, resultat, labels_omis = _creer_issue(cfg, cfg_projet, champs["titre"], labels, body)
+    finally:
+        _demarquer_creation_en_cours(cfg_projet.depot, champs["titre"])
     if not succes:
         return (False, champs["titre"], champs["projet"],
                 f"gh issue create a échoué : {resultat}", "", None, None)
@@ -1869,15 +2161,36 @@ def traiter_fichier(cfg: ConfigInbox, chemin: Path) -> None:
 def traiter_dossier(cfg: ConfigInbox) -> None:
     if not cfg.inbox_dir.is_dir():
         return
+    # Reprise après arrêt brutal (issue #881) : AVANT tout nouveau claim, pour
+    # libérer les noms orphelins de en_cours/ — sinon une resoumission sous le
+    # même nom qu'un orphelin pourrait rester bloquée jusqu'au cycle suivant
+    # (_reclamer_fichier refuse déjà d'écraser un nom occupé, cf. sa docstring).
+    recuperer_fichiers_en_cours_orphelins(cfg)
     for chemin in sorted(cfg.inbox_dir.glob("*")):
         if chemin == cfg.rejected_dir:
             continue
         if not chemin.is_file() or not _fichier_pret(chemin):
             continue
+        # Réclamation atomique (issue #881) : seule l'instance dont ce
+        # déplacement réussit poursuit — None = réclamé par ailleurs (ou nom
+        # provisoirement occupé), retenté au prochain cycle, fichier intact.
+        chemin_reclame = _reclamer_fichier(cfg, chemin)
+        if chemin_reclame is None:
+            continue
         try:
-            traiter_fichier(cfg, chemin)
+            traiter_fichier(cfg, chemin_reclame)
         except Exception as e:
-            log.error(f"Erreur inattendue en traitant {chemin.name} : {e}")
+            log.error(f"Erreur inattendue en traitant {chemin_reclame.name} : {e}")
+            # Remis dans issues_inbox/ pour un nouvel essai au prochain cycle —
+            # comportement inchangé par rapport à avant la réclamation atomique
+            # (le fichier restait alors sur place dans issues_inbox/ après une
+            # exception), plutôt que de le laisser bloqué dans en_cours/.
+            try:
+                chemin_reclame.rename(_chemin_disponible(cfg.inbox_dir, chemin_reclame.name))
+            except OSError as e2:
+                log.error(f"Remise en file de {chemin_reclame.name} après erreur impossible : {e2}")
+        finally:
+            _supprimer_proprietaire(cfg, chemin_reclame.name)
 
 
 # ─── Boucle principale ──────────────────────────────────────────────────────
@@ -1943,6 +2256,29 @@ def main() -> None:
     args = parser.parse_args()
 
     configurer_logs()
+
+    # Instance unique (issue #881) : AVANT toute autre chose — un second
+    # lancement (tâche planifiée Windows démarrée en parallèle du lancement
+    # par new_issue.py, double-clic manuel, etc.) s'arrête ici proprement,
+    # sans jamais ouvrir issues_inbox/ ni traiter quoi que ce soit. sys.exit(0)
+    # (arrêt « propre ») plutôt qu'un code d'erreur : un superviseur qui ne
+    # redémarre que sur arrêt INATTENDU (ex. surveiller_processus_session.ps1,
+    # codes 0/42) ne doit pas boucler à relancer un process qui se refuse
+    # légitimement — voir docstring de module pour le détail complet.
+    verrou_instance = acquerir_verrou_instance_unique()
+    if verrou_instance is None:
+        log.warning(f"Une autre instance de watcher_issues_inbox.py est déjà active "
+                    f"(verrou {CHEMIN_VERROU_INSTANCE} détenu par un autre process) — "
+                    f"arrêt immédiat de CETTE instance, aucun fichier ne sera traité "
+                    f"par elle (issue #881).")
+        sys.exit(0)
+
+    # Publication du PID par CE script lui-même (issue #881) — voir le
+    # commentaire de CHEMIN_PID plus haut : seul le process qui a réellement
+    # gagné le verrou ci-dessus la publie, jamais un second lancement refusé.
+    CHEMIN_PID.parent.mkdir(parents=True, exist_ok=True)
+    CHEMIN_PID.write_text(str(os.getpid()))
+
     cfg = charger_config_inbox(Path(args.config))
     boucle(cfg, once=args.once, duree_min=args.duree_min)
 

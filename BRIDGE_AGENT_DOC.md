@@ -90,6 +90,30 @@ déplacé dans `issues_inbox/rejected/`, jamais retraité automatiquement.
   correction manuelle.
 - **`issues_inbox/en_attente/`** : fichiers portant un champ `ATTENTE` non
   vide, mis de côté avant création (voir §3.16).
+- **`issues_inbox/en_cours/`** (issue #881) : réclamation atomique avant
+  traitement — un fichier prêt à être traité est d'abord déplacé ici sous
+  son nom inchangé ; seule l'instance dont ce déplacement réussit poursuit.
+  Vide en fonctionnement normal (le fichier en repart vers une création, un
+  rejet ou `en_attente/` dès la fin du traitement) ; un fichier qui y reste
+  après un arrêt brutal (process tué, coupure) est remis automatiquement
+  dans `issues_inbox/` au cycle suivant, jamais perdu ni retraité deux fois.
+
+**Instance unique du watcher (issue #881).** `scripts/watcher_issues_
+inbox.py` pose, dès son démarrage et avant toute autre chose, un verrou
+système (flock POSIX / verrouillage Windows selon la plateforme) tenu
+pendant toute sa durée de vie — robuste à la réutilisation des numéros de
+processus, contrairement à un simple fichier PID. Un second lancement
+(ex. tâche planifiée de session Windows démarrée en parallèle d'un
+lancement par `new_issue.py`, voir `provisioning/windows/
+DEMARRAGE_SESSION_WINDOWS.md`) détecte immédiatement le verrou déjà tenu,
+journalise un message clair dans `logs/issues_inbox.log` et s'arrête sans
+avoir rien traité. La réclamation atomique ci-dessus (`en_cours/`) protège
+en plus, même si deux instances coexistaient malgré tout par accident,
+qu'un même fichier ne soit jamais traité par les deux — c'est l'incident
+réel qui a motivé cette issue : deux issues GitHub identiques créées pour
+un seul fichier déposé, chaque instance l'ayant vu avant que l'autre n'ait
+terminé sa création (l'anti-doublon GitHub, basé sur `gh issue list`, ne
+pouvait pas voir à temps une création encore en cours ailleurs).
 
 ### 3.3 Format attendu du fichier
 
@@ -151,7 +175,14 @@ Un fichier est rejeté (déplacé vers `rejected/`, jamais créé sur GitHub) si
 `#Titre:` absent/vide, `MODELE` fourni mais non reconnu, `TIMEOUT` fourni
 mais non numérique, ou si le titre est déjà porté par une issue **ouverte**
 du même dépôt (anti-doublon — utiliser `RELANCE`, §3.14, pour corriger une
-issue déjà ouverte plutôt que de la redéposer). `REPO_CIBLE` (issue #829) :
+issue déjà ouverte plutôt que de la redéposer) **ou par une création encore
+EN COURS dans cette même instance** (registre en mémoire, issue #881 —
+complète l'anti-doublon GitHub pour la fenêtre où `gh issue list` ne voit
+pas encore une création que cette même instance vient de lancer ; deux
+fichiers distincts partageant le même titre, traités l'un après l'autre).
+Cette dernière vérification n'allège en rien l'anti-doublon GitHub, qui
+reste consulté en premier — voir §3.2 pour l'instance unique et la
+réclamation atomique. `REPO_CIBLE` (issue #829) :
 rejet si le projet est à `PERIMETRE_DYNAMIQUE=true` et que ce champ est
 absent (il serait de toute façon abandonné à l'exécution par le watcher,
 sans aucun repli) ; rejet aussi si ce champ est fourni pour un projet qui
@@ -1194,26 +1225,26 @@ estimation que celle déjà affichée, sans dupliquer ce calcul.
 
 ---
 
-*Dernière mise à jour : 10 novembre 2026 — issue #879, visibilité par défaut
-du dépôt créé par le formulaire « Nouveau projet » (§8.3) : la case « Dépôt
-public » reste cochée par défaut pour l'installation d'Alain, mais est
-désormais **décochée par défaut** sur une copie non-propriétaire de l'outil
-(`COPIE_NON_PROPRIETAIRE`, §8.2) — réglage facultatif `DEPOT_PRIVE_PAR_DEFAUT`
-dans `identite_locale.conf` (`identite.depot_public_par_defaut()`), qui PRIME
-sur `COPIE_NON_PROPRIETAIRE` dans les deux sens. Le libellé de la case est
-adapté à sa valeur par défaut pour ne jamais contredire son état réel ; le
-compte-rendu de création indique explicitement « créé (public) »/« créé
-(privé) ».*
+*Dernière mise à jour : 10 novembre 2026 — issue #881, instance unique et
+réclamation atomique pour le watcher `issues_inbox` (§3.2, §3.4) : un essai
+réel sous Windows avait produit deux issues GitHub identiques pour un seul
+fichier déposé (deux process `watcher_issues_inbox.py` vivants en même
+temps, l'un lancé par la tâche planifiée de session, l'autre par
+`new_issue.py` lui-même, qui ne voyait pas le premier faute d'un fichier PID
+renseigné par ce mode de lancement). Corrigé par un verrou système tenu
+pendant toute la durée de vie du process (robuste à la réutilisation des
+PID) et une réclamation atomique du fichier avant tout traitement
+(`issues_inbox/en_cours/`, avec reprise automatique après un arrêt brutal) ;
+l'anti-doublon GitHub est complété par un registre en mémoire des créations
+en cours dans la même instance.*
 
-*Mise à jour précédente : 10 novembre 2026 — issue #872, délai de la mise à
-jour automatique du dépôt (#868) adapté au démarrage de session, fin du faux
-« échec » : §8.1, délai par défaut 8 s → 30 s (réglable, `MAJ_AUTO_DEPOT_
-DELAI`), arrêt propre de tout l'arbre de process du `git pull` en cas de
-dépassement (pas seulement son process de tête), détection d'une avancée
-malgré le délai dépassé (annoncée comme une réussite, plus jamais comme un
-échec),
-nettoyage d'un `index.lock` résiduel UNIQUEMENT si l'arrêt du process qui
-l'a posé est confirmé, et nouvelle tentative automatique après une courte
-pause pour les échecs jugés transitoires (réseau).*
+*Mise à jour précédente : 10 novembre 2026 — issue #879, visibilité par
+défaut du dépôt créé par le formulaire « Nouveau projet » (§8.3) : la case
+« Dépôt public » reste cochée par défaut pour l'installation d'Alain, mais
+est désormais **décochée par défaut** sur une copie non-propriétaire de
+l'outil (`COPIE_NON_PROPRIETAIRE`, §8.2) — réglage facultatif
+`DEPOT_PRIVE_PAR_DEFAUT` dans `identite_locale.conf`
+(`identite.depot_public_par_defaut()`), qui PRIME sur
+`COPIE_NON_PROPRIETAIRE` dans les deux sens.*
 
 Historique complet : voir [`CHANGELOG.md`](CHANGELOG.md).

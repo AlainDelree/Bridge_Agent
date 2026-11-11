@@ -432,6 +432,28 @@ Ce script a été écrit et relu sous Linux, où il ne peut pas être exécuté
     composants demandés (watchers de projet, interface web) s'enregistrent
     normalement malgré cet échec isolé, et que le résumé final affiche
     bien « INSTALLATION PARTIELLE » en listant le composant en échec.
+20. **(issue #881, essai volontaire de double instance)** Avec la tâche
+    `IssuesInbox` déjà démarrée par ce script (donc `logs\watcher-
+    issues_inbox.pid` déjà renseigné), lancer manuellement une SECONDE
+    instance : `python scripts\watcher_issues_inbox.py` dans une fenêtre
+    PowerShell séparée, ou cliquer « ▶ Démarrer » sur le watcher spool dans
+    l'onglet Infrastructure de l'interface web alors que la tâche tourne
+    déjà. Vérifier dans `logs\issues_inbox.log` (ou la sortie console de la
+    seconde instance) une ligne claire « Une autre instance de
+    watcher_issues_inbox.py est déjà active… arrêt immédiat » et que cette
+    seconde instance se termine SANS avoir rien traité — pas de boucle de
+    redémarrage côté superviseur (arrêt propre, code 0). Puis, PENDANT que
+    les deux instances tournent volontairement (juste avant que la seconde
+    ne détecte le verrou — fenêtre étroite, ou en déposant le fichier avant
+    de lancer la seconde instance), déposer un fichier `.txt` dans
+    `issues_inbox\` et vérifier qu'**une seule** issue GitHub est créée pour
+    ce fichier (pas deux, même titre/contenu, même seconde de création —
+    c'est exactement l'incident constaté qui a motivé cette issue). Non
+    testable depuis l'environnement Linux de l'agent qui a fait la
+    correction (verrou cross-plateforme — flock POSIX déjà vérifié entre
+    deux process réels sous Linux, voir le rapport de clôture ; chemin
+    `msvcrt` Windows non exécutable ici) — **à vérifier en vrai sur
+    Windows**.
 
 20. **(issue #880)** Arrêter brutalement le superviseur d'un watcher (ex.
     tuer le process PowerShell `surveiller_processus_session.ps1` lui-même
