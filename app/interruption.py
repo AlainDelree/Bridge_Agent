@@ -53,7 +53,10 @@ from app.ccw import (
 # « from watcher import »), mais on s'assure ici aussi de l'ordre d'import.
 DOSSIER_SCRIPT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(DOSSIER_SCRIPT))
-from watcher import _chemin_verrou, _pid_vivant, _lister_worktrees_secondaires, DOSSIER_LOGS  # noqa: E402
+from watcher import (  # noqa: E402
+    _chemin_verrou, _pid_vivant, _lister_worktrees_secondaires, DOSSIER_LOGS,
+    _etat_processus_windows, _attendre_signal_windows,  # issue #886
+)
 
 # Job Object PERSISTANT du watcher (issue #695, côté producteur déjà en
 # place dans watcher.py) : constantes/structure/fonction de nommage, SANS
@@ -337,18 +340,40 @@ def _arreter_arbre_windows(cfg) -> tuple:
                                    "(liste de PID indisponible), considéré mort."})
         return etapes, True
 
+    # Sondage par code de sortie (issue #886, pas par la seule présence d'un
+    # handle OpenProcess — voir _etat_processus_windows) + réveil anticipé
+    # par WaitForSingleObject (_attendre_signal_windows, point 4 de l'issue)
+    # au lieu d'un sommeil fixe de 50ms à chaque tour : détecte une
+    # terminaison dès qu'elle survient plutôt qu'à la prochaine granularité.
     limite = time.monotonic() + 5
     survivants = list(arbre)
+    code_non_confirme: set[int] = set()
     while True:
-        survivants = [(pid, img) for pid, img in survivants if _pid_vivant(pid)]
+        nouveaux = []
+        for pid, img in survivants:
+            vivant, code_lu = _etat_processus_windows(pid)
+            if vivant:
+                nouveaux.append((pid, img))
+                (code_non_confirme.discard if code_lu else code_non_confirme.add)(pid)
+            else:
+                code_non_confirme.discard(pid)
+        survivants = nouveaux
         if not survivants or time.monotonic() >= limite:
             break
-        time.sleep(0.05)
+        _attendre_signal_windows(survivants[0][0], 50)
 
     if survivants:
         noms = ", ".join(f"{pid} ({img})" for pid, img in survivants)
+        # Message précis (issue #886, point 5) sur ce qui a VRAIMENT été
+        # vérifié, pour qu'un faux échec (code de sortie non lisible) reste
+        # reconnaissable d'un échec confirmé (STILL_ACTIVE réellement lu).
+        if code_non_confirme:
+            detail = (f"code de sortie non lisible pour {', '.join(str(p) for p in sorted(code_non_confirme))} "
+                      f"— faux échec possible (process peut-être déjà terminé, voir issue #886).")
+        else:
+            detail = "code de sortie lu pour tous (STILL_ACTIVE confirmé)."
         etapes.append({"etape": "attente_fin_process", "statut": "echec",
-                        "message": f"Process encore vivant(s) après 5s : {noms} — lock NON nettoyé."})
+                        "message": f"Process encore vivant(s) après 5s : {noms} — lock NON nettoyé. {detail}"})
         return etapes, False
 
     etapes.append({"etape": "attente_fin_process", "statut": "succes",

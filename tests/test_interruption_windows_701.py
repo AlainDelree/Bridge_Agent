@@ -127,7 +127,7 @@ def scenario_job_introuvable_rien_a_faire():
 def scenario_succes_liste_et_tue_tout():
     kernel32 = FausseAPIWindowsKernel32(pids=[111, 222])
     m1, m2 = _mocker_windows(kernel32)
-    with m1, m2, mock.patch.object(interruption, "_pid_vivant", lambda pid: False):
+    with m1, m2, mock.patch.object(interruption, "_etat_processus_windows", lambda pid: (False, True)):
         etapes, arbre_mort = interruption._arreter_arbre_windows(_cfg("demo"))
 
     assert arbre_mort is True
@@ -160,7 +160,7 @@ def scenario_liste_tronquee_signalee_mais_terminaison_complete():
     capacite = interruption._CAPACITE_PID_JOB_PERSISTANT
     kernel32 = FausseAPIWindowsKernel32(pids=[1, 2, 3], nb_assignes=capacite + 50)
     m1, m2 = _mocker_windows(kernel32)
-    with m1, m2, mock.patch.object(interruption, "_pid_vivant", lambda pid: False):
+    with m1, m2, mock.patch.object(interruption, "_etat_processus_windows", lambda pid: (False, True)):
         etapes, arbre_mort = interruption._arreter_arbre_windows(_cfg())
 
     assert arbre_mort is True
@@ -189,11 +189,14 @@ def scenario_terminaison_echoue_ferme_quand_meme_le_handle():
 
 
 def scenario_process_survivant_apres_fenetre_attente():
+    """111 a réellement terminé (code de sortie lu, != STILL_ACTIVE) ; 222
+    reste confirmé actif (STILL_ACTIVE réellement lu) — message d'échec
+    attendu SANS mention de code non lisible (issue #886, point 5)."""
     kernel32 = FausseAPIWindowsKernel32(pids=[111, 222])
     m1, m2 = _mocker_windows(kernel32)
     horloge = iter([0.0, 999.0])   # limite calculée à 0+5 ; 2e lecture (999) >= limite → sort tout de suite
     with m1, m2, \
-         mock.patch.object(interruption, "_pid_vivant", lambda pid: pid == 222), \
+         mock.patch.object(interruption, "_etat_processus_windows", lambda pid: (pid == 222, True)), \
          mock.patch.object(interruption.time, "monotonic", lambda: next(horloge)), \
          mock.patch.object(interruption.time, "sleep", lambda s: None):
         etapes, arbre_mort = interruption._arreter_arbre_windows(_cfg())
@@ -204,6 +207,32 @@ def scenario_process_survivant_apres_fenetre_attente():
     assert "222" in etape_attente["message"] and "111" not in etape_attente["message"], (
         etape_attente["message"]
     )
+    assert "STILL_ACTIVE confirmé" in etape_attente["message"], (
+        "code de sortie lu pour le seul survivant : doit être signalé comme "
+        f"confirmé, pas comme un faux échec possible : {etape_attente['message']}"
+    )
+    return {"message": etape_attente["message"]}
+
+
+def scenario_process_survivant_code_non_lisible_signale_faux_echec_possible():
+    """222 reste 'vivant' sans que GetExitCodeProcess ait pu être lu (sonde en
+    échec, cas rare prévu par prudence) — le message doit le dire EXPLICITEMENT
+    (faux échec possible), pas affirmer un STILL_ACTIVE confirmé qu'on n'a pas
+    vraiment lu (issue #886, point 5 — reconnaître un faux échec)."""
+    kernel32 = FausseAPIWindowsKernel32(pids=[222])
+    m1, m2 = _mocker_windows(kernel32)
+    horloge = iter([0.0, 999.0])
+    with m1, m2, \
+         mock.patch.object(interruption, "_etat_processus_windows", lambda pid: (True, False)), \
+         mock.patch.object(interruption.time, "monotonic", lambda: next(horloge)), \
+         mock.patch.object(interruption.time, "sleep", lambda s: None):
+        etapes, arbre_mort = interruption._arreter_arbre_windows(_cfg())
+
+    assert arbre_mort is False
+    etape_attente = next(e for e in etapes if e["etape"] == "attente_fin_process")
+    assert etape_attente["statut"] == "echec", etape_attente
+    assert "222" in etape_attente["message"]
+    assert "faux échec possible" in etape_attente["message"], etape_attente["message"]
     return {"message": etape_attente["message"]}
 
 
@@ -259,6 +288,8 @@ def main():
          scenario_terminaison_echoue_ferme_quand_meme_le_handle),
         ("process survivant après la fenêtre d'attente → 'echec', lock non nettoyé",
          scenario_process_survivant_apres_fenetre_attente),
+        ("code de sortie non lisible → message signale un faux échec possible (#886)",
+         scenario_process_survivant_code_non_lisible_signale_faux_echec_possible),
         ("aiguillage par OS : interrompre_linux bascule sur la bonne branche",
          scenario_aiguillage_interrompre_linux_par_os),
     ]

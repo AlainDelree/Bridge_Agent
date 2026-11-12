@@ -3640,6 +3640,16 @@ _PROCESS_ACCES_JOB = _PROCESS_SET_QUOTA | _PROCESS_TERMINATE
 # SANS pouvoir agir dessus — utilisé par _pid_vivant (issue #584), même esprit
 # de moindre privilège que _PROCESS_ACCES_JOB ci-dessus.
 _PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+# Droit supplémentaire requis pour attendre le signal de terminaison d'un
+# process via WaitForSingleObject (issue #886, _attendre_signal_windows) —
+# PROCESS_QUERY_LIMITED_INFORMATION seul ne suffit pas à l'obtenir.
+_SYNCHRONIZE = 0x00100000
+_WAIT_OBJECT_0 = 0x00000000
+# Valeur documentée (winbase.h) du code de sortie d'un process Windows qui
+# n'a PAS encore appelé ExitProcess — toute autre valeur lue par
+# GetExitCodeProcess est un FAIT CERTAIN de terminaison (issue #886, voir
+# _etat_processus_windows).
+_STILL_ACTIVE = 259
 
 # ─── Job Object PERSISTANT (issue #695) ─────────────────────────────────────
 # Distinct du job transitoire ci-dessus (créé/fermé à chaque tâche claude,
@@ -3757,6 +3767,16 @@ def _declarer_prototypes_kernel32_windows():
     k32.QueryFullProcessImageNameW.restype = wt.BOOL
     k32.QueryFullProcessImageNameW.argtypes = (
         wt.HANDLE, wt.DWORD, wt.LPWSTR, ctypes.POINTER(wt.DWORD))
+
+    # Code de sortie réel d'un process (issue #886 — distinct de la seule
+    # existence du handle, voir _etat_processus_windows) + attente passive de
+    # son signal de terminaison (_attendre_signal_windows), utilisées par
+    # _pid_vivant et app.interruption._arreter_arbre_windows.
+    k32.GetExitCodeProcess.restype = wt.BOOL
+    k32.GetExitCodeProcess.argtypes = (wt.HANDLE, ctypes.POINTER(wt.DWORD))
+
+    k32.WaitForSingleObject.restype = wt.DWORD
+    k32.WaitForSingleObject.argtypes = (wt.HANDLE, wt.DWORD)
 
 
 if os.name == "nt":
@@ -6013,16 +6033,22 @@ def _pid_vivant(pid: int | None) -> bool:
     interrompre_linux (app/interruption.py) et le comptage « en cours » du
     panneau Infrastructure (taches_en_cours ci-dessous). Repli sur le
     comportement ci-dessus si /proc est absent ou la lecture échoue — jamais
-    de faux zombie faute de pouvoir le confirmer."""
+    de faux zombie faute de pouvoir le confirmer.
+
+    Même exception côté Windows, FAIT CERTAIN équivalent (issue #886, voir
+    _etat_processus_windows ci-dessous) : la seule réussite d'OpenProcess ne
+    prouve que l'existence de l'OBJET process dans le noyau, laquelle peut
+    survivre à la terminaison réelle tant qu'un AUTRE handle le référence
+    encore (son parent par exemple) — l'équivalent Windows du zombie Linux
+    ci-dessus. Le code de sortie (GetExitCodeProcess), lui, n'est posé par le
+    noyau qu'au moment précis où le process termine — on s'y fie désormais
+    avant de conclure « vivant »."""
     if not pid or pid <= 0:
         return False
     try:
         if os.name == "nt":
-            handle = ctypes.windll.kernel32.OpenProcess(_PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
-            if not handle:
-                return False
-            ctypes.windll.kernel32.CloseHandle(handle)
-            return True
+            vivant, _code_lu = _etat_processus_windows(pid)
+            return vivant
         os.kill(pid, 0)
         if _etat_processus_linux(pid) == "Z":
             return False
@@ -6033,6 +6059,87 @@ def _pid_vivant(pid: int | None) -> bool:
         return True
     except Exception:
         return True
+
+
+def _etat_processus_windows(pid: int) -> tuple[bool, bool]:
+    """Windows uniquement (issue #886) : sonde `pid` via OpenProcess puis lit
+    son code de sortie réel (GetExitCodeProcess). Renvoie (vivant, code_lu).
+
+    FAITS CERTAINS (dans l'ordre où ils sont établis) :
+    - OpenProcess échoue (handle nul) ⇒ (False, True) : process introuvable,
+      comportement INCHANGÉ depuis #584.
+    - OpenProcess réussit ET GetExitCodeProcess lit un code ⇒ code_lu=True.
+      Le code vaut STILL_ACTIVE (259, winbase.h) ⇒ (True, True) : le process
+      n'a pas encore appelé ExitProcess, vivant au sens plein. Toute AUTRE
+      valeur ⇒ (False, True) : le process a bel et bien terminé — fait établi
+      indépendamment du nombre de handles qui référencent encore son objet
+      noyau (à la différence de la seule réussite d'OpenProcess, qui ne
+      prouve que l'existence de cet objet, pas l'exécution — voir la
+      docstring de _pid_vivant). C'est la correction centrale de l'issue
+      #886 : avant elle, un watcher Windows affichait « process encore
+      vivant » pour un process déjà terminé mais dont l'objet noyau restait
+      référencé (par ex. le handle du subprocess.Popen qui l'a lancé, encore
+      ouvert côté watcher au moment du sondage).
+
+    SUPPOSITION (pas un fait lu dans ce code, mais documentée séparément pour
+    rester honnête sur ce qui reste incertain) : rien dans ce module ne
+    permet d'affirmer QUI tient ce handle superflu dans un incident donné
+    (le parent via subprocess.Popen, un antivirus, l'OS pendant la fenêtre
+    asynchrone de TerminateProcess/TerminateJobObject...) — seul le FAIT que
+    le code de sortie est désormais lisible malgré cette incertitude compte
+    ici.
+
+    - OpenProcess réussit mais GetExitCodeProcess échoue (cas non observé en
+      pratique, prévu par prudence) ⇒ (True, False) : AUCUN fait établi,
+      repli sur la réponse prudente historique (asymétrie documentée sur
+      _pid_vivant — jamais conclure à tort qu'un PID recyclé est mort).
+
+    `code_lu` permet à l'appelant (voir app.interruption._arreter_arbre_
+    windows) de distinguer dans son message d'échec un « vivant confirmé par
+    le code de sortie » d'un « vivant faute de mieux », pour qu'un faux échec
+    reste reconnaissable (issue #886, point 5)."""
+    handle = ctypes.windll.kernel32.OpenProcess(_PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+    if not handle:
+        return False, True
+    try:
+        code = ctypes.wintypes.DWORD(0)
+        if ctypes.windll.kernel32.GetExitCodeProcess(handle, ctypes.byref(code)):
+            return (code.value == _STILL_ACTIVE), True
+        return True, False
+    finally:
+        ctypes.windll.kernel32.CloseHandle(handle)
+
+
+def _attendre_signal_windows(pid: int, delai_ms: int) -> None:
+    """Windows uniquement (issue #886, point 4) : attend jusqu'à `delai_ms`
+    millisecondes que `pid` signale sa terminaison (WaitForSingleObject),
+    plutôt qu'un simple time.sleep suivi d'un nouveau sondage à l'itération
+    suivante de la boucle d'attente (app.interruption._arreter_arbre_windows).
+
+    Choix (point 4 de l'issue) : WaitForSingleObject réveille l'appelant DÈS
+    que le noyau pose l'état « signalé » du process — exactement au moment où
+    ExitProcess s'exécute, un fait aussi certain que le code de sortie lu par
+    _etat_processus_windows (et pour la même raison : indépendant du nombre
+    de handles qui référencent encore l'objet). Utilisé ici en complément du
+    sondage, PAS en remplacement : cette fonction ne renvoie qu'un simple
+    réveil anticipé (aucun verdict), le verdict réel reste tranché par
+    _etat_processus_windows au tour de boucle suivant — bénéfice en
+    pratique : détecter une terminaison survenue après seulement quelques ms
+    sans attendre la granularité fixe du sondage précédent (50ms).
+
+    Best-effort, ne lève jamais : si le handle (ouvert avec SYNCHRONIZE, en
+    plus des droits de _etat_processus_windows) ne peut être obtenu, retombe
+    sur un simple sommeil — le sondage habituel tranchera comme avant cette
+    issue."""
+    handle = ctypes.windll.kernel32.OpenProcess(
+        _PROCESS_QUERY_LIMITED_INFORMATION | _SYNCHRONIZE, False, pid)
+    if not handle:
+        time.sleep(delai_ms / 1000)
+        return
+    try:
+        ctypes.windll.kernel32.WaitForSingleObject(handle, delai_ms)
+    finally:
+        ctypes.windll.kernel32.CloseHandle(handle)
 
 
 def _nettoyer_orphelin_verrou_perime(verrou: Path) -> None:
