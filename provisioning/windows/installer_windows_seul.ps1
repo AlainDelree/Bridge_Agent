@@ -121,11 +121,13 @@ param(
     # -SansProtegerPush désactive ce garde-fou (déconseillé).
     [switch]$SansProtegerPush,
 
-    # Installe en plus Mistral Vibe (uv + mistral-vibe, version figée) et le
-    # profil d'écriture bridge_ecriture.toml — §6 du guide. La connexion par
-    # compte (`vibe --setup`) reste manuelle (console réelle requise). ACTIF
-    # PAR DÉFAUT depuis l'issue #876 : Vibe est l'agent de toute cette
-    # installation. -SansVibe l'ignore (à faire soi-même plus tard si besoin).
+    # Installe en plus Mistral Vibe (uv + mistral-vibe, version figée) et les
+    # profils d'agent (bridge_ecriture.toml en écriture, bridge_lecture.toml
+    # en lecture seule depuis l'issue #885 — tout provisioning\vibe\agents\)
+    # — §6 du guide. La connexion par compte (`vibe --setup`) reste manuelle
+    # (console réelle requise). ACTIF PAR DÉFAUT depuis l'issue #876 : Vibe
+    # est l'agent de toute cette installation. -SansVibe l'ignore (à faire
+    # soi-même plus tard si besoin).
     [switch]$SansVibe,
 
     # Version figée de mistral-vibe installée (sauf -SansVibe) — JAMAIS
@@ -539,10 +541,11 @@ if ($DryRun) {
 }
 
 # ---------------------------------------------------------------------------
-# Étape 9 — Mistral Vibe (uv, mistral-vibe version figée, profil
-# bridge_ecriture.toml) : ACTIF PAR DÉFAUT depuis l'issue #876 (Vibe est
-# l'agent de toute cette installation) ; -SansVibe l'ignore. La connexion par
-# compte (vibe --setup) reste manuelle (console réelle requise, §6 du guide).
+# Étape 9 — Mistral Vibe (uv, mistral-vibe version figée, profils d'agent
+# bridge_ecriture.toml + bridge_lecture.toml depuis l'issue #885) : ACTIF PAR
+# DÉFAUT depuis l'issue #876 (Vibe est l'agent de toute cette installation) ;
+# -SansVibe l'ignore. La connexion par compte (vibe --setup) reste manuelle
+# (console réelle requise, §6 du guide).
 # ---------------------------------------------------------------------------
 if ($SansVibe) {
     Etape 9 'Mistral Vibe — IGNORÉ (-SansVibe)'
@@ -603,20 +606,32 @@ if ($SansVibe) {
         }
     }
 
+    # Copie TOUS les profils de provisioning\vibe\agents\ (pas seulement
+    # bridge_ecriture.toml) — depuis l'issue #885, ce dossier contient aussi
+    # bridge_lecture.toml (profil de lecture seule, nécessaire dès Vibe 3.1.0
+    # qui a retiré l'agent intégré `plan` ; voir provisioning\vibe\README.md
+    # §1 bis). Itère sur le dossier plutôt que de nommer chaque fichier : un
+    # futur profil ajouté au dépôt est copié sans modifier ce script.
     $RepAgentsVibe = Join-Path $env:USERPROFILE '.vibe\agents'
-    $CibleProfilVibe = Join-Path $RepAgentsVibe 'bridge_ecriture.toml'
-    $SourceProfilVibe = Join-Path $Dossier 'provisioning\vibe\agents\bridge_ecriture.toml'
+    $SourceRepAgentsVibe = Join-Path $Dossier 'provisioning\vibe\agents'
     if ($DryRun) {
-        Info "[DRY-RUN] Copierait $SourceProfilVibe vers $CibleProfilVibe."
-        $script:ActionsPrevues += "Profil bridge_ecriture.toml serait copié"
+        Info "[DRY-RUN] Copierait tous les profils de $SourceRepAgentsVibe vers $RepAgentsVibe."
+        $script:ActionsPrevues += "Profils d'agent Vibe (provisioning\vibe\agents\*.toml) seraient copiés"
     } else {
-        if (-not (Test-Path $SourceProfilVibe)) {
-            Avert "Profil $SourceProfilVibe introuvable — dépôt incomplet ou -Dossier inattendu, profil non copié."
+        if (-not (Test-Path $SourceRepAgentsVibe)) {
+            Avert "Dossier $SourceRepAgentsVibe introuvable — dépôt incomplet ou -Dossier inattendu, aucun profil copié."
         } else {
-            New-Item -ItemType Directory -Force -Path $RepAgentsVibe | Out-Null
-            Copy-Item -Path $SourceProfilVibe -Destination $CibleProfilVibe -Force
-            Ok "Profil bridge_ecriture.toml copié vers $CibleProfilVibe."
-            $script:ActionsFaites += "Profil bridge_ecriture.toml copié"
+            $ProfilsVibe = Get-ChildItem -Path $SourceRepAgentsVibe -Filter '*.toml' -File -ErrorAction SilentlyContinue
+            if (-not $ProfilsVibe) {
+                Avert "Aucun profil .toml trouvé dans $SourceRepAgentsVibe — dépôt incomplet ou -Dossier inattendu, aucun profil copié."
+            } else {
+                New-Item -ItemType Directory -Force -Path $RepAgentsVibe | Out-Null
+                foreach ($Profil in $ProfilsVibe) {
+                    Copy-Item -Path $Profil.FullName -Destination (Join-Path $RepAgentsVibe $Profil.Name) -Force
+                    Ok "Profil $($Profil.Name) copié vers $RepAgentsVibe."
+                    $script:ActionsFaites += "Profil $($Profil.Name) copié"
+                }
+            }
         }
     }
 

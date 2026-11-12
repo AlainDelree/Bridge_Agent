@@ -125,6 +125,119 @@ future décision d'Alain :
 | toute commande avec substitution (`$(...)`, backticks) ou redirection (`>`, `>>`, `<`, `\|`) | **à ne jamais autoriser** — précisément la classe que Mistral elle-même juge risquée ; la réponse est le prompt (§9), pas une permission plus large |
 | `rm -rf`, `git reset --hard`, `git clean -fd`, `git push` | **à ne jamais autoriser** — déjà proscrites partout ailleurs dans ce dépôt (irréversibilité) |
 
+## 1 bis. Profil de lecture seule (`agents/bridge_lecture.toml`, issue #885)
+
+**Cause corrigée (issue #885) : `plan`, l'agent intégré jusqu'ici utilisé
+pour MODE_LECTURE, a été RETIRÉ par Vibe 3.1.0.** Établi par lecture du code
+source installé (`mistral-vibe==3.1.0`, installé dans un environnement
+virtuel jetable sous `/tmp` pour cette seule vérification — jamais dans une
+installation réelle) :
+
+- `vibe.core.agents.models.BuiltinAgentName` ne liste plus que `ask`,
+  `accept-edits`, `smart-approve`, `auto-approve`, `explore`, `lean` — pas
+  `plan`.
+- `vibe.core.agents.models.REMOVED_BUILTIN_AGENTS = {"plan": "ask"}` ne
+  remplace `plan` par `ask` QUE quand il est la valeur du `default_agent` de
+  la config (`AgentManager._replace_removed_default_agent`, dans
+  `vibe.core.agents.manager`) — **pas** quand il est passé explicitement
+  par `--agent plan`, ce que faisait `_construire_cmd_vibe` pour TOUT MODE_LECTURE.
+  Dans ce second cas, `AgentManager._profile_for` lève
+  `ValueError("Agent 'plan' not found.")` — exactement le message observé en
+  production (échec en 7,8 secondes, `needs-human`).
+- `ask` (seul agent restant qui refuse l'écriture par défaut) demande une
+  approbation à CHAQUE outil : inutilisable en session non interactive
+  (`vibe -p`, personne pour répondre) — pas un remplacement viable de `plan`.
+- Aucun outil de LISTAGE de répertoire séparé n'existe dans Vibe 3.1.0 (ni
+  `glob`, ni `list_dir`, ni `ls` — vérifié à la fois en lisant
+  `vibe/core/tools/builtins/*.py` et en imprimant le schéma exact de
+  `config.toml` avec `vibe config schema`, qui énumère par ailleurs TOUS les
+  outils réels — `ask_user_question`, `bash` + ses outils compagnons
+  `bash_log_file`/`bash_output`/`bash_sessions`/`bash_stdin`, `edit`,
+  `git_bash` + mêmes compagnons, `grep`, `powershell` + mêmes compagnons,
+  `read_file`, `skill`, `task`, `todo`, `web_fetch`, `web_search`,
+  `write_file` — ni plus ni moins). Le seul moyen trouvé d'énumérer des
+  fichiers sans `bash` est `grep` pointé sur un répertoire plutôt que sur un
+  fichier précis.
+
+**Correctif : profil personnalisé `agents/bridge_lecture.toml`**, même
+mécanisme que `bridge_ecriture.toml` (§1 ci-dessus — fichier TOML versionné
+dans ce dépôt, désigné par son nom via `--agent bridge_lecture`). Permissions
+retenues (voir les commentaires du fichier lui-même pour le détail complet) :
+
+- `enabled_tools = ["read_file", "grep"]` — liste BLANCHE explicite plutôt
+  qu'une liste de permissions `"never"` par outil nommé : un outil hors
+  liste disparaît purement et simplement de ceux proposés au modèle
+  (`vibe.core.tools.manager.ToolManager.available_tools`), au lieu de
+  rester disponible par défaut s'il n'est pas explicitement cité — y
+  compris pour un outil ajouté par une future version de Vibe, non repris
+  ici. Confirmé décisif en lisant `vibe config schema` : plusieurs outils
+  compagnons de `bash`/`git_bash`/`powershell` (`*_stdin`, `*_output`,
+  `*_sessions`) ont par défaut la permission `always`, tout comme `skill`
+  et `todo` — une liste `"never"` ciblant seulement `bash`/`write_file`/
+  `edit` les aurait tous laissés passer.
+- `[tools.read_file]`/`[tools.grep]` `permission = "always"` déclarée
+  explicitement, par cohérence de lecture avec `bridge_ecriture.toml`, bien
+  qu'elle double leur défaut déjà réglé à `always` dans le code
+  (`ReadFileConfig`/`GrepToolConfig`, confirmé par `vibe config schema`).
+  **Point relevé en passant (non corrigé, hors périmètre de cette issue) :**
+  `bridge_ecriture.toml` (§1) déclare `[tools.read]`, qui ne correspond à
+  AUCUN outil réel de Vibe — le nom exact est `read_file`
+  (`BaseTool.get_name()` dérive le nom de l'outil du nom de sa classe
+  Python en snake_case, `ReadFile` → `read_file`). Sans conséquence dans ce
+  fichier précis puisque cet outil est de toute façon `always` par défaut,
+  mais à corriger si `bridge_ecriture.toml` est revu un jour.
+- `[tools.write_file]`/`[tools.edit]`/`[tools.bash]` `permission = "never"`
+  déclarée explicitement — déjà hors de `enabled_tools` ci-dessus (donc
+  totalement absents pour le modèle), répétés ici en défense en profondeur
+  et pour documenter l'intention en clair.
+
+**`_construire_cmd_vibe` (watcher.py) choisit `bridge_lecture` pour
+MODE_LECTURE SEULEMENT SI son fichier existe déjà** à l'emplacement attendu
+(`~/.vibe/agents/bridge_lecture.toml`, vérifié à chaque appel, jamais mis en
+cache) ; sinon il garde `plan` — comportement **strictement inchangé** pour
+une installation Vibe 2.x (`plan` y existe encore, constaté sur le ThinkPad
+d'Alain, Vibe 2.26.1) ou pour une machine Vibe 3.x où ce profil n'a pas
+encore été déployé. Dans ce dernier cas, l'échec brut de Vibe
+(`Agent 'plan' not found.`) reste possible, mais
+`AGENTS_CONNUS["vibe"]["causes_connues_echec_rapide"]` reconnaît désormais
+cette signature et affine le message de clôture de l'issue plutôt que de
+laisser l'erreur brute seule (voir `_detecter_cause_connue_echec_rapide`
+dans `watcher.py`) — aucune sonde supplémentaire ajoutée (pas de relance de
+`vibe` pour vérifier que `plan` existe encore avant de choisir l'agent) :
+même choix de coût que le pré-vol d'authentification existant
+(`verifier_preflight_cle_api_vibe`).
+
+**Déploiement** (une fois, sur chaque machine qui exécutera Vibe ≥ 3.1.0 en
+MODE_LECTURE — sans danger non plus sur une machine encore en 2.x, où le
+fichier est simplement ignoré par cette version de Vibe tant qu'il n'est pas
+désigné) :
+
+```bash
+mkdir -p ~/.vibe/agents
+cp provisioning/vibe/agents/bridge_lecture.toml ~/.vibe/agents/bridge_lecture.toml
+```
+
+**Pour une installation déjà faite** (ex. le PC fixe d'Alain, ou toute
+machine Windows déjà provisionnée par `installer_windows_seul.ps1` avant
+cette issue) : relancer `installer_windows_seul.ps1` (il copie désormais
+TOUS les profils de `provisioning/vibe/agents/`, pas seulement
+`bridge_ecriture.toml` — voir son étape 9), ou copier le fichier à la main
+avec la commande équivalente PowerShell :
+
+```powershell
+New-Item -ItemType Directory -Force "$env:USERPROFILE\.vibe\agents"
+Copy-Item provisioning\vibe\agents\bridge_lecture.toml "$env:USERPROFILE\.vibe\agents\"
+```
+
+**Non vérifié par un essai réel** (aucune session Vibe réelle lancée pour
+cette issue, consigne explicite — seulement établi par lecture du code
+source de la version 3.1.0, par `vibe config schema`, et par les tests
+unitaires de ce dépôt). **Essai à faire par Alain** : déposer une issue en
+`MODE = lecture` qui demande de lister les fichiers d'un projet basculé sur
+Vibe — vérifier que l'issue se termine par un rapport listant effectivement
+des fichiers (pas une erreur `Agent 'plan' not found.`, pas un blocage sur
+une demande d'approbation).
+
 ## 2. Dossiers de confiance (`trusted_folders.toml`)
 
 Vibe tient une liste de dossiers de travail approuvés
@@ -260,10 +373,11 @@ ajout : Vibe l'écraserait silencieusement à son prochain démarrage.
 4. Relancer le watcher du projet pour qu'il recharge sa configuration.
 5. Vérifier en conditions réelles sur une tâche simple avant de confier une
    tâche conséquente — le mapping des trois modes (lecture seule → profil
-   `plan`, écriture et lecture active → profil `bridge_ecriture`) et les
-   signatures d'erreur bloquante côté Vibe sont des choix best-effort, non
-   vérifiés en conditions réelles pendant l'issue #760 (consigne explicite :
-   ne pas lancer de session Vibe réelle, facturée).
+   `bridge_lecture` si déployé, sinon `plan`, voir §1 bis ; écriture et
+   lecture active → profil `bridge_ecriture`) et les signatures d'erreur
+   bloquante côté Vibe sont des choix best-effort, non vérifiés en
+   conditions réelles (consigne explicite des issues #760/#885 : ne pas
+   lancer de session Vibe réelle, facturée).
 
 ## 6. Interface CLI figée (`VIBE_CLI=python`, issue #779)
 
