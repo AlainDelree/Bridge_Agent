@@ -10,7 +10,8 @@
 //     - pièce jointe image (issue #191/#192) ;
 //     - envoi en lot de plusieurs blocs « #Titre: » (issue #135/#505) ;
 //     - détection automatique des champs d'en-tête collés dans le corps
-//       (#Titre, PROJET #109, TIMEOUT #111, MODE #326) + résumé (#117) ;
+//       (#Titre, PROJET #109, TIMEOUT #111, MODE #326, COMPLEXITE/REDACTEUR/
+//       ATTENTE #884) + résumé (#117) ;
 //     - aperçu de la commande, envoi, modales de confirmation/incohérence ;
 //     - mémorisation de notif_pc (issue #93), défaut coché de la case Bureau.
 //
@@ -23,10 +24,10 @@
 //
 // LOGIQUE PURE (testée sous Node — voir static/js/tests/creation.test.js) :
 //   zoneEntete, lireChampEntete, retirerLigneEntete, reconnaitreModeTexte,
-//   timeoutDefautSelonMode, detecterIncoherenceProjet, decouperCorpsEnBlocs,
-//   projetEffectifBloc, modeEffectifBloc — aucune dépendance au DOM ni au
-//   réseau. Elles sont exportées à cette seule fin ; le reste reste interne
-//   au module.
+//   reconnaitreComplexiteTexte, timeoutDefautSelonMode, detecterIncoherenceProjet,
+//   decouperCorpsEnBlocs, projetEffectifBloc, modeEffectifBloc,
+//   complexiteEffectifBloc — aucune dépendance au DOM ni au réseau. Elles sont
+//   exportées à cette seule fin ; le reste reste interne au module.
 //
 // PONT VERS L'ANCIEN app.js (à retirer avec le pont à la fin de la refonte) :
 //   - creation → ancien : le sélecteur de projet global reste dans app.js ;
@@ -876,6 +877,24 @@ export function reconnaitreModeTexte(brut) {
   return trouve ? trouve.valeur : 'lecture';
 }
 
+// ─── Reconnaissance de COMPLEXITE (issue #884) ─────────────────────────────
+// Quatre niveaux EXACTS (insensible à la casse/espaces), mêmes mots et même
+// correspondance stricte (pas de synonymes tolérants comme MODE) que
+// watcher.NIVEAUX_COMPLEXITE / extraire_complexite — à garder alignés.
+export const NIVEAUX_COMPLEXITE = ['rapide', 'court', 'normal', 'lourd'];
+
+// Traduit le texte brut de la cellule « | COMPLEXITE | … | » en l'un des
+// NIVEAUX_COMPLEXITE, ou null si la valeur ne correspond EXACTEMENT à aucun
+// des quatre (contrairement à reconnaitreModeTexte, il n'y a pas de repli
+// implicite ici : absent/non reconnu doivent être traités différemment par
+// l'appelant — absent ne retire rien du corps, non reconnu retire quand même
+// la ligne et avertit).
+export function reconnaitreComplexiteTexte(brut) {
+  if (!brut) return null;
+  const normalise = brut.trim().toLowerCase();
+  return NIVEAUX_COMPLEXITE.includes(normalise) ? normalise : null;
+}
+
 // ─── Timeout par défaut selon le mode (issue #752) ─────────────────────────
 // Le champ Timeout est pré-rempli avec TIMEOUT_CLAUDE du projet (cf.
 // appliquerTimeoutDefaut, appelée par mettreAJourInfoProjet d'app.js) ; une
@@ -958,6 +977,88 @@ function detecterModeDansCorps() {
   mettreAJourBoutonEnvoi();
 }
 
+// Détection de « | COMPLEXITE | <valeur> | » dans le corps → pré-sélection du
+// sélecteur Complexité (issue #884, suite #848). Contrairement à MODE, il n'y
+// a PAS de repli silencieux vers une valeur par défaut : COMPLEXITE absente
+// du corps ne touche à rien (le sélecteur garde sa valeur courante) — mais dès
+// que le champ est PRÉSENT, sa ligne est TOUJOURS retirée du corps, valeur
+// reconnue ou non, pour que construire_body() (qui régénère sa propre ligne
+// COMPLEXITE depuis le sélecteur) n'empile jamais un second tableau avec deux
+// lignes COMPLEXITE contradictoires (cause du bug #884 : « normal » du
+// formulaire + « rapide » resté dans le corps collé). Valeur non reconnue
+// (hors des quatre niveaux exacts) : la ligne est quand même retirée, le
+// sélecteur n'est PAS modifié, et un toast discret en informe Alain — même
+// principe que les autres champs d'en-tête (ex. labels omis).
+let dernierComplexiteAutoDetecte = null;
+function detecterComplexiteDansCorps() {
+  // Mode lot : chaque bloc porte sa propre COMPLEXITE, traitée par
+  // envoyerLot (complexiteEffectifBloc) — pas de sélecteur unique à refléter.
+  if (enModeLot()) { dernierComplexiteAutoDetecte = null; return; }
+  const corpsEl = document.getElementById('corps');
+  const brut = lireChampEntete(corpsEl.value, 'COMPLEXITE');
+  // Absent : rien à retirer, on relâche le garde-fou (une valeur recollée
+  // plus tard pourra être redétectée) sans toucher au sélecteur.
+  if (!brut) { dernierComplexiteAutoDetecte = null; return; }
+
+  // Rien de neuf depuis la dernière détection : ne pas réécraser un éventuel
+  // choix manuel d'Alain, ni re-signaler le même toast en boucle.
+  if (brut === dernierComplexiteAutoDetecte) return;
+  dernierComplexiteAutoDetecte = brut;
+
+  const reconnu = reconnaitreComplexiteTexte(brut);
+  const select = document.getElementById('complexite');
+  if (reconnu) {
+    champsEnteteExtraits.COMPLEXITE = reconnu;
+    if (select && select.value !== reconnu) select.value = reconnu;
+  } else {
+    afficherToast('Complexité « ' + brut + ' » non reconnue dans l\'en-tête collé '
+      + '(valeurs valides : rapide, court, normal, lourd) — ligne retirée du corps, '
+      + 'sélecteur Complexité laissé à « ' + (select ? select.value : 'normal') + ' ».');
+  }
+  // Retirée dans tous les cas (reconnue ou non) — jamais laissée dans le
+  // corps envoyé à l'agent.
+  corpsEl.value = retirerLigneEntete(corpsEl.value, 'COMPLEXITE');
+}
+
+// Retire silencieusement la ligne « | REDACTEUR | … | » du corps collé (issue
+// #884) : champ propre au fichier déposé dans issues_inbox/ (validation
+// REDACTEUR ⇄ PROJET côté scripts/watcher_issues_inbox.py, voir §3.4 du DOC)
+// — jamais lu par watcher.py pour une issue créée par ce formulaire (gh issue
+// create direct, sans passer par issues_inbox/). Laissé dans le corps, il
+// n'aurait aucun effet utile et ne ferait que polluer le prompt envoyé à
+// l'agent ; retiré sans notification, à l'inverse de COMPLEXITE (pas de
+// « valeur » à juger) et d'ATTENTE (pas de comportement différent à signaler).
+function detecterRedacteurDansCorps() {
+  if (enModeLot()) return;   // traité par bloc dans envoyerLot
+  const corpsEl = document.getElementById('corps');
+  if (lireChampEntete(corpsEl.value, 'REDACTEUR')) {
+    corpsEl.value = retirerLigneEntete(corpsEl.value, 'REDACTEUR');
+  }
+}
+
+// Signale (sans retirer la ligne) la présence de « | ATTENTE | <condition> | »
+// dans le corps collé (issue #884) : champ réservé aux fichiers déposés dans
+// issues_inbox/ (§3.16 du DOC) — SEUL scripts/watcher_issues_inbox.py évalue
+// cette condition pour mettre une issue de côté AVANT sa création ; une issue
+// créée par ce formulaire passe par `gh issue create` directement et est donc
+// créée IMMÉDIATEMENT, condition ou non. Contrairement à REDACTEUR (retiré
+// sans bruit, aucun effet attendu), ATTENTE porte une intention d'Alain qu'il
+// ne faut jamais faire disparaître en silence — on laisse la ligne telle
+// quelle dans le corps et on avertit clairement par un toast.
+let derniereAttenteSignalee = null;
+function detecterAttenteDansCorps() {
+  if (enModeLot()) { derniereAttenteSignalee = null; return; }
+  const corpsEl = document.getElementById('corps');
+  const brut = lireChampEntete(corpsEl.value, 'ATTENTE');
+  if (!brut) { derniereAttenteSignalee = null; return; }
+  if (brut === derniereAttenteSignalee) return;
+  derniereAttenteSignalee = brut;
+  afficherToast('Champ ATTENTE détecté (« ' + brut + ' ») mais NON géré par ce '
+    + 'formulaire : l\'issue sera créée immédiatement, sans attendre cette '
+    + 'condition. Ligne laissée dans le corps — utilise le dépôt de fichier '
+    + 'dans issues_inbox/ si tu veux réellement la mettre de côté.');
+}
+
 // Résumé lecture seule des champs d'en-tête détectés dans le corps (issue #117).
 // Sous le champ Titre, on affiche une petite série de badges listant, dans
 // l'ordre du §6, les champs d'en-tête effectivement présents dans le corps
@@ -972,7 +1073,7 @@ function detecterModeDansCorps() {
 //   • purement informatif : n'interfère pas avec l'alerte d'incohérence #44,
 //     qui reste pilotée par detecterIncoherenceProjet à l'envoi.
 const CHAMPS_ENTETE_RESUME = [
-  'PROJET', 'PRIORITE', 'TIMEOUT', 'MODELE',
+  'PROJET', 'COMPLEXITE', 'PRIORITE', 'TIMEOUT', 'MODELE',
   'TYPE', 'SPECS', 'SUITE_DE', 'FICHIER_CONTEXTE', 'LABELS',
 ];
 function mettreAJourResumeEntete() {
@@ -1070,6 +1171,18 @@ export function modeEffectifBloc(bloc, modeForm) {
   return brut ? reconnaitreModeTexte(brut) : modeForm;
 }
 
+// Complexité effectivement appliquée à un bloc de lot (issue #884) : son champ
+// « COMPLEXITE » d'en-tête s'il est présent ET reconnu (un des quatre niveaux
+// exacts), sinon le sélecteur Complexité du formulaire en repli — y compris
+// quand le champ est présent mais avec une valeur NON reconnue (même repli
+// que « absent », envoyerLot signale alors ce cas séparément dans le résumé).
+// Même principe que projetEffectifBloc/modeEffectifBloc.
+export function complexiteEffectifBloc(bloc, complexiteForm) {
+  const brut = lireChampEntete(bloc.corps, 'COMPLEXITE');
+  const reconnu = reconnaitreComplexiteTexte(brut);
+  return reconnu || complexiteForm;
+}
+
 // Bascule le bouton d'envoi entre mode mono-issue et mode lot selon le contenu
 // du corps. En lot : « Envoyer le lot (N issues) sur <projet(s)> » → envoyerLot ;
 // sinon on restaure le bouton normal « Envoyer sur <projet> » → envoyerIssue.
@@ -1132,6 +1245,15 @@ function afficherResumeLot(resultats, projetForm) {
       // Trace visible (issue #786) d'un label de confort omis, absent du dépôt.
       if (r.labelsOmis && r.labelsOmis.length) {
         l += ' <em>(label(s) absent(s) du dépôt, omis : ' + escapeHtml(r.labelsOmis.join(', ')) + ')</em>';
+      }
+      // Issue #884 : COMPLEXITE non reconnue dans l'en-tête du bloc (repli
+      // sur le sélecteur du formulaire) et/ou ATTENTE détectée mais non gérée
+      // en lot (l'issue a été créée immédiatement, condition ignorée).
+      if (r.complexiteInconnue) {
+        l += ' <em>(COMPLEXITE non reconnue dans l\'en-tête du bloc, repli appliqué)</em>';
+      }
+      if (r.attenteNonGeree) {
+        l += ' <em>(ATTENTE détectée mais non gérée par le lot — créée immédiatement)</em>';
       }
       return l;
     }
@@ -1199,16 +1321,28 @@ async function envoyerLot() {
       btn.textContent = 'Envoi ' + (i + 1) + '/' + blocs.length + '…';
 
       // Champs d'en-tête lus dans le bloc ; repli sur les valeurs du formulaire.
-      const projetBloc   = lireChampEntete(bloc.corps, 'PROJET');
-      const timeoutBloc  = lireChampEntete(bloc.corps, 'TIMEOUT');
-      const modeleBloc   = lireChampEntete(bloc.corps, 'MODELE');
-      const prioriteBloc = lireChampEntete(bloc.corps, 'PRIORITE');
-      const modeBloc     = lireChampEntete(bloc.corps, 'MODE');
+      const projetBloc     = lireChampEntete(bloc.corps, 'PROJET');
+      const timeoutBloc    = lireChampEntete(bloc.corps, 'TIMEOUT');
+      const modeleBloc     = lireChampEntete(bloc.corps, 'MODELE');
+      const prioriteBloc   = lireChampEntete(bloc.corps, 'PRIORITE');
+      const modeBloc       = lireChampEntete(bloc.corps, 'MODE');
+      // COMPLEXITE/REDACTEUR/ATTENTE (issue #884) : mêmes champs qu'en
+      // mono-issue (detecterComplexiteDansCorps/detecterRedacteurDansCorps/
+      // detecterAttenteDansCorps), lus et traités ici bloc par bloc.
+      const complexiteBloc = lireChampEntete(bloc.corps, 'COMPLEXITE');
+      const redacteurBloc  = lireChampEntete(bloc.corps, 'REDACTEUR');
+      const attenteBloc    = lireChampEntete(bloc.corps, 'ATTENTE');
 
       const projet = projetEffectifBloc(bloc, projetForm);
       // Mode mixte (issue #505) : chaque bloc peut porter son propre MODE,
       // repli sur le radio du formulaire — mêmes trois valeurs qu'en mono-issue.
       const mode   = modeEffectifBloc(bloc, base.mode);
+      // Complexité par bloc (issue #884) : repli sur le sélecteur du formulaire
+      // si absente OU non reconnue (même repli que modeEffectifBloc) — on
+      // distingue ce dernier cas (complexiteInconnue) pour le signaler dans le
+      // résumé, comme l'incohérence PROJET ci-dessous.
+      const complexite = complexiteEffectifBloc(bloc, base.complexite);
+      const complexiteInconnue = !!complexiteBloc && !reconnaitreComplexiteTexte(complexiteBloc);
 
       // Timeout : la cellule peut porter un suffixe « s » (ex. 1200s) ; on ne
       // conserve que les chiffres, comme detecterTimeoutDansCorps. Repli formulaire.
@@ -1218,11 +1352,18 @@ async function envoyerLot() {
 
       // Corps du bloc : on retire les lignes d'en-tête effectivement lues (comme le
       // flux mono-issue) pour ne pas empiler un second tableau d'en-tête.
+      // COMPLEXITE est retirée qu'elle soit reconnue ou non (même principe que
+      // detecterComplexiteDansCorps) ; REDACTEUR est un champ propre au fichier
+      // d'issue, sans effet pour une issue créée par ce formulaire — toujours
+      // retiré. ATTENTE, à l'inverse, est volontairement LAISSÉE dans le corps
+      // (réservée aux fichiers déposés dans issues_inbox/, voir détecteur mono).
       let corpsBloc = bloc.corps;
-      if (projetBloc)  corpsBloc = retirerLigneEntete(corpsBloc, 'PROJET');
-      if (timeoutBloc) corpsBloc = retirerLigneEntete(corpsBloc, 'TIMEOUT');
-      if (modeleBloc)  corpsBloc = retirerLigneEntete(corpsBloc, 'MODELE');
-      if (modeBloc)    corpsBloc = retirerLigneEntete(corpsBloc, 'MODE');
+      if (projetBloc)     corpsBloc = retirerLigneEntete(corpsBloc, 'PROJET');
+      if (timeoutBloc)    corpsBloc = retirerLigneEntete(corpsBloc, 'TIMEOUT');
+      if (modeleBloc)     corpsBloc = retirerLigneEntete(corpsBloc, 'MODELE');
+      if (modeBloc)        corpsBloc = retirerLigneEntete(corpsBloc, 'MODE');
+      if (complexiteBloc)  corpsBloc = retirerLigneEntete(corpsBloc, 'COMPLEXITE');
+      if (redacteurBloc)   corpsBloc = retirerLigneEntete(corpsBloc, 'REDACTEUR');
 
       const data = {
         projet:          projet,
@@ -1230,6 +1371,7 @@ async function envoyerLot() {
         priorite:        prioriteBloc || base.priorite,
         timeout:         timeout,
         mode:            mode,
+        complexite:      complexite,
         notifs:          base.notifs,
         corps:           corpsBloc.trim(),
         modele_ponctuel: modeleBloc || base.modele_ponctuel,
@@ -1251,7 +1393,9 @@ async function envoyerLot() {
           if (json.watcher_demarre === true) watcherDemarre = true;
           resultats.push({succes: true, titre: bloc.titre, projet: projet,
                           url: json.url, incoherence: incoherence,
-                          labelsOmis: json.labels_omis || []});
+                          labelsOmis: json.labels_omis || [],
+                          complexiteInconnue: complexiteInconnue,
+                          attenteNonGeree: !!attenteBloc});
         } else {
           signalerEchecPossible(json);   // issue #732, même logique que l'envoi mono-issue
           resultats.push({succes: false, titre: bloc.titre, projet: projet,
@@ -1317,9 +1461,19 @@ function viderFormulaire(cacherMsg=true) {
   // Réinitialise l'état des détections d'en-tête (issues #117/#129) : sans ça,
   // un ancien PROJET/TIMEOUT mémorisé empêcherait de redétecter la même valeur
   // au prochain collage, et le résumé afficherait des champs d'une issue passée.
-  dernierProjetAutoDetecte  = null;
-  dernierTimeoutAutoDetecte = null;
-  champsEnteteExtraits      = {};
+  dernierProjetAutoDetecte     = null;
+  dernierTimeoutAutoDetecte    = null;
+  champsEnteteExtraits         = {};
+  // Idem pour COMPLEXITE/ATTENTE (issue #884) : sans ce reset, une même
+  // valeur COMPLEXITE collée dans l'issue suivante ne serait pas redétectée
+  // (guard sur la valeur BRUTE inchangée), et un même ATTENTE ne serait pas
+  // re-signalé. Le sélecteur Complexité, lui, n'est remis à son défaut
+  // 'normal' que maintenant (issue #848 ne le faisait pas) — une nouvelle
+  // issue ne doit pas hériter de la complexité de la précédente.
+  dernierComplexiteAutoDetecte = null;
+  derniereAttenteSignalee      = null;
+  const champComplexite = document.getElementById('complexite');
+  if (champComplexite) champComplexite.value = 'normal';
   // Le corps est vidé par programme (pas d'event « input ») : on masque
   // explicitement le résumé d'en-tête (issue #117).
   mettreAJourResumeEntete();
@@ -1382,14 +1536,18 @@ function installerDelegationCreation() {
 
   // Détecteurs d'en-tête à la frappe + résumé + bascule mono/lot du bouton.
   // Enregistrés dans le MÊME ORDRE que les anciens addEventListener('input')
-  // d'app.js : detecterTitre → PROJET → TIMEOUT → MODE → résumé → bouton lot.
-  // La brique de délégation (socle/dom.js) exécute les règles d'un même type
-  // dans leur ordre d'enregistrement — l'ordre est donc préservé. insererDansCorps
+  // d'app.js : detecterTitre → PROJET → TIMEOUT → MODE → COMPLEXITE →
+  // REDACTEUR → ATTENTE (issue #884) → résumé → bouton lot. La brique de
+  // délégation (socle/dom.js) exécute les règles d'un même type dans leur
+  // ordre d'enregistrement — l'ordre est donc préservé. insererDansCorps
   // (joindreImage) redéclenche cet enchaînement via un Event('input', bubbles:true).
   dom.surAction('#corps', 'input', () => detecterTitreDansCorps());
   dom.surAction('#corps', 'input', () => detecterProjetDansCorps());
   dom.surAction('#corps', 'input', () => detecterTimeoutDansCorps());
   dom.surAction('#corps', 'input', () => detecterModeDansCorps());
+  dom.surAction('#corps', 'input', () => detecterComplexiteDansCorps());
+  dom.surAction('#corps', 'input', () => detecterRedacteurDansCorps());
+  dom.surAction('#corps', 'input', () => detecterAttenteDansCorps());
   dom.surAction('#corps', 'input', () => mettreAJourResumeEntete());
   dom.surAction('#corps', 'input', () => mettreAJourBoutonLot());
 }

@@ -49,6 +49,47 @@
       combobox projet (si connu, ligne retirée du corps) ; `| TIMEOUT | … |` →
       champ Timeout ; `| MODE | … |` → radio Mode. Une correction manuelle
       ultérieure du champ n'est pas réécrasée à la frappe suivante.
+- [ ] **COMPLEXITE / REDACTEUR / ATTENTE collés dans l'en-tête (issue #884)** —
+      coller EXACTEMENT ceci dans le champ Corps (projet `gestionstock`
+      existant, sinon remplacer par un projet réel) :
+      ```
+      | PROJET     | gestionstock |
+      | REDACTEUR  | gestionstock |
+      | MODE       | écriture     |
+      | COMPLEXITE | rapide       |
+      | TIMEOUT    | 900s         |
+
+      #Titre: Test manuel issue #884
+      Corps de test, à ne pas envoyer pour de vrai (ou envoyer sur un projet
+      de test et fermer l'issue créée ensuite).
+      ```
+      Vérifier dans l'ordre :
+      1. le sélecteur **Complexité** passe sur `rapide` ;
+      2. dans le champ Corps, les lignes `COMPLEXITE` ET `REDACTEUR` ont
+         disparu (seules `PROJET`/`MODE`/`TIMEOUT` disparaissent déjà, comme
+         avant) — il ne doit plus rester trace de `REDACTEUR` ni de
+         `COMPLEXITE` dans le texte ;
+      3. cliquer « Aperçu de la commande » (ou envoyer réellement sur un
+         projet de test) : le corps final ne doit porter **qu'un seul**
+         tableau `## En-tête`, avec **une seule** ligne `COMPLEXITE` (valeur
+         `rapide`) et aucune ligne `REDACTEUR`.
+      - Remplacer ensuite `| COMPLEXITE | rapide |` par
+        `| COMPLEXITE | archi-vite |` (valeur invalide) et recoller : un
+        toast discret doit apparaître (« Complexité « archi-vite » non
+        reconnue… ») ; le sélecteur Complexité ne doit PAS changer ; la ligne
+        doit quand même disparaître du corps.
+      - Remplacer enfin par `| ATTENTE | après la release 2.0 |` (en plus du
+        reste) : un toast clair doit apparaître (« Champ ATTENTE détecté …
+        mais NON géré par ce formulaire… ») et la ligne `ATTENTE` doit
+        **rester visible** dans le corps (contrairement à REDACTEUR/
+        COMPLEXITE) — l'issue serait créée immédiatement si on l'envoyait.
+      - Rejouer le même essai en **mode lot** (coller 2 blocs `#Titre:`, l'un
+        avec `COMPLEXITE` valide, l'autre avec une valeur invalide) : le
+        récapitulatif de fin de lot doit mentionner « COMPLEXITE non reconnue
+        dans l'en-tête du bloc » pour le second bloc.
+      - Cliquer « Vider » puis recoller un corps SANS aucun de ces champs :
+        le sélecteur Complexité doit être revenu à `normal` (pas resté sur la
+        valeur de l'essai précédent).
 - [ ] Changement de Mode (lecture / lecture active / écriture) : le bouton
       d'envoi reflète le mode (couleur noir/bleu/rouge).
 - [ ] **Créer une issue via le formulaire** → message de succès ; l'issue est

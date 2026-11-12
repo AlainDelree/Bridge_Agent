@@ -19,11 +19,14 @@ import {
   retirerLigneEntete,
   normaliserTexteMode,
   reconnaitreModeTexte,
+  reconnaitreComplexiteTexte,
+  NIVEAUX_COMPLEXITE,
   timeoutDefautSelonMode,
   detecterIncoherenceProjet,
   decouperCorpsEnBlocs,
   projetEffectifBloc,
   modeEffectifBloc,
+  complexiteEffectifBloc,
 } from '../creation.js';
 
 // ─── zoneEntete : borne les 25 premières lignes (issue #512) ───────────────
@@ -184,4 +187,81 @@ test('projetEffectifBloc : PROJET du bloc prioritaire, sinon repli formulaire', 
 test('modeEffectifBloc : MODE du bloc reconnu, sinon repli formulaire', () => {
   assert.equal(modeEffectifBloc({ corps: '| MODE | écriture |' }, 'lecture'), 'ecriture');
   assert.equal(modeEffectifBloc({ corps: 'rien' }, 'lecture_active'), 'lecture_active');
+});
+
+// ─── reconnaitreComplexiteTexte : reconnaissance STRICTE (issue #884) ──────
+// Contrairement à reconnaitreModeTexte, AUCUN synonyme toléré et AUCUN repli
+// implicite : seuls les quatre mots exacts de NIVEAUX_COMPLEXITE (insensible
+// à la casse/espaces) sont reconnus, tout le reste renvoie null — l'appelant
+// (detecterComplexiteDansCorps / complexiteEffectifBloc) décide du repli.
+test('reconnaitreComplexiteTexte : reconnaît les quatre niveaux exacts, insensible à la casse', () => {
+  for (const niveau of NIVEAUX_COMPLEXITE) {
+    assert.equal(reconnaitreComplexiteTexte(niveau), niveau);
+    assert.equal(reconnaitreComplexiteTexte('  ' + niveau.toUpperCase() + '  '), niveau);
+  }
+});
+
+test('reconnaitreComplexiteTexte : valeur inconnue → null (pas de repli)', () => {
+  assert.equal(reconnaitreComplexiteTexte('rapidos'), null);
+  assert.equal(reconnaitreComplexiteTexte('moyen'), null);
+});
+
+test('reconnaitreComplexiteTexte : absent (vide/null) → null', () => {
+  assert.equal(reconnaitreComplexiteTexte(''), null);
+  assert.equal(reconnaitreComplexiteTexte(null), null);
+});
+
+// ─── lireChampEntete/retirerLigneEntete appliqués à COMPLEXITE/REDACTEUR/
+//     ATTENTE (issue #884) — ces fonctions sont déjà génériques (champ passé
+//     en paramètre), ces tests documentent simplement leur usage sur les
+//     nouveaux champs traités par le formulaire. ───────────────────────────
+test('lireChampEntete : lit COMPLEXITE et REDACTEUR comme tout autre champ', () => {
+  const corps = '| PROJET     | gestionstock |\n'
+              + '| REDACTEUR  | gestionstock |\n'
+              + '| MODE       | écriture     |\n'
+              + '| COMPLEXITE | rapide       |\n'
+              + '| TIMEOUT    | 900s         |';
+  assert.equal(lireChampEntete(corps, 'REDACTEUR'), 'gestionstock');
+  assert.equal(lireChampEntete(corps, 'COMPLEXITE'), 'rapide');
+});
+
+test('retirerLigneEntete : retire REDACTEUR sans toucher aux lignes voisines', () => {
+  const corps = '| PROJET    | gestionstock |\n| REDACTEUR | gestionstock |\n| MODE | écriture |';
+  assert.equal(retirerLigneEntete(corps, 'REDACTEUR'),
+    '| PROJET    | gestionstock |\n| MODE | écriture |');
+});
+
+test('retirerLigneEntete : COMPLEXITE non reconnue est quand même retirable (l\'appelant décide, pas la regex)', () => {
+  const corps = '| COMPLEXITE | rapidos |\nContenu';
+  assert.equal(retirerLigneEntete(corps, 'COMPLEXITE'), 'Contenu');
+});
+
+test('lireChampEntete : ATTENTE lue mais retirerLigneEntete n\'est volontairement PAS appelée dessus '
+    + 'par detecterAttenteDansCorps (vérifié manuellement, non testable hors DOM)', () => {
+  const corps = '| ATTENTE | après la release 2.0 |\nReste du corps';
+  assert.equal(lireChampEntete(corps, 'ATTENTE'), 'après la release 2.0');
+  // Le corps n'est PAS muté par ce test : on vérifie juste que la ligne
+  // RESTE lisible/intacte, comme le fait le détecteur (il ne retire rien).
+  assert.equal(corps.includes('| ATTENTE | après la release 2.0 |'), true);
+});
+
+// ─── complexiteEffectifBloc : repli formulaire, lot multi-issues (#884) ────
+test('complexiteEffectifBloc : COMPLEXITE du bloc prioritaire si reconnue, sinon repli formulaire', () => {
+  assert.equal(complexiteEffectifBloc({ corps: '| COMPLEXITE | lourd |' }, 'normal'), 'lourd');
+  assert.equal(complexiteEffectifBloc({ corps: 'rien' }, 'court'), 'court');
+});
+
+test('complexiteEffectifBloc : valeur non reconnue → repli formulaire (comme absente)', () => {
+  assert.equal(complexiteEffectifBloc({ corps: '| COMPLEXITE | rapidos |' }, 'normal'), 'normal');
+});
+
+test('complexiteEffectifBloc : lot de plusieurs issues, une COMPLEXITE par bloc', () => {
+  const corps = '#Titre: Un\n| COMPLEXITE | rapide |\ncorps un'
+              + '\n#Titre: Deux\n| COMPLEXITE | rapidos |\ncorps deux'
+              + '\n#Titre: Trois\ncorps trois, sans COMPLEXITE';
+  const blocs = decouperCorpsEnBlocs(corps);
+  assert.equal(blocs.length, 3);
+  assert.equal(complexiteEffectifBloc(blocs[0], 'normal'), 'rapide');   // reconnue
+  assert.equal(complexiteEffectifBloc(blocs[1], 'normal'), 'normal');  // non reconnue → repli
+  assert.equal(complexiteEffectifBloc(blocs[2], 'normal'), 'normal');  // absente → repli
 });
