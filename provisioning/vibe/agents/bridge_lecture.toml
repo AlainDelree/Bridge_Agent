@@ -1,0 +1,118 @@
+# Profil d'agent Mistral Vibe pour les projets Bridge_Agent en mode lecture
+# seule (MODE_LECTURE) — issue #885, suite des issues #760/#761/#873.
+#
+# Cause corrigée par ce profil : depuis Vibe 3.1.0, l'agent intégré `plan`
+# (utilisé jusqu'ici par `_construire_cmd_vibe` pour MODE_LECTURE, voir
+# watcher.py) a été RETIRÉ du produit. Établi par lecture du code source
+# installé (paquet `mistral-vibe==3.1.0`, installé dans un environnement
+# virtuel jetable sous /tmp pour cette seule vérification, jamais dans
+# l'installation réelle) :
+# - `vibe.core.agents.models.BuiltinAgentName` ne liste plus que `ask`,
+#   `accept-edits`, `smart-approve`, `auto-approve`, `explore`, `lean` — pas
+#   `plan`.
+# - `vibe.core.agents.models.REMOVED_BUILTIN_AGENTS = {"plan": "ask"}` ne
+#   remplace `plan` par `ask` QUE quand `plan` est la valeur du
+#   `default_agent` de la config (`AgentManager._replace_removed_default_agent`,
+#   dans `vibe.core.agents.manager`) — PAS quand il est passé explicitement
+#   par `--agent plan`, ce que fait `_construire_cmd_vibe`. Dans ce second
+#   cas, `AgentManager._profile_for` lève
+#   `ValueError("Agent 'plan' not found.")`, le message observé en
+#   production (issue #885) — confirmé en lisant littéralement ce message
+#   dans le code source.
+# - `ask` (le seul agent restant qui refuse l'écriture par défaut) demande
+#   une approbation à CHAQUE outil, ce qui bloque indéfiniment une session
+#   non interactive (`vibe -p`, sans personne pour répondre) : ce n'est donc
+#   pas un remplacement viable de `plan` pour ce watcher.
+#
+# Solution retenue : un profil d'agent personnalisé, sur le modèle de
+# `bridge_ecriture.toml` (même mécanisme — fichier TOML déposé dans
+# `~/.vibe/agents/`, désigné par son nom via `--agent bridge_lecture`), mais
+# qui n'autorise QUE la lecture, jamais l'écriture ni l'exécution.
+#
+# Permissions retenues — établies par lecture de
+# `vibe.core.tools.builtins.{read_file,grep,write_file,edit,bash}.py` (même
+# environnement jetable) :
+#
+# 1. `enabled_tools` : liste blanche EXPLICITE plutôt qu'une liste de
+#    permissions "never" par outil. Lu dans
+#    `vibe.core.tools.manager.ToolManager.available_tools` : `enabled_tools`
+#    retire les outils hors liste de la liste même des outils proposés au
+#    modèle (ils n'existent simplement plus pour lui), alors qu'une
+#    permission "never" sur un outil nommé ne protège que les outils
+#    explicitement cités — un nouvel outil d'écriture ajouté par une future
+#    version de Vibe, non repris dans ce fichier, resterait sinon disponible
+#    par défaut. La liste blanche échoue donc fermé par construction, pas
+#    seulement contre les outils connus aujourd'hui.
+#    Seuls deux outils de LECTURE existent dans Vibe 3.1.0 (aucun outil de
+#    listage de répertoire séparé trouvé dans le paquet — ni `glob`, ni
+#    `list_dir`, ni `ls` : seule l'« explore » intégrée, sous-agent non
+#    sélectionnable comme agent principal via `--agent`, voir plus bas,
+#    s'appuie sur les deux mêmes outils plus `skill`, non retenu ici car
+#    sans rapport avec la lecture d'un projet) :
+#    - `read_file` (lecture d'un fichier, à un chemin absolu) ;
+#    - `grep` (recherche de motif dans des fichiers OU listage d'un
+#      répertoire en pointant `path` sur un dossier — c'est le seul moyen
+#      trouvé dans ce paquet d'énumérer des fichiers sans `bash`).
+#
+# 2. Permission "always" déclarée EXPLICITEMENT sur ces deux outils, par
+#    cohérence de lecture avec `bridge_ecriture.toml`, bien qu'elle double
+#    leur défaut déjà réglé à `ALWAYS` dans le code (`ReadFileConfig`/
+#    `GrepToolConfig`, issue #885 : `bridge_ecriture.toml` déclare quant à
+#    lui `[tools.read]`, nom qui ne correspond à AUCUN outil réel de Vibe
+#    — le nom exact est `read_file`, confirmé par
+#    `BaseTool.get_name()` (snake_case du nom de classe `ReadFile`) — sans
+#    conséquence côté `bridge_ecriture.toml` puisque ce même outil est de
+#    toute façon "always" par défaut ; non corrigé ici, hors périmètre de
+#    cette issue, signalé dans son rapport de clôture).
+#
+# 3. Permission "never" déclarée EXPLICITEMENT sur `write_file`, `edit` et
+#    `bash` — appartiennent de toute façon déjà hors de `enabled_tools`
+#    ci-dessus (donc absents du tout pour le modèle), mais répétés ici en
+#    "never" par défense en profondeur et pour documenter l'intention en
+#    clair si `enabled_tools` venait à changer de comportement dans une
+#    future version de Vibe.
+#
+# `agent_type`/`safety` : omis volontairement de l'héritage de l'« explore »
+# intégré (`AgentType.SUBAGENT`) — un sous-agent ne peut PAS être choisi
+# comme agent principal via `--agent` (`AgentManager._profile_for` lève
+# alors une erreur dédiée, « is a subagent and cannot be used »). Ce profil
+# reste donc du type par défaut `agent` (valeur implicite de
+# `AgentProfile.agent_type`), sélectionnable par `--agent bridge_lecture`.
+# `safety = "safe"` : cosmétique (couleur dans le sélecteur d'agent
+# interactif de Vibe), sans effet sur les permissions ci-dessus — reflète
+# simplement qu'aucune écriture n'est possible avec ce profil.
+#
+# Non vérifié par un essai réel (aucune session Vibe réelle lancée pour
+# cette issue, consigne explicite) : seulement établi par lecture du code
+# source de la version 3.1.0 et par les tests unitaires de ce dépôt (voir
+# tests/test_profil_lecture_vibe_885.py). Essai à faire par Alain : déposer
+# une issue en mode lecture qui demande de lister les fichiers d'un projet
+# (voir le rapport de clôture de l'issue #885 pour le détail).
+#
+# Déploiement : voir provisioning/vibe/README.md §1 bis — même mécanisme que
+# `bridge_ecriture.toml` (copie vers `~/.vibe/agents/bridge_lecture.toml`).
+# `_construire_cmd_vibe` (watcher.py) ne choisit ce profil pour MODE_LECTURE
+# QUE si ce fichier existe déjà à cet emplacement ; sinon il continue
+# d'utiliser `plan` (comportement strictement inchangé pour les
+# installations Vibe 2.x, où `plan` existe encore).
+
+display_name = "Bridge Lecture"
+description = "Lecture seule (Bridge_Agent, issue #885) : lecture de fichiers et recherche/listage, aucune écriture ni commande, sans la moindre approbation à donner en session non interactive."
+safety = "safe"
+
+enabled_tools = ["read_file", "grep"]
+
+[tools.read_file]
+permission = "always"
+
+[tools.grep]
+permission = "always"
+
+[tools.write_file]
+permission = "never"
+
+[tools.edit]
+permission = "never"
+
+[tools.bash]
+permission = "never"

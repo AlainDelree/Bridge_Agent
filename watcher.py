@@ -4218,14 +4218,32 @@ def _construire_cmd_claude(mode: str, modele: str, prompt: str, cwd: Path) -> li
 LIMITE_CAR_PROMPT_VIBE_WINDOWS = 30000
 
 
+def _chemin_profil_vibe_lecture() -> Path:
+    """Chemin attendu du profil de lecture seule personnalisé pour Vibe
+    (`bridge_lecture.toml`, issue #885 — voir
+    `provisioning/vibe/agents/bridge_lecture.toml` et son déploiement,
+    `provisioning/vibe/README.md` §1 bis).
+
+    Fonction plutôt que constante précalculée : relue à CHAQUE appel de
+    `_construire_cmd_vibe` (jamais mise en cache), pour refléter un
+    déploiement fait APRÈS le démarrage du watcher sans nécessiter de
+    redémarrage, et pour que les tests puissent rediriger `HOME` avant
+    l'appel (même pattern que `_lire_cle_api_vibe` ci-dessus, qui lit
+    `Path.home() / ".vibe" / ".env"` de la même façon)."""
+    return Path.home() / ".vibe" / "agents" / "bridge_lecture.toml"
+
+
 def _construire_cmd_vibe(mode: str, modele: str, prompt: str, cwd: Path) -> list[str]:
     """Construit l'argv de `vibe` en mode non interactif (issue #760, corrigé #761).
 
     Traduction des trois MODE_* (mêmes garde-fous de prompt que pour Claude
     Code — bloc `garde_fou` de `lancer_claude`, agnostique de l'agent) :
-    - MODE_LECTURE : profil intégré `plan`, qui refuse par construction toute
-      écriture de fichier et toute exécution de commande, explique le refus
-      et se termine proprement (constaté par essai manuel) — équivalent de
+    - MODE_LECTURE : profil `bridge_lecture` SI son fichier existe déjà à
+      l'emplacement attendu (`_chemin_profil_vibe_lecture()`), sinon profil
+      intégré `plan` (issue #885, voir ce commentaire plus bas pour pourquoi
+      ce repli). `plan` refusait par construction toute écriture de fichier
+      et toute exécution de commande, expliquait le refus et se terminait
+      proprement (constaté par essai manuel sur Vibe 2.26.1) — équivalent de
       l'absence de `--dangerously-skip-permissions` côté Claude Code.
     - MODE_ECRITURE : profil `bridge_ecriture`, fichier TOML versionné dans
       ce dépôt (voir provisioning/vibe/) et déployé vers
@@ -4325,7 +4343,46 @@ def _construire_cmd_vibe(mode: str, modele: str, prompt: str, cwd: Path) -> list
             "tâche à un agent qui supporte ce mode (ex. claude), ou traiter "
             "cette issue en MODE_ECRITURE si le projet l'autorise."
         )
-    agent_vibe = "plan" if mode == MODE_LECTURE else "bridge_ecriture"
+    # MODE_LECTURE : `plan` a été RETIRÉ des agents intégrés par Vibe 3.1.0
+    # (issue #885, cause établie par lecture du code source installé du
+    # paquet `mistral-vibe==3.1.0` — environnement virtuel jetable, aucune
+    # installation réelle modifiée) : `vibe.core.agents.models.
+    # BuiltinAgentName` ne liste plus que ask/accept-edits/smart-approve/
+    # auto-approve/explore/lean. `REMOVED_BUILTIN_AGENTS = {"plan": "ask"}`
+    # ne remplace `plan` par `ask` QUE quand il est la valeur du
+    # `default_agent` de la config (`AgentManager.
+    # _replace_removed_default_agent`) — PAS quand il est passé explicitement
+    # par `--agent plan`, ce qui est exactement ce que cette fonction faisait
+    # jusqu'ici : `AgentManager._profile_for` lève alors
+    # `ValueError("Agent 'plan' not found.")`, message observé en production
+    # (issue #885, échec en 7,8s). `ask` (seul agent restant qui refuse
+    # l'écriture par défaut) demande une approbation à CHAQUE outil : inutile
+    # en session non interactive (`vibe -p`, personne pour répondre).
+    #
+    # Correctif : profil personnalisé `bridge_lecture`, même mécanisme que
+    # `bridge_ecriture` (fichier TOML versionné dans ce dépôt — voir
+    # provisioning/vibe/agents/bridge_lecture.toml pour le détail des
+    # permissions retenues et provisioning/vibe/README.md §1 bis pour son
+    # déploiement vers ~/.vibe/agents/bridge_lecture.toml), choisi SEULEMENT
+    # si ce fichier existe déjà à cet emplacement
+    # (`_chemin_profil_vibe_lecture`). Sinon, repli inchangé sur `plan` :
+    # comportement strictement identique à avant #885 pour une installation
+    # Vibe 2.x (où `plan` existe encore, constaté sur le ThinkPad d'Alain,
+    # Vibe 2.26.1) ou pour une machine Vibe 3.x où ce profil n'a pas encore
+    # été déployé — dans ce dernier cas, l'échec Vibe brut reste possible
+    # (`Agent 'plan' not found.`), mais `_detecter_cause_connue_echec_rapide`
+    # (AGENTS_CONNUS["vibe"]["causes_connues_echec_rapide"]) reconnaît
+    # désormais cette signature et affine le message de clôture plutôt que
+    # de laisser l'erreur brute de Vibe seule — pas de sonde supplémentaire
+    # (ex. relancer `vibe` pour vérifier que `plan` existe encore) : un appel
+    # subprocess de plus par tentative pour un cas qui se résorbe une fois le
+    # profil déployé n'en vaut pas le coût, même esprit que le pré-vol
+    # d'authentification (verifier_preflight_cle_api_vibe) qui fait le même
+    # choix pour une raison similaire.
+    if mode == MODE_LECTURE:
+        agent_vibe = "bridge_lecture" if _chemin_profil_vibe_lecture().is_file() else "plan"
+    else:
+        agent_vibe = "bridge_ecriture"
     cmd = ["vibe", "--agent", agent_vibe, "--workdir", str(cwd), "--prompt", prompt]
     plafonds = AGENTS_CONNUS["vibe"]["plafonds_session"]
     cmd += [
@@ -4498,6 +4555,18 @@ AGENTS_CONNUS = {
                 "vérifier que rien n'écrase VIBE_CLI entre ce watcher et le "
                 "process vibe (voir AGENTS_CONNUS['vibe']['env']), et que "
                 "la version de vibe installée honore encore cette variable.",
+            ),
+            (
+                "agent 'plan' not found",
+                "agent intégré `plan` supprimé par cette version de Vibe "
+                "(≥ 3.1.0, issue #885) ET profil de lecture `bridge_lecture` "
+                "absent de ~/.vibe/agents/ sur cette machine — "
+                "`_construire_cmd_vibe` s'est donc rabattu sur `plan`, qui "
+                "n'existe plus, texte rapporté tel quel par l'outil lui-même.",
+                "déployer provisioning/vibe/agents/bridge_lecture.toml vers "
+                "~/.vibe/agents/bridge_lecture.toml (voir "
+                "provisioning/vibe/README.md §1 bis), puis relancer cette "
+                "issue.",
             ),
         ),
         # Plafonds de session explicites (issue #781, incident chesscoach

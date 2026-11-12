@@ -54,10 +54,11 @@ Le titre doit être unique : si une issue ouverte porte déjà le même titre, l
 
 ## 4. Choisir le mode
 
-- **`lecture`** : l'agent peut lire, analyser et rapporter. Il ne peut **ni écrire un fichier, ni exécuter un script ou une commande** (pas même un test). Convient aux diagnostics, audits, comptages.
+- **`lecture`** : l'agent peut lire, analyser et rapporter. Il ne peut **ni écrire un fichier, ni exécuter un script ou une commande** (pas même un test). Convient aux diagnostics, audits, comptages, listages de fichiers.
 - **`écriture`** : l'agent peut modifier les fichiers du projet, exécuter des commandes et faire des commits locaux. Un commit de sauvegarde est fait avant. Convient à toute tâche qui doit changer le projet **ou lancer un script ou un test**.
 - Il n'y a **pas de mode « lecture active »** avec cet agent : ne le propose jamais.
 - Si la tâche contient un des mots *exécuter, lancer, tester, mesurer, simuler, script*, le mode `lecture` ne convient presque jamais : choisis `écriture`.
+- **Le mode `lecture` fonctionne normalement avec cet agent** (profil dédié `bridge_lecture`, lecture et recherche/listage sans la moindre approbation à donner — issue #885). Choisis-le sans hésiter pour toute tâche qui n'a besoin de rien écrire : il répond plus vite qu'une tâche en `écriture` (aucun commit de sauvegarde, aucune exécution), et ne touche jamais au projet par construction.
 
 ## 5. Choisir la complexité
 
