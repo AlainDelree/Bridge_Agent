@@ -135,6 +135,107 @@ export function etatsCasesNotif(nomsLabels) {
   };
 }
 
+// ─── Bouton « Avancement » (issue #887) : commits + fichiers (committés/non
+// committés) du worktree dédié à l'issue sélectionnée, lecture seule (GET
+// /avancement/<projet>/<numero>) — pour estimer l'avancement d'une tâche en
+// cours sans ouvrir de terminal. Rendu entièrement ici (pas via le pont) :
+// fonctionnalité neuve, aucun code hérité d'app.js à réutiliser. ────────────
+
+// Horodatage epoch (secondes) → heure lisible française, '—' si absent/
+// invalide (pur, testé sous Node).
+export function formaterHorodatageAvancement(epochSecondes) {
+  if (!epochSecondes) return '—';
+  const d = new Date(epochSecondes * 1000);
+  if (Number.isNaN(d.getTime())) return '—';
+  return d.toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'medium' });
+}
+
+// Une ligne de fichier +N/-M — compteurs manquants (fichier binaire, issue
+// #788) affichés '?' plutôt qu'un faux 0 ; chemin renommé affiché
+// « ancien → nouveau ».
+export function ligneFichierAvancement(f) {
+  const ajoutees = (f.ajoutees === null || f.ajoutees === undefined) ? '?' : f.ajoutees;
+  const supprimees = (f.supprimees === null || f.supprimees === undefined) ? '?' : f.supprimees;
+  const chemin = f.ancien_chemin ? (f.ancien_chemin + ' → ' + f.chemin) : f.chemin;
+  return dom.echapperHtml(chemin) + ' <span class="av-plus">+' + ajoutees + '</span>/'
+       + '<span class="av-moins">-' + supprimees + '</span> (' + dom.echapperHtml(f.statut || '') + ')';
+}
+
+// Corps complet de la modale à partir de la réponse JSON de /avancement
+// (pur — aucun accès réseau ici, juste le rendu). Deux formes de réponse :
+//   - { disponible:false, message } : cas dégradé (lecture seule/active,
+//     for-windows/CCW, worktree introuvable) — message serveur affiché tel
+//     quel, jamais un échec brut.
+//   - { disponible:true, ... } : détail complet (worktree, dernière
+//     activité, commits, fichiers committés/non committés).
+export function rendreCorpsAvancement(resultat) {
+  if (!resultat) {
+    return '<div class="av-ligne-vide">Réponse vide du serveur.</div>';
+  }
+  if (!resultat.disponible) {
+    return '<div class="message">' + dom.echapperHtml(resultat.message || resultat.erreur
+      || 'Aucun avancement à montrer.') + '</div>';
+  }
+  const commits = resultat.commits || [];
+  const committes = resultat.fichiers_committes || [];
+  const nonCommittes = resultat.fichiers_non_committes || [];
+
+  let html = '<div class="av-section-titre">Worktree</div>'
+           + '<div class="av-ligne">' + dom.echapperHtml(resultat.chemin || '?') + ' (branche '
+           + dom.echapperHtml(resultat.branche || '?') + ')</div>'
+           + '<div class="av-ligne">Dernière activité : '
+           + formaterHorodatageAvancement(resultat.derniere_activite) + '</div>';
+
+  html += '<div class="av-section-titre">Commits depuis '
+        + dom.echapperHtml(resultat.branche_base || 'la base') + ' (' + commits.length + ')</div>';
+  html += commits.length
+    ? commits.map((c) => '<div class="av-ligne">' + dom.echapperHtml(c.hash) + ' — '
+        + dom.echapperHtml(c.message) + ' <span style="color:#888">('
+        + formaterHorodatageAvancement(c.horodatage) + ')</span></div>').join('')
+    : '<div class="av-ligne-vide">Aucun commit depuis la base.</div>';
+
+  html += '<div class="av-section-titre">Fichiers committés (' + committes.length + ')</div>';
+  html += committes.length
+    ? committes.map((f) => '<div class="av-ligne">' + ligneFichierAvancement(f) + '</div>').join('')
+    : '<div class="av-ligne-vide">Aucun.</div>';
+
+  html += '<div class="av-section-titre">Fichiers non committés (' + nonCommittes.length + ')</div>';
+  html += nonCommittes.length
+    ? nonCommittes.map((f) => '<div class="av-ligne">' + ligneFichierAvancement(f) + '</div>').join('')
+    : '<div class="av-ligne-vide">Working tree propre.</div>';
+
+  return html;
+}
+
+// Ouvre la modale, affiche un état « Chargement… » puis le résultat de GET
+// /avancement/<nom>/<numero> — à la demande seulement (clic), jamais de
+// sondage permanent (Alain préfère explicitement les mises à jour à la
+// demande, cf. issue #887). `silencieux:true` : une réponse dégradée
+// (disponible:false) est un succès HTTP 200, pas une erreur à signaler par
+// toast ; seule une vraie panne réseau/serveur l'est (catch ci-dessous).
+async function ouvrirAvancement(nom, numero, labelsCsv) {
+  const overlay = dom.$('#modal-avancement');
+  const titre   = dom.$('#modal-avancement-titre');
+  const corps   = dom.$('#modal-avancement-corps');
+  if (!overlay || !titre || !corps) return;
+  titre.textContent = '📊 Avancement — ' + nom + ' #' + numero;
+  corps.innerHTML = '<div class="av-ligne-vide">Chargement…</div>';
+  overlay.classList.add('actif');
+  try {
+    const url = '/avancement/' + encodeURIComponent(nom) + '/' + encodeURIComponent(numero)
+              + '?labels=' + encodeURIComponent(labelsCsv || '');
+    const resultat = await api.get(url, { silencieux: true });
+    corps.innerHTML = rendreCorpsAvancement(resultat);
+  } catch (e) {
+    corps.innerHTML = '<div class="message avertissement">Erreur : ' + dom.echapperHtml(e.message) + '</div>';
+  }
+}
+
+function fermerAvancement() {
+  const overlay = dom.$('#modal-avancement');
+  if (overlay) overlay.classList.remove('actif');
+}
+
 // ─── État ouvert/fermé (persisté, ouvert par défaut) ───────────────────────
 function panneauEstOuvert() {
   return persistance.lire(CLE_PANNEAU_OUVERT, true);
@@ -424,8 +525,18 @@ function rendrePanneauLateralActions() {
           + '<div id="pl-notif-erreur" class="pl-notif-erreur"></div>'
           + '</div>';
   }
-  html += '<div class="pl-actions">'
-        + '<button data-action="pl-relancer-ccl" data-projet="' + dom.echapperHtml(nom) + '">'
+  html += '<div class="pl-actions">';
+  if (interromptible) {
+    // Bouton « Avancement » (issue #887) : commits + fichiers du worktree
+    // dédié à CETTE issue, lecture seule — voir ouvrirAvancement() plus bas.
+    // Mêmes labels que ceux déjà normalisés ci-dessus (nomsLabels), transmis
+    // au serveur en paramètre de requête : évite un second appel GitHub pour
+    // déterminer le mode (écriture/lecture active/lecture seule/for-windows).
+    html += '<button data-action="pl-avancement" data-projet="' + dom.echapperHtml(nom)
+          + '" data-numero="' + Number(numero) + '" data-labels="'
+          + dom.echapperHtml(nomsLabels.join(',')) + '">📊 Avancement</button>';
+  }
+  html += '<button data-action="pl-relancer-ccl" data-projet="' + dom.echapperHtml(nom) + '">'
         + '↺ Relancer watcher CCL</button>';
   if (interromptible) {
     html += '<button class="danger" data-action="pl-interrompre-relancer" data-projet="' + dom.echapperHtml(nom)
@@ -614,6 +725,11 @@ function installerDelegationPanneau() {
     (e, el) => sidebarDemarrerWatcherInbox(el));
   dom.surAction('[data-action="pl-arreter-watcher-inbox"]', 'click',
     (e, el) => sidebarArreterWatcherInbox(el));
+
+  dom.surAction('[data-action="pl-avancement"]', 'click',
+    (e, el) => ouvrirAvancement(el.dataset.projet, Number(el.dataset.numero), el.dataset.labels));
+  dom.surAction('[data-action="pl-fermer-avancement"]', 'click',
+    () => fermerAvancement());
 
   dom.surAction('[data-action="pl-interrompre-relancer"]', 'click',
     (e, el) => appelerAncien('interrompreEtRelancer', el.dataset.projet, Number(el.dataset.numero)));

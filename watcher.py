@@ -5747,6 +5747,52 @@ def _horodatage_dernier_commit(chemin: Path) -> float:
         return 0.0
 
 
+def _candidats_worktree_issue(cfg, numero: int) -> list[tuple[Path, str]]:
+    """Candidats de worktree (chemin, branche) pour l'issue mode_write
+    `numero` du projet `cfg`, identifiés par `git worktree list` (jamais par
+    un chemin calculé, cf. commentaire plus haut sur `_chemin_worktree`) :
+    nom `<cfg.nom>-issue<numero>` ou ses suffixes historiques `-bis`/`-ter`
+    (issue #611), avec la branche attendue pour ce suffixe.
+
+    Factorisé hors de `_trouver_worktree_reutilisable` (issue #887, bouton
+    « Avancement ») : cette fonction ne fait QUE l'identification — aucun
+    filtre « pas en cours de traitement », à la différence de l'appelant
+    historique ci-dessous. Un appelant qui veut la lecture seule d'une
+    issue ACTUELLEMENT en cours (donc verrouillée) doit pouvoir trouver son
+    worktree quand même — voir `_trouver_worktree_pour_issue`."""
+    prefixe = f"{cfg.nom}-issue{numero}"
+    candidats: list[tuple[Path, str]] = []
+    for w in _lister_worktrees_secondaires(cfg.rep_travail):
+        chemin_str = w.get("chemin") or ""
+        nom = Path(chemin_str).name
+        if nom == prefixe:
+            suffixe = ""
+        elif nom in (prefixe + "-bis", prefixe + "-ter"):
+            suffixe = nom[len(prefixe):]
+        else:
+            continue
+        branche = w.get("branche", "")
+        if branche != _branche_worktree(numero, suffixe):
+            continue
+        chemin = Path(chemin_str)
+        if not chemin.is_dir():
+            continue
+        candidats.append((chemin, branche))
+    return candidats
+
+
+def _meilleur_candidat_worktree(candidats: list[tuple[Path, str]]) -> tuple[Path, str] | None:
+    """Départage plusieurs candidats de worktree pour la même issue (cas
+    hérité uniquement : standard + `-bis`/`-ter`, issue #611/#725) — le plus
+    récemment modifié (dernier commit) est choisi. None si `candidats` est
+    vide."""
+    if not candidats:
+        return None
+    if len(candidats) == 1:
+        return candidats[0]
+    return max(candidats, key=lambda c: _horodatage_dernier_commit(c[0]))
+
+
 def _trouver_worktree_reutilisable(numero: int) -> tuple[Path, str] | None:
     """Cherche un worktree déjà existant, valide et disponible pour l'issue
     mode_write `numero` (issue #725) — relance qui doit reprendre le travail
@@ -5769,31 +5815,25 @@ def _trouver_worktree_reutilisable(numero: int) -> tuple[Path, str] | None:
     disponible n'est trouvé — l'appelant retombe alors sur le chemin
     historique (`_creer_worktree_avec_retries` : nom standard, puis -bis,
     puis -ter)."""
-    prefixe = f"{CFG.nom}-issue{numero}"
-    candidats: list[tuple[Path, str]] = []
-    for w in _lister_worktrees_secondaires():
-        chemin_str = w.get("chemin") or ""
-        nom = Path(chemin_str).name
-        if nom == prefixe:
-            suffixe = ""
-        elif nom in (prefixe + "-bis", prefixe + "-ter"):
-            suffixe = nom[len(prefixe):]
-        else:
-            continue
-        branche = w.get("branche", "")
-        if branche != _branche_worktree(numero, suffixe):
-            continue
-        chemin = Path(chemin_str)
-        if not chemin.is_dir():
-            continue
-        if _worktree_en_cours_de_traitement(chemin):
-            continue
-        candidats.append((chemin, branche))
-    if not candidats:
-        return None
-    if len(candidats) == 1:
-        return candidats[0]
-    return max(candidats, key=lambda c: _horodatage_dernier_commit(c[0]))
+    candidats = [c for c in _candidats_worktree_issue(CFG, numero)
+                 if not _worktree_en_cours_de_traitement(c[0])]
+    return _meilleur_candidat_worktree(candidats)
+
+
+def _trouver_worktree_pour_issue(cfg, numero: int) -> tuple[Path, str] | None:
+    """Localise (chemin, branche) le worktree d'une issue mode_write
+    `numero` du projet `cfg` — MÊME mécanisme d'identification que
+    `_trouver_worktree_reutilisable` ci-dessus (issue #725 : `git worktree
+    list`, nom + branche attendus), mais SANS son filtre « pas en cours de
+    traitement » : destiné au bouton « Avancement » (issue #887), qui doit
+    justement retrouver le worktree d'une issue ACTUELLEMENT en cours
+    (donc verrouillée) pour le lire — jamais pour le reprendre.
+
+    Lecture seule par construction : ne fait qu'interroger `git worktree
+    list` (via `_candidats_worktree_issue`), n'exécute aucune commande git
+    qui modifie quoi que ce soit, ne prend aucun verrou. Retourne None si
+    aucun candidat (worktree absent, jamais créé, ou déjà nettoyé)."""
+    return _meilleur_candidat_worktree(_candidats_worktree_issue(cfg, numero))
 
 
 def _commits_ecart_depuis_creation(branche: str) -> int:

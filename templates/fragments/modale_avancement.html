@@ -1,0 +1,16 @@
+<!-- ─── Modal « Avancement » d'une issue en cours (issue #887) ────────────────
+     Affichée au clic sur le bouton 📊 Avancement du panneau latéral (zone
+     Actions, issue sélectionnée) : commits + fichiers (committés/non
+     committés) du worktree dédié à cette issue, lecture seule (GET
+     /avancement/<projet>/<numero>) — aucun effet sur le traitement en cours.
+     Rendue entièrement en JS (static/js/panneau_lateral.js::ouvrirAvancement),
+     jamais côté serveur, comme modale_interrompre.html. -->
+<div id="modal-avancement" class="modal-overlay">
+  <div class="modal-carte modal-carte-large">
+    <div class="modal-titre" id="modal-avancement-titre"></div>
+    <div id="modal-avancement-corps" class="modal-avancement-corps"></div>
+    <div class="modal-boutons">
+      <button id="btn-fermer-avancement" data-action="pl-fermer-avancement">OK</button>
+    </div>
+  </div>
+</div>

@@ -289,3 +289,54 @@ touchés par l'issue fusionnée :
   d'avant ce correctif reste tel quel tant qu'Alain ne le nettoie pas
   manuellement (§3, étape 5). Le nettoyage des worktrees reste, dans tous
   les cas, entièrement manuel.
+
+## 6. Bouton « Avancement » dans l'interface web (issue #887)
+
+Pour estimer l'état d'avancement d'une issue `mode_write` **en cours**
+sans ouvrir de terminal : un bouton **📊 Avancement**, dans le panneau
+latéral « Infrastructure » (onglet Résultats), zone *Actions* de l'issue
+sélectionnée — là où vivent déjà les actions contextuelles sur une issue
+(Interrompre, Fermer, notifications), plutôt qu'un nouvel onglet dédié
+(l'onglet « Git » générique de l'issue #569, qui listait worktrees et
+commits non poussés pour TOUS les projets, avait été retiré à l'issue
+#573 : hors du rôle de `new_issue.py`). Ce bouton-ci est volontairement
+scopé à UNE issue précise, pas un tableau de bord général.
+
+**Ce qu'il affiche** (route `GET /avancement/<projet>/<numero>`,
+strictement en lecture) :
+- le chemin et la branche du worktree de l'issue ;
+- les **commits** faits depuis la branche de base (`master`, en pratique)
+  — identifiant court, message, heure ;
+- les **fichiers modifiés**, avec les lignes ajoutées/retirées, en
+  distinguant le **déjà committé** (`git diff <base> HEAD`) du **non
+  committé** (`git diff HEAD` + fichiers non suivis `git status
+  --porcelain`) — les commits seuls mesurent mal l'avancement, CCL peut
+  travailler longtemps avant de committer ;
+- l'heure de la **dernière activité** (le plus récent entre le dernier
+  commit et le `mtime` des fichiers modifiés non committés).
+
+Mise à jour **à la demande** (clic), jamais par sondage permanent — cohérent
+avec la préférence d'Alain pour ce qui est lisible directement dans
+l'interface plutôt que par notification (ntfy jugé peu fiable).
+
+**Worktree retrouvé par le même mécanisme que RELANCE.** Le chemin est
+identifié exactement comme le fait la reprise de worktree sur RELANCE
+(§2, issue #725) : nom `<projet>-issue<numero>` (ou `-bis`/`-ter`),
+branche attendue, via `git worktree list` — factorisé dans
+`watcher._candidats_worktree_issue`. Seule différence : le bouton
+Avancement utilise `watcher._trouver_worktree_pour_issue`, qui **ignore**
+le filtre « pas en cours de traitement » de `_trouver_worktree_reutilisable`
+— le but est justement de lire le worktree d'une issue **actuellement en
+cours** (donc verrouillée), jamais de le reprendre. Aucune commande git
+destructrice n'est jamais exécutée par cette route, aucun verrou n'est pris.
+
+**Cas dégradés** (message clair, jamais un échec brut) :
+- **Issue en lecture seule ou en lecture active (`mode_scratch`)** : pas de
+  worktree de projet dédié — message l'indiquant, rien à chercher.
+- **Issue `for-windows`** : son worktree, s'il existe, est sur la machine
+  CCW — non pris en charge par cette étape (pas de SSH depuis cette vue),
+  message explicite.
+- **Worktree introuvable ou déjà nettoyé** (`mode_write` sans candidat
+  trouvé) : déjà fusionné et nettoyé manuellement (§3, étape 5), ou
+  traitement fait directement dans `REP_TRAVAIL` (repli faute de worktree
+  disponible, issue #611) — message l'indiquant, pas une erreur 500.
