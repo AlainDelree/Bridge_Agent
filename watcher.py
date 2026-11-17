@@ -4909,7 +4909,12 @@ fichier, n'exécute aucune commande modifiant l'état du système ou du dépôt.
                 contenu = chemin_ctx.read_text(encoding="utf-8", errors="replace")
                 LIMITE = 4000
                 if len(contenu) > LIMITE:
-                    contenu = contenu[:LIMITE] + "\n[...contexte tronqué à 4000 caractères...]"
+                    contenu = contenu[:LIMITE] + (
+                        "\n[...contexte tronqué à 4000 caractères — la suite "
+                        "n'est pas injectée mais reste lisible en entier dans "
+                        "le dépôt ; aide-toi de l'index des fichiers de "
+                        "domaine...]"
+                    )
                 bloc_contexte = (
                     f"\nCONTEXTE DU PROJET (lu depuis {chemin_ctx}) :\n"
                     f"---\n{contenu}\n---\n"

@@ -995,6 +995,23 @@ consulte `consignes/globales.md` (rappels de sécurité, garde-fous) via :
 curl -sL "https://raw.githubusercontent.com/AlainDelree/Bridge_Agent/master/consignes/globales.md"
 ```
 
+### 12.2 Fichier de contexte `CONTEXTE.md` (issue #889)
+
+Chaque projet a un `CONTEXTE.md` (chemin donné par `FICHIER_CONTEXTE` du
+`.conf`), injecté en tête du prompt CCL — mais **seuls ses 4000 premiers
+caractères** : au-delà, rien n'est vu par l'agent. Il ne garde donc que
+l'essentiel (règles, architecture, conventions) et un index de fichiers de
+détail par domaine, chacun sous `docs/contexte/<domaine>.md` — nom en
+minuscules, sans accent, mots séparés par `_` (ex. `onglet_parametre.md`),
+pour éviter les doublons de graphie.
+
+⚠️ **Pour Claude Chat, au moment de rédiger une issue touchant un domaine
+déjà indexé** : inclure dans le corps de l'issue la ligne `Fichiers de
+contexte à lire : <chemins>`, avec le ou les chemins exacts donnés par
+l'index de `CONTEXTE.md`. **Pour un domaine nouveau** : demander
+explicitement dans le corps la création du fichier (en donnant son nom
+exact) et l'ajout de sa ligne à l'index de `CONTEXTE.md`.
+
 ---
 
 ## 14. Délégation Chef → Ouvrier (changement d'environnement)

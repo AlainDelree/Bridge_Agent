@@ -3,12 +3,18 @@
 Injecté en tête de chaque prompt CCL (`FICHIER_CONTEXTE`, plafond 4000 car.).
 Référence complète : `BRIDGE_AGENT_DOC.md` (+ `ARCHITECTURE.md`).
 
-## Objectif
-Bridge inter-agents : Claude Chat (CC) délègue des tâches à Claude Code
-Linux (CCL) — et Windows (CCW) — via des GitHub Issues. Flux : CC crée une
-issue → `watcher.py` la détecte → l'agent exécute → poste le résultat en
-commentaire → ferme l'issue → notification. Bridge_Agent se développe
-lui-même par ses propres issues (dogfooding).
+## Règles
+- Bridge inter-agents : Claude Chat (CC) délègue des tâches à Claude Code
+  Linux (CCL) — et Windows (CCW) — via des GitHub Issues. Flux : CC crée une
+  issue → `watcher.py` la détecte → l'agent exécute → poste le résultat en
+  commentaire → ferme l'issue → notification. Bridge_Agent se développe
+  lui-même par ses propres issues (dogfooding).
+- Maintenance de ce fichier : si ta tâche modifie une règle, une
+  convention, l'architecture ou une dépendance, mets à jour ce CONTEXTE.md
+  dans le même commit, en 1 à 3 lignes (jamais un récit — il va dans
+  `CHANGELOG-<N>.md`). S'il dépasse déjà 4000 caractères, ne le grossis pas :
+  déplace plutôt le détail dans un fichier `docs/contexte/<domaine>.md`,
+  référencé dans l'index ci-dessous.
 
 ## Architecture
 - **`watcher.py`** — watcher générique unique (`--config configs/<nom>.conf`),
@@ -26,12 +32,12 @@ lui-même par ses propres issues (dogfooding).
 - **`templates/`** — `index.html` + `fragments/` (un par onglet/panneau/
   modale, Jinja2). **`static/`** — `css/` par zone (cascade), `js/app.js`
   (hérité, classique) + `js/socle/` (modules ES sans build, refonte
-  #625→#632 — détail ci-dessous).
+  #625→#632 — détail : `docs/contexte/etat_avancement.md`).
 - **`configs/`** (gitignoré, un `.conf`/projet) ; **`provisioning/windows/`**
   + **`systemd/`** (`watcher@.service`) pour le déploiement ; **`scripts/`**
   (bip).
 
-## Conventions de code (§11 du DOC)
+## Conventions
 - **Français** pour tout ce qui est nommé librement (identifiants,
   commentaires, clés de config) ; anglais gardé pour les contrats existants
   (labels GitHub, drapeaux CLI, mots-clés Python).
@@ -42,30 +48,8 @@ lui-même par ses propres issues (dogfooding).
 - **Scripts `.ps1` : BOM UTF-8 obligatoire** (octets `EF BB BF`) dès la
   création, sinon PowerShell 5.1 plante sur les accents.
 
-## État d'avancement (récent, cf. changelog en bas du DOC)
-- #625→#652 (refonte web) : socle `static/js/socle/` + modules par
-  fonctionnalité sortis d'app.js, communiquant par le store. #643 :
-  retrait du son par projet. #644 : migration `localStorage` terminée,
-  fuite corrigée. #649→#652 : onglets CCW/Journal/Configuration (+
-  suppression de projet #587) et le formulaire Nouvelle issue sortis en
-  modules dédiés. Détail : `ARCHITECTURE.md §6`.
-- #221 (calibration TIMEOUT, 2/3) : `watcher.py` journalise `TIMEOUT_suggéré`
-  à la clôture (EWMA par projet+TYPE+mode dans `logs/etat_timeout.json` +
-  `logs/etat_ambiance.json` pour F_reseau/F_local) — n'affecte pas encore le
-  TIMEOUT appliqué (en-tête seul décisif).
-- §12.1 (#209/#211) : `consignes/` (globales/type/projet) injecté dans le
-  PROMPT CCL par `watcher.py` (point de passage unique) ; `globales.md`
-  obligatoire, le reste facultatif.
-- §18 (#191/#192) : pièces jointes image → `issue-attachments/` + URL raw.
-- §17 (#187) : notifications centralisées via `new_issue.py` (tous projets).
-- §16 (#174…) : onglet « CCW », démarrage à la demande fini (#709/#711).
-  #717 : natif Windows sans SSH → `nssm` direct (droits `sc.exe sdset`).
-- §3.16 (#713, 1/2) : champ `ATTENTE` dans `issues_inbox/` met une issue de
-  côté (`en_attente/`) au lieu de la créer ; routes `/issues-attente`
-  (liste/lancer/supprimer), `nb_en_attente` sur `/issues-inbox/etat` ;
-  AUCUNE vérif auto de la condition. Onglet web = issue 2/2 (à venir).
-
-## Maintenance de ce fichier
-Si ta tâche modifie l'architecture, les dépendances, les conventions ou
-l'état d'avancement majeur, mets à jour ce CONTEXTE.md dans le même commit
-(≤ 4000 car.).
+## Index des fichiers de domaine
+- `docs/contexte/etat_avancement.md` — à lire avant de toucher au socle web
+  récent, à la calibration TIMEOUT, aux consignes §12.1, aux pièces
+  jointes, aux notifications, à l'onglet CCW, ou au champ `ATTENTE`
+  d'`issues_inbox/`.

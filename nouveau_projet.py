@@ -81,6 +81,22 @@ def owner_defaut() -> str:
 # Fichiers Specs MVC (§15) créés en plus de CONTEXTE.md quand l'option est active.
 FICHIERS_SPECS = ("CONTEXTE_VUE.md", "CONTEXTE_METIER.md", "CONTEXTE_PERSISTANCE.md")
 
+# Squelette de CONTEXTE.md (issue #889) : l'ordre règles / architecture /
+# conventions / index des fichiers de domaine est celui attendu par
+# consignes/globales.md — pas la règle complète (déjà injectée depuis ce
+# fichier, chaque caractère d'en-tête consommant par ailleurs le budget de
+# 4000 caractères injectés).
+GABARIT_CONTEXTE = """<!-- 4000 caractères maximum : tout ce qui est en haut est injecté dans chaque prompt CCL. -->
+
+## Règles
+
+## Architecture
+
+## Conventions
+
+## Index des fichiers de domaine
+"""
+
 # .gitignore minimal écrit à l'initialisation git d'un répertoire de travail
 # neuf (issue #257), seulement s'il n'en existe pas déjà un.
 GITIGNORE_MINIMAL = """venv/
@@ -305,7 +321,8 @@ def _ecrire_fichiers_contexte(rep_path: Path,
         if f.exists():
             existants.append(f)
         else:
-            f.write_text("", encoding="utf-8")
+            contenu = GABARIT_CONTEXTE if nom_fic == "CONTEXTE.md" else ""
+            f.write_text(contenu, encoding="utf-8")
             crees.append(f)
     return crees, existants
 
@@ -876,8 +893,9 @@ def etape_contexte(rep: str, avec_specs: bool) -> list[Path]:
     if contexte.exists():
         print(f"   • {contexte} existe déjà, laissé intact.")
     else:
-        contexte.write_text("", encoding="utf-8")
-        print(f"   ✓ {contexte} créé (vide).")
+        contexte.write_text(GABARIT_CONTEXTE, encoding="utf-8")
+        print(f"   ✓ {contexte} créé (squelette : règles/architecture/"
+              "conventions/index).")
         crees.append(contexte)
 
     if avec_specs:
@@ -1106,7 +1124,8 @@ def main() -> None:
 
     print("\n\033[1mReste à faire manuellement :\033[0m")
     print(f"   Côté projet {nom} créé :")
-    print(f"   • Rédiger {rep}/CONTEXTE.md — créé VIDE, injecté dans chaque "
+    print(f"   • Compléter {rep}/CONTEXTE.md — créé avec un squelette "
+          "(règles/architecture/conventions/index), injecté dans chaque "
           "prompt CCL (plafonné à 4000 caractères).")
     if git_res.get("commande_manuelle"):
         if git_res.get("contenu_preexistant"):
