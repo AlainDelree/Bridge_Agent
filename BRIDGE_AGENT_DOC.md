@@ -153,6 +153,7 @@ Champs d'en-tête reconnus, tous optionnels sauf `PROJET` et `COMPLEXITE` :
 | `ATTENTE`   | Optionnel — condition en une phrase qui retarde la création de l'issue jusqu'à levée manuelle (§3.16) ; à poser par Claude Chat lui-même dès qu'une tâche est « à lancer après... ». |
 | `RELANCE`   | Optionnel — `#N` d'une issue `needs-human` déjà ouverte à corriger/relancer plutôt que d'en créer une nouvelle (voir §3.14). |
 | `REPO_CIBLE` | Chemin ABSOLU — **obligatoire** pour un projet à `PERIMETRE_DYNAMIQUE=true` (issue #125), **refusé** pour tout autre projet (issue #829). Réservé à ces projets : leur `REP_TRAVAIL` devient le `cwd` réel et le périmètre d'écriture de cette exécution, remplaçant celui du `.conf`. Si `REP_TRAVAIL` (où vit le code de l'outil) est DISJOINT de `REPO_CIBLE`, il reste quand même accessible en LECTURE et EXÉCUTION SEULEMENT, jamais en écriture (issue #833, détail §7). Supporté à la création (fichier déposé **et** formulaire web, qui affiche alors un champ obligatoire « Dépôt cible ») — pas seulement corrigeable par `RELANCE` (§3.14). |
+| `DOMAINES`  | Optionnel — noms de domaine séparés par des virgules, chacun candidat à `docs/contexte/<nom>.md` (détail §12.2). Validation TOLÉRANTE : un nom hors convention (minuscules/chiffres/`_`) est ignoré avec avertissement, jamais interprété comme un chemin, et ne rejette jamais l'issue. Absent/vide → comportement inchangé. Pas de champ dédié côté formulaire web (comme `LABELS`) : à écrire en texte libre dans le corps. Corrigeable par `RELANCE` (§3.14). |
 
 > ⚠️ **Choix du MODE quand la tâche exécute un script (issue #722).** Si la
 > « Tâche demandée » contient un mot déclencheur (**exécuter, lancer,
@@ -259,9 +260,9 @@ de zéro.
 
 L'issue ciblée doit être **ouverte** et appartenir au dépôt du `PROJET`
 indiqué, sinon rejet. Champs corrigibles dans son corps : `TIMEOUT`,
-`MODELE`, `SOUS_DOSSIER` et `REPO_CIBLE` (une ligne déjà présente est
-corrigée, jamais insérée) — `MODE` et `LABELS` ne sont pas corrigibles par
-ce chemin. Le texte libre du fichier (au-delà de l'en-tête et de
+`MODELE`, `SOUS_DOSSIER`, `REPO_CIBLE` et `DOMAINES` (une ligne déjà
+présente est corrigée, jamais insérée) — `MODE` et `LABELS` ne sont pas
+corrigibles par ce chemin. Le texte libre du fichier (au-delà de l'en-tête et de
 `#Titre:`) est ajouté en fin de corps de l'issue, dans une section
 horodatée `## Relance du <date>` — c'est donc bien lu par CCL à la reprise.
 
@@ -1017,6 +1018,23 @@ contexte à lire : <chemins>`, avec le ou les chemins exacts donnés par
 l'index de `CONTEXTE.md`. **Pour un domaine nouveau** : demander
 explicitement dans le corps la création du fichier (en donnant son nom
 exact) et l'ajout de sa ligne à l'index de `CONTEXTE.md`.
+
+**Champ d'en-tête `DOMAINES` (issue #892), en complément de la ligne de
+texte libre ci-dessus.** Cette ligne dépend de l'attention de CCL et
+d'aucun contrôle ; `| DOMAINES | nom1, nom2 |` (un ou plusieurs noms,
+séparés par des virgules, chacun le nom d'un `docs/contexte/<nom>.md`,
+§3.3) rend la lecture fiable : le watcher injecte lui-même, juste après le
+bloc `CONTEXTE.md` du prompt, une ligne « Lis d'abord : ... » — avec, pour
+un fichier manquant, la mention explicite de le créer si l'issue le
+demande, sinon de le signaler dans le rapport. Pour un domaine nouveau :
+Claude Chat fournit le nom exact dans `DOMAINES` et demande la création du
+fichier dans le corps (comme ci-dessus) — un fichier créé sous
+`docs/contexte/` est alors systématiquement signalé dans le commentaire de
+clôture (liste des créations, avertissement si un nom cité reste
+introuvable ou si un fichier créé n'a pas été cité, avertissement sur un
+nom quasi identique à un fichier existant). `DOMAINES` reste facultatif et
+sa validation TOLÉRANTE : un nom hors convention est ignoré avec
+avertissement plutôt que de faire échouer l'issue.
 
 ---
 

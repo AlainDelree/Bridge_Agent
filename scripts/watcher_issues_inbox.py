@@ -573,8 +573,18 @@ TITRE_RE = re.compile(r"^#Titre:\s*(.*)$", re.IGNORECASE | re.MULTILINE)
 # — puisqu'un bloc mis en attente n'est jamais validé ni créé (voir
 # traiter_fichier). Un bloc qui atteint réellement extraire_champs() a donc
 # toujours un champ ATTENTE vide ou absent.
+# DOMAINES (issue #892) : champ optionnel, texte libre tolérant (validation
+# faite côté watcher.py::domaines_demandes, jamais ici — aucun rejet possible
+# pour ce champ). Comme REPO_CIBLE ci-dessus (et à la différence de
+# SOUS_DOSSIER/REDACTEUR), réinséré À LA CRÉATION (construire_body plus bas)
+# — une issue créée par fichier déposé sans cette ligne ferait perdre le
+# champ, puisque extraire_champs() retire sa ligne de `corps` comme pour
+# tous les CHAMPS_ENTETE. Reste aussi disponible au chemin RELANCE
+# (_fusionner_entete, même traitement que TIMEOUT/MODELE/SOUS_DOSSIER/
+# REPO_CIBLE : une correction d'un champ déjà présent dans le corps GitHub
+# existant, jamais une insertion).
 CHAMPS_ENTETE = ("PROJET", "REDACTEUR", "TIMEOUT", "MODELE", "MODE", "LABELS",
-                  "RELANCE", "SOUS_DOSSIER", "REPO_CIBLE", "ATTENTE")
+                  "RELANCE", "SOUS_DOSSIER", "REPO_CIBLE", "ATTENTE", "DOMAINES")
 
 
 def extraire_champs(contenu: str) -> dict:
@@ -607,6 +617,7 @@ def extraire_champs(contenu: str) -> dict:
         "sous_dossier_brut": valeurs["SOUS_DOSSIER"],
         "repo_cible_brut":   valeurs["REPO_CIBLE"],
         "attente_brut": valeurs["ATTENTE"],
+        "domaines_brut": valeurs["DOMAINES"],
         "titre":        titre,
         "corps":        reste.strip("\n"),
     }
@@ -793,9 +804,9 @@ def valider(champs: dict):
 # app.interruption.relancer_issue() (cœur du bouton « 🔄 Relancer », issue
 # #460) plutôt que de dupliquer le retrait de label + la pose du commentaire.
 #
-# Champs corrigibles : TIMEOUT, MODELE, SOUS_DOSSIER et REPO_CIBLE (issue
-# #567 pour ces deux derniers) — quatre champs de chemin/paramètre purement
-# opérationnels, sans implication de sécurité. MODE reste exclu (le mode réel
+# Champs corrigibles : TIMEOUT, MODELE, SOUS_DOSSIER, REPO_CIBLE (issue #567
+# pour ces deux derniers) et DOMAINES (issue #892) — champs de chemin/
+# paramètre purement opérationnels, sans implication de sécurité. MODE reste exclu (le mode réel
 # est arme par le label GitHub `mode_write`, pas par le texte du corps — le
 # changer sans re-synchroniser ce label serait trompeur, et synchroniser un
 # label qui ARME l'écriture pour CCL depuis ce chemin ouvrirait une voie de
@@ -974,6 +985,12 @@ def _fusionner_entete(corps_existant: str, champs: dict) -> tuple[str, list]:
         nouveau = _maj_ligne_entete(nouveau, "REPO_CIBLE", champs["repo_cible_brut"])
         if nouveau != avant:
             modifies.append(f"REPO_CIBLE → {champs['repo_cible_brut']}")
+
+    if champs.get("domaines_brut"):
+        avant = nouveau
+        nouveau = _maj_ligne_entete(nouveau, "DOMAINES", champs["domaines_brut"])
+        if nouveau != avant:
+            modifies.append(f"DOMAINES → {champs['domaines_brut']}")
 
     return nouveau, modifies
 
@@ -1203,7 +1220,8 @@ def construire_body(champs: dict, cfg_projet) -> tuple[str, str | None]:
 
     entete = formater_entete(mode_label, "normale", timeout, cfg_projet.nom,
                               modele=champs["modele"],
-                              repo_cible=champs.get("repo_cible_brut") or None)
+                              repo_cible=champs.get("repo_cible_brut") or None,
+                              domaines=champs.get("domaines_brut") or None)
     parties = [p for p in (entete, champs["corps"]) if p]
     return "\n\n".join(parties), info_timeout
 

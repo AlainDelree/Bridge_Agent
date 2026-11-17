@@ -2854,6 +2854,193 @@ def _extraire_champ_entete(body: str, nom_champ: str) -> str:
                 return valeur
     return ""
 
+# ─── Champ d'en-tête optionnel DOMAINES (issue #892) ───────────────────────
+# `| DOMAINES | nom1, nom2 |` — noms séparés par des virgules, chacun
+# candidat à un fichier `docs/contexte/<nom>.md` (index de CONTEXTE.md,
+# issues #889/#890) : rend fiable la lecture de ces fichiers par CCL (ligne
+# « Lis d'abord » injectée dans le prompt, voir lancer_claude) plutôt que de
+# dépendre uniquement de l'attention de l'agent sur une ligne de texte libre
+# écrite par Claude Chat dans le corps. Champ absent ou vide : comportement
+# strictement inchangé (rien injecté, rien vérifié à la clôture).
+#
+# Validation TOLÉRANTE (jamais une cause de rejet de l'issue) : un nom qui ne
+# respecte pas la convention des fichiers de domaine (minuscules sans
+# accent, chiffres, '_' — même règle que CONTEXTE.md/BRIDGE_AGENT_DOC.md
+# §12.2) est ignoré avec un avertissement journalisé, et n'est JAMAIS
+# interprété comme un chemin : MOTIF_NOM_DOMAINE n'autorise ni '/' ni '..'
+# (ni aucun autre caractère hors [a-z0-9_]), donc aucune valeur invalide ne
+# peut atteindre une opération sur le système de fichiers.
+MOTIF_NOM_DOMAINE = re.compile(r"^[a-z0-9_]+$")
+
+
+def _extraire_domaines_entete(body: str) -> list[str]:
+    """Jetons BRUTS (non validés, non dédupliqués) du champ `| DOMAINES |
+    nom1, nom2 |` (issue #892), séparés par des virgules, espaces superflus
+    retirés — [] si le champ est absent ou vide. Réutilise
+    `_extraire_champ_entete` (comparaison exacte du nom de champ, même
+    convention que CREATION_* ci-dessus)."""
+    brut = _extraire_champ_entete(body, "DOMAINES")
+    if not brut:
+        return []
+    return [jeton.strip() for jeton in brut.split(",") if jeton.strip()]
+
+
+def _nom_domaine_valide(nom: str) -> bool:
+    """Convention des fichiers de domaine (BRIDGE_AGENT_DOC.md §12.2) :
+    minuscules, chiffres, '_' uniquement — rejette explicitement tout nom
+    contenant '/' ou '..' (ou toute autre majuscule/accent/caractère hors
+    convention), qui ne doit jamais être interprété comme un chemin."""
+    return bool(MOTIF_NOM_DOMAINE.fullmatch(nom))
+
+
+def domaines_demandes(body: str) -> tuple[list[str], list[str]]:
+    """Noms de domaine demandés par le champ DOMAINES (issue #892) :
+    (valides, invalides) — `valides` dans l'ordre d'apparition et
+    dédupliqués, conformes à `_nom_domaine_valide` ; `invalides` les jetons
+    bruts qui ne le sont pas (jamais interprétés comme un chemin, voir
+    ci-dessus). ([], []) si le champ est absent ou vide."""
+    valides: list[str] = []
+    invalides: list[str] = []
+    for jeton in _extraire_domaines_entete(body):
+        if _nom_domaine_valide(jeton):
+            if jeton not in valides:
+                valides.append(jeton)
+        else:
+            invalides.append(jeton)
+    return valides, invalides
+
+
+def _bloc_domaines(numero: int, body: str, cwd_effectif: Path) -> str:
+    """Bloc de prompt « Lis d'abord : ... » (issue #892), injecté par
+    `lancer_claude` juste après le bloc CONTEXTE.md. Cherche chaque
+    `docs/contexte/<nom>.md` SOUS `cwd_effectif` — déjà le répertoire de
+    travail EFFECTIF de cette exécution (worktree en écriture, ou
+    REPO_CIBLE résolu pour un projet à périmètre dynamique quand il est
+    fourni : ces deux résolutions ont lieu avant l'appel, cf. `cwd` de
+    `lancer_claude`), donc rien de plus à résoudre ici.
+
+    Un nom invalide (convention non respectée) est journalisé en
+    avertissement et simplement omis de la ligne — jamais une cause de rejet
+    de la tâche. Un fichier introuvable reste cité, avec une mention
+    explicite : CCL doit le créer si l'issue le demande, sinon le signaler
+    dans son rapport (vérifié de nouveau à la clôture, voir
+    `_avertissement_domaines`). "" si DOMAINES est absent/vide ou si tous
+    les noms sont invalides — comportement strictement inchangé."""
+    valides, invalides = domaines_demandes(body)
+    for nom in invalides:
+        log.warning(
+            f"  ⚠ Issue #{numero} : DOMAINES contient un nom invalide "
+            f"« {nom} » (convention : minuscules/chiffres/'_') — ignoré."
+        )
+    if not valides:
+        return ""
+    dossier = cwd_effectif / "docs" / "contexte"
+    morceaux = []
+    for nom in valides:
+        rel = f"docs/contexte/{nom}.md"
+        if (dossier / f"{nom}.md").exists():
+            morceaux.append(rel)
+        else:
+            log.warning(
+                f"  ⚠ Issue #{numero} : fichier de domaine « {rel} » cité "
+                f"par DOMAINES introuvable sous {cwd_effectif}."
+            )
+            morceaux.append(
+                f"{rel} (introuvable : crée-le si l'issue te le demande, "
+                f"sinon signale-le dans ton rapport)"
+            )
+    return f"\nLis d'abord : {', '.join(morceaux)}\n"
+
+
+def _avertissement_domaines(numero: int, body: str, mode: str, cwd_effectif: Path,
+                             tete_avant_traitement: str | None) -> str:
+    """Avertissements de clôture liés au champ DOMAINES (issue #892) — non
+    bloquants, ton neutre, même esprit que `_avertissement_succes_sans_
+    commit` : un échec de CETTE vérification (dépôt inaccessible, commande
+    `git` indisponible...) est seulement journalisé, jamais une cause
+    d'échec de la tâche par ailleurs réussie.
+
+    Portée stricte MODE_ECRITURE (comme (a)-(d) ci-dessous ne concernent que
+    l'écriture — lecture/lecture active n'attendent aucune création) :
+      (a) liste les fichiers créés sous `docs/contexte/` par CETTE issue
+          (même sans champ DOMAINES — une création demandée dans le corps
+          seul reste normale, voir (d)) ;
+      (b) avertit si un fichier cité par DOMAINES n'existe TOUJOURS pas une
+          fois la tâche terminée ;
+      (c) avertit si un fichier créé porte, une fois mis en minuscules et
+          débarrassé de '_'/'-', le même nom qu'un autre fichier déjà
+          existant ou créé sous `docs/contexte/` (ex. `onglet_parametre.md`
+          vs `OngletParametre.md`) ;
+      (d) si DOMAINES est présent (même avec des jetons tous invalides),
+          avertit d'un fichier créé non cité — SANS ce champ, (d) ne
+          s'applique pas : une création demandée dans le corps seul reste
+          normale.
+    "" si rien à signaler."""
+    if mode != MODE_ECRITURE or tete_avant_traitement is None:
+        return ""
+    dossier = cwd_effectif / "docs" / "contexte"
+    try:
+        resultat = subprocess.run(
+            ["git", "diff", "--name-only", "--diff-filter=A",
+             f"{tete_avant_traitement}..HEAD", "--", "docs/contexte"],
+            cwd=cwd_effectif, capture_output=True, text=True,
+            encoding="utf-8", errors="replace", timeout=30,
+        )
+        if resultat.returncode != 0:
+            return ""
+        crees = sorted({Path(l).name for l in resultat.stdout.splitlines() if l.strip()})
+    except (OSError, subprocess.SubprocessError) as e:
+        log.warning(f"  ⚠ Issue #{numero} : vérification DOMAINES de clôture impossible ({e}).")
+        return ""
+
+    lignes = []
+    if crees:
+        lignes.append(
+            "fichiers créés sous `docs/contexte/` par cette issue : "
+            + ", ".join(f"`{c}`" for c in crees) + "."
+        )
+
+    valides, _invalides = domaines_demandes(body)
+    if valides:
+        manquants = [n for n in valides if not (dossier / f"{n}.md").exists()]
+        if manquants:
+            lignes.append(
+                "toujours introuvable après traitement : "
+                + ", ".join(f"`docs/contexte/{n}.md`" for n in manquants)
+                + " (cité par DOMAINES)."
+            )
+
+    try:
+        existants = sorted(p.name for p in dossier.glob("*.md")) if dossier.is_dir() else []
+    except OSError:
+        existants = []
+
+    def _cle(nom: str) -> str:
+        return nom.lower().replace("_", "").replace("-", "")
+
+    for c in crees:
+        autres = sorted({n for n in existants + crees if n != c and _cle(n) == _cle(c)})
+        if autres:
+            lignes.append(
+                f"`{c}` a un nom quasi identique à {', '.join(f'`{a}`' for a in autres)} "
+                "une fois mis en minuscules sans '_'/'-' — vérifier qu'il ne s'agit pas "
+                "d'un doublon créé sous un nom légèrement différent."
+            )
+
+    if _extraire_domaines_entete(body):
+        non_cites = [c for c in crees if Path(c).stem not in valides]
+        if non_cites:
+            lignes.append(
+                "fichier créé non cité par DOMAINES : "
+                + ", ".join(f"`{c}`" for c in non_cites)
+                + " — vérifier si l'index de CONTEXTE.md doit en recevoir la ligne."
+            )
+
+    if not lignes:
+        return ""
+    return "\n\n**Vérification DOMAINES (`docs/contexte/`)** — " + " ".join(lignes) + "\n"
+
+
 def creation_demandee(body: str) -> bool:
     """Indique si l'issue porte `| CREATION | oui |` (issue #556) — déclencheur
     du bootstrap automatique d'un service CCW dédié, détecté tôt dans le
@@ -4924,6 +5111,12 @@ fichier, n'exécute aucune commande modifiant l'état du système ou du dépôt.
         else:
             log.warning(f"Fichier de contexte '{chemin_ctx}' introuvable — rien injecté.")
 
+    # Bloc « Lis d'abord : ... » (issue #892) : fichiers de domaine cités par
+    # le champ d'en-tête optionnel DOMAINES, injecté juste après le bloc
+    # CONTEXTE.md ci-dessus. "" si le champ est absent/vide — comportement
+    # strictement inchangé dans ce cas (voir _bloc_domaines).
+    bloc_domaines = _bloc_domaines(numero, body, cwd_effectif)
+
     # Consignes à trois couches (globales/type/projet) injectées dans le prompt
     # CCL (issue #211). Placées APRÈS le bloc CONTEXTE et AVANT la clause de
     # périmètre / le garde-fou : choix assumé de regrouper toutes les « règles »
@@ -5093,7 +5286,7 @@ TITRE : {titre}
 
 BODY :
 {body}
-{bloc_contexte}{bloc_consignes}{clause_perimetre}{bloc_worktree}{bloc_reprise_worktree}{bloc_tentative}{garde_fou}
+{bloc_contexte}{bloc_domaines}{bloc_consignes}{clause_perimetre}{bloc_worktree}{bloc_reprise_worktree}{bloc_tentative}{garde_fou}
 Instructions :
 1. Lis attentivement la tâche demandée
 2. Effectue le travail demandé (dans les limites du mode ci-dessus)
@@ -7919,12 +8112,14 @@ def _finaliser_succes(numero: int, titre: str, body: str, labels: list[str], mod
     avertissement_sans_commit = _avertissement_succes_sans_commit(
         numero, mode, dry_run, cwd_effectif, tete_avant_traitement,
         commit_sauvegarde_watcher)
+    avertissement_domaines = _avertissement_domaines(
+        numero, body, mode, cwd_effectif, tete_avant_traitement)
     if commit_sauvegarde_watcher:
         sortie = sortie.replace("[hash backup]", commit_sauvegarde_watcher[:12])
     message_resultat = (
         f"{MARQUEUR_RESULTAT}\n## Résultat\n\n{avertissement_conflit}"
         f"{avertissement_worktree_deja_pris}{avertissement_worktree_repris}"
-        f"{sortie}{avertissement_sans_commit}"
+        f"{sortie}{avertissement_sans_commit}{avertissement_domaines}"
     )
     # Le commentaire de résultat est critique (issue #195) : on le
     # poste avec retry/backoff et on ne ferme l'issue QUE s'il a réussi.
