@@ -1041,6 +1041,37 @@ nom quasi identique à un fichier existant). `DOMAINES` reste facultatif et
 sa validation TOLÉRANTE : un nom hors convention est ignoré avec
 avertissement plutôt que de faire échouer l'issue.
 
+### 12.3 Restructurer le contexte d'un projet (issue #898)
+
+Procédure ponctuelle : `CONTEXTE.md` dépasse 4000 caractères, ou Alain le
+demande. Les règles permanentes (limite, convention `docs/contexte/`,
+nommage, champ `DOMAINES`) restent en §12.2 et dans `consignes/globales.md`
+— ne pas les recopier ici.
+
+1. Mesurer avec `wc -m` ; viser 3700 caractères au plus.
+2. Rédiger, depuis le Chat du projet (`REDACTEUR` = `PROJET`), une issue en
+   écriture ; au-delà d'environ 50 000 caractères, en faire deux : étude
+   en lecture proposant le découpage par domaines, puis implémentation.
+3. Demander : un inventaire d'abord (fichiers de contexte, taille,
+   références) ; l'ordre imposé des sections (règles, architecture,
+   conventions, index avec « quand le lire ») ; un seul emplacement par
+   sujet sous `docs/contexte/<domaine>.md` (nommage §12.2), `git mv`
+   vérifié sans dépendance code/test sur l'ancien chemin ; le tri du
+   contenu — règle vivante dans son fichier de domaine, récit d'issue ou
+   historique supprimé si un changelog le couvre (sinon listé pour
+   décision), pas d'archive ; README, `ARCHITECTURE.md`, etc. ni déplacés
+   ni dupliqués, l'index les cite par section ; vérifier que les mentions
+   « à venir » ne sont pas périmées dans le code.
+4. Interdire toute valeur sensible (adresse privée, clé, jeton). Un fichier
+   de domaine n'est pas un journal : pas de récits datés ou numérotés
+   d'issues, seulement ce qui reste vrai — un nom contenant « historique
+   », « journal » ou « récit » est un signal d'alerte à examiner.
+5. Exiger au rapport : taille finale de `CONTEXTE.md`, fichiers de contexte
+   avant et après, ce qui a été déplacé, supprimé ou laissé pour
+   décision.
+6. Après fusion par Alain, le champ `DOMAINES` (§12.2) peut servir dans les
+   issues suivantes.
+
 ---
 
 ## 14. Délégation Chef → Ouvrier (changement d'environnement)
