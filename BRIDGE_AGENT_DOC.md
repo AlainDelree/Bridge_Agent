@@ -344,7 +344,7 @@ lignes distinctes.
 | `notif_gsm` | Ajoute une notification push (ntfy) |
 | `notif_tous` | notify-send + ntfy |
 | `mode_scratch` | **ARME le mode lecture active** — écriture confinée au dossier scratch, voir §5 |
-| `mode_interactif` | Marqueur « interactif » (étude #888, étape 1 — issue #900), **orthogonal** aux labels de mode ci-dessus — posé via le champ `INTERACTIF` (§6, spécifique à `issues_inbox/`). N'arme encore rien au lancement de CCL ; exclut seulement l'issue de la calibration automatique du TIMEOUT (§19). Jamais retenu en lecture seule ni sur une issue destinée à Windows (`for-windows`) : comportement automatique appliqué, avec avertissement informatif, voir `watcher.est_interactif()`. |
+| `mode_interactif` | Marqueur « interactif » (étude #888), **orthogonal** aux labels de mode ci-dessus — posé via le champ `INTERACTIF` (§6, spécifique à `issues_inbox/`). Exclut l'issue de la calibration automatique du TIMEOUT (§19). Depuis l'issue #901 (étape 2) : CCL est lancé dans une session **tmux** détachée (à laquelle Alain peut s'attacher, voir la commande postée dans l'issue) et surveillé de façon non bloquante jusqu'à la fin de la session ou l'expiration du TIMEOUT — clôture encore MANUELLE à ce stade (aucun label `done` posé). Jamais retenu en lecture seule ni sur une issue destinée à Windows (`for-windows`) : comportement automatique appliqué, avec avertissement informatif, voir `watcher.est_interactif()`. Détail complet : `docs/contexte/mode_interactif.md`. |
 | `sans-redacteur` | Posé automatiquement quand `REDACTEUR` est absent de l'en-tête — signale une issue rédigée sans déclarer son projet d'origine, pour repérer un projet qui rédige à la place d'un autre, voir §3.4 |
 | `sans-complexite` | Posé automatiquement quand `COMPLEXITE` est absente ou non reconnue dans l'en-tête — signale une erreur de rédaction à corriger, l'issue ayant été traitée avec le repli `normal`, voir §6 |
 | `agent-claude` | Posé automatiquement à la clôture — **agent d'exécution** Claude Code (clé `AGENT` du `.conf`, issue #768) |
@@ -1332,7 +1332,20 @@ estimation que celle déjà affichée, sans dupliquer ce calcul.
 
 ---
 
-*Dernière mise à jour : 17 novembre 2026 — issue #900, mode interactif,
+*Dernière mise à jour : 17 novembre 2026 — issue #901, mode interactif,
+étape 2 (étude #888) : pour une issue `mode_interactif` effective, CCL est
+désormais lancé dans une session tmux détachée (nommée
+`bridge-<projet>-issue<numero>`) plutôt qu'en `claude --print`, surveillée
+de façon non bloquante jusqu'à la fin de la session ou l'expiration du
+TIMEOUT (nettoyage identique au chemin automatique). Repli automatique sur
+`claude --print`, avec avertissement, si tmux est absent ou le lancement
+échoue — jamais un échec silencieux ; chemin automatique (issues sans le
+label) strictement inchangé. Clôture encore manuelle (aucune fermeture
+d'issue automatique) ; survie à un redémarrage du watcher tentée via
+`systemd-run --user --scope` mais non vérifiée en conditions réelles.
+Détail complet : `docs/contexte/mode_interactif.md`.*
+
+*Mise à jour précédente : 17 novembre 2026 — issue #900, mode interactif,
 étape 1 (étude #888) : nouveau label `mode_interactif` (§4), orthogonal aux
 labels de mode, posé via le champ d'en-tête `INTERACTIF` du dépôt d'issues
 par fichier (§6, `issues_inbox/`). N'arme encore rien au lancement de CCL

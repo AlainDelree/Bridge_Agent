@@ -49,10 +49,10 @@ Référence complète : `BRIDGE_AGENT_DOC.md` (+ `ARCHITECTURE.md`).
   création, sinon PowerShell 5.1 plante sur les accents.
 
 ## Index des fichiers de domaine
-Aucun fichier `docs/contexte/<domaine>.md` pour l'instant (issue #890 : le
-détail encore vrai vivait déjà, à jour, dans les documents de référence
-ci-dessous — pas besoin de le dupliquer). Entrées pointant directement
-vers leur section :
+Entrées pointant vers leur section (la plupart vivent encore dans les
+documents de référence ci-dessous, voir issue #890) :
+- `docs/contexte/mode_interactif.md` — à lire avant de toucher au mode
+  interactif (session tmux, surveillance non bloquante, issue #901).
 - `ARCHITECTURE.md §6` — à lire avant de toucher au socle web
   (`static/js/socle/`).
 - `BRIDGE_AGENT_DOC.md §19` — à lire avant de toucher à la calibration du

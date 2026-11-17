@@ -34,6 +34,7 @@ import ctypes.wintypes
 import base64
 import binascii
 import unicodedata
+import shlex
 from logging.handlers import RotatingFileHandler
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -218,6 +219,12 @@ TIMEOUT_SUGGERE_PLAFOND     = 3600
 # dossier de travail serait happé par le `git add -A` de la sauvegarde que CCL
 # effectue à chaque tâche en mode écriture, puis committé par erreur.
 DOSSIER_VERROUS = DOSSIER_LOGS / "verrous"
+
+# Scripts de lancement des sessions tmux interactives (étude #888, étape 2 —
+# issue #901). Même logique d'emplacement que DOSSIER_VERROUS ci-dessus : sous
+# logs/ (gitignoré), jamais dans rep_travail (échapperait au périmètre et
+# serait happé par le commit de sauvegarde mode écriture).
+DOSSIER_TMUX = DOSSIER_LOGS / "tmux"
 
 # Marge (secondes) ajoutée à la durée de traitement plausible d'une issue pour
 # décider qu'un verrou est PÉRIMÉ (orphelin d'un watcher tué brutalement sans
@@ -538,6 +545,200 @@ def est_interactif(labels: list[str], mode: str) -> tuple[bool, str]:
             f"ThinkPad (CCL), comportement automatique appliqué (étude #888)."
         )
     return True, ""
+
+
+# ─── Mode interactif, étape 2 (étude #888 — issue #901) : session tmux ─────
+# persistante, surveillée de façon non bloquante, au lieu du couple
+# Popen/communicate() bloquant du chemin automatique (lancer_claude). Tout ce
+# qui suit n'est utilisé QUE quand est_interactif() ci-dessus a retenu
+# l'issue comme effectivement interactive — le chemin automatique
+# (_construire_cmd_claude, Popen/communicate dans lancer_claude) reste
+# strictement inchangé, voir le paramètre `mode_tmux` plus bas.
+
+PREFIXE_SESSION_TMUX = "bridge"
+
+# Intervalle de sondage de la surveillance non bloquante (issue #901, point
+# 2) — volontairement indépendant de CFG.intervalle (le polling GitHub du
+# projet, qui peut être réglé bien plus large) : une session interactive
+# reste ouverte longtemps (TIMEOUT délibérément fixé long par Alain), un
+# sondage toutes les 15s reste négligeable en coût (un simple `tmux
+# has-session`) tout en détectant une fin de session ou un TIMEOUT dépassé
+# avec une granularité raisonnable.
+INTERVALLE_SURVEILLANCE_TMUX_S = 15
+
+
+def _nom_session_tmux(nom_projet: str, numero: int) -> str:
+    """Nom de session tmux conventionnel et stable (issue #901) :
+    `bridge-<projet>-issue<numero>` — retrouvable à l'identique d'un cycle à
+    l'autre et après un redémarrage du watcher (voir _tmux_session_existe,
+    point 5). Le nom du projet est assaini : tmux n'accepte pas `:` comme
+    séparateur de nom de session et certains autres caractères sont source
+    d'ambiguïté en ligne de commande — seuls lettres/chiffres/tiret/
+    underscore sont conservés, le reste remplacé par `_`."""
+    projet_assaini = re.sub(r"[^A-Za-z0-9_-]", "_", nom_projet)
+    return f"{PREFIXE_SESSION_TMUX}-{projet_assaini}-issue{numero}"
+
+
+def _tmux_disponible() -> bool:
+    """`tmux` est-il installé et accessible depuis le PATH de ce watcher ?
+    Best-effort pur, ne lève jamais — son absence doit déclencher le repli
+    automatique (issue #901, point 6), jamais un crash."""
+    return shutil.which("tmux") is not None
+
+
+def _tmux_session_existe(nom_session: str) -> bool:
+    """Vrai si une session tmux nommée `nom_session` existe déjà. Sert à la
+    fois à éviter un double lancement (reprise après redémarrage du watcher,
+    point 5) et à la surveillance non bloquante elle-même (une session
+    disparue = fin de la session, volontaire ou non — voir
+    _surveiller_session_tmux)."""
+    try:
+        resultat = subprocess.run(
+            ["tmux", "has-session", "-t", nom_session],
+            capture_output=True, text=True, timeout=10,
+        )
+        return resultat.returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+
+def _ecrire_script_lancement_tmux(nom_session: str, cmd: list[str], cwd: Path,
+                                   env_extra: dict[str, str]) -> Path:
+    """Écrit un petit script shell qui exporte `env_extra` (projet/numéro
+    d'issue, utiles aux hooks des étapes suivantes de l'étude #888), se place
+    dans `cwd` puis `exec` `cmd` — et retourne son chemin.
+
+    Pourquoi un script plutôt que de confier `cmd` directement à `tmux
+    new-session` : le "shell-command" de tmux rejoint tous les arguments
+    restants de la ligne de commande par de simples espaces avant de les
+    passer au shell par défaut de la session, SANS ré-échapper quoi que ce
+    soit — un `cmd` ici contient le prompt complet (CONTEXTE + CONSIGNES +
+    corps d'issue, potentiellement plusieurs milliers de caractères, avec
+    guillemets et retours à la ligne), que cette simple concaténation
+    casserait presque certainement. Passer un seul argument (le chemin de ce
+    script) à tmux élimine le problème : aucune re-segmentation, aucun
+    ré-échappement, un seul mot sans espace."""
+    DOSSIER_TMUX.mkdir(parents=True, exist_ok=True)
+    chemin_script = DOSSIER_TMUX / f"{nom_session}.sh"
+    lignes = ["#!/bin/sh"]
+    for cle, valeur in env_extra.items():
+        lignes.append(f"export {cle}={shlex.quote(valeur)}")
+    lignes.append(f"cd {shlex.quote(str(cwd))}")
+    lignes.append("exec " + shlex.join(cmd))
+    chemin_script.write_text("\n".join(lignes) + "\n", encoding="utf-8")
+    chemin_script.chmod(0o700)
+    return chemin_script
+
+
+def _lancer_session_tmux(nom_session: str, cmd: list[str], cwd: Path,
+                          env_extra: dict[str, str]) -> tuple[bool, str]:
+    """Lance CCL dans une session tmux détachée nommée `nom_session` (issue
+    #901, point 1). Retourne (succès, message) :
+    - succès : message vaut "hors_groupe" si le lancement a pu passer par
+      `systemd-run --user --scope` (voir ci-dessous, point 5), "meme_groupe"
+      sinon (systemd-run absent ou en échec — repli direct, survie à un
+      redémarrage du watcher NON garantie) ;
+    - échec : message = raison concrète (tmux absent, écriture du script ou
+      lancement impossible...), jamais une exception.
+
+    Point 5 de l'issue #901 — survie à un redémarrage du service
+    watcher@<projet> : par défaut, systemd (KillMode=control-group, valeur
+    implicite de watcher@.service — aucune autre valeur n'y est déclarée)
+    tue TOUS les descendants du watcher à l'arrêt/redémarrage du service, y
+    compris un serveur tmux lancé comme simple sous-process. `systemd-run
+    --user --scope` fait sortir la commande lancée de CE groupe : le process
+    (ici le client tmux, qui démarre le serveur tmux puis rend la main
+    immédiatement grâce à `-d`) est inscrit dans un scope systemd INDÉPENDANT
+    (`bridge-tmux-<session>.scope`), que `systemctl --user restart
+    watcher@<projet>` ne touche pas — seul le cgroup du service lui-même est
+    tué. Le serveur tmux, démarré DANS ce scope, y reste avec la session.
+    Repli silencieux (log.warning, pas un échec de tâche) sur un lancement
+    tmux direct si `systemd-run` est absent du PATH ou échoue (ex. bus
+    D-Bus de session introuvable) — mieux vaut une session qui ne survivrait
+    pas à un redémarrage qu'aucune session du tout."""
+    if not _tmux_disponible():
+        return False, "tmux introuvable dans le PATH de ce watcher."
+    try:
+        chemin_script = _ecrire_script_lancement_tmux(nom_session, cmd, cwd, env_extra)
+    except OSError as e:
+        return False, f"Écriture du script de lancement tmux impossible : {e}"
+
+    base = ["tmux", "new-session", "-d", "-s", nom_session, "-c", str(cwd), str(chemin_script)]
+    hors_groupe = shutil.which("systemd-run") is not None
+    argv = (
+        ["systemd-run", "--user", "--scope", "--collect",
+         f"--unit=bridge-tmux-{nom_session}", "--"] + base
+        if hors_groupe else base
+    )
+    try:
+        resultat = subprocess.run(argv, capture_output=True, text=True, timeout=15)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return False, f"Lancement de la session tmux '{nom_session}' impossible : {e}"
+
+    if resultat.returncode != 0 and hors_groupe:
+        log.warning(
+            f"systemd-run --scope a échoué pour la session tmux {nom_session} "
+            f"(code {resultat.returncode}) : {resultat.stderr.strip()} — repli sur un "
+            f"lancement direct (survie à un redémarrage du watcher NON garantie, issue #901)."
+        )
+        try:
+            resultat = subprocess.run(base, capture_output=True, text=True, timeout=15)
+        except (OSError, subprocess.TimeoutExpired) as e:
+            return False, f"Lancement de la session tmux '{nom_session}' impossible : {e}"
+        hors_groupe = False
+
+    if resultat.returncode != 0:
+        return False, f"tmux new-session a échoué (code {resultat.returncode}) : {resultat.stderr.strip()}"
+    return True, ("hors_groupe" if hors_groupe else "meme_groupe")
+
+
+def _tuer_session_tmux(nom_session: str) -> None:
+    """Nettoyage best-effort d'une session tmux (issue #901, point 2 — même
+    esprit que _nettoyer_arbre_claude pour le chemin automatique) : appelée
+    au dépassement du TIMEOUT pour une issue interactive, jamais ailleurs
+    (une fin de session normale n'a rien à nettoyer, la session a déjà
+    disparu d'elle-même)."""
+    try:
+        subprocess.run(["tmux", "kill-session", "-t", nom_session],
+                        capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        log.warning(f"Nettoyage de la session tmux '{nom_session}' impossible : {e}")
+
+
+def _surveiller_session_tmux(nom_session: str, echeance: float) -> str:
+    """Surveillance NON BLOQUANTE (issue #901, point 2) — remplace, pour les
+    issues interactives, l'attente bloquante `proc.communicate(timeout=...)`
+    du chemin automatique par un sondage périodique de l'existence de la
+    session tmux, jusqu'à ce qu'elle disparaisse (fin de session, volontaire
+    ou non) ou que l'échéance (`time.monotonic()`) soit dépassée.
+
+    Retourne "terminee" (session disparue avant l'échéance) ou "timeout"
+    (encore présente à l'échéance — l'appelant doit alors la nettoyer, voir
+    _tuer_session_tmux)."""
+    while time.monotonic() < echeance:
+        if not _tmux_session_existe(nom_session):
+            return "terminee"
+        time.sleep(max(0.0, min(INTERVALLE_SURVEILLANCE_TMUX_S, echeance - time.monotonic())))
+    return "terminee" if not _tmux_session_existe(nom_session) else "timeout"
+
+
+def _construire_cmd_claude_interactif(mode: str, modele: str, prompt: str) -> list[str]:
+    """Même construction que `_construire_cmd_claude` (--model,
+    --dangerously-skip-permissions selon le mode, prompt positionnel), SANS
+    `--print` : lancée dans une session tmux interactive (issue #901) plutôt
+    qu'en mode non-interactif. `--allowedTools` (branche MODE_LECTURE de
+    `_construire_cmd_claude`) est délibérément absent : une issue interactive
+    n'est jamais en lecture seule (voir est_interactif), ce cas ne se
+    présente donc jamais en pratique — gardé absent plutôt que dupliqué sans
+    pouvoir être exercé, pour que cette fonction reste un vrai sous-ensemble
+    évident de `_construire_cmd_claude`."""
+    cmd = ["claude"]
+    if modele:
+        cmd += ["--model", modele]
+    if mode != MODE_LECTURE:
+        cmd.append("--dangerously-skip-permissions")
+    cmd.append(prompt)
+    return cmd
 
 
 def _etiquette_calibration(mode: str) -> str:
@@ -4938,9 +5139,29 @@ def lancer_claude(numero: int, titre: str, body: str, dry_run: bool,
                   commits_ecart_worktree: int = 0,
                   chemin_outil_lecture_exec: Path = None,
                   commit_sauvegarde_watcher: str = None,
-                  backup_watcher_nouveaux_suivis: tuple[str, ...] = ()) -> tuple[bool, str]:
+                  backup_watcher_nouveaux_suivis: tuple[str, ...] = (),
+                  mode_tmux: bool = False) -> tuple[bool, str]:
     """
     Lance Claude Code en mode non-interactif sur une issue.
+
+    mode_tmux (issue #901, étude #888 étape 2) : False par défaut partout —
+    chemin AUTOMATIQUE strictement inchangé (`claude --print`,
+    Popen/communicate bloquant ci-dessous). True UNIQUEMENT pour une issue
+    `mode_interactif` effective (voir est_interactif), appelée depuis
+    `_traiter_issue_interactive`, jamais depuis `_executer_une_tentative` —
+    le gabarit de prompt (identique dans les deux cas, construit une seule
+    fois plus bas) reste le même, mais tout ce qui suit la construction de
+    `prompt` change : au lieu du Popen/communicate(timeout=...) bloquant,
+    CCL est lancé dans une session tmux détachée et nommée de façon
+    conventionnelle (_nom_session_tmux), surveillée ENSUITE de façon non
+    bloquante par l'appelant (_surveiller_session_tmux) — cette fonction ne
+    fait que lancer, jamais attendre la fin. Retourne (True, "hors_groupe"
+    ou "meme_groupe") si la session a bien été lancée (voir
+    _lancer_session_tmux pour la signification de ces deux valeurs), ou
+    (False, raison) si le lancement est impossible (tmux absent, agent/OS
+    non pris en charge, échec de `tmux new-session`) — l'appelant doit alors
+    replier sur le chemin automatique (issue #901, point 6), jamais
+    considérer cela comme un échec de la tâche elle-même.
 
     `mode` (issue #327, remplace l'ancien booléen autoriser_ecriture) : un des
     trois MODE_* — par défaut MODE_LECTURE (diagnostic, aucune écriture). En
@@ -5377,6 +5598,22 @@ Si la tâche échoue, remplace la toute première ligne par {MARQUEUR_VERDICT_EC
     # l'appelant (projet ou worktree, issue #337), identique à celui passé à
     # `cwd=` du Popen plus bas — voir _construire_cmd_vibe pour l'usage qu'en
     # fait vibe (--workdir) ; _construire_cmd_claude l'ignore délibérément.
+    if mode_tmux:
+        # Issue #901 — branche ENTIÈREMENT séparée du chemin automatique
+        # ci-dessous (cmd/Popen/communicate, inchangés) : réutilise le même
+        # `prompt`, déjà construit plus haut, identique dans les deux cas.
+        if os.name == "nt":
+            return False, "Mode interactif tmux non disponible sous Windows (issue #901)."
+        if CFG.agent != "claude":
+            return False, (
+                f"Mode interactif tmux non pris en charge pour l'agent "
+                f"'{CFG.agent}' (seul 'claude' l'est, issue #901)."
+            )
+        cmd_tmux = _construire_cmd_claude_interactif(mode, modele, prompt)
+        nom_session = _nom_session_tmux(CFG.nom, numero)
+        env_extra = {"BRIDGE_PROJET": CFG.nom, "BRIDGE_ISSUE": str(numero)}
+        return _lancer_session_tmux(nom_session, cmd_tmux, cwd_effectif, env_extra)
+
     try:
         cmd = AGENTS_CONNUS[CFG.agent]["construire_cmd"](mode, modele, prompt, cwd_effectif)
     except (ModeAgentIndisponible, PromptTropLong) as e:
@@ -8651,6 +8888,149 @@ def _nettoyer_apres_traitement(verrou, chemin_scratch: Path | None,
         )
 
 
+def _traiter_issue_interactive(numero: int, titre: str, body: str, mode: str,
+                                timeout: int, modele: str, perimetre_effectif: str,
+                                cwd_effectif: Path, chemin_scratch: Path | None,
+                                chemin_worktree: Path | None,
+                                chemin_outil_lecture_exec: Path | None,
+                                worktree_repris: bool, commits_ecart_worktree: int,
+                                tete_avant_traitement: str | None,
+                                commit_sauvegarde_watcher: str | None,
+                                backup_watcher_nouveaux_suivis: tuple[str, ...],
+                                dry_run: bool) -> bool:
+    """Issue #901 (étude #888, étape 2) : lance (ou retrouve) CCL dans une
+    session tmux détachée pour une issue `mode_interactif` effective (voir
+    est_interactif), et la surveille de façon NON BLOQUANTE jusqu'à sa fin ou
+    l'expiration du TIMEOUT — remplace, pour ces seules issues, l'attente
+    bloquante `proc.communicate(timeout=...)` du chemin automatique
+    (lancer_claude, cmd/Popen inchangés). Appelée par `_traiter_issue_synchrone`
+    juste avant sa boucle de tentatives habituelle, à laquelle elle ne touche
+    pas.
+
+    Retourne True si l'issue a été entièrement prise en charge ici (session
+    lancée/retrouvée et surveillée jusqu'à sa fin, ou dry-run) — l'appelant
+    doit alors `return` immédiatement, SANS entrer dans la boucle de
+    tentatives normale (aucune retry : une session interactive dépend
+    d'Alain, pas d'un nombre de tentatives).
+
+    Retourne False en repli — tmux absent du PATH, ou `tmux new-session` en
+    échec malgré le repli `systemd-run` (issue #901, point 6) — après avoir
+    posté un avertissement explicite dans l'issue et le journal : l'appelant
+    doit alors poursuivre EXACTEMENT comme si cette issue n'était pas
+    interactive (chemin automatique inchangé), jamais un échec silencieux."""
+    nom_session = _nom_session_tmux(CFG.nom, numero)
+
+    if not dry_run and _tmux_session_existe(nom_session):
+        # Issue #901, point 5 : une session de ce nom existe déjà — le
+        # watcher a très probablement été redémarré (service systemd) alors
+        # que cette session tournait encore. On ne relance PAS claude (un
+        # second lancement dans le même répertoire serait une collision, en
+        # plus de répéter le prompt initial) : on reprend simplement la
+        # surveillance de la session déjà vivante.
+        log.info(
+            f"  Issue #{numero} : session tmux '{nom_session}' déjà existante — "
+            f"reprise de la surveillance (watcher probablement redémarré pendant "
+            f"la session) plutôt que relancée (issue #901, point 5)."
+        )
+        commenter_issue(
+            numero,
+            f"🖥️ Session tmux interactive déjà en cours pour l'issue #{numero} "
+            f"(watcher redémarré pendant la session) — reprise de la surveillance "
+            f"sur `{nom_session}`, sans relancer CCL.\n\nPour t'y attacher :\n"
+            f"```\ntmux attach -t {nom_session}\n```"
+        )
+    else:
+        succes, sortie = lancer_claude(
+            numero, titre, body, dry_run, mode, timeout, modele,
+            perimetre=perimetre_effectif, cwd=cwd_effectif,
+            chemin_scratch=chemin_scratch, chemin_worktree=chemin_worktree,
+            chemin_outil_lecture_exec=chemin_outil_lecture_exec,
+            worktree_repris=worktree_repris, commits_ecart_worktree=commits_ecart_worktree,
+            tete_avant_traitement=tete_avant_traitement,
+            commit_sauvegarde_watcher=commit_sauvegarde_watcher,
+            backup_watcher_nouveaux_suivis=backup_watcher_nouveaux_suivis,
+            mode_tmux=True,
+        )
+        if dry_run:
+            log.info(f"  [DRY-RUN] Issue #{numero} (interactif) : {sortie}")
+            return True
+        if not succes:
+            log.warning(
+                f"  ⚠️ Issue #{numero} : lancement de la session tmux interactive "
+                f"impossible ({sortie}) — repli sur le mode automatique (issue #901, point 6)."
+            )
+            commenter_issue(
+                numero,
+                f"⚠️ Label `{LABEL_INTERACTIF}` posé, mais le lancement de la session "
+                f"tmux interactive a échoué ({sortie}) — repli sur le traitement "
+                f"automatique habituel (`claude --print`) pour cette issue "
+                f"(étude #888/#901)."
+            )
+            return False
+
+        note_survie = (
+            "Cette session est lancée **hors du groupe du service** watcher "
+            "(`systemd-run --user --scope`) : un redémarrage du service watcher "
+            "ne devrait pas la tuer (issue #901)."
+            if sortie == "hors_groupe" else
+            "⚠️ `systemd-run` indisponible ou en échec : cette session tourne "
+            "**dans le même groupe** que le service watcher — un redémarrage du "
+            "watcher pendant la session la tuera probablement aussi (issue #901)."
+        )
+        log.info(
+            f"  Issue #{numero} : session tmux interactive '{nom_session}' lancée "
+            f"(TIMEOUT {timeout}s) — pour s'y attacher : tmux attach -t {nom_session}"
+        )
+        commenter_issue(
+            numero,
+            f"🖥️ Session tmux interactive lancée pour l'issue #{numero} (TIMEOUT {timeout}s).\n\n"
+            f"Pour t'y attacher depuis n'importe quel terminal :\n```\ntmux attach -t {nom_session}\n```\n"
+            f"Pour t'en détacher sans y mettre fin : `Ctrl-b d`.\n\n{note_survie}"
+        )
+
+    echeance = time.monotonic() + timeout
+    log.info(
+        f"  Issue #{numero} : surveillance non bloquante de la session tmux "
+        f"'{nom_session}' (échéance {timeout}s, issue #901, point 2)..."
+    )
+    resultat = _surveiller_session_tmux(nom_session, echeance)
+
+    try:
+        (DOSSIER_TMUX / f"{nom_session}.sh").unlink(missing_ok=True)
+    except OSError:
+        pass
+
+    if resultat == "timeout":
+        log.warning(
+            f"  Issue #{numero} : TIMEOUT ({timeout}s) dépassé, session tmux "
+            f"'{nom_session}' encore ouverte — nettoyage (issue #901, point 2)."
+        )
+        _tuer_session_tmux(nom_session)
+        commenter_issue(
+            numero,
+            f"⏱️ TIMEOUT ({timeout}s) dépassé pour la session interactive de l'issue "
+            f"#{numero} — session tmux `{nom_session}` fermée automatiquement. Le "
+            f"verrou et la place de parallélisme sont libérés ; l'issue reste "
+            f"OUVERTE et n'est PAS marquée `{LABEL_FAIT}` : clôture manuelle par "
+            f"Alain pour l'instant (étude #888, étapes suivantes : suspension du "
+            f"délai, alerte, détection de fin par fichier de rapport)."
+        )
+    else:
+        log.info(
+            f"  Issue #{numero} : session tmux '{nom_session}' terminée (Alain a "
+            f"quitté, ou le process s'est arrêté) — issue #901."
+        )
+        commenter_issue(
+            numero,
+            f"🏁 Session tmux interactive de l'issue #{numero} terminée "
+            f"(`{nom_session}` n'existe plus). Le verrou et la place de "
+            f"parallélisme sont libérés ; l'issue reste OUVERTE et n'est PAS "
+            f"marquée `{LABEL_FAIT}` : clôture manuelle par Alain pour l'instant "
+            f"(étude #888)."
+        )
+    return True
+
+
 def _traiter_issue_synchrone(issue: dict, dry_run: bool, chemin_worktree: Path | None = None,
                               echec_worktree_deja_pris: str | None = None,
                               worktree_repris: bool = False,
@@ -8726,6 +9106,25 @@ def _traiter_issue_synchrone(issue: dict, dry_run: bool, chemin_worktree: Path |
             tete_avant_traitement, timeout_suggere_lancement, estimation_lancement, \
             commit_sauvegarde_watcher, backup_watcher_nouveaux_suivis = \
             _demarrer_traitement(numero, titre, body, mode, mode_txt, dry_run, cwd_effectif)
+
+        # Mode interactif, étape 2 (étude #888 — issue #901) : branche
+        # entièrement séparée de la boucle de tentatives ci-dessous — voir
+        # _traiter_issue_interactive. `est_interactif` (étape 1, #900) a déjà
+        # écarté lecture seule et destination Windows. Un repli (tmux
+        # absent du PATH, ou lancement échoué) fait retourner False : le
+        # traitement se poursuit alors normalement, EXACTEMENT comme pour
+        # une issue non interactive (aucune autre branche de code n'est
+        # touchée par ce paramètre).
+        if est_interactif(labels, mode)[0]:
+            if _traiter_issue_interactive(
+                numero, titre, body, mode, timeout, modele,
+                perimetre_effectif, cwd_effectif, chemin_scratch,
+                chemin_worktree, chemin_outil_lecture_exec,
+                worktree_repris, commits_ecart_worktree,
+                tete_avant_traitement, commit_sauvegarde_watcher,
+                backup_watcher_nouveaux_suivis, dry_run,
+            ):
+                return
 
         # None si critique (essais illimités) : voir le bloc de prompt "rang
         # de tentative" dans lancer_claude, qui affiche alors juste "N" sans
