@@ -28,7 +28,7 @@ apercevoir.
 
 import subprocess
 
-# Quatorze labels requis par le watcher (§4 de BRIDGE_AGENT_DOC.md). couleur =
+# Quinze labels requis par le watcher (§4 de BRIDGE_AGENT_DOC.md). couleur =
 # hex sans '#'. Recréés à l'identique sur chaque dépôt cible — watcher.py au
 # démarrage (manquants seulement, voir verifier_labels_demarrage ci-dessous)
 # et nouveau_projet.py à la création d'un projet ; sans eux, le watcher ne
@@ -39,6 +39,7 @@ LABELS = [
     ("bridge",         "1d76db", "Marque l'issue comme tâche bridge (traçabilité)"),
     ("mode_write",     "d93f0b", "ARME le mode écriture — CCL peut modifier des fichiers"),
     ("mode_scratch",   "1a4d8f", "ARME la lecture active — écriture confinée au dossier scratch"),
+    ("mode_interactif", "5319e7", "Marqueur interactif (étude #888) — exclut l'issue de la calibration TIMEOUT"),
     ("needs-human",    "b60205", "Posé après 3 échecs — stoppe le retraitement auto"),
     ("done",           "0e8a16", "Posé automatiquement au succès"),
     ("notif_pc",       "fbca04", "Ajoute une notification bureau (notify-send)"),

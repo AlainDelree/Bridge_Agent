@@ -199,6 +199,7 @@ from watcher import (charger_config, lire_conf, est_titre_chef,  # noqa: E402
                      LABEL_NOTIF_PC, LABEL_NOTIF_GSM, LABEL_NOTIF_TOUS,
                      LABEL_SANS_REDACTEUR,  # (issue #647)
                      LABEL_SANS_COMPLEXITE, complexite_reconnue,  # (issue #844)
+                     LABEL_INTERACTIF,  # (étude #888, étape 1 — issue #900)
                      PLANCHER_TIMEOUT_ECRITURE,  # (issue #752)
                      valider_sous_dossier, valider_repo_cible,  # noqa: E402 (issue #567)
                      forcer_utf8,  # (issue #698, étendue #875)
@@ -583,8 +584,13 @@ TITRE_RE = re.compile(r"^#Titre:\s*(.*)$", re.IGNORECASE | re.MULTILINE)
 # (_fusionner_entete, même traitement que TIMEOUT/MODELE/SOUS_DOSSIER/
 # REPO_CIBLE : une correction d'un champ déjà présent dans le corps GitHub
 # existant, jamais une insertion).
-CHAMPS_ENTETE = ("PROJET", "REDACTEUR", "TIMEOUT", "MODELE", "MODE", "LABELS",
-                  "RELANCE", "SOUS_DOSSIER", "REPO_CIBLE", "ATTENTE", "DOMAINES")
+# INTERACTIF (étude #888, étape 1 — issue #900) : champ optionnel — valeur
+# "oui" pose le label mode_interactif à la création (même principe que MODE
+# ci-dessous, construire_labels()). Toute autre valeur, ou champ absent :
+# issue automatique, sans rejet — jamais réinséré dans construire_body (pas
+# un format supporté pour la création d'issue, comme MODE).
+CHAMPS_ENTETE = ("PROJET", "REDACTEUR", "TIMEOUT", "MODELE", "MODE", "INTERACTIF",
+                  "LABELS", "RELANCE", "SOUS_DOSSIER", "REPO_CIBLE", "ATTENTE", "DOMAINES")
 
 
 def extraire_champs(contenu: str) -> dict:
@@ -612,6 +618,7 @@ def extraire_champs(contenu: str) -> dict:
         "timeout_brut": valeurs["TIMEOUT"],
         "modele":       (valeurs["MODELE"] or "").strip(),
         "mode_brut":    valeurs["MODE"],
+        "interactif_brut": valeurs["INTERACTIF"],
         "labels_brut":  valeurs["LABELS"],
         "relance_brut": valeurs["RELANCE"],
         "sous_dossier_brut": valeurs["SOUS_DOSSIER"],
@@ -1189,6 +1196,15 @@ def construire_labels(champs: dict) -> str:
     # Purement informatif côté onglet Résultats — ne bloque jamais rien.
     if not complexite_reconnue(champs.get("corps") or "") and LABEL_SANS_COMPLEXITE not in labels:
         labels.append(LABEL_SANS_COMPLEXITE)
+    # Label « mode_interactif » (étude #888, étape 1 — issue #900) : posé
+    # UNIQUEMENT quand le champ d'en-tête INTERACTIF vaut exactement "oui" —
+    # toute autre valeur, ou champ absent, laisse l'issue automatique, sans
+    # rejet. Marqueur orthogonal aux labels de mode ci-dessus (une issue peut
+    # être mode_write ET mode_interactif à la fois) — voir
+    # watcher.est_interactif() pour les cas de repli appliqués à l'exécution
+    # (lecture seule, destination Windows).
+    if (champs.get("interactif_brut") or "").strip().lower() == "oui" and LABEL_INTERACTIF not in labels:
+        labels.append(LABEL_INTERACTIF)
     return ",".join(labels)
 
 

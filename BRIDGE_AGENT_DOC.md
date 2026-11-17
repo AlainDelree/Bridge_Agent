@@ -344,6 +344,7 @@ lignes distinctes.
 | `notif_gsm` | Ajoute une notification push (ntfy) |
 | `notif_tous` | notify-send + ntfy |
 | `mode_scratch` | **ARME le mode lecture active** — écriture confinée au dossier scratch, voir §5 |
+| `mode_interactif` | Marqueur « interactif » (étude #888, étape 1 — issue #900), **orthogonal** aux labels de mode ci-dessus — posé via le champ `INTERACTIF` (§6, spécifique à `issues_inbox/`). N'arme encore rien au lancement de CCL ; exclut seulement l'issue de la calibration automatique du TIMEOUT (§19). Jamais retenu en lecture seule ni sur une issue destinée à Windows (`for-windows`) : comportement automatique appliqué, avec avertissement informatif, voir `watcher.est_interactif()`. |
 | `sans-redacteur` | Posé automatiquement quand `REDACTEUR` est absent de l'en-tête — signale une issue rédigée sans déclarer son projet d'origine, pour repérer un projet qui rédige à la place d'un autre, voir §3.4 |
 | `sans-complexite` | Posé automatiquement quand `COMPLEXITE` est absente ou non reconnue dans l'en-tête — signale une erreur de rédaction à corriger, l'issue ayant été traitée avec le repli `normal`, voir §6 |
 | `agent-claude` | Posé automatiquement à la clôture — **agent d'exécution** Claude Code (clé `AGENT` du `.conf`, issue #768) |
@@ -503,6 +504,7 @@ Le watcher lit ces champs dans le tableau markdown de l'en-tête :
 | `REDACTEUR` | ex. `bridge_agent` | **Spécifique à `issues_inbox/`**, voir §3.4 pour la règle complète — nom du projet depuis le contexte duquel Claude Chat a rédigé l'issue, validé pour cohérence avec `PROJET`. À toujours renseigner par Claude Chat. |
 | `COMPLEXITE` | **uniquement** `rapide` / `court` / `normal` / `lourd` — aucun autre mot | **Obligatoire dans toute issue, quel que soit le MODE** (lecture, lecture active, écriture) — estimée par Claude Chat au moment de rédiger l'issue, jamais omise. 4e dimension de la calibration automatique du TIMEOUT (voir §19). `Absent ou non reconnu = normal` est un **repli technique du code**, pas un choix de rédaction légitime (voir encadré ci-dessous, issue #843). |
 | `RESEAU` | `oui` ou `non` | Tag réseau pour la calibration TIMEOUT (voir §19) : `oui` = issue impliquant de lourdes opérations réseau, `non` = purement locale. Optionnel. |
+| `INTERACTIF` | `oui` | **Spécifique à `issues_inbox/`** (étude #888, étape 1 — issue #900) — pose le label `mode_interactif` à la création, sur le même principe que `MODE` ci-dessus. Toute autre valeur ou champ absent : issue automatique, sans rejet. N'arme encore rien au lancement de CCL à cette étape ; exclut seulement l'issue de la calibration automatique du TIMEOUT. Jamais retenu en lecture seule ni sur une issue destinée à Windows, voir §4. |
 
 > ⚠️ **`COMPLEXITE` obligatoire, quatre valeurs exactes (issue #843).** Une
 > mesure sur ~1500 issues fermées des dépôts du système montre ce champ
@@ -1270,6 +1272,15 @@ Voir §6 pour les champs `COMPLEXITE` et `RESEAU`, qui affinent cette
 calibration (constantes actuelles du code : `K_VARIABILITE` = 3, issue
 #475).
 
+Une issue **interactive** (label `mode_interactif`, posé via le champ
+`INTERACTIF`, §4/§6, étude #888, issue #900) est **exclue** de cette
+calibration : sa durée dépend d'Alain (mode interactif), pas de la tâche.
+Ni `enregistrer_duree` (historique des durées, §19.1) ni
+`maj_calibration_timeout` (EWMA par combinaison) ne sont appelés pour elle,
+à la clôture réussie comme à chaque tentative expirée — voir
+`watcher.est_interactif()` pour les deux cas de repli (lecture seule,
+destination Windows) qui désarment ce marqueur.
+
 ### 19.1 Format d'une ligne de `logs/historique_durees.json` (issue #845)
 
 Fichier gitignoré (télémétrie locale), liste JSON append-only — une entrée
@@ -1321,7 +1332,19 @@ estimation que celle déjà affichée, sans dupliquer ce calcul.
 
 ---
 
-*Dernière mise à jour : 11 novembre 2026 — issue #883, prise de relais par
+*Dernière mise à jour : 17 novembre 2026 — issue #900, mode interactif,
+étape 1 (étude #888) : nouveau label `mode_interactif` (§4), orthogonal aux
+labels de mode, posé via le champ d'en-tête `INTERACTIF` du dépôt d'issues
+par fichier (§6, `issues_inbox/`). N'arme encore rien au lancement de CCL
+(une issue marquée reste traitée comme une issue automatique ordinaire) ;
+exclut seulement l'issue de la calibration automatique du TIMEOUT (§19,
+`enregistrer_duree`/`maj_calibration_timeout`), sa durée dépendant d'Alain
+et non de la tâche. Deux cas de repli, jamais un rejet bloquant : la lecture
+seule n'est jamais interactive, et le mode interactif ne concerne que le
+ThinkPad (CCL) — une issue destinée à Windows reste automatique même
+marquée (`watcher.est_interactif()`).*
+
+*Mise à jour précédente : 11 novembre 2026 — issue #883, prise de relais par
 le watcher de la tâche planifiée Windows (§3.2) : après #881, la tâche
 planifiée `…-IssuesInbox` (démarrée ~20 s après l'interface web) perdait
 presque toujours la course au verrou d'instance unique et s'arrêtait
@@ -1345,14 +1368,5 @@ PID) et une réclamation atomique du fichier avant tout traitement
 (`issues_inbox/en_cours/`, avec reprise automatique après un arrêt brutal) ;
 l'anti-doublon GitHub est complété par un registre en mémoire des créations
 en cours dans la même instance.*
-
-*Mise à jour précédente : 10 novembre 2026 — issue #879, visibilité par
-défaut du dépôt créé par le formulaire « Nouveau projet » (§8.3) : la case
-« Dépôt public » reste cochée par défaut pour l'installation d'Alain, mais
-est désormais **décochée par défaut** sur une copie non-propriétaire de
-l'outil (`COPIE_NON_PROPRIETAIRE`, §8.2) — réglage facultatif
-`DEPOT_PRIVE_PAR_DEFAUT` dans `identite_locale.conf`
-(`identite.depot_public_par_defaut()`), qui PRIME sur
-`COPIE_NON_PROPRIETAIRE` dans les deux sens.*
 
 Historique complet : voir [`CHANGELOG.md`](CHANGELOG.md).

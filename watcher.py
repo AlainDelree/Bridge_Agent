@@ -238,6 +238,16 @@ LABEL_SCRATCH   = "mode_scratch"  # ARME la lecture active (écriture confinée 
 LABEL_ECHEC     = "needs-human"   # posé après échec définitif : stoppe le retraitement auto
 LABEL_FAIT      = "done"          # posé au succès
 
+# Marqueur « interactif » (étude #888, étape 1 — issue #900) : label
+# ORTHOGONAL aux labels de mode ci-dessus (une issue peut être mode_write ET
+# mode_interactif à la fois) — la déduction du MODE (_deduire_mode) reste
+# inchangée, à trois valeurs. Ne change RIEN au lancement de CCL à cette
+# étape (une issue marquée reste traitée comme une issue automatique
+# ordinaire) : sert uniquement à exclure l'issue de la calibration
+# automatique du TIMEOUT (sa durée dépend d'Alain, pas de la tâche) — voir
+# est_interactif() ci-dessous pour les cas de repli.
+LABEL_INTERACTIF = "mode_interactif"
+
 # Posé à la création (issue #647) quand l'en-tête ne porte pas le champ
 # optionnel REDACTEUR (issue #599) — signal purement informatif pour l'onglet
 # Résultats (badge « Créée sans REDACTEUR »), jamais un rejet : REDACTEUR
@@ -493,6 +503,41 @@ def _avertissement_ecart_mode(numero: int, body: str, mode: str) -> str:
             f"mal posé à la création — cf. issue #785, nouveau_projet.LABELS/gh label create)."
         )
     return texte
+
+
+# ─── Mode interactif (étude #888, étape 1 — issue #900) ───────────────────
+# Marqueur posé par le label `mode_interactif` (LABEL_INTERACTIF), exclu de
+# la calibration automatique du TIMEOUT (sa durée dépend d'Alain, pas de la
+# tâche — voir les deux appels à enregistrer_duree/maj_calibration_timeout
+# dans _finaliser_succes et _tracer_tentative_expiree). Deux cas de repli
+# décidés avec Alain, jamais un rejet bloquant (même esprit que
+# sans-redacteur/sans-complexite) :
+#   1. La lecture seule n'est JAMAIS interactive (une tâche de lecture seule
+#      a une durée qui dépend d'elle, pas d'Alain).
+#   2. Le mode interactif ne concerne que le ThinkPad (CCL) — une issue
+#      destinée à Windows (label `for-windows`) reste automatique même
+#      marquée (watcher.py tourne tel quel sur les deux plateformes).
+def est_interactif(labels: list[str], mode: str) -> tuple[bool, str]:
+    """Indique si le marqueur `mode_interactif` est EFFECTIVEMENT retenu pour
+    cette issue. Renvoie (interactif_effectif, avertissement) : avertissement
+    vide si le label est absent ou retenu sans repli, sinon un texte
+    informatif décrivant le repli appliqué — jamais un rejet. Ne lève
+    jamais."""
+    if LABEL_INTERACTIF not in labels:
+        return False, ""
+    if mode == MODE_LECTURE:
+        return False, (
+            f"Label `{LABEL_INTERACTIF}` posé sur une issue en lecture seule — "
+            f"le mode interactif ne s'applique jamais à la lecture seule, "
+            f"comportement automatique appliqué (étude #888)."
+        )
+    if "for-windows" in labels:
+        return False, (
+            f"Label `{LABEL_INTERACTIF}` posé sur une issue destinée à la "
+            f"machine Windows — le mode interactif ne concerne que le "
+            f"ThinkPad (CCL), comportement automatique appliqué (étude #888)."
+        )
+    return True, ""
 
 
 def _etiquette_calibration(mode: str) -> str:
@@ -7042,6 +7087,13 @@ def _deduire_mode_et_logguer(numero: int, titre: str, body: str, labels: list[st
             f"rappel : CCL/CCW ne doit JAMAIS modifier ces fichiers (consignes/globales.md, "
             f"issue #318), même si l'issue le demande explicitement. Garde-fou technique actif."
         )
+    # Marqueur mode_interactif (étude #888, étape 1 — issue #900) : purement
+    # informatif à ce stade (rien ne change dans le lancement de CCL), mais
+    # un repli (lecture seule, destination Windows) mérite un avertissement
+    # visible dans le log, même esprit que l'écart MODE ci-dessus.
+    _interactif, avertissement_interactif = est_interactif(labels, mode)
+    if avertissement_interactif:
+        log.warning(f"  ⚠️  Issue #{numero} : {avertissement_interactif}")
     return mode, mode_txt, priorite, critique, timeout, modele, avertissement_mode
 
 
@@ -8156,38 +8208,44 @@ def _finaliser_succes(numero: int, titre: str, body: str, labels: list[str], mod
         extraire_complexite_pour_historique(body)
     duree_reelle      = time.monotonic() - debut_traitement
     date_iso_close    = datetime.now().isoformat(timespec="seconds")
-    enregistrer_duree(
-        CFG.nom,
-        type_issue_close,
-        mode_close,
-        duree_reelle,
-        date_iso_close,
-        body=body,
-        nb_projets_actifs=nb_projets_actifs_debut,
-        numero_issue=numero,
-        tentative=tentative,
-        timeout_applique=timeout,
-        complexite_valeur=complexite_close,
-        complexite_statut=complexite_statut_close,
-        complexite_brute=complexite_brute_close,
-        timeout_suggere_lancement=timeout_suggere_lancement,
-        estimation_lancement=estimation_lancement,
-    )
-    # Calibration automatique du TIMEOUT (issue #221) : met à jour les
-    # EWMA duree_typique/variabilite/backoff (par combinaison) et F
-    # (global), puis journalise le TIMEOUT_suggéré — sans effet sur le
-    # TIMEOUT réellement appliqué (extraire_timeout reste seul décisif).
-    suggere = maj_calibration_timeout(
-        projet=CFG.nom,
-        type_issue=type_issue_close,
-        mode=mode_close,
-        complexite=complexite_close,
-        duree_s=duree_reelle,
-        expiree=False,
-        body=body,
-        date_iso=date_iso_close,
-        relance=est_relance,
-    )
+    # Issue interactive (étude #888, étape 1 — issue #900) : sa durée dépend
+    # d'Alain, pas de la tâche — exclue de l'historique des durées ET de la
+    # calibration du TIMEOUT, ni l'un ni l'autre n'étant appelés pour elle.
+    interactif, _ = est_interactif(labels, mode)
+    suggere = None
+    if not interactif:
+        enregistrer_duree(
+            CFG.nom,
+            type_issue_close,
+            mode_close,
+            duree_reelle,
+            date_iso_close,
+            body=body,
+            nb_projets_actifs=nb_projets_actifs_debut,
+            numero_issue=numero,
+            tentative=tentative,
+            timeout_applique=timeout,
+            complexite_valeur=complexite_close,
+            complexite_statut=complexite_statut_close,
+            complexite_brute=complexite_brute_close,
+            timeout_suggere_lancement=timeout_suggere_lancement,
+            estimation_lancement=estimation_lancement,
+        )
+        # Calibration automatique du TIMEOUT (issue #221) : met à jour les
+        # EWMA duree_typique/variabilite/backoff (par combinaison) et F
+        # (global), puis journalise le TIMEOUT_suggéré — sans effet sur le
+        # TIMEOUT réellement appliqué (extraire_timeout reste seul décisif).
+        suggere = maj_calibration_timeout(
+            projet=CFG.nom,
+            type_issue=type_issue_close,
+            mode=mode_close,
+            complexite=complexite_close,
+            duree_s=duree_reelle,
+            expiree=False,
+            body=body,
+            date_iso=date_iso_close,
+            relance=est_relance,
+        )
     # Exposition du TIMEOUT_suggéré dans le commentaire de clôture
     # GitHub (issue #222) : seul canal fiable pour transmettre cette
     # info calculée localement à Claude Chat (pas d'accès direct aux
@@ -8209,7 +8267,8 @@ def _finaliser_succes(numero: int, titre: str, body: str, labels: list[str], mod
     notifier_fin_sse(numero)
 
 
-def _tracer_tentative_expiree(numero: int, titre: str, body: str, mode: str,
+def _tracer_tentative_expiree(numero: int, titre: str, body: str, labels: list[str],
+                               mode: str,
                                debut_traitement: float, nb_projets_actifs_debut: int,
                                tentative: int, timeout: int,
                                timeout_suggere_lancement: float | None,
@@ -8227,7 +8286,14 @@ def _tracer_tentative_expiree(numero: int, titre: str, body: str, mode: str,
     tentative / timeout / timeout_suggere_lancement / estimation_lancement
     (issue #845) : même contexte de décision que _finaliser_succes ci-dessus
     — `duree_expiree` ci-dessous est le PLAFOND TIMEOUT atteint, pas une
-    durée réelle de traitement (voir §19 de BRIDGE_AGENT_DOC.md)."""
+    durée réelle de traitement (voir §19 de BRIDGE_AGENT_DOC.md).
+
+    Issue interactive (étude #888, étape 1 — issue #900) : exclue de cette
+    trace comme de la calibration (ni `enregistrer_duree` ni
+    `maj_calibration_timeout` ne sont appelés), même principe que
+    `_finaliser_succes` — sa durée dépend d'Alain, pas de la tâche."""
+    if est_interactif(labels, mode)[0]:
+        return
     type_issue_expire = deduire_type_issue(titre, body)
     mode_expire        = _etiquette_calibration(mode)
     complexite_expire, complexite_statut_expire, complexite_brute_expire = \
@@ -8743,7 +8809,7 @@ def _traiter_issue_synchrone(issue: dict, dry_run: bool, chemin_worktree: Path |
                 return
 
             if sortie.startswith("Timeout après"):
-                _tracer_tentative_expiree(numero, titre, body, mode, debut_traitement, nb_projets_actifs_debut,
+                _tracer_tentative_expiree(numero, titre, body, labels, mode, debut_traitement, nb_projets_actifs_debut,
                                            tentative, timeout, timeout_suggere_lancement, estimation_lancement)
 
             if tentative >= CFG.max_essais:
