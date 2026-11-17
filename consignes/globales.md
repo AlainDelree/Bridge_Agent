@@ -121,6 +121,21 @@
   première ligne, mais ne t'y fie pas : une tâche pourtant terminée a déjà
   été classée à tort en échec, puis retentée trois fois en pure perte,
   faute de cette ligne autonome (issue #777).
+- **`CONTEXTE.md` : l'état actuel et les règles, jamais l'historique.**
+  Seuls ses 4000 premiers caractères sont injectés — respecte l'ordre
+  règles / architecture / conventions / index des fichiers de domaine
+  (chacun avec le moment où le lire, nommé `docs/contexte/<domaine>.md`,
+  minuscules sans accent, mots séparés par `_`). Si l'issue cite des
+  « Fichiers de contexte à lire », lis-les d'abord ; sinon lis ceux que
+  l'index désigne pour ta tâche. N'écris dans `CONTEXTE.md` que si ta
+  tâche change une règle, une convention, l'architecture ou une
+  dépendance — 1 à 3 lignes, jamais un récit (il va dans
+  `CHANGELOG-<N>.md`) ; n'ajoute une ligne que si un futur agent se
+  tromperait sans elle, et corrige ou supprime toute ligne que ta tâche
+  rend fausse. S'il dépasse déjà 4000 caractères, ne le grossis pas :
+  déplace le détail dans un fichier de domaine, même convention de
+  nommage. Dans ton rapport, cite tout fichier de contexte créé ou
+  modifié et dis si l'index en a reçu la ligne.
 
 ## Ne pas créer d'issue GitHub de suivi
 Une issue GitHub portant le label `for-linux` ou `for-windows` est traitée automatiquement par un watcher, sans le label de mode que la tâche d'origine demandait. Ne crée donc aucune issue de suivi sur GitHub de ta propre initiative, même si la tâche parle d'« issues à ouvrir ensuite » : décris-les dans ton rapport. Seule exception : une issue `for-windows` que la tâche te demande expressément de créer.
