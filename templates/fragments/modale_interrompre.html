@@ -8,6 +8,30 @@
     <div class="modal-titre" id="modal-interrompre-titre"></div>
     <div id="modal-interrompre-liste" class="modal-liste" style="font-family:inherit"></div>
     <div id="modal-interrompre-rappel" class="message avertissement" style="margin-bottom:14px"></div>
+
+    <!-- ─── Corriger la consigne et relancer (issue #896) ────────────────────
+         Dépose un fichier RELANCE dans issues_inbox/ (§3.14 BRIDGE_AGENT_DOC.md)
+         — même chemin qu'un dépôt manuel/Claude Chat, aucun second mécanisme de
+         relance. L'issue reste needs-human/ouverte et son worktree est conservé
+         tel quel (rien n'est committé/nettoyé par l'interruption, voir
+         app/interruption.py) : les fichiers non committés sont donc listés
+         ci-dessous AVANT de relancer, pour qu'Alain les vérifie s'il le souhaite
+         (jamais bloquant — l'information suffit, le worktree n'est pas perdu). -->
+    <div id="modal-interrompre-correction" class="modal-correction">
+      <div class="titre-section" style="margin-top:0">✏️ Corriger la consigne et relancer</div>
+      <div id="ri-non-committes" class="message avertissement" style="display:none;margin-bottom:8px"></div>
+      <label for="ri-texte" style="display:block;margin-bottom:4px">Consigne corrigée (texte libre ajouté à l'issue) :</label>
+      <textarea id="ri-texte" rows="4" style="width:100%;box-sizing:border-box"></textarea>
+      <label for="ri-timeout" style="display:block;margin:8px 0 4px">Nouveau TIMEOUT en secondes (optionnel — vide = inchangé) :</label>
+      <input type="number" id="ri-timeout" min="1" style="width:140px">
+      <div class="message avertissement" style="margin:10px 0">
+        ⚠️ Le MODE et les labels de l'issue ne sont PAS corrigibles par ce chemin — pour changer de
+        mode, modifiez-le à la main sur GitHub avant de relancer.
+      </div>
+      <div id="ri-resultat" class="message" style="display:none;margin-bottom:8px"></div>
+      <button id="btn-deposer-relance" onclick="deposerRelanceConsigne()">📨 Déposer la relance (issues_inbox)</button>
+    </div>
+
     <div class="modal-boutons">
       <button id="btn-fermer-interrompre" onclick="fermerModalInterrompre()">OK</button>
     </div>
