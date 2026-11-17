@@ -137,5 +137,12 @@
   déplace le détail dans un fichier de domaine. Cite tout fichier de
   contexte créé/modifié et dis si l'index en a reçu la ligne.
 
+- **Outil manquant : jamais d'installer dans un environnement partagé**
+  (venv Bridge_Agent, Python/npm global, système) — dépendances du projet
+  traité (son fichier de dépendances, son dossier modules) restent
+  permises. Si absent : environnement temporaire hors dépôt, détruit en
+  fin de tâche, sinon arrêt + signalement. Citer outil utilisé/manquant
+  et sa version dans le rapport.
+
 ## Ne pas créer d'issue GitHub de suivi
 Une issue GitHub portant le label `for-linux` ou `for-windows` est traitée automatiquement par un watcher, sans le label de mode que la tâche d'origine demandait. Ne crée donc aucune issue de suivi sur GitHub de ta propre initiative, même si la tâche parle d'« issues à ouvrir ensuite » : décris-les dans ton rapport. Seule exception : une issue `for-windows` que la tâche te demande expressément de créer.

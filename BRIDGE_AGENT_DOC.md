@@ -928,6 +928,11 @@ page, bien plus bas.
   - *Bon exemple* : « Dans `api.py`, pour les trois méthodes de navigation,
     différer l'appel dans un thread daemon avec `time.sleep(0.05)` avant
     de naviguer. »
+- **Outil externe demandé (issue #897)** : si la tâche décrite exige un
+  outil externe (ex. un linter d'audit), Claude Chat précise dans l'issue
+  quoi faire s'il est absent côté CCL/CCW — environnement temporaire, ou
+  arrêt et signalement (règle complète, destinée à CCL/CCW, dans
+  `consignes/globales.md`).
 - **Parallélisation `mode_write` (issue #337, information pour les projets
   utilisant Bridge_Agent)** : plusieurs issues `mode_write` d'un même projet
   peuvent tourner **en parallèle**, chacune dans son propre `git worktree`.
