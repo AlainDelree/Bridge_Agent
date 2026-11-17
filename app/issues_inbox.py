@@ -587,3 +587,110 @@ def issues_attente_supprimer():
         return jsonify(succes=False, erreur=str(e)), 500
 
     return jsonify(succes=True)
+
+
+# ─── Relance avec consigne corrigée, depuis l'interface (issue #896) ───────
+# Relie le bouton ⛔ « Interrompre » (app/interruption.py, pose needs-human
+# SANS fermer l'issue ni toucher au worktree) au champ `RELANCE` d'
+# issues_inbox/ (§3.14 BRIDGE_AGENT_DOC.md) : jusqu'ici, corriger le TIMEOUT
+# ou ajouter une consigne avant de relancer une issue interrompue exigeait de
+# déposer ce fichier À LA MAIN. Cette route dépose EXACTEMENT le même genre
+# de fichier qu'un dépôt manuel/Claude Chat — aucun second chemin de relance :
+# la validation (projet connu, issue ouverte et dans le bon dépôt, TIMEOUT
+# numérique...) reste celle de `watcher_issues_inbox.py::_traiter_relance`,
+# exécutée en asynchrone par le watcher spool au prochain cycle. Un fichier
+# invalide atterrit normalement dans `rejected/`, visible dans l'onglet
+# « Résultats inbox » — pas de duplication de cette logique ici.
+#
+# Champs corrigibles : TIMEOUT (texte libre toujours ajouté, voir §3.14) —
+# MODELE/SOUS_DOSSIER/REPO_CIBLE/DOMAINES ne sont PAS exposés ici (hors
+# périmètre de cette issue, qui ne demande que consigne + TIMEOUT). MODE et
+# LABELS restent EXPLICITEMENT hors de ce chemin (comme pour tout RELANCE) —
+# à la charge du FRONT de le dire à Alain plutôt que de laisser croire qu'un
+# changement de mode serait pris en compte (voir modale_interrompre.html).
+#
+# Watcher spool (issue #896) : un fichier déposé dans issues_inbox/ reste
+# inerte tant que `scripts/watcher_issues_inbox.py` ne tourne pas (processus
+# séparé, piloté à la main depuis le panneau « Watcher spool » — PAS un
+# service système, à la différence des watchers de projet). Démarré ici s'il
+# est éteint, même esprit que `redemarrer_si_eteint` (app/watchers.py,
+# #574/#600) pour le watcher CCL cible : sans ce démarrage, Alain croirait la
+# relance effective alors que rien ne la traiterait avant qu'il pense à
+# relancer ce watcher lui-même. JAMAIS redémarré s'il tourne déjà
+# (`demarrer_watcher_inbox` le ferait sinon, coupant le traitement d'un
+# AUTRE fichier en cours — voir sa docstring, issue #485).
+def _corps_fichier_relance_consigne(nom_projet: str, numero: int, texte: str, timeout_s: int | None) -> str:
+    """Corps du fichier RELANCE déposé dans issues_inbox/ — même format que
+    celui documenté en §3.14 BRIDGE_AGENT_DOC.md (en-tête `PROJET`/`RELANCE`/
+    `TIMEOUT`, puis texte libre), pour rester indiscernable d'un dépôt manuel."""
+    lignes = [f"| PROJET  | {nom_projet} |", f"| RELANCE | #{numero} |"]
+    if timeout_s:
+        lignes.append(f"| TIMEOUT | {timeout_s}s |")
+    corps = "\n".join(lignes) + "\n"
+    if texte:
+        corps += "\n" + texte.strip() + "\n"
+    return corps
+
+
+def relancer_avec_consigne():
+    """POST /issues-inbox/relancer-avec-consigne — JSON {projet, numero,
+    texte, timeout_s}. Dépose un fichier RELANCE dans issues_inbox/ pour
+    corriger la consigne et/ou le TIMEOUT d'une issue déjà interrompue, sans
+    recréer de nouvelle issue (issue #896) — voir commentaire de section
+    ci-dessus. `texte` et `timeout_s` sont chacun optionnels mais pas
+    simultanément vides (rien à corriger sinon — utiliser le bouton
+    « 🔄 Relancer » existant dans ce cas, qui ne passe pas par issues_inbox/)."""
+    data = request.json or {}
+    nom_projet = (data.get("projet") or "").strip()
+    numero_brut = data.get("numero")
+    texte = (data.get("texte") or "").strip()
+    timeout_brut = data.get("timeout_s")
+
+    cfg_projet = projet_par_nom(nom_projet)
+    if not cfg_projet:
+        return jsonify(succes=False, erreur=f"Projet « {nom_projet} » introuvable."), 404
+    if not str(numero_brut).isdigit():
+        return jsonify(succes=False, erreur="Numéro d'issue invalide."), 400
+    numero = int(numero_brut)
+
+    timeout_s = None
+    if timeout_brut not in (None, ""):
+        try:
+            timeout_s = int(timeout_brut)
+        except (TypeError, ValueError):
+            return jsonify(succes=False, erreur="TIMEOUT invalide (nombre de secondes attendu)."), 400
+        if timeout_s <= 0:
+            return jsonify(succes=False, erreur="TIMEOUT doit être positif."), 400
+
+    if not texte and timeout_s is None:
+        return jsonify(succes=False,
+                       erreur="Rien à corriger : consigne et TIMEOUT sont vides."), 400
+
+    cfg = _config()
+    cfg.inbox_dir.mkdir(parents=True, exist_ok=True)
+    cible = _chemin_disponible(cfg.inbox_dir, f"relance_{cfg_projet.nom}_{numero}.md")
+    contenu = _corps_fichier_relance_consigne(cfg_projet.nom, numero, texte, timeout_s)
+    try:
+        fd, tmp_nom = tempfile.mkstemp(dir=str(cfg.inbox_dir), suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(contenu)
+            os.replace(tmp_nom, cible)
+        except OSError:
+            Path(tmp_nom).unlink(missing_ok=True)
+            raise
+    except OSError as e:
+        return jsonify(succes=False, erreur=f"écriture impossible : {e}"), 500
+
+    actif, pid = watcher_inbox_actif()
+    demarre = False
+    if not actif:
+        try:
+            _, pid = demarrer_watcher_inbox()
+            actif, demarre = True, True
+        except Exception as e:
+            return jsonify(succes=True, fichier=cible.name, watcher_actif=False, watcher_demarre=False,
+                           avertissement=f"fichier déposé, mais démarrage du watcher spool échoué : {e}")
+
+    return jsonify(succes=True, fichier=cible.name, watcher_actif=actif,
+                   watcher_demarre=demarre, watcher_pid=pid)

@@ -2511,7 +2511,7 @@ async function interrompreIssue(nom, numero) {
     return false;
   }
   if (actionsLigne) actionsLigne.terminerInterruption(_interruptionsEnCours, nom, numero);
-  ouvrirModalInterrompre(resultat, avertTree);
+  ouvrirModalInterrompre(resultat, avertTree, nom, numero, windows);
 
   // Recharge la liste (l'issue porte désormais needs-human) puis réaffiche.
   const numStr = String(numero);
@@ -2626,7 +2626,7 @@ const LIBELLES_STATUT_INTERROMPRE = {
 };
 const BADGES_ETAPE_INTERROMPRE = {succes: '✅', rien_a_faire: '➖', echec: '❌'};
 
-function ouvrirModalInterrompre(resultat, avertTree) {
+function ouvrirModalInterrompre(resultat, avertTree, nom, numero, windows) {
   const overlay = document.getElementById('modal-interrompre');
   const titre   = document.getElementById('modal-interrompre-titre');
   const liste   = document.getElementById('modal-interrompre-liste');
@@ -2660,10 +2660,156 @@ function ouvrirModalInterrompre(resultat, avertTree) {
   rappel.textContent = rappelTexte;
 
   overlay.classList.add('actif');
+  preparerFormulaireRelanceConsigne(nom, numero, windows);
 }
 
 function fermerModalInterrompre() {
   document.getElementById('modal-interrompre').classList.remove('actif');
+}
+
+// ─── Corriger la consigne et relancer, depuis la modale d'interruption
+// (issue #896) : relie le bouton ⛔ « Interrompre » (needs-human posé SANS
+// fermer l'issue ni toucher au worktree, voir app/interruption.py) au champ
+// `RELANCE` d'issues_inbox/ (§3.14 BRIDGE_AGENT_DOC.md, route Flask
+// app/issues_inbox.py::relancer_avec_consigne) — AUCUN second chemin de
+// relance : la validation (projet/dépôt/état de l'issue, TIMEOUT
+// numérique…) reste celle du watcher spool, exécutée en asynchrone après
+// dépôt du fichier. ───────────────────────────────────────────────────────
+
+// Contexte de la correction en cours (nom/numéro/for-windows), posé par
+// preparerFormulaireRelanceConsigne() à l'ouverture de la modale — lu par
+// deposerRelanceConsigne() au clic sur le bouton de dépôt.
+let _contexteRelanceConsigne = null;
+
+// Logique pure (testée sous Node, static/js/tests/) : construit le message
+// à afficher dans #ri-non-committes à partir de la réponse de GET
+// /avancement/<projet>/<numero> — AUCUNE conséquence bloquante, le worktree
+// n'est jamais perdu par l'interruption (conservé tel quel, voir
+// app/interruption.py::interrompre_linux) : ce message informe seulement
+// Alain de ce qui n'est pas encore committé, pour qu'il vérifie s'il le
+// souhaite avant de relancer.
+function messageNonCommittesRelance(resultatAvancement) {
+  if (!resultatAvancement || !resultatAvancement.disponible) {
+    const msg = resultatAvancement && resultatAvancement.message;
+    return {avertissement: false, texte: msg || 'Avancement indisponible pour cette issue.'};
+  }
+  const fichiers = resultatAvancement.fichiers_non_committes || [];
+  if (!fichiers.length) {
+    return {avertissement: false, texte: 'Working tree propre : aucun fichier non committé.'};
+  }
+  const liste = fichiers.map(f => f.chemin).join(', ');
+  return {
+    avertissement: true,
+    texte: "⚠️ Travail NON committé dans le worktree (conservé tel quel par l'interruption, "
+         + 'pas perdu, mais à vérifier avant de relancer) : ' + liste,
+  };
+}
+
+// Réinitialise le formulaire de correction à l'ouverture de la modale
+// d'interruption, puis lance la vérification du working tree (issue for-
+// windows/CCW : non disponible depuis cette interface, message dédié plutôt
+// qu'un appel réseau voué à l'échec — voir app/avancement.py).
+async function preparerFormulaireRelanceConsigne(nom, numero, windows) {
+  _contexteRelanceConsigne = {nom: nom, numero: numero, windows: windows};
+  document.getElementById('ri-texte').value = '';
+  document.getElementById('ri-timeout').value = '';
+  const resultatDiv = document.getElementById('ri-resultat');
+  resultatDiv.style.display = 'none';
+  resultatDiv.textContent = '';
+  const bouton = document.getElementById('btn-deposer-relance');
+  bouton.disabled = false;
+  bouton.textContent = '📨 Déposer la relance (issues_inbox)';
+
+  const zone = document.getElementById('ri-non-committes');
+  zone.style.display = 'block';
+  zone.className = 'message avertissement';
+  if (windows) {
+    zone.textContent = '⚠️ Issue for-windows (CCW) : vérification du working tree non disponible '
+                      + 'depuis cette interface — vérifiez à la main sur le PC fixe avant de relancer.';
+    return;
+  }
+  zone.textContent = 'Vérification du working tree…';
+  try {
+    const labels = labelsIssueDepuisCache(nom, numero);
+    const url = '/avancement/' + encodeURIComponent(nom) + '/' + encodeURIComponent(numero)
+              + '?labels=' + encodeURIComponent(labels.join(','));
+    const rep = await fetch(url);
+    const resultatAvancement = await rep.json();
+    const msg = messageNonCommittesRelance(resultatAvancement);
+    zone.textContent = msg.texte;
+    zone.className = msg.avertissement ? 'message avertissement' : 'message';
+    zone.style.display = 'block';
+  } catch(e) {
+    zone.textContent = 'Erreur réseau lors de la vérification du working tree : ' + e.message;
+  }
+}
+
+// Dépose le fichier RELANCE (POST /issues-inbox/relancer-avec-consigne) à
+// partir des champs du formulaire — jamais réactivé après un dépôt réussi
+// (évite un second fichier RELANCE accidentel pour la même correction) ;
+// réactivé après une erreur, pour permettre de corriger et réessayer.
+async function deposerRelanceConsigne() {
+  if (!_contexteRelanceConsigne) return;
+  const {nom, numero} = _contexteRelanceConsigne;
+  const texte        = document.getElementById('ri-texte').value.trim();
+  const timeoutBrut   = document.getElementById('ri-timeout').value.trim();
+  if (!texte && !timeoutBrut) {
+    alert('Rien à corriger : remplissez la consigne et/ou le TIMEOUT avant de déposer la relance.');
+    return;
+  }
+
+  const avertZone = document.getElementById('ri-non-committes');
+  const avertissementActif = avertZone.classList.contains('avertissement')
+                            && avertZone.textContent.indexOf('NON committé') !== -1;
+  let confirmTexte = "Déposer cette relance (fichier RELANCE dans issues_inbox/) pour l'issue #"
+                    + numero + " ?\n\nLe MODE et les labels ne seront PAS modifiés par ce chemin "
+                    + '(à corriger à la main sur GitHub si besoin).';
+  if (avertissementActif) confirmTexte += '\n\n' + avertZone.textContent;
+  if (!confirm(confirmTexte)) return;
+
+  const bouton      = document.getElementById('btn-deposer-relance');
+  const resultatDiv = document.getElementById('ri-resultat');
+  bouton.disabled = true;
+  bouton.textContent = 'Dépôt en cours…';
+  resultatDiv.style.display = 'none';
+
+  const payload = {projet: nom, numero: Number(numero), texte: texte};
+  if (timeoutBrut) payload.timeout_s = Number(timeoutBrut);
+
+  let json;
+  try {
+    const rep = await fetch('/issues-inbox/relancer-avec-consigne', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(payload)
+    });
+    json = await rep.json();
+  } catch(e) {
+    resultatDiv.className = 'message avertissement';
+    resultatDiv.textContent = 'Erreur réseau : ' + e.message;
+    resultatDiv.style.display = 'block';
+    bouton.disabled = false;
+    bouton.textContent = '📨 Déposer la relance (issues_inbox)';
+    return;
+  }
+
+  if (!json.succes) {
+    resultatDiv.className = 'message avertissement';
+    resultatDiv.textContent = 'Erreur : ' + (json.erreur || 'échec du dépôt.');
+    resultatDiv.style.display = 'block';
+    bouton.disabled = false;
+    bouton.textContent = '📨 Déposer la relance (issues_inbox)';
+    return;
+  }
+
+  let texteOk = '✅ Déposé : ' + json.fichier + '.';
+  if (json.watcher_demarre) texteOk += ' Watcher spool démarré (pid ' + json.watcher_pid + ').';
+  else if (json.watcher_actif) texteOk += ' Watcher spool déjà actif — traité au prochain cycle.';
+  if (json.avertissement) texteOk += ' ⚠️ ' + json.avertissement;
+  resultatDiv.className = 'message succes';
+  resultatDiv.textContent = texteOk;
+  resultatDiv.style.display = 'block';
+  bouton.textContent = '✅ Déposé';
 }
 
 // ─── Onglet « Nouvelle issue » : SORTI d'app.js (issue #652) ───────────────

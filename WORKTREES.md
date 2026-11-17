@@ -340,3 +340,47 @@ destructrice n'est jamais exécutée par cette route, aucun verrou n'est pris.
   trouvé) : déjà fusionné et nettoyé manuellement (§3, étape 5), ou
   traitement fait directement dans `REP_TRAVAIL` (repli faute de worktree
   disponible, issue #611) — message l'indiquant, pas une erreur 500.
+
+## 7. Corriger la consigne et relancer depuis l'interface (issue #896)
+
+Relie deux briques jusqu'ici séparées : le bouton ⛔ « Interrompre cette
+issue » (§4 ci-dessus — pose `needs-human` SANS fermer l'issue, worktree et
+verrous nettoyés mais **contenu du worktree intact**, rien n'y est jamais
+committé/annulé par l'interruption elle-même) et le champ `RELANCE`
+d'`issues_inbox/` (§3.14 BRIDGE_AGENT_DOC.md), qui reprend ce worktree
+existant plutôt que d'en créer un neuf (§2).
+
+**Parcours.** La modale de résultat affichée après un clic sur ⛔ propose
+désormais un petit formulaire : un texte libre (la consigne corrigée, ajoutée
+à l'issue dans une section horodatée) et un nouveau TIMEOUT optionnel. Le
+bouton « 📨 Déposer la relance » dépose un fichier `RELANCE` dans
+`issues_inbox/` (`POST /issues-inbox/relancer-avec-consigne`,
+`app/issues_inbox.py::relancer_avec_consigne`) — **exactement** le même
+format qu'un dépôt manuel/Claude Chat, aucun second mécanisme de relance : la
+validation (projet connu, issue ouverte dans le bon dépôt, TIMEOUT
+numérique…) reste celle de `watcher_issues_inbox.py::_traiter_relance`,
+exécutée en asynchrone par le watcher spool au cycle suivant — un fichier
+invalide atterrit normalement dans `rejected/`, visible dans l'onglet
+« Résultats inbox ».
+
+**Travail non committé — signalé, jamais perdu.** Avant de proposer le
+dépôt, le formulaire interroge `GET /avancement/<projet>/<numero>` (§6
+ci-dessus, même route que le bouton 📊 Avancement) et affiche la liste des
+fichiers non committés s'il y en a. C'est une information, pas un blocage :
+l'interruption ne touchant jamais au contenu du worktree, rien n'y est perdu
+par la relance elle-même — seul un risque résiduel existe si la tâche
+relancée réécrit les mêmes fichiers sans vérifier l'état du worktree au
+préalable. Pour une issue `for-windows` (worktree sur la machine CCW), cette
+vérification n'est pas disponible depuis cette interface (pas de SSH depuis
+cette vue, même limite que §6) — message dédié à la place.
+
+**Limites volontaires.** Comme pour tout dépôt `RELANCE` (§3.14 BRIDGE_AGENT_
+DOC.md), le `MODE` et les labels de l'issue ne sont **pas** corrigibles par
+ce chemin — le formulaire le rappelle explicitement plutôt que de laisser
+croire qu'un changement de mode serait pris en compte ; un changement de mode
+reste à faire à la main sur GitHub avant de relancer. Le watcher spool
+(`scripts/watcher_issues_inbox.py`, processus séparé piloté à la main depuis
+le panneau « Watcher spool ») est démarré automatiquement par cette route
+s'il est éteint — sans quoi le fichier déposé resterait inerte — mais jamais
+redémarré s'il tourne déjà (couperait le traitement d'un autre fichier en
+cours).
