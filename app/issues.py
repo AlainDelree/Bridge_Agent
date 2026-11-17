@@ -192,7 +192,8 @@ MODES = {
 
 def formater_entete(mode, priorite, timeout, projet, *,
                      source="CC", dest="CCL", retour="CC",
-                     modele=None, complexite=None, repo_cible=None) -> str:
+                     modele=None, complexite=None, repo_cible=None,
+                     domaines=None) -> str:
     """Construit le tableau markdown "## En-tête" commun aux issues Bridge_Agent.
 
     Factorisation (diagnostic #579 §3.2, issue #601) du tableau auparavant
@@ -203,13 +204,20 @@ def formater_entete(mode, priorite, timeout, projet, *,
     en parallèle watcher.py (parsing des champs, extraire_complexite).
 
     `timeout` est le nombre de secondes SANS le suffixe "s" (ajouté ici).
-    `modele`, `complexite` et `repo_cible` sont optionnels : absents par
-    défaut, chacun n'ajoute sa ligne que s'il est fourni (COMPLEXITE sur une
-    ligne séparée, hors tableau principal, comme dans app/projet_ccw.py).
+    `modele`, `complexite`, `repo_cible` et `domaines` sont optionnels :
+    absents par défaut, chacun n'ajoute sa ligne que s'il est fourni
+    (COMPLEXITE sur une ligne séparée, hors tableau principal, comme dans
+    app/projet_ccw.py).
     `repo_cible` (issue #829, étend #125/#567) : chemin absolu réservé aux
     projets à PERIMETRE_DYNAMIQUE=true, relu ensuite par
-    watcher.extraire_repo_cible(). Sans lui, la sortie de cette fonction
-    reste identique à l'existante pour tout appelant qui ne le fournit pas."""
+    watcher.extraire_repo_cible(). `domaines` (issue #892) : noms de domaine
+    séparés par des virgules, relus ensuite par watcher.domaines_demandes() —
+    PAS de champ dédié dans le formulaire web (comme LABELS, il n'a de sens
+    que tapé en texte libre dans le corps par Claude Chat ; ce paramètre ne
+    sert qu'au chemin fichier déposé/RELANCE, scripts/watcher_issues_inbox.py,
+    pour réinsérer la ligne extraite plutôt que de la perdre). Sans eux, la
+    sortie de cette fonction reste identique à l'existante pour tout
+    appelant qui ne les fournit pas."""
     lignes = [
         "## En-tête\n",
         "| Champ    | Valeur |",
@@ -226,6 +234,8 @@ def formater_entete(mode, priorite, timeout, projet, *,
         lignes.append(f"| MODELE   | {modele} |")
     if repo_cible:
         lignes.append(f"| REPO_CIBLE | {repo_cible} |")
+    if domaines:
+        lignes.append(f"| DOMAINES | {domaines} |")
     if complexite:
         lignes.append("")
         lignes.append(f"| COMPLEXITE | {complexite} |")
