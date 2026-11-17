@@ -995,7 +995,7 @@ consulte `consignes/globales.md` (rappels de sécurité, garde-fous) via :
 curl -sL "https://raw.githubusercontent.com/AlainDelree/Bridge_Agent/master/consignes/globales.md"
 ```
 
-### 12.2 Fichier de contexte `CONTEXTE.md` (issue #889)
+### 12.2 Fichiers de contexte : `CONTEXTE.md` et fichiers de domaine (issues #889, #890)
 
 Chaque projet a un `CONTEXTE.md` (chemin donné par `FICHIER_CONTEXTE` du
 `.conf`), injecté en tête du prompt CCL — mais **seuls ses 4000 premiers
@@ -1003,7 +1003,13 @@ caractères** : au-delà, rien n'est vu par l'agent. Il ne garde donc que
 l'essentiel (règles, architecture, conventions) et un index de fichiers de
 détail par domaine, chacun sous `docs/contexte/<domaine>.md` — nom en
 minuscules, sans accent, mots séparés par `_` (ex. `onglet_parametre.md`),
-pour éviter les doublons de graphie.
+pour éviter les doublons de graphie. Chaque fichier de domaine suit la
+même règle que `CONTEXTE.md` — état actuel, jamais l'historique — et se
+met à jour dans les mêmes conditions (détail : `consignes/globales.md`).
+Un sujet déjà tenu à jour ailleurs (section de ce document ou
+d'`ARCHITECTURE.md`) n'a pas besoin d'un fichier de domaine dédié :
+l'index de `CONTEXTE.md` peut citer directement cette section tant que le
+« quand lire » reste utile à l'agent.
 
 ⚠️ **Pour Claude Chat, au moment de rédiger une issue touchant un domaine
 déjà indexé** : inclure dans le corps de l'issue la ligne `Fichiers de

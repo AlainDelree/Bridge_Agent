@@ -32,7 +32,7 @@ Référence complète : `BRIDGE_AGENT_DOC.md` (+ `ARCHITECTURE.md`).
 - **`templates/`** — `index.html` + `fragments/` (un par onglet/panneau/
   modale, Jinja2). **`static/`** — `css/` par zone (cascade), `js/app.js`
   (hérité, classique) + `js/socle/` (modules ES sans build, refonte
-  #625→#632 — détail : `docs/contexte/etat_avancement.md`).
+  #625→#632 — détail : `ARCHITECTURE.md §6`).
 - **`configs/`** (gitignoré, un `.conf`/projet) ; **`provisioning/windows/`**
   + **`systemd/`** (`watcher@.service`) pour le déploiement ; **`scripts/`**
   (bip).
@@ -49,7 +49,20 @@ Référence complète : `BRIDGE_AGENT_DOC.md` (+ `ARCHITECTURE.md`).
   création, sinon PowerShell 5.1 plante sur les accents.
 
 ## Index des fichiers de domaine
-- `docs/contexte/etat_avancement.md` — à lire avant de toucher au socle web
-  récent, à la calibration TIMEOUT, aux consignes §12.1, aux pièces
-  jointes, aux notifications, à l'onglet CCW, ou au champ `ATTENTE`
+Aucun fichier `docs/contexte/<domaine>.md` pour l'instant (issue #890 : le
+détail encore vrai vivait déjà, à jour, dans les documents de référence
+ci-dessous — pas besoin de le dupliquer). Entrées pointant directement
+vers leur section :
+- `ARCHITECTURE.md §6` — à lire avant de toucher au socle web
+  (`static/js/socle/`).
+- `BRIDGE_AGENT_DOC.md §19` — à lire avant de toucher à la calibration du
+  `TIMEOUT`.
+- `BRIDGE_AGENT_DOC.md §12.1` — à lire avant de toucher aux consignes à
+  trois couches (`consignes/`).
+- `BRIDGE_AGENT_DOC.md §18` — à lire avant de toucher aux pièces jointes
+  d'issue.
+- `BRIDGE_AGENT_DOC.md §4.1` — à lire avant de toucher aux notifications.
+- `BRIDGE_AGENT_DOC.md §16` — à lire avant de toucher à l'agent Windows /
+  l'onglet CCW.
+- `BRIDGE_AGENT_DOC.md §3.16` — à lire avant de toucher au champ `ATTENTE`
   d'`issues_inbox/`.
