@@ -84,7 +84,6 @@ def creer_nouveau_projet():
         rep                   = data.get("rep", ""),
         perimetre             = data.get("perimetre", ""),
         topic                 = data.get("topic", ""),
-        avec_specs            = bool(data.get("avec_specs")),
         creer_depot_si_absent = bool(data.get("creer_depot_si_absent", True)),
         # Couleur d'accent choisie dans le modal (pastille). creer_projet la
         # revalide contre les couleurs encore libres (issue #121) : une valeur

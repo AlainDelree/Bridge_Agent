@@ -129,7 +129,7 @@ def test_creer_projet_nom_interne_minuscule_mais_depot_rep_respectent_la_casse()
         np.DOSSIER_CONFIGS = configs
         np.depot_existe = lambda depot: True  # installation, pas de création
         np.creer_labels = lambda depot: []
-        np.creer_fichiers_contexte = lambda rep, avec_specs: {
+        np.creer_fichiers_contexte = lambda rep: {
             "crees": [], "existants": [], "rep_cree": False}
         np.initialiser_git = lambda rep, depot: {
             "ok": True, "deja_git": True, "push_ok": None,

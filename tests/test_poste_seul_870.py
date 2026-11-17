@@ -105,7 +105,7 @@ def _mocker_etapes_reseau_creation(monkeypatch, configs: Path, tmp_path: Path) -
     monkeypatch.setattr(np_cli, "depot_existe", lambda depot: True)
     monkeypatch.setattr(np_cli, "creer_labels", lambda depot: [])
     monkeypatch.setattr(np_cli, "creer_fichiers_contexte",
-                        lambda rep, avec_specs: {"crees": [], "existants": [], "rep_cree": False})
+                        lambda rep: {"crees": [], "existants": [], "rep_cree": False})
     monkeypatch.setattr(np_cli, "initialiser_git", lambda rep, depot: {
         "ok": True, "detail": "ignoré (test)", "deja_git": True, "push_ok": None,
         "contenu_preexistant": [], "commande_manuelle": None,

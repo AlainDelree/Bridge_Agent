@@ -78,9 +78,6 @@ def owner_defaut() -> str:
     appel réseau `gh`."""
     return identite.compte_github() or OWNER_INDETERMINE
 
-# Fichiers Specs MVC (§15) créés en plus de CONTEXTE.md quand l'option est active.
-FICHIERS_SPECS = ("CONTEXTE_VUE.md", "CONTEXTE_METIER.md", "CONTEXTE_PERSISTANCE.md")
-
 # Squelette de CONTEXTE.md (issue #889) : l'ordre règles / architecture /
 # conventions / index des fichiers de domaine est celui attendu par
 # consignes/globales.md — pas la règle complète (déjà injectée depuis ce
@@ -116,7 +113,7 @@ TIMEOUT_GIT_PUSH = 60
 # Fichiers que le script crée lui-même dans le répertoire de travail (contexte
 # + gitignore auto) : exclus de la détection de contenu préexistant (issue
 # #258) — leur seule présence ne doit pas bloquer le push automatique.
-FICHIERS_CREES_PAR_SCRIPT = frozenset({"CONTEXTE.md", ".gitignore", *FICHIERS_SPECS})
+FICHIERS_CREES_PAR_SCRIPT = frozenset({"CONTEXTE.md", ".gitignore"})
 
 
 # ─── Entrées / sorties interactives ───────────────────────────────────────────
@@ -307,35 +304,28 @@ def ecrire_conf(nom: str, depot: str, rep: str, perimetre: str,
     return chemin
 
 
-def _ecrire_fichiers_contexte(rep_path: Path,
-                              avec_specs: bool) -> tuple[list[Path], list[Path]]:
-    """Crée CONTEXTE.md (et les 3 fichiers Specs MVC si demandé) dans un
-    répertoire supposé existant. Renvoie (créés, déjà présents). Idempotent :
-    les fichiers déjà là sont laissés intacts."""
+def _ecrire_fichiers_contexte(rep_path: Path) -> tuple[list[Path], list[Path]]:
+    """Crée CONTEXTE.md dans un répertoire supposé existant. Renvoie (créés,
+    déjà présents). Idempotent : un fichier déjà là est laissé intact."""
     crees, existants = [], []
-    fichiers = ["CONTEXTE.md"]
-    if avec_specs:
-        fichiers += list(FICHIERS_SPECS)
-    for nom_fic in fichiers:
-        f = rep_path / nom_fic
-        if f.exists():
-            existants.append(f)
-        else:
-            contenu = GABARIT_CONTEXTE if nom_fic == "CONTEXTE.md" else ""
-            f.write_text(contenu, encoding="utf-8")
-            crees.append(f)
+    f = rep_path / "CONTEXTE.md"
+    if f.exists():
+        existants.append(f)
+    else:
+        f.write_text(GABARIT_CONTEXTE, encoding="utf-8")
+        crees.append(f)
     return crees, existants
 
 
-def creer_fichiers_contexte(rep: str, avec_specs: bool) -> dict:
+def creer_fichiers_contexte(rep: str) -> dict:
     """Version non interactive : crée le répertoire de travail s'il manque puis
-    les fichiers contexte. Renvoie {crees, existants, rep_cree}."""
+    le fichier contexte. Renvoie {crees, existants, rep_cree}."""
     rep_path = Path(rep).expanduser()
     rep_cree = False
     if not rep_path.exists():
         rep_path.mkdir(parents=True, exist_ok=True)
         rep_cree = True
-    crees, existants = _ecrire_fichiers_contexte(rep_path, avec_specs)
+    crees, existants = _ecrire_fichiers_contexte(rep_path)
     return {"crees": crees, "existants": existants, "rep_cree": rep_cree}
 
 
@@ -567,7 +557,7 @@ def mettre_a_jour_doc() -> dict:
 
 
 def creer_projet(nom: str, depot: str = "", rep: str = "", perimetre: str = "",
-                 topic: str = "", avec_specs: bool = False,
+                 topic: str = "",
                  creer_depot_si_absent: bool = True, couleur: str = "",
                  public: bool | None = None) -> dict:
     """Orchestrateur non interactif appelé par la route Flask. Enchaîne les
@@ -654,7 +644,7 @@ def creer_projet(nom: str, depot: str = "", rep: str = "", perimetre: str = "",
                        "detail": detail_labels})
 
     # 4. Fichier(s) de contexte (crée le répertoire de travail au besoin).
-    ctx = creer_fichiers_contexte(rep, avec_specs)
+    ctx = creer_fichiers_contexte(rep)
     noms_crees = [f.name for f in ctx["crees"]]
     if noms_crees:
         detail_ctx = ", ".join(noms_crees) + " créé(s)"
@@ -875,9 +865,9 @@ def etape_labels(depot: str) -> list[str]:
     return crees
 
 
-def etape_contexte(rep: str, avec_specs: bool) -> list[Path]:
-    """Crée CONTEXTE.md (et les 3 fichiers Specs MVC si demandé) dans le
-    répertoire de travail du projet. Renvoie les fichiers créés."""
+def etape_contexte(rep: str) -> list[Path]:
+    """Crée CONTEXTE.md dans le répertoire de travail du projet. Renvoie les
+    fichiers créés."""
     titre("6. Fichier(s) de contexte")
     rep_path = Path(rep).expanduser()
     if not rep_path.exists():
@@ -897,17 +887,6 @@ def etape_contexte(rep: str, avec_specs: bool) -> list[Path]:
         print(f"   ✓ {contexte} créé (squelette : règles/architecture/"
               "conventions/index).")
         crees.append(contexte)
-
-    if avec_specs:
-        for nom_fic in ("CONTEXTE_VUE.md", "CONTEXTE_METIER.md",
-                        "CONTEXTE_PERSISTANCE.md"):
-            f = rep_path / nom_fic
-            if f.exists():
-                print(f"   • {f} existe déjà, laissé intact.")
-            else:
-                f.write_text("", encoding="utf-8")
-                print(f"   ✓ {f} créé (vide).")
-                crees.append(f)
     return crees
 
 
@@ -916,7 +895,7 @@ def etape_git(depot: str, rep: str) -> dict:
     après confirmation — cohérent avec les autres étapes, qui demandent
     toutes. Rien n'est demandé si REP_TRAVAIL est déjà un dépôt git (cas
     laissé strictement inchangé). Renvoie le même dict que initialiser_git()."""
-    titre("8. Dépôt git local")
+    titre("7. Dépôt git local")
     rep_path = Path(rep).expanduser()
     if (rep_path / ".git").exists():
         print(f"   ✓ {rep_path} est déjà un dépôt git — inchangé.")
@@ -972,7 +951,7 @@ def etape_git(depot: str, rep: str) -> dict:
 # mettre_a_jour_doc() (route Flask) maintenues indépendamment.
 
 def etape_doc() -> bool:
-    titre("9. Mise à jour de BRIDGE_AGENT_DOC.md")
+    titre("8. Mise à jour de BRIDGE_AGENT_DOC.md")
     if identite.copie_non_proprietaire():
         # Copie non-propriétaire (issue #869) : PROJETS_LOCAUX.md à la place
         # de BRIDGE_AGENT_DOC.md, jamais touché — voir mettre_a_jour_doc().
@@ -1073,19 +1052,12 @@ def main() -> None:
     rep, perimetre = etape_repertoire(nom_saisi)
     chemin_conf = etape_conf(nom, depot, rep, perimetre)
     labels_crees = etape_labels(depot)
-    fichiers_contexte = etape_contexte(rep, avec_specs=False)
-
-    # 7. Pattern Chef + Specs MVC (prospectif, §15) — question séparée.
-    titre("7. Pattern Chef + Specs MVC (optionnel, §15)")
-    print("   Crée en plus CONTEXTE_VUE.md, CONTEXTE_METIER.md, "
-          "CONTEXTE_PERSISTANCE.md (vides).")
-    if demander_oui_non("Mettre en place le pattern Specs MVC", defaut=False):
-        fichiers_contexte += etape_contexte(rep, avec_specs=True)
+    fichiers_contexte = etape_contexte(rep)
 
     git_res = etape_git(depot, rep)
     doc_ok = etape_doc()
 
-    # 10. Résumé final.
+    # Résumé final.
     titre("✅ Résumé")
     print(f"   Projet          : {nom}")
     print(f"   Dépôt GitHub    : {depot} "

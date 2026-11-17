@@ -41,7 +41,7 @@ ORDRE_SECTIONS = ("## Règles", "## Architecture", "## Conventions",
 
 # ─── 1. Squelette créé, dans l'ordre attendu ───────────────────────────────
 def test_ecrire_fichiers_contexte_cree_un_squelette_pas_un_fichier_vide(tmp_path):
-    crees, existants = np_cli._ecrire_fichiers_contexte(tmp_path, avec_specs=False)
+    crees, existants = np_cli._ecrire_fichiers_contexte(tmp_path)
     assert existants == []
     assert [f.name for f in crees] == ["CONTEXTE.md"]
 
@@ -57,7 +57,7 @@ def test_ecrire_fichiers_contexte_cree_un_squelette_pas_un_fichier_vide(tmp_path
 
 def test_creer_fichiers_contexte_meme_squelette(tmp_path):
     rep = tmp_path / "projet"
-    resultat = np_cli.creer_fichiers_contexte(str(rep), avec_specs=False)
+    resultat = np_cli.creer_fichiers_contexte(str(rep))
     assert resultat["rep_cree"] is True
     assert [f.name for f in resultat["crees"]] == ["CONTEXTE.md"]
     contenu = (rep / "CONTEXTE.md").read_text(encoding="utf-8")
@@ -65,23 +65,12 @@ def test_creer_fichiers_contexte_meme_squelette(tmp_path):
         assert section in contenu
 
 
-def test_fichiers_specs_restent_vides_seul_contexte_a_le_squelette(tmp_path):
-    """Seul CONTEXTE.md reçoit le squelette — les fichiers Specs MVC (§15)
-    restent créés vides, comportement inchangé par #889."""
-    crees, _existants = np_cli._ecrire_fichiers_contexte(tmp_path, avec_specs=True)
-    noms = {f.name: f for f in crees}
-    assert set(noms) == {"CONTEXTE.md", *np_cli.FICHIERS_SPECS}
-    assert noms["CONTEXTE.md"].read_text(encoding="utf-8") != ""
-    for nom_spec in np_cli.FICHIERS_SPECS:
-        assert noms[nom_spec].read_text(encoding="utf-8") == ""
-
-
 # ─── 2. Non-écrasement d'un CONTEXTE.md existant ───────────────────────────
 def test_contexte_existant_jamais_ecrase(tmp_path):
     contexte = tmp_path / "CONTEXTE.md"
     contexte.write_text("contenu déjà rédigé par le projet", encoding="utf-8")
 
-    crees, existants = np_cli._ecrire_fichiers_contexte(tmp_path, avec_specs=False)
+    crees, existants = np_cli._ecrire_fichiers_contexte(tmp_path)
 
     assert crees == []
     assert existants == [contexte]
@@ -94,7 +83,7 @@ def test_creer_fichiers_contexte_existant_jamais_ecrase(tmp_path):
     contexte = rep / "CONTEXTE.md"
     contexte.write_text("contenu existant", encoding="utf-8")
 
-    resultat = np_cli.creer_fichiers_contexte(str(rep), avec_specs=False)
+    resultat = np_cli.creer_fichiers_contexte(str(rep))
 
     assert resultat["crees"] == []
     assert resultat["existants"] == [contexte]

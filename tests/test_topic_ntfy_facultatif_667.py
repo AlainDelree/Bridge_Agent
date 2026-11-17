@@ -120,7 +120,7 @@ def test_creer_projet_topic_vide_reste_vide(monkeypatch, tmp_path):
     monkeypatch.setattr(np_cli, "depot_existe", lambda depot: True)
     monkeypatch.setattr(np_cli, "creer_labels", lambda depot: [])
     monkeypatch.setattr(np_cli, "creer_fichiers_contexte",
-                        lambda rep, avec_specs: {"crees": [], "rep_cree": False})
+                        lambda rep: {"crees": [], "rep_cree": False})
     monkeypatch.setattr(np_cli, "initialiser_git", lambda rep, depot: {
         "ok": True, "detail": "ignoré (test)", "deja_git": True, "push_ok": None,
         "contenu_preexistant": [], "commande_manuelle": None,

@@ -2958,7 +2958,6 @@ let npCouleurChoisie = '';
 function ouvrirNouveauProjet() {
   ['np-nom', 'np-depot', 'np-rep', 'np-perimetre', 'np-topic'].forEach(id =>
     document.getElementById(id).value = '');
-  document.getElementById('np-specs').checked = false;
   document.getElementById('np-creer-depot').checked = true;
   document.getElementById('np-creer-depot-ligne').style.display = 'none';
   // Visibilité par défaut du dépôt à créer (issue #879) : suit
@@ -3377,7 +3376,6 @@ async function soumettreNouveauProjet() {
     perimetre: document.getElementById('np-perimetre').value.trim(),
     topic:     document.getElementById('np-topic').value.trim(),
     couleur:   npCouleurChoisie,
-    avec_specs: document.getElementById('np-specs').checked,
     creer_depot_si_absent: document.getElementById('np-creer-depot').checked,
     public: document.getElementById('np-public').checked,
   };
