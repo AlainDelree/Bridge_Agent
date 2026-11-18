@@ -226,6 +226,14 @@ DOSSIER_VERROUS = DOSSIER_LOGS / "verrous"
 # serait happé par le commit de sauvegarde mode écriture).
 DOSSIER_TMUX = DOSSIER_LOGS / "tmux"
 
+# Rapports de clôture des issues interactives (étude #888, étape 3 — issue
+# #903). Même logique d'emplacement que DOSSIER_VERROUS/DOSSIER_TMUX
+# ci-dessus — sous logs/ (gitignoré), JAMAIS dans le worktree/REP_TRAVAIL de
+# la tâche : ce chemin doit rester hors du périmètre suivi par git pour ne
+# jamais être happé par le commit de sauvegarde/fix d'une tâche en mode
+# écriture. Voir _chemin_rapport_interactif.
+DOSSIER_RAPPORTS_INTERACTIFS = DOSSIER_LOGS / "interactif"
+
 # Marge (secondes) ajoutée à la durée de traitement plausible d'une issue pour
 # décider qu'un verrou est PÉRIMÉ (orphelin d'un watcher tué brutalement sans
 # passer par le finally). Au-delà de cette péremption, aucun claude légitime ne
@@ -567,16 +575,39 @@ PREFIXE_SESSION_TMUX = "bridge"
 INTERVALLE_SURVEILLANCE_TMUX_S = 15
 
 
+def _nom_projet_assaini(nom_projet: str) -> str:
+    """Nom de projet assaini pour un usage en identifiant système (nom de
+    session tmux, nom de fichier) — seuls lettres/chiffres/tiret/underscore
+    sont conservés, le reste remplacé par `_`. Factorisé de `_nom_session_tmux`
+    (issue #901) pour être réutilisé à l'identique par
+    `_chemin_rapport_interactif` (issue #903) : les deux doivent rester
+    dérivables du même nom de projet, de la même façon."""
+    return re.sub(r"[^A-Za-z0-9_-]", "_", nom_projet)
+
+
 def _nom_session_tmux(nom_projet: str, numero: int) -> str:
     """Nom de session tmux conventionnel et stable (issue #901) :
     `bridge-<projet>-issue<numero>` — retrouvable à l'identique d'un cycle à
     l'autre et après un redémarrage du watcher (voir _tmux_session_existe,
-    point 5). Le nom du projet est assaini : tmux n'accepte pas `:` comme
-    séparateur de nom de session et certains autres caractères sont source
-    d'ambiguïté en ligne de commande — seuls lettres/chiffres/tiret/
-    underscore sont conservés, le reste remplacé par `_`."""
-    projet_assaini = re.sub(r"[^A-Za-z0-9_-]", "_", nom_projet)
-    return f"{PREFIXE_SESSION_TMUX}-{projet_assaini}-issue{numero}"
+    point 5). Le nom du projet est assaini (_nom_projet_assaini) : tmux
+    n'accepte pas `:` comme séparateur de nom de session et certains autres
+    caractères sont source d'ambiguïté en ligne de commande."""
+    return f"{PREFIXE_SESSION_TMUX}-{_nom_projet_assaini(nom_projet)}-issue{numero}"
+
+
+def _chemin_rapport_interactif(nom_projet: str, numero: int) -> Path:
+    """Chemin FIXE et stable du rapport de clôture d'une issue interactive
+    (étude #888, étape 3 — issue #903) : `logs/interactif/<projet>-issue
+    <numero>.md`, HORS de tout worktree/REP_TRAVAIL (DOSSIER_RAPPORTS_
+    INTERACTIFS, gitignoré) — pour ne jamais être happé par un commit (ni
+    celui de sauvegarde, ni un `git add -A` de la tâche elle-même), et pour
+    rester trouvable à l'identique d'un sondage à l'autre ainsi qu'après un
+    redémarrage du watcher (même esprit que `_nom_session_tmux`). C'est
+    l'agent qui écrit ce fichier, UNIQUEMENT quand Alain confirme que la
+    tâche est terminée (voir le bloc de prompt dédié dans `lancer_claude`) —
+    jamais le watcher, qui ne fait que le lire et le conserver comme trace
+    une fois la clôture faite."""
+    return DOSSIER_RAPPORTS_INTERACTIFS / f"{_nom_projet_assaini(nom_projet)}-issue{numero}.md"
 
 
 def _tmux_disponible() -> bool:
@@ -695,9 +726,10 @@ def _lancer_session_tmux(nom_session: str, cmd: list[str], cwd: Path,
 def _tuer_session_tmux(nom_session: str) -> None:
     """Nettoyage best-effort d'une session tmux (issue #901, point 2 — même
     esprit que _nettoyer_arbre_claude pour le chemin automatique) : appelée
-    au dépassement du TIMEOUT pour une issue interactive, jamais ailleurs
-    (une fin de session normale n'a rien à nettoyer, la session a déjà
-    disparu d'elle-même)."""
+    au dépassement du TIMEOUT pour une issue interactive, ou quand un rapport
+    de clôture est trouvé alors que la session est encore ouverte (issue
+    #903, point 2) — jamais pour une fin de session déjà normale (la session
+    a alors déjà disparu d'elle-même, rien à nettoyer)."""
     try:
         subprocess.run(["tmux", "kill-session", "-t", nom_session],
                         capture_output=True, text=True, timeout=10)
@@ -705,20 +737,65 @@ def _tuer_session_tmux(nom_session: str) -> None:
         log.warning(f"Nettoyage de la session tmux '{nom_session}' impossible : {e}")
 
 
-def _surveiller_session_tmux(nom_session: str, echeance: float) -> str:
-    """Surveillance NON BLOQUANTE (issue #901, point 2) — remplace, pour les
-    issues interactives, l'attente bloquante `proc.communicate(timeout=...)`
-    du chemin automatique par un sondage périodique de l'existence de la
-    session tmux, jusqu'à ce qu'elle disparaisse (fin de session, volontaire
-    ou non) ou que l'échéance (`time.monotonic()`) soit dépassée.
+def _taille_fichier_rapport_interactif(chemin_rapport: Path) -> int | None:
+    """Taille en octets de `chemin_rapport`, ou None s'il n'existe pas encore
+    (best-effort pur, issue #903 — ne lève jamais : une erreur de lecture
+    d'attribut ne doit jamais faire planter la surveillance d'une session
+    interactive, juste retarder la détection de stabilité d'un sondage)."""
+    try:
+        return chemin_rapport.stat().st_size
+    except OSError:
+        return None
 
-    Retourne "terminee" (session disparue avant l'échéance) ou "timeout"
-    (encore présente à l'échéance — l'appelant doit alors la nettoyer, voir
-    _tuer_session_tmux)."""
+
+def _surveiller_session_tmux(nom_session: str, echeance: float, chemin_rapport: Path) -> str:
+    """Surveillance NON BLOQUANTE (issue #901, point 2 — étendue #903, étape
+    3) — remplace, pour les issues interactives, l'attente bloquante
+    `proc.communicate(timeout=...)` du chemin automatique par un sondage
+    périodique, toutes les INTERVALLE_SURVEILLANCE_TMUX_S, qui teste À CHAQUE
+    FOIS la taille de `chemin_rapport` (voir _chemin_rapport_interactif) AVANT
+    l'existence de la session tmux : c'est Alain qui décide de la fin d'une
+    issue interactive en lui faisant écrire ce rapport (voir le bloc de
+    prompt dédié dans lancer_claude), donc sa présence prime sur tout —
+    qu'elle soit détectée alors que la session tourne encore (Alain resté
+    dedans après l'avoir fait écrire) ou après qu'elle a disparu.
+
+    Un rapport n'est considéré au complet ET lu que lorsque sa taille est
+    IDENTIQUE à deux sondages consécutifs (jamais au premier sondage où il
+    apparaît, qui peut tomber pendant son écriture) — c'est l'APPELANT qui le
+    lit réellement (jamais cette fonction, simple sondage d'attributs de
+    fichier). EXCEPTION : dès que la session a disparu, plus personne ne peut
+    plus écrire dans ce fichier — sa seule PRÉSENCE (jamais sa stabilité sur
+    deux sondages, qui n'a alors plus de sens) suffit à le considérer complet,
+    y compris s'il vient d'apparaître au sondage même où la disparition de la
+    session est constatée (écriture du rapport puis sortie de la session dans
+    le même intervalle).
+
+    Retourne "rapport" (rapport détecté — complet par stabilité si la session
+    tourne encore, ou par disparition de la session sinon — prioritaire sur
+    tout le reste), "terminee" (session disparue avant l'échéance SANS aucun
+    rapport) ou "timeout" (encore présente à l'échéance, toujours sans
+    rapport stable — l'appelant doit alors la nettoyer, voir _tuer_session_tmux)."""
+    taille_precedente = _taille_fichier_rapport_interactif(chemin_rapport)
     while time.monotonic() < echeance:
-        if not _tmux_session_existe(nom_session):
-            return "terminee"
         time.sleep(max(0.0, min(INTERVALLE_SURVEILLANCE_TMUX_S, echeance - time.monotonic())))
+        taille_courante = _taille_fichier_rapport_interactif(chemin_rapport)
+        if taille_courante is not None and taille_courante == taille_precedente:
+            return "rapport"
+        taille_precedente = taille_courante
+        if not _tmux_session_existe(nom_session):
+            # Un dernier sondage du fichier : la disparition de la session
+            # peut avoir eu lieu APRÈS que le rapport ait fini d'être écrit
+            # mais avant le sondage ci-dessus (ordre des deux lectures) —
+            # cette relecture immédiate ne perd jamais ce cas.
+            taille_apres_mort = _taille_fichier_rapport_interactif(chemin_rapport)
+            return "rapport" if taille_apres_mort is not None else "terminee"
+    # Échéance dépassée : un dernier sondage avant de conclure "timeout" — un
+    # rapport déjà stable à cet instant précis ne doit jamais être perdu au
+    # profit d'un TIMEOUT (même priorité que ci-dessus).
+    taille_finale = _taille_fichier_rapport_interactif(chemin_rapport)
+    if taille_finale is not None and taille_finale == taille_precedente:
+        return "rapport"
     return "terminee" if not _tmux_session_existe(nom_session) else "timeout"
 
 
@@ -4035,6 +4112,38 @@ def fermer_issue(numero: int) -> bool:
         log.error(f"Erreur fermeture issue #{numero} : {e}")
         return False
 
+
+def _fermer_issue_sans_done(numero: int) -> bool:
+    """Ferme une issue SANS poser le label 'done' (issue #903, repli
+    « fin de session interactive sans rapport », étude #888 étape 3) — à la
+    différence de `fermer_issue` ci-dessus, dont c'est précisément le but.
+    Une issue fermée SANS ce label signale ainsi, par construction, une fin
+    de session sans rapport — distincte d'une clôture normale. Pose malgré
+    tout CFG.label_agent (best-effort, même esprit que `fermer_issue`),
+    purement informatif sur l'agent qui a traité l'issue.
+
+    Retourne True seulement si la fermeture elle-même (`gh issue close`) a
+    réussi — l'appelant (`_finaliser_session_interactive_sans_rapport`) s'en
+    sert pour décider s'il peut considérer cette fin de session comme
+    entièrement traitée (jamais sur la base du seul label CFG.label_agent,
+    purement informatif)."""
+    try:
+        res_close = subprocess.run(
+            ["gh", "issue", "close", str(numero), "--repo", CFG.depot],
+            capture_output=True, text=True,
+            encoding="utf-8", errors="replace", timeout=30
+        )
+        close_ok = res_close.returncode == 0
+        if not close_ok:
+            log.error(f"Erreur fermeture issue #{numero} (code {res_close.returncode}) : {res_close.stderr.strip()}")
+        ajouter_label(numero, CFG.label_agent)
+        etat_rate_limit.maj_rate_limit("watcher.fermer_issue_sans_done")
+        return close_ok
+    except Exception as e:
+        log.error(f"Erreur fermeture issue #{numero} (sans label '{LABEL_FAIT}') : {e}")
+        return False
+
+
 def _lister_processus_pgid(pgid: int, exclure_pid: int | None = None) -> list[tuple[int, str]]:
     """POSIX uniquement. Liste (pid, ligne de commande) des process actuellement
     vivants dont le pgid vaut exactement pgid, hors exclure_pid. Lecture directe
@@ -5508,6 +5617,49 @@ le travail déjà fait par cette tentative précédente. Dans ce cas :
   fait de zéro.{clause_ecart}
 """
 
+    # Bloc rapport de fin de session interactive (issue #903, étude #888,
+    # étape 3) : injecté UNIQUEMENT quand `mode_tmux` est vrai, c'est-à-dire
+    # UNIQUEMENT pour une issue mode_interactif effective (voir
+    # est_interactif) — ne touche JAMAIS au prompt du chemin automatique
+    # (mode_tmux reste False partout ailleurs, cf. docstring plus haut).
+    # Indique le chemin EXACT (fixe, hors du worktree/projet — voir
+    # _chemin_rapport_interactif) où écrire le rapport de clôture, dans le
+    # MÊME format que le rapport de fin de tâche imposé plus bas (ligne de
+    # verdict seule en première ligne, puis résumé et détails) — mais à
+    # écrire SEULEMENT quand Alain confirme que la tâche est terminée : la
+    # fin de cette session dépend de lui, jamais d'un critère automatique
+    # (durée, nombre de tours, estimation de complétude par l'agent...).
+    bloc_interactif = ""
+    if mode_tmux:
+        chemin_rapport = _chemin_rapport_interactif(CFG.nom, numero)
+        precision_scratch = (
+            f"\nCette issue est en LECTURE ACTIVE (écriture confinée au "
+            f"scratch {chemin_scratch}) : ce fichier de rapport, à ce chemin "
+            f"précis hors du projet, est la SEULE écriture autorisée en plus "
+            f"du scratch — le garde-fou technique qui restaure toute "
+            f"écriture détectée hors scratch ne porte que sur le projet lui-"
+            f"même, jamais sur ce chemin.\n"
+            if mode == MODE_LECTURE_ACTIVE else ""
+        )
+        bloc_interactif = f"""
+SESSION INTERACTIVE (étude #888, étape 3) — Alain peut intervenir dans cette
+session à tout moment (relecture de ton travail en cours, consignes
+complémentaires, discussion). N'écris le FICHIER DE RAPPORT DE FIN décrit
+ci-dessous QUE lorsqu'Alain te dit explicitement que cette issue est
+terminée, ou confirme ta proposition de clôture — JAMAIS de ta propre
+initiative (ni après un certain temps, ni parce que tu estimes la tâche
+achevée) : c'est Alain qui décide de la fin de cette session, pas toi.
+Une fois cette confirmation obtenue, écris le rapport de clôture — EXACTEMENT
+le même format que le rapport de fin de tâche demandé plus bas (ligne de
+verdict seule en première ligne, puis résumé et détails ci-dessous) — dans ce
+fichier, à ce chemin exact (hors du worktree, ne le crée nulle part ailleurs) :
+  {chemin_rapport}
+Le watcher détecte ce fichier à son prochain sondage et s'en sert comme
+clôture de l'issue (commentaire, fermeture, label) dès qu'il le trouve
+stable (plus de changement entre deux sondages) — n'y touche plus une fois
+écrit.{precision_scratch}
+"""
+
     if prompt_perso is not None:
         prompt = prompt_perso
     else:
@@ -5552,7 +5704,7 @@ TITRE : {titre}
 
 BODY :
 {body}
-{bloc_contexte}{bloc_domaines}{bloc_consignes}{clause_perimetre}{bloc_worktree}{bloc_reprise_worktree}{bloc_tentative}{garde_fou}
+{bloc_contexte}{bloc_domaines}{bloc_consignes}{clause_perimetre}{bloc_worktree}{bloc_reprise_worktree}{bloc_tentative}{garde_fou}{bloc_interactif}
 Instructions :
 1. Lis attentivement la tâche demandée
 2. Effectue le travail demandé (dans les limites du mode ci-dessus)
@@ -8888,6 +9040,129 @@ def _nettoyer_apres_traitement(verrou, chemin_scratch: Path | None,
         )
 
 
+def _resume_worktree_sans_rapport(cwd_effectif: Path, tete_avant_traitement: str | None,
+                                   commit_sauvegarde_watcher: str | None) -> str:
+    """Résumé markdown de l'état d'un worktree/répertoire de travail, pour le
+    commentaire de repli « fin de session interactive sans rapport » (issue
+    #903, point 3) — commits au-delà de la sauvegarde (même relevé que
+    `_commits_au_dela_sauvegarde`, utilisé pour le même repli côté verdict
+    illisible #777) et fichiers modifiés/non committés (même source que le
+    bouton « Avancement » #887, `_statut_git_rep_travail`, app/avancement.py).
+    Best-effort total, comme les deux fonctions dont il dépend : ne lève
+    jamais, se contente de signaler « aucun » quand un relevé est vide ou
+    indéterminable."""
+    commits = _commits_au_dela_sauvegarde(cwd_effectif, tete_avant_traitement, commit_sauvegarde_watcher)
+    if commits:
+        section_commits = "**Commits depuis la sauvegarde :**\n" + "\n".join(f"- `{c}`" for c in commits)
+    else:
+        section_commits = "**Commits depuis la sauvegarde :** aucun."
+
+    statut = _statut_git_rep_travail(cwd_effectif) or {}
+    if statut:
+        section_fichiers = "**Fichiers modifiés non committés :**\n" + "\n".join(
+            f"- `{code.strip()}` {chemin}" for chemin, code in sorted(statut.items())
+        )
+    else:
+        section_fichiers = "**Fichiers modifiés non committés :** aucun."
+
+    return f"{section_commits}\n\n{section_fichiers}"
+
+
+def _finaliser_session_interactive_sans_rapport(numero: int, nom_session: str,
+                                                 chemin_script: Path, cwd_effectif: Path,
+                                                 tete_avant_traitement: str | None,
+                                                 commit_sauvegarde_watcher: str | None) -> None:
+    """Repli « fin de session sans rapport » (issue #903, point 3) : la
+    session tmux interactive de l'issue `numero` a disparu — Alain a quitté
+    Claude ou fermé la fenêtre, volontairement ou non — SANS qu'aucun
+    fichier de rapport de clôture n'ait été trouvé (voir
+    `_chemin_rapport_interactif`). Couvre aussi bien une disparition détectée
+    EN DIRECT par `_surveiller_session_tmux` (résultat "terminee") qu'une
+    disparition découverte seulement après un redémarrage du watcher
+    (`chemin_script` encore présent au moment où `_traiter_issue_interactive`
+    est ré-invoquée, point 5 — jamais une relance dans les deux cas).
+
+    Poste un commentaire décrivant l'état du worktree (commits depuis la
+    sauvegarde, fichiers modifiés non committés — voir
+    `_resume_worktree_sans_rapport`), puis ferme l'issue SANS poser le label
+    'done' (`_fermer_issue_sans_done`) : une issue fermée sans ce label
+    signale ainsi, par construction, une fin de session sans rapport, à
+    distinguer d'une clôture normale — et casse l'invariant « aucune
+    relance » (`lister_issues()` ne renvoie que les issues OUVERTES).
+
+    Le script de lancement (`chemin_script`) n'est supprimé QUE si la
+    fermeture a réussi : s'il échoue (réseau), le script reste le marqueur
+    qui permet à `_traiter_issue_interactive` de retenter cette même
+    finalisation au prochain cycle plutôt que de relancer CCL à tort."""
+    resume = _resume_worktree_sans_rapport(cwd_effectif, tete_avant_traitement, commit_sauvegarde_watcher)
+    log.warning(
+        f"  Issue #{numero} : session tmux interactive '{nom_session}' disparue "
+        f"SANS fichier de rapport — fermeture sans label 'done' (issue #903)."
+    )
+    commenter_issue(
+        numero,
+        f"🏁 Fin de session sans rapport — la session tmux interactive "
+        f"`{nom_session}` de l'issue #{numero} n'existe plus, et aucun fichier "
+        f"de rapport de clôture n'a été trouvé (Alain a probablement quitté "
+        f"Claude ou fermé la fenêtre sans demander/confirmer le rapport de fin "
+        f"— étude #888, étape 3). État du worktree au moment de cette "
+        f"détection :\n\n{resume}\n\n"
+        f"Issue fermée SANS le label `{LABEL_FAIT}` — une issue fermée sans ce "
+        f"label signale justement une fin de session sans rapport, à "
+        f"distinguer d'une clôture normale."
+    )
+    if _fermer_issue_sans_done(numero):
+        _issues_en_cours_retirer(numero)
+        chemin_script.unlink(missing_ok=True)
+    else:
+        log.warning(
+            f"  Fermeture (sans label 'done') de l'issue #{numero} incomplète — "
+            f"nouvelle tentative au prochain cycle (script de lancement conservé, issue #903)."
+        )
+        _issues_en_cours_retirer(numero)
+
+
+def _cloturer_session_interactive_via_rapport(numero: int, nom_session: str,
+                                               chemin_rapport: Path, chemin_script: Path,
+                                               cwd_effectif: Path,
+                                               tete_avant_traitement: str | None,
+                                               commit_sauvegarde_watcher: str | None) -> str | None:
+    """Rapport de clôture interactif trouvé et stable (issue #903, point 2) —
+    qu'il vienne d'être détecté par `_surveiller_session_tmux` ou qu'il soit
+    déjà présent à la reprise après un redémarrage du watcher (point 5) :
+    termine la session tmux si elle est encore ouverte (Alain peut être
+    resté dedans après l'avoir fait écrire), supprime le script de lancement
+    (fin de session entièrement traitée — voir le même raisonnement
+    d'idempotence que `_finaliser_session_interactive_sans_rapport`, mais le
+    rapport lui-même, JAMAIS supprimé, suffit ici à rendre tout le reste
+    idempotent) et retourne le contenu du rapport pour que l'appelant le
+    transmette tel quel à `_finaliser_succes` — EXACTEMENT la chaîne de
+    clôture habituelle (verdict, commentaire, fermeture, label).
+
+    Retourne None si la lecture du fichier échoue malgré sa présence : repli
+    immédiat sur la fin sans rapport, déjà entièrement géré ICI dans ce cas
+    — l'appelant n'a alors plus rien à faire."""
+    if _tmux_session_existe(nom_session):
+        log.info(
+            f"  Issue #{numero} : rapport de clôture interactif trouvé alors que la "
+            f"session tmux '{nom_session}' est encore ouverte — fermeture de la "
+            f"session (issue #903)."
+        )
+        _tuer_session_tmux(nom_session)
+    chemin_script.unlink(missing_ok=True)
+    try:
+        return chemin_rapport.read_text(encoding="utf-8", errors="replace")
+    except OSError as e:
+        log.error(
+            f"  Issue #{numero} : lecture du rapport interactif '{chemin_rapport}' "
+            f"impossible ({e}) malgré sa présence — repli sur « fin sans rapport » (issue #903)."
+        )
+        _finaliser_session_interactive_sans_rapport(
+            numero, nom_session, chemin_script, cwd_effectif,
+            tete_avant_traitement, commit_sauvegarde_watcher)
+        return None
+
+
 def _traiter_issue_interactive(numero: int, titre: str, body: str, mode: str,
                                 timeout: int, modele: str, perimetre_effectif: str,
                                 cwd_effectif: Path, chemin_scratch: Path | None,
@@ -8897,28 +9172,53 @@ def _traiter_issue_interactive(numero: int, titre: str, body: str, mode: str,
                                 tete_avant_traitement: str | None,
                                 commit_sauvegarde_watcher: str | None,
                                 backup_watcher_nouveaux_suivis: tuple[str, ...],
-                                dry_run: bool) -> bool:
-    """Issue #901 (étude #888, étape 2) : lance (ou retrouve) CCL dans une
-    session tmux détachée pour une issue `mode_interactif` effective (voir
-    est_interactif), et la surveille de façon NON BLOQUANTE jusqu'à sa fin ou
-    l'expiration du TIMEOUT — remplace, pour ces seules issues, l'attente
-    bloquante `proc.communicate(timeout=...)` du chemin automatique
-    (lancer_claude, cmd/Popen inchangés). Appelée par `_traiter_issue_synchrone`
-    juste avant sa boucle de tentatives habituelle, à laquelle elle ne touche
-    pas.
+                                dry_run: bool) -> tuple[bool, str | None]:
+    """Issue #901 (étude #888, étape 2, étendue #903 étape 3) : lance (ou
+    retrouve) CCL dans une session tmux détachée pour une issue
+    `mode_interactif` effective (voir est_interactif), et la surveille de
+    façon NON BLOQUANTE jusqu'à sa fin — rapport de clôture, TIMEOUT, ou
+    disparition de la session sans rapport — remplace, pour ces seules
+    issues, l'attente bloquante `proc.communicate(timeout=...)` du chemin
+    automatique (lancer_claude, cmd/Popen inchangés). Appelée par
+    `_traiter_issue_synchrone` juste avant sa boucle de tentatives
+    habituelle, à laquelle elle ne touche pas.
 
-    Retourne True si l'issue a été entièrement prise en charge ici (session
-    lancée/retrouvée et surveillée jusqu'à sa fin, ou dry-run) — l'appelant
-    doit alors `return` immédiatement, SANS entrer dans la boucle de
-    tentatives normale (aucune retry : une session interactive dépend
-    d'Alain, pas d'un nombre de tentatives).
+    Retourne (pris_en_charge, sortie_rapport) :
+    - (False, None) : repli — tmux absent du PATH, ou `tmux new-session` en
+      échec malgré le repli `systemd-run` (issue #901, point 6), après avoir
+      posté un avertissement explicite dans l'issue et le journal. L'appelant
+      doit alors poursuivre EXACTEMENT comme si cette issue n'était pas
+      interactive (chemin automatique inchangé), jamais un échec silencieux.
+    - (True, None) : fin de session entièrement traitée ICI (TIMEOUT +
+      `needs-human` posé, ou repli « fin sans rapport » + fermeture sans
+      `done`), ou dry-run. L'appelant doit `return` immédiatement.
+    - (True, <texte>) : rapport de clôture interactif trouvé et stable — le
+      texte est le contenu intégral du rapport, à transmettre tel quel à
+      `_finaliser_succes` par l'appelant (réutilisation à l'identique de la
+      chaîne de clôture habituelle : verdict, commentaire, fermeture, label).
 
-    Retourne False en repli — tmux absent du PATH, ou `tmux new-session` en
-    échec malgré le repli `systemd-run` (issue #901, point 6) — après avoir
-    posté un avertissement explicite dans l'issue et le journal : l'appelant
-    doit alors poursuivre EXACTEMENT comme si cette issue n'était pas
-    interactive (chemin automatique inchangé), jamais un échec silencieux."""
+    Invariant central de l'issue #903 : quelle qu'en soit la cause, AUCUNE
+    fin de session ne doit laisser l'issue dans un état qui permettrait une
+    relance au cycle suivant — l'issue est toujours soit fermée (avec ou
+    sans `done`, selon qu'un rapport a été trouvé), soit marquée
+    `needs-human` (TIMEOUT). `lister_issues()` ne renvoyant que les issues
+    OUVERTES, une fermeture suffit déjà à elle seule à empêcher la relance ;
+    `needs-human` s'appuie sur le garde-fou déjà existant en tête de
+    `_guards_precoces_et_bootstrap`."""
     nom_session = _nom_session_tmux(CFG.nom, numero)
+    chemin_rapport = _chemin_rapport_interactif(CFG.nom, numero)
+    chemin_script = DOSSIER_TMUX / f"{nom_session}.sh"
+
+    if not dry_run and chemin_rapport.exists():
+        # Issue #903, point 5 : un rapport déjà présent prime sur toute autre
+        # décision — y compris sur la relecture de l'état de la session,
+        # qu'elle soit encore ouverte (Alain y est resté après l'avoir fait
+        # écrire) ou déjà refermée (watcher redémarré après la fin réelle de
+        # la session). Jamais une relance dans aucun des deux cas.
+        sortie_rapport = _cloturer_session_interactive_via_rapport(
+            numero, nom_session, chemin_rapport, chemin_script, cwd_effectif,
+            tete_avant_traitement, commit_sauvegarde_watcher)
+        return True, sortie_rapport
 
     if not dry_run and _tmux_session_existe(nom_session):
         # Issue #901, point 5 : une session de ce nom existe déjà — le
@@ -8939,6 +9239,23 @@ def _traiter_issue_interactive(numero: int, titre: str, body: str, mode: str,
             f"sur `{nom_session}`, sans relancer CCL.\n\nPour t'y attacher :\n"
             f"```\ntmux attach -t {nom_session}\n```"
         )
+    elif not dry_run and chemin_script.exists():
+        # Issue #903, points 3/5 : le script de lancement existe encore
+        # (jamais nettoyé — voir chaque branche de fin plus bas), mais ni
+        # session ni rapport : cette session s'est terminée alors qu'AUCUN
+        # watcher n'a pu traiter sa fin (redémarrage pendant la surveillance,
+        # ou crash) — exactement le défaut constaté manuellement par Alain
+        # le 18/11/2026 sur l'issue #902. Jamais une relance : repli direct
+        # sur « fin sans rapport », traité avant toute autre décision.
+        log.warning(
+            f"  Issue #{numero} : script de lancement tmux '{chemin_script}' encore "
+            f"présent, mais ni session ni rapport — cette session s'est terminée "
+            f"alors qu'aucun watcher n'a traité sa fin (issue #903, point 5)."
+        )
+        _finaliser_session_interactive_sans_rapport(
+            numero, nom_session, chemin_script, cwd_effectif,
+            tete_avant_traitement, commit_sauvegarde_watcher)
+        return True, None
     else:
         succes, sortie = lancer_claude(
             numero, titre, body, dry_run, mode, timeout, modele,
@@ -8953,7 +9270,7 @@ def _traiter_issue_interactive(numero: int, titre: str, body: str, mode: str,
         )
         if dry_run:
             log.info(f"  [DRY-RUN] Issue #{numero} (interactif) : {sortie}")
-            return True
+            return True, None
         if not succes:
             log.warning(
                 f"  ⚠️ Issue #{numero} : lancement de la session tmux interactive "
@@ -8966,7 +9283,7 @@ def _traiter_issue_interactive(numero: int, titre: str, body: str, mode: str,
                 f"automatique habituel (`claude --print`) pour cette issue "
                 f"(étude #888/#901)."
             )
-            return False
+            return False, None
 
         note_survie = (
             "Cette session est lancée **hors du groupe du service** watcher "
@@ -8991,14 +9308,16 @@ def _traiter_issue_interactive(numero: int, titre: str, body: str, mode: str,
     echeance = time.monotonic() + timeout
     log.info(
         f"  Issue #{numero} : surveillance non bloquante de la session tmux "
-        f"'{nom_session}' (échéance {timeout}s, issue #901, point 2)..."
+        f"'{nom_session}' (échéance {timeout}s, issue #901 point 2 — rapport "
+        f"de clôture guetté à chaque sondage, issue #903)..."
     )
-    resultat = _surveiller_session_tmux(nom_session, echeance)
+    resultat = _surveiller_session_tmux(nom_session, echeance, chemin_rapport)
 
-    try:
-        (DOSSIER_TMUX / f"{nom_session}.sh").unlink(missing_ok=True)
-    except OSError:
-        pass
+    if resultat == "rapport":
+        sortie_rapport = _cloturer_session_interactive_via_rapport(
+            numero, nom_session, chemin_rapport, chemin_script, cwd_effectif,
+            tete_avant_traitement, commit_sauvegarde_watcher)
+        return True, sortie_rapport
 
     if resultat == "timeout":
         log.warning(
@@ -9010,25 +9329,27 @@ def _traiter_issue_interactive(numero: int, titre: str, body: str, mode: str,
             numero,
             f"⏱️ TIMEOUT ({timeout}s) dépassé pour la session interactive de l'issue "
             f"#{numero} — session tmux `{nom_session}` fermée automatiquement. Le "
-            f"verrou et la place de parallélisme sont libérés ; l'issue reste "
-            f"OUVERTE et n'est PAS marquée `{LABEL_FAIT}` : clôture manuelle par "
-            f"Alain pour l'instant (étude #888, étapes suivantes : suspension du "
-            f"délai, alerte, détection de fin par fichier de rapport)."
+            f"verrou et la place de parallélisme sont libérés ; label `{LABEL_ECHEC}` "
+            f"posé : cette issue ne sera plus retraitée (ni relancée) automatiquement "
+            f"tant que ce label n'est pas retiré manuellement par Alain (étude #888, "
+            f"étape 3 — la suspension du délai pendant l'attente d'Alain reste une "
+            f"étape suivante)."
         )
-    else:
-        log.info(
-            f"  Issue #{numero} : session tmux '{nom_session}' terminée (Alain a "
-            f"quitté, ou le process s'est arrêté) — issue #901."
-        )
-        commenter_issue(
-            numero,
-            f"🏁 Session tmux interactive de l'issue #{numero} terminée "
-            f"(`{nom_session}` n'existe plus). Le verrou et la place de "
-            f"parallélisme sont libérés ; l'issue reste OUVERTE et n'est PAS "
-            f"marquée `{LABEL_FAIT}` : clôture manuelle par Alain pour l'instant "
-            f"(étude #888)."
-        )
-    return True
+        ajouter_label(numero, LABEL_ECHEC)
+        if mode == MODE_ECRITURE:
+            _issue_write_bloquee_ajouter(numero)
+        chemin_script.unlink(missing_ok=True)
+        return True, None
+
+    # resultat == "terminee" : session disparue sans rapport de clôture.
+    log.info(
+        f"  Issue #{numero} : session tmux '{nom_session}' terminée sans rapport de "
+        f"clôture (Alain a quitté, ou le process s'est arrêté) — issue #903."
+    )
+    _finaliser_session_interactive_sans_rapport(
+        numero, nom_session, chemin_script, cwd_effectif,
+        tete_avant_traitement, commit_sauvegarde_watcher)
+    return True, None
 
 
 def _traiter_issue_synchrone(issue: dict, dry_run: bool, chemin_worktree: Path | None = None,
@@ -9107,23 +9428,36 @@ def _traiter_issue_synchrone(issue: dict, dry_run: bool, chemin_worktree: Path |
             commit_sauvegarde_watcher, backup_watcher_nouveaux_suivis = \
             _demarrer_traitement(numero, titre, body, mode, mode_txt, dry_run, cwd_effectif)
 
-        # Mode interactif, étape 2 (étude #888 — issue #901) : branche
-        # entièrement séparée de la boucle de tentatives ci-dessous — voir
-        # _traiter_issue_interactive. `est_interactif` (étape 1, #900) a déjà
-        # écarté lecture seule et destination Windows. Un repli (tmux
-        # absent du PATH, ou lancement échoué) fait retourner False : le
-        # traitement se poursuit alors normalement, EXACTEMENT comme pour
+        # Mode interactif, étape 2 (étude #888 — issue #901), étendue par la
+        # détection de fin par fichier de rapport (étape 3 — issue #903) :
+        # branche entièrement séparée de la boucle de tentatives ci-dessous —
+        # voir _traiter_issue_interactive. `est_interactif` (étape 1, #900) a
+        # déjà écarté lecture seule et destination Windows. Un repli (tmux
+        # absent du PATH, ou lancement échoué) fait retourner (False, None) :
+        # le traitement se poursuit alors normalement, EXACTEMENT comme pour
         # une issue non interactive (aucune autre branche de code n'est
-        # touchée par ce paramètre).
+        # touchée par ce paramètre). `sortie_rapport` non None (issue #903) :
+        # un rapport de clôture a été trouvé et lu — réutilise à l'identique
+        # la chaîne de clôture habituelle (_finaliser_succes), EXACTEMENT
+        # comme pour une tentative automatique réussie.
         if est_interactif(labels, mode)[0]:
-            if _traiter_issue_interactive(
+            pris_en_charge, sortie_rapport = _traiter_issue_interactive(
                 numero, titre, body, mode, timeout, modele,
                 perimetre_effectif, cwd_effectif, chemin_scratch,
                 chemin_worktree, chemin_outil_lecture_exec,
                 worktree_repris, commits_ecart_worktree,
                 tete_avant_traitement, commit_sauvegarde_watcher,
                 backup_watcher_nouveaux_suivis, dry_run,
-            ):
+            )
+            if pris_en_charge:
+                if sortie_rapport is not None:
+                    _finaliser_succes(numero, titre, body, labels, mode, timeout,
+                                       avertissement_conflit, avertissement_worktree_deja_pris,
+                                       avertissement_worktree_repris,
+                                       sortie_rapport, debut_traitement, nb_projets_actifs_debut,
+                                       est_relance, dry_run, cwd_effectif, tete_avant_traitement,
+                                       1, timeout_suggere_lancement, estimation_lancement,
+                                       commit_sauvegarde_watcher)
                 return
 
         # None si critique (essais illimités) : voir le bloc de prompt "rang

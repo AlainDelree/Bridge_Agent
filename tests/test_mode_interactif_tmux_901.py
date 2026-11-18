@@ -25,8 +25,10 @@ Couvre :
    `_lancer_session_tmux` avec le même `prompt` que le chemin automatique.
 7. `_traiter_issue_interactive` — lancement, reprise d'une session déjà
    existante au redémarrage du watcher (point 5), repli automatique si tmux
-   est indisponible (point 6), et clôture (fin normale / TIMEOUT) sans
-   jamais fermer l'issue.
+   est indisponible (point 6), et fin de session SANS rapport / TIMEOUT.
+   Depuis l'issue #903 (étape 3, voir tests/test_mode_interactif_rapport_
+   903.py), une fin de session sans rapport ferme désormais l'issue SANS le
+   label `done` (plus de clôture manuelle) et un TIMEOUT pose `needs-human`.
 
 Exécution :  python3 -m pytest tests/test_mode_interactif_tmux_901.py
         ou : python3 tests/test_mode_interactif_tmux_901.py
@@ -46,10 +48,14 @@ import watcher  # noqa: E402
 @pytest.fixture
 def cfg(tmp_path, monkeypatch):
     """CFG minimal et isolé, restauré après le test — même patron que
-    tests/test_mode_interactif_900.py."""
+    tests/test_mode_interactif_900.py. `DOSSIER_RAPPORTS_INTERACTIFS` isolé
+    comme `DOSSIER_TMUX` (issue #903) : aucun de ces tests n'écrit de
+    rapport, mais l'isolation évite toute collision avec un vrai
+    logs/interactif/ sur la machine qui exécute les tests."""
     ancien_cfg = watcher.CFG
     watcher.CFG = watcher.Config(nom="t901", depot="AlainDelree/x", rep_travail=tmp_path)
     monkeypatch.setattr(watcher, "DOSSIER_TMUX", tmp_path / "tmux")
+    monkeypatch.setattr(watcher, "DOSSIER_RAPPORTS_INTERACTIFS", tmp_path / "interactif")
     yield watcher.CFG
     watcher.CFG = ancien_cfg
 
@@ -234,7 +240,11 @@ def test_lancer_session_tmux_new_session_echoue(cfg, tmp_path, monkeypatch):
 
 # ─── 5. Surveillance non bloquante : session simulée + expiration ────────
 
-def test_surveiller_session_tmux_fin_normale(monkeypatch):
+def test_surveiller_session_tmux_fin_normale(monkeypatch, tmp_path):
+    """Fin de session SANS rapport (issue #903 : "rapport" a désormais la
+    priorité — voir tests/test_mode_interactif_rapport_903.py — mais une
+    session qui disparaît sans qu'aucun fichier n'apparaisse reste
+    "terminee", comportement #901 inchangé)."""
     horloge = {"t": 0.0}
 
     def faux_monotonic():
@@ -246,11 +256,12 @@ def test_surveiller_session_tmux_fin_normale(monkeypatch):
     monkeypatch.setattr(watcher.time, "sleep", lambda s: None)
     monkeypatch.setattr(watcher, "_tmux_session_existe", lambda nom: next(existe_sequence))
 
-    resultat = watcher._surveiller_session_tmux("bridge-t901-issue6", echeance=1000.0)
+    resultat = watcher._surveiller_session_tmux(
+        "bridge-t901-issue6", echeance=1000.0, chemin_rapport=tmp_path / "aucun_rapport.md")
     assert resultat == "terminee"
 
 
-def test_surveiller_session_tmux_timeout(monkeypatch):
+def test_surveiller_session_tmux_timeout(monkeypatch, tmp_path):
     horloge = {"t": 0.0}
 
     def faux_monotonic():
@@ -261,7 +272,8 @@ def test_surveiller_session_tmux_timeout(monkeypatch):
     monkeypatch.setattr(watcher.time, "sleep", lambda s: None)
     monkeypatch.setattr(watcher, "_tmux_session_existe", lambda nom: True)
 
-    resultat = watcher._surveiller_session_tmux("bridge-t901-issue7", echeance=3.0)
+    resultat = watcher._surveiller_session_tmux(
+        "bridge-t901-issue7", echeance=3.0, chemin_rapport=tmp_path / "aucun_rapport.md")
     assert resultat == "timeout"
 
 
@@ -341,9 +353,17 @@ def commentaires(monkeypatch):
 
 
 def test_traiter_issue_interactive_lance_et_surveille_jusqu_a_fin_normale(cfg, monkeypatch, tmp_path, commentaires):
+    """Fin de session SANS rapport (issue #903) : la clôture par rapport est
+    couverte séparément par tests/test_mode_interactif_rapport_903.py — ici,
+    `_surveiller_session_tmux` retourne "terminee" (comme à l'étape 2),
+    traité désormais par le repli « fin sans rapport » (fermeture SANS
+    `done`, jamais une issue laissée ouverte sans label — invariant #903)."""
     monkeypatch.setattr(watcher, "_tmux_session_existe", lambda nom: False)
     monkeypatch.setattr(watcher, "lancer_claude", lambda *a, **k: (True, "hors_groupe"))
-    monkeypatch.setattr(watcher, "_surveiller_session_tmux", lambda nom, echeance: "terminee")
+    monkeypatch.setattr(watcher, "_surveiller_session_tmux", lambda nom, echeance, chemin_rapport: "terminee")
+    fermetures = []
+    monkeypatch.setattr(watcher, "_fermer_issue_sans_done", lambda numero: fermetures.append(numero) or True)
+    monkeypatch.setattr(watcher, "_issues_en_cours_retirer", lambda numero: None)
 
     resultat = watcher._traiter_issue_interactive(
         numero=10, titre="T", body="B", mode=watcher.MODE_ECRITURE, timeout=1800,
@@ -353,18 +373,25 @@ def test_traiter_issue_interactive_lance_et_surveille_jusqu_a_fin_normale(cfg, m
         backup_watcher_nouveaux_suivis=(), dry_run=False,
     )
 
-    assert resultat is True
+    assert resultat == (True, None)
     assert any("tmux attach" in m for m in commentaires), "la commande d'attache doit être postée (point 3)"
-    assert any("terminée" in m and watcher.LABEL_FAIT in m for m in commentaires), (
-        "la clôture doit rester manuelle, jamais le label 'done' posé automatiquement (point 4)")
+    assert any("sans rapport" in m and watcher.LABEL_FAIT in m for m in commentaires), (
+        "le commentaire de repli doit mentionner l'absence de rapport ET le label 'done' (jamais posé)")
+    assert fermetures == [10], "la session disparue sans rapport doit être fermée sans 'done' (issue #903)"
 
 
-def test_traiter_issue_interactive_timeout_nettoie_la_session(cfg, monkeypatch, tmp_path, commentaires):
+def test_traiter_issue_interactive_timeout_pose_needs_human(cfg, monkeypatch, tmp_path, commentaires):
+    """TIMEOUT dépassé (issue #903, point 4) : comme à l'étape 2 (session
+    tuée, commentaire), avec en plus le label `needs-human` posé — comme le
+    fait déjà le chemin automatique après un abandon — pour interdire la
+    relance."""
     appels_kill = []
+    labels_poses = []
     monkeypatch.setattr(watcher, "_tmux_session_existe", lambda nom: False)
     monkeypatch.setattr(watcher, "lancer_claude", lambda *a, **k: (True, "meme_groupe"))
-    monkeypatch.setattr(watcher, "_surveiller_session_tmux", lambda nom, echeance: "timeout")
+    monkeypatch.setattr(watcher, "_surveiller_session_tmux", lambda nom, echeance, chemin_rapport: "timeout")
     monkeypatch.setattr(watcher, "_tuer_session_tmux", lambda nom: appels_kill.append(nom))
+    monkeypatch.setattr(watcher, "ajouter_label", lambda numero, label: labels_poses.append((numero, label)))
 
     resultat = watcher._traiter_issue_interactive(
         numero=11, titre="T", body="B", mode=watcher.MODE_ECRITURE, timeout=60,
@@ -374,9 +401,12 @@ def test_traiter_issue_interactive_timeout_nettoie_la_session(cfg, monkeypatch, 
         backup_watcher_nouveaux_suivis=(), dry_run=False,
     )
 
-    assert resultat is True
+    assert resultat == (True, None)
     assert appels_kill == ["bridge-t901-issue11"]
-    assert any("TIMEOUT" in m and watcher.LABEL_FAIT in m for m in commentaires)
+    assert any("TIMEOUT" in m for m in commentaires)
+    assert labels_poses == [(11, watcher.LABEL_ECHEC)], "needs-human doit être posé, interdisant toute relance"
+    assert not (tmp_path / "tmux" / "bridge-t901-issue11.sh").exists(), (
+        "le script de lancement doit être nettoyé une fois le TIMEOUT traité")
 
 
 def test_traiter_issue_interactive_reprise_session_existante_ne_relance_pas(cfg, monkeypatch, tmp_path, commentaires):
@@ -385,7 +415,9 @@ def test_traiter_issue_interactive_reprise_session_existante_ne_relance_pas(cfg,
     def jamais_appele(*a, **k):
         raise AssertionError("lancer_claude ne doit pas être appelé si la session existe déjà")
     monkeypatch.setattr(watcher, "lancer_claude", jamais_appele)
-    monkeypatch.setattr(watcher, "_surveiller_session_tmux", lambda nom, echeance: "terminee")
+    monkeypatch.setattr(watcher, "_surveiller_session_tmux", lambda nom, echeance, chemin_rapport: "terminee")
+    monkeypatch.setattr(watcher, "_fermer_issue_sans_done", lambda numero: True)
+    monkeypatch.setattr(watcher, "_issues_en_cours_retirer", lambda numero: None)
 
     resultat = watcher._traiter_issue_interactive(
         numero=12, titre="T", body="B", mode=watcher.MODE_ECRITURE, timeout=1800,
@@ -395,7 +427,7 @@ def test_traiter_issue_interactive_reprise_session_existante_ne_relance_pas(cfg,
         backup_watcher_nouveaux_suivis=(), dry_run=False,
     )
 
-    assert resultat is True
+    assert resultat == (True, None)
     assert any("déjà en cours" in m or "reprise" in m for m in commentaires)
 
 
@@ -415,7 +447,7 @@ def test_traiter_issue_interactive_repli_si_lancement_tmux_impossible(cfg, monke
         backup_watcher_nouveaux_suivis=(), dry_run=False,
     )
 
-    assert resultat is False, "le repli doit laisser l'appelant poursuivre le chemin automatique"
+    assert resultat == (False, None), "le repli doit laisser l'appelant poursuivre le chemin automatique"
     assert any("repli" in m.lower() for m in commentaires)
 
 
@@ -431,7 +463,7 @@ def test_traiter_issue_interactive_dry_run_ne_commente_rien(cfg, monkeypatch, tm
         backup_watcher_nouveaux_suivis=(), dry_run=True,
     )
 
-    assert resultat is True
+    assert resultat == (True, None)
     assert commentaires == []
 
 

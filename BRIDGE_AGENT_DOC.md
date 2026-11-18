@@ -344,7 +344,7 @@ lignes distinctes.
 | `notif_gsm` | Ajoute une notification push (ntfy) |
 | `notif_tous` | notify-send + ntfy |
 | `mode_scratch` | **ARME le mode lecture active** — écriture confinée au dossier scratch, voir §5 |
-| `mode_interactif` | Marqueur « interactif » (étude #888), **orthogonal** aux labels de mode ci-dessus — posé via le champ `INTERACTIF` (§6, spécifique à `issues_inbox/`). Exclut l'issue de la calibration automatique du TIMEOUT (§19). Depuis l'issue #901 (étape 2) : CCL est lancé dans une session **tmux** détachée (à laquelle Alain peut s'attacher, voir la commande postée dans l'issue) et surveillé de façon non bloquante jusqu'à la fin de la session ou l'expiration du TIMEOUT — clôture encore MANUELLE à ce stade (aucun label `done` posé). Jamais retenu en lecture seule ni sur une issue destinée à Windows (`for-windows`) : comportement automatique appliqué, avec avertissement informatif, voir `watcher.est_interactif()`. Détail complet : `docs/contexte/mode_interactif.md`. |
+| `mode_interactif` | Marqueur « interactif » (étude #888), **orthogonal** aux labels de mode ci-dessus — posé via le champ `INTERACTIF` (§6, spécifique à `issues_inbox/`). Exclut l'issue de la calibration automatique du TIMEOUT (§19). Depuis l'issue #901 (étape 2) : CCL est lancé dans une session **tmux** détachée (à laquelle Alain peut s'attacher, voir la commande postée dans l'issue) et surveillé de façon non bloquante jusqu'à la fin de la session ou l'expiration du TIMEOUT. Depuis l'issue #903 (étape 3) : la fin de session ne laisse plus jamais l'issue relançable — rapport de clôture écrit par CCL sur confirmation d'Alain (chemin fixe hors worktree) ⇒ clôture identique au chemin automatique (label `done`) ; session disparue sans rapport ⇒ fermeture SANS `done` ; TIMEOUT ⇒ label `needs-human`. Jamais retenu en lecture seule ni sur une issue destinée à Windows (`for-windows`) : comportement automatique appliqué, avec avertissement informatif, voir `watcher.est_interactif()`. Détail complet : `docs/contexte/mode_interactif.md`. |
 | `sans-redacteur` | Posé automatiquement quand `REDACTEUR` est absent de l'en-tête — signale une issue rédigée sans déclarer son projet d'origine, pour repérer un projet qui rédige à la place d'un autre, voir §3.4 |
 | `sans-complexite` | Posé automatiquement quand `COMPLEXITE` est absente ou non reconnue dans l'en-tête — signale une erreur de rédaction à corriger, l'issue ayant été traitée avec le repli `normal`, voir §6 |
 | `agent-claude` | Posé automatiquement à la clôture — **agent d'exécution** Claude Code (clé `AGENT` du `.conf`, issue #768) |
@@ -1332,7 +1332,27 @@ estimation que celle déjà affichée, sans dupliquer ce calcul.
 
 ---
 
-*Dernière mise à jour : 17 novembre 2026 — issue #901, mode interactif,
+*Dernière mise à jour : 18 novembre 2026 — issue #903, mode interactif,
+étape 3 (étude #888) : la fin d'une session interactive ne laisse plus
+jamais l'issue dans un état relançable au cycle suivant (défaut constaté
+manuellement par Alain sur #902 : fin de session sans label ⇒ relance avec
+nouveau worktree `-bis`). Trois issues, détectées à chaque sondage de
+`_surveiller_session_tmux` (chemin fixe `logs/interactif/<projet>-issue
+<numero>.md`, hors de tout worktree) : rapport de clôture écrit par CCL
+(seulement sur confirmation d'Alain, jamais de sa propre initiative) et
+STABLE (taille inchangée entre deux sondages, sauf session déjà disparue) ⇒
+chaîne de clôture identique au chemin automatique (verdict, commentaire,
+fermeture, label `done`) ; session disparue SANS rapport ⇒ commentaire
+décrivant l'état du worktree (commits/fichiers non committés, même relevé
+que le bouton « Avancement » #887) puis fermeture SANS `done` ; TIMEOUT
+dépassé ⇒ en plus du nettoyage déjà existant, label `needs-human` posé,
+comme le chemin automatique après un abandon. Reprise après un redémarrage
+du watcher : un rapport déjà présent, ou le script de lancement tmux encore
+présent sans session ni rapport, sont traités avant toute autre décision —
+jamais une relance. Chemin automatique strictement inchangé.
+Détail complet : `docs/contexte/mode_interactif.md`.*
+
+*Mise à jour précédente : 17 novembre 2026 — issue #901, mode interactif,
 étape 2 (étude #888) : pour une issue `mode_interactif` effective, CCL est
 désormais lancé dans une session tmux détachée (nommée
 `bridge-<projet>-issue<numero>`) plutôt qu'en `claude --print`, surveillée

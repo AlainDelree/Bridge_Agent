@@ -53,19 +53,45 @@ ou que l'échéance (TIMEOUT de l'issue) soit dépassée. Au dépassement, la
 session est tuée (`tmux kill-session`) comme le process `claude` l'aurait
 été dans le chemin automatique.
 
-## Fin de session
+## Fin de session (étape 3, issue #903)
 
-Dans tous les cas (fin normale ou TIMEOUT), **aucune fermeture automatique
-de l'issue** : un commentaire explicite est posté (différent selon fin
-normale / TIMEOUT), le verrou et la place de parallélisme sont libérés par
-le mécanisme déjà existant (`_nettoyer_apres_traitement`, appelé par le
-`finally` de `_traiter_issue_synchrone` — mécanisme choisi car déjà en
-place et agnostique du mode, le moins intrusif possible), mais l'issue
-reste ouverte sans le label `done` : clôture manuelle par Alain. Prochaines
-étapes de l'étude #888 : suspension du délai pendant l'attente d'Alain,
-alerte, détection de fin par fichier de rapport.
+Invariant central : quelle qu'en soit la cause, une fin de session laisse
+TOUJOURS l'issue dans un état qui empêche la relance au cycle suivant
+(`lister_issues()` ne renvoie que les issues OUVERTES) — jamais ouverte sans
+label comme à l'étape 2, où le watcher relançait CCL (nouveau worktree
+`-bis`) au cycle suivant une fin déjà traitée. Trois issues, détectées à
+chaque sondage par `_surveiller_session_tmux` (`watcher._chemin_rapport_
+interactif(nom_projet, numero)` = `logs/interactif/<projet>-issue<numero>.md`,
+chemin FIXE hors de tout worktree/REP_TRAVAIL, gitignoré — jamais happé par
+un commit) :
 
-## Survie à un redémarrage du watcher (point 5, issue #901)
+1. **Rapport de clôture trouvé et STABLE** (taille inchangée entre deux
+   sondages — sauf si la session a déjà disparu, où une seule lecture
+   suffit, personne ne pouvant plus écrire) : c'est Alain qui décide de la
+   fin en demandant/confirmant à CCL d'écrire ce fichier (bloc de prompt
+   dédié dans `lancer_claude`, injecté uniquement si `mode_tmux`) — jamais
+   un critère automatique. La session tmux est terminée si encore ouverte,
+   et le contenu est transmis tel quel à `_finaliser_succes` : chaîne de
+   clôture IDENTIQUE au chemin automatique (verdict, commentaire, fermeture,
+   label `done`). Le rapport est conservé comme trace, jamais supprimé.
+   Pour une issue en lecture active (`mode_scratch`), ce fichier est la
+   SEULE écriture autorisée hors du dossier scratch — hors du projet, le
+   garde-fou technique (`_restaurer_rep_travail_modifie`) ne le voit jamais.
+2. **Session disparue SANS rapport** (Alain a quitté Claude ou fermé la
+   fenêtre) : commentaire décrivant l'état du worktree (commits depuis la
+   sauvegarde, fichiers non committés — `_resume_worktree_sans_rapport`,
+   même relevé que le bouton « Avancement » #887), puis fermeture SANS le
+   label `done` (`_fermer_issue_sans_done`) — une issue fermée sans ce label
+   signale justement une fin sans rapport.
+3. **TIMEOUT dépassé** : comme à l'étape 2 (session tuée, commentaire), plus
+   le label `needs-human`, comme le chemin automatique après un abandon —
+   garde-fou déjà existant en tête de `_guards_precoces_et_bootstrap`.
+
+Verrou et place de parallélisme libérés dans les trois cas par le mécanisme
+déjà existant (`_nettoyer_apres_traitement`). Étapes suivantes de l'étude
+#888 : suspension du délai pendant l'attente d'Alain, alerte.
+
+## Survie à un redémarrage du watcher (point 5, issue #901, étendu #903)
 
 `systemd/watcher@.service` ne déclare pas `KillMode=` : valeur implicite
 `control-group`, qui tue TOUS les descendants du watcher (donc un serveur
@@ -75,9 +101,18 @@ scope systemd indépendant — un redémarrage de `watcher@<projet>` ne devrait
 alors pas tuer la session. **Non vérifié en conditions réelles** (aucun
 environnement systemd --user disponible pour le valider end-to-end pendant
 cette issue) — voir la liste d'essais manuels du rapport de clôture #901.
-Au redémarrage, `watcher._traiter_issue_interactive` retrouve une session
-existante par son nom conventionnel (`_tmux_session_existe`) et reprend
-seulement la surveillance, sans relancer CCL ni recréer de verrou orphelin.
+Au redémarrage, `watcher._traiter_issue_interactive` teste, AVANT toute
+autre décision (issue #903) : un rapport déjà présent (traité comme au point
+1 ci-dessus, que la session soit encore ouverte ou pas) ; sinon une session
+existante par son nom conventionnel (`_tmux_session_existe`) — reprend alors
+seulement la surveillance, sans relancer CCL ni recréer de verrou orphelin ;
+sinon le script de lancement tmux (`logs/tmux/<session>.sh`) encore présent
+sans session ni rapport — signe qu'un redémarrage ou un crash a eu lieu
+PENDANT la surveillance d'une session déjà terminée : traité comme le point
+2 ci-dessus (fermeture sans `done`), jamais une relance. Ce script n'est
+supprimé qu'une fois la fin de session entièrement traitée (commentaire posté
+ET fermeture/label réussis) — tant qu'il subsiste, il sert justement de
+marqueur « session déjà lancée, fin pas encore traitée ».
 
 ## Repli (issue #901, point 6)
 
