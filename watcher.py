@@ -35,6 +35,18 @@ import base64
 import binascii
 import unicodedata
 import shlex
+# Verrouillage système cross-plateforme (issue #908, verrou d'instance unique
+# par projet — voir acquerir_verrou_processus/DOSSIER_VERROUS plus bas) : même
+# précaution que scripts/watcher_issues_inbox.py (issue #881) — fcntl n'existe
+# que sous POSIX, msvcrt que sous Windows, jamais les deux à la fois.
+try:
+    import fcntl
+except ImportError:
+    fcntl = None
+try:
+    import msvcrt
+except ImportError:
+    msvcrt = None
 from logging.handlers import RotatingFileHandler
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -82,6 +94,18 @@ SCRIPT_BIP_PARTAGE = DOSSIER_SCRIPT / "scripts" / "traitement_fin.py"
 # alors qu'un crash (tout autre code de sortie non nul, ou terminaison par
 # signal) l'est.
 EXIT_INACTIVITE = 42
+
+# Code de sortie dédié au refus de démarrage pour cause de verrou de
+# processus déjà tenu par un autre watcher du MÊME projet (issue #908, voir
+# acquerir_verrou_processus plus bas). Même logique que EXIT_INACTIVITE
+# ci-dessus : distinct de 0 pour rester identifiable dans les journaux/codes
+# de sortie, et déclaré dans `SuccessExitStatus` de `systemd/watcher@.service`
+# pour qu'un watcher ainsi refusé — lancé par erreur en double, via l'unité
+# systemd ou l'interface, peu importe lequel des deux arrive en second — ne
+# déclenche PAS la boucle de redémarrage de `Restart=on-failure` : ce n'est
+# pas un crash, c'est le fonctionnement voulu (un seul watcher actif par
+# projet, quel que soit qui l'a lancé).
+EXIT_VERROU_DEJA_PRIS = 43
 
 # Bootstrap automatique d'un service CCW dédié (issue #556, 2/3, champ
 # d'en-tête CREATION — voir plus bas et BRIDGE_AGENT_DOC.md §16). Scripts
@@ -219,6 +243,116 @@ TIMEOUT_SUGGERE_PLAFOND     = 3600
 # dossier de travail serait happé par le `git add -A` de la sauvegarde que CCL
 # effectue à chaque tâche en mode écriture, puis committé par erreur.
 DOSSIER_VERROUS = DOSSIER_LOGS / "verrous"
+
+# ─── Verrou d'instance unique PAR PROJET (issue #908) ──────────────────────
+# Distinct des verrous ci-dessus (qui protègent un rep_travail pendant UN
+# traitement d'issue) : celui-ci protège le PROCESS watcher lui-même, posé
+# une seule fois au démarrage et tenu pendant toute sa durée de vie. But :
+# garantir qu'un seul watcher tourne par projet quel que soit qui l'a lancé
+# (interface new_issue.py via app.watchers.demarrer_watcher, unité systemd
+# `watcher@<projet>`, terminal manuel) — incident réel du 18/11/2026 : l'unité
+# systemd démarrée à la main alors que le watcher de l'interface tournait
+# déjà, deux process actifs en parallèle sur le même projet, chacun avec son
+# propre compteur de parallélisme, ont pris deux fois la même issue (#903).
+#
+# Verrou SYSTÈME (flock POSIX non bloquant / verrouillage de plage Windows
+# via msvcrt, voir acquerir_verrou_processus ci-dessous) sur un descripteur
+# gardé OUVERT tout le cycle de vie du process — PAS un simple fichier PID
+# (déjà utilisé ailleurs, logs/watcher-<nom>.pid, mais réécrit sans
+# concertation par n'importe quel lancement, donc impuissant à empêcher un
+# second démarrage) : l'OS libère ce verrou lui-même, immédiatement, dès que
+# le descripteur se ferme (fin propre OU brutale — kill -9, crash, coupure),
+# sans dépendre d'un nettoyage applicatif. Nom distinct des verrous par issue
+# ci-dessus (`{nom_rep}-{empreinte}.lock`) pour ne jamais les confondre :
+# préfixe fixe « watcher-processus- » suivi du NOM du projet (pas un chemin
+# de rep_travail) — voir _chemin_verrou_processus. Vit dans le MÊME dossier
+# qu'eux (logs/verrous/, déjà gitignoré), comme demandé par l'issue #908.
+
+def _chemin_verrou_processus(nom_projet: str) -> Path:
+    """Chemin du verrou d'instance unique du projet `nom_projet` — une seule
+    entrée par projet, quel que soit le nombre de .conf qui le désignent
+    (rep_travail n'entre pas en jeu ici, contrairement à _chemin_verrou)."""
+    return DOSSIER_VERROUS / f"watcher-processus-{nom_projet}.lock"
+
+
+# Descripteur du verrou de CE process, gardé référencé pour toute sa durée de
+# vie (issue #908) — ne JAMAIS le fermer avant la fin du process, sous peine
+# de libérer le verrou prématurément et de permettre un second démarrage.
+_verrou_processus_fd: int | None = None
+
+
+def acquerir_verrou_processus(nom_projet: str) -> bool:
+    """Tente de poser le verrou d'instance unique du projet `nom_projet`.
+    Retourne True si acquis (le descripteur reste ouvert dans
+    _verrou_processus_fd pour toute la vie du process — aucun appel à
+    liberer n'est nécessaire, l'OS s'en charge à la fermeture du process),
+    False si un AUTRE process vivant le détient déjà.
+
+    Jamais hérité par un enfant (issue #908, point 3 — sessions tmux du mode
+    interactif, `claude`, scripts lancés par ce watcher) : le descripteur est
+    ouvert avec `O_CLOEXEC` sous POSIX et explicitement rendu non héritable
+    via `os.set_inheritable` sous les deux plateformes (ceinture ET
+    bretelles — `subprocess.Popen` ferme déjà par défaut tous les
+    descripteurs sauf stdin/stdout/stderr avant d'exécuter un enfant,
+    `close_fds=True` étant le défaut Python 3 partout dans ce fichier,
+    jamais désactivé). Le serveur tmux d'une session interactive n'est de
+    toute façon jamais un enfant DIRECT de ce process : il est forké par le
+    CLIENT tmux (lui-même lancé via subprocess, donc déjà sans ce
+    descripteur) — voir docs/contexte/mode_interactif.md.
+
+    `fcntl.flock(..., LOCK_EX | LOCK_NB)` (POSIX) et `msvcrt.locking(...,
+    LK_NBLCK, 1)` (Windows) sont non bloquants : un appel échoue
+    immédiatement si un autre process tient déjà le verrou, plutôt que
+    d'attendre — comportement voulu (refuser le second lancement). Aucun des
+    deux mécanismes disponible (plateforme exotique) → dégradé (verrou
+    désactivé, instance unique NON garantie, journalisé) plutôt que de
+    refuser de démarrer."""
+    global _verrou_processus_fd
+    chemin = _chemin_verrou_processus(nom_projet)
+    chemin.parent.mkdir(parents=True, exist_ok=True)
+
+    flags = os.O_CREAT | os.O_RDWR
+    if hasattr(os, "O_CLOEXEC"):
+        flags |= os.O_CLOEXEC
+    fd = os.open(str(chemin), flags, 0o644)
+    try:
+        os.set_inheritable(fd, False)
+    except OSError:
+        pass
+
+    try:
+        if os.fstat(fd).st_size == 0:
+            # Au moins un octet, requis par msvcrt.locking pour verrouiller
+            # la plage [0, 1) — sans effet côté flock (verrou de fichier
+            # entier, taille indifférente).
+            os.write(fd, b"0")
+    except OSError:
+        pass
+
+    try:
+        if fcntl is not None:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        elif msvcrt is not None:
+            os.lseek(fd, 0, os.SEEK_SET)
+            msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+        else:
+            log.warning("Aucun mécanisme de verrouillage de fichier disponible sur cette "
+                        "plateforme (ni fcntl ni msvcrt) — instance unique du watcher NON "
+                        "garantie pour le projet « %s » (issue #908).", nom_projet)
+    except OSError:
+        os.close(fd)
+        return False
+
+    try:
+        os.lseek(fd, 0, os.SEEK_SET)
+        os.ftruncate(fd, 0)
+        os.write(fd, f"pid={os.getpid()}\n".encode("utf-8"))
+    except OSError:
+        pass  # best-effort : le verrou lui-même est déjà acquis, le contenu n'est qu'informatif
+
+    _verrou_processus_fd = fd
+    return True
+
 
 # Scripts de lancement des sessions tmux interactives (étude #888, étape 2 —
 # issue #901). Même logique d'emplacement que DOSSIER_VERROUS ci-dessus : sous
@@ -9808,6 +9942,22 @@ def main():
 
     CFG = charger_config(chemin)
     configurer_logs(CFG)
+
+    # Verrou d'instance unique par projet (issue #908) — AVANT toute autre
+    # chose, avant même le fichier PID ci-dessous : un second watcher pour ce
+    # MÊME projet, lancé par erreur en parallèle (interface new_issue.py,
+    # unité systemd `watcher@<projet>`, ou terminal manuel — peu importe
+    # lequel des deux arrive en second), s'arrête ici, proprement, sans
+    # jamais écraser le fichier PID du watcher légitime ni traiter la moindre
+    # issue. Voir acquerir_verrou_processus ci-dessus pour le détail du
+    # mécanisme (verrou OS, jamais hérité par un enfant, libéré
+    # automatiquement par le noyau même après un `kill -9`).
+    if not acquerir_verrou_processus(CFG.nom):
+        log.error(f"Un autre watcher est déjà actif pour le projet « {CFG.nom} » "
+                  f"(verrou {_chemin_verrou_processus(CFG.nom)} détenu par un autre "
+                  f"process) — arrêt immédiat de CETTE instance, aucune issue ne sera "
+                  f"traitée par elle (issue #908).")
+        sys.exit(EXIT_VERROU_DEJA_PRIS)
 
     # Fichier PID auto-publié (issue #596) : jusqu'ici c'était le lanceur
     # (app/watchers.py::demarrer_watcher, via subprocess.Popen) qui écrivait

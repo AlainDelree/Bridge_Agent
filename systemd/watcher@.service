@@ -7,14 +7,20 @@
 # Installation : voir installer_services.sh (copie ce fichier dans
 # ~/.config/systemd/user/, daemon-reload, enable --now, enable-linger).
 #
-# Restart=on-failure + SuccessExitStatus=42 (issue #596) : le watcher
-# s'éteint proprement avec le code 42 après une période d'inactivité
-# (DELAI_INACTIVITE_MIN, issues #199/#200 — voir watcher.py, constante
-# EXIT_INACTIVITE). Déclarer 42 en SuccessExitStatus fait traiter cette
-# sortie comme un arrêt normal : systemd ne relance PAS le watcher, ce qui
+# Restart=on-failure + SuccessExitStatus=42 43 (issue #596, complété #908) :
+# le watcher s'éteint proprement avec le code 42 après une période
+# d'inactivité (DELAI_INACTIVITE_MIN, issues #199/#200 — voir watcher.py,
+# constante EXIT_INACTIVITE), et avec le code 43 quand un AUTRE watcher du
+# même projet tient déjà le verrou d'instance unique au démarrage (issue
+# #908, constante EXIT_VERROU_DEJA_PRIS — ex. cette unité démarrée à la main
+# alors que l'interface new_issue.py a déjà lancé le watcher de ce projet,
+# ou l'inverse). Déclarer 42 et 43 en SuccessExitStatus fait traiter ces deux
+# sorties comme un arrêt normal : systemd ne relance PAS le watcher, ce qui
 # évite la boucle allumage/extinction constatée avec Restart=always (issue
-# #119, abandonné pour cette raison). Un crash réel (tout autre code de
-# sortie non nul, ou terminaison par signal) reste, lui, relancé.
+# #119, abandonné pour cette raison) et, pour le code 43, une boucle de
+# redémarrage sur un refus par ailleurs parfaitement normal. Un crash réel
+# (tout autre code de sortie non nul, ou terminaison par signal) reste, lui,
+# relancé.
 #
 # Diagnostic :
 #   systemctl --user status watcher@alchess
@@ -41,7 +47,7 @@ Environment="PATH=/home/alain/Bridge_Agent/venv/bin:/home/alain/.npm-global/bin:
 ExecStart=/home/alain/Bridge_Agent/venv/bin/python3 watcher.py --config configs/%i.conf
 Restart=on-failure
 RestartSec=10
-SuccessExitStatus=42
+SuccessExitStatus=42 43
 StandardOutput=journal
 StandardError=journal
 

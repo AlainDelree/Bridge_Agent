@@ -26,6 +26,14 @@ Claude Chat → crée une issue → GitHub → watcher.py détecte → CCL/CCW e
 > `watcher.py` met à jour son code (`git pull --ff-only`) avant de lister
 > les issues, sans rien écraser s'il existe des commits locaux non poussés.
 
+> **Instance unique par projet (issue #908).** `watcher.py` pose, dès son
+> démarrage et avant toute autre chose, un verrou système (OS, pas un simple
+> fichier PID) propre au projet, tenu toute sa durée de vie. Peu importe qui
+> le lance — l'interface web, l'unité systemd `watcher@<projet>` (désactivée
+> au démarrage, réservée aux tests manuels), un terminal — un second
+> lancement pour le MÊME projet détecte le verrou déjà tenu, se l'interdit et
+> s'arrête immédiatement sans rien traiter.
+
 ---
 
 ## 2. Projets actifs
@@ -1332,7 +1340,27 @@ estimation que celle déjà affichée, sans dupliquer ce calcul.
 
 ---
 
-*Dernière mise à jour : 18 novembre 2026 — issue #903, mode interactif,
+*Dernière mise à jour : 22 novembre 2026 — issue #908, instance unique par
+projet (§1) : `watcher.py` pose désormais, au tout début de son démarrage,
+un verrou système (flock POSIX / verrouillage de plage Windows, pas un
+simple fichier PID) propre au projet (`logs/verrous/watcher-processus-
+<projet>.lock`, nom distinct des verrous par issue existants) et le garde
+toute sa durée de vie — réparant l'absence de garde-fou qui avait laissé
+tourner deux watchers du même projet en parallèle le 18/11/2026 (interface
+web + unité systemd démarrée à la main pour un test), chacun traitant la
+même issue #903. Un second lancement détecte le verrou déjà tenu, journalise
+un message clair et quitte avec un code de sortie dédié
+(`EXIT_VERROU_DEJA_PRIS=43`, déclaré dans `SuccessExitStatus` de
+`systemd/watcher@.service` à côté de `EXIT_INACTIVITE=42`) pour que
+`Restart=on-failure` ne le relance pas en boucle. Verrou jamais hérité par
+un enfant (`O_CLOEXEC`/`os.set_inheritable`) — vérifié qu'une session tmux
+du mode interactif ne le reçoit jamais, cf.
+`docs/contexte/mode_interactif.md`. Fonctionne sans changement côté
+interface (`app/watchers.py`) : le fichier PID partagé qu'elle consulte déjà
+reste fiable puisqu'un seul process peut désormais réellement tourner.
+Comportement Windows (`msvcrt`) inchangé en pratique, non exécuté en test.*
+
+*Mise à jour précédente : 18 novembre 2026 — issue #903, mode interactif,
 étape 3 (étude #888) : la fin d'une session interactive ne laisse plus
 jamais l'issue dans un état relançable au cycle suivant (défaut constaté
 manuellement par Alain sur #902 : fin de session sans label ⇒ relance avec

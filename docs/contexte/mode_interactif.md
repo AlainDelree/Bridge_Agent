@@ -114,6 +114,21 @@ supprimé qu'une fois la fin de session entièrement traitée (commentaire post�
 ET fermeture/label réussis) — tant qu'il subsiste, il sert justement de
 marqueur « session déjà lancée, fin pas encore traitée ».
 
+## Verrou d'instance unique du watcher et sessions tmux (issue #908)
+
+Le verrou d'instance unique par projet (`watcher.acquerir_verrou_processus`,
+`logs/verrous/watcher-processus-<projet>.lock`, un par projet — à ne pas
+confondre avec les verrous par issue ci-dessus) est posé tout au début de
+`main()`, avant le fichier PID. Il ne doit JAMAIS être hérité par un enfant,
+sous peine d'empêcher tout redémarrage du watcher tant qu'une session tmux
+survivante le détiendrait : descripteur ouvert `O_CLOEXEC`/non héritable
+(`os.set_inheritable`), et de toute façon jamais transmis au CLIENT tmux
+lancé via `subprocess` (fermeture par défaut de tous les descripteurs avant
+exec, `close_fds=True`) ni, a fortiori, au SERVEUR tmux qu'il fork lui-même —
+vérifié par test (non-régression #908). Un redémarrage du watcher pendant
+qu'une session interactive tourne acquiert donc normalement ce verrou et
+démarre.
+
 ## Repli (issue #901, point 6)
 
 `tmux` absent du PATH, agent différent de `claude`, OS Windows, ou

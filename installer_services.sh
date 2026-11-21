@@ -8,8 +8,10 @@
 #   - démarrage dès le boot, sans session ouverte, grâce au linger utilisateur
 #   - redémarrage automatique en cas de crash (Restart=on-failure, RestartSec=10)
 #     SANS relancer un watcher qui s'est éteint proprement pour inactivité
-#     (SuccessExitStatus=42 — voir systemd/watcher@.service et watcher.py,
-#     constante EXIT_INACTIVITE)
+#     (SuccessExitStatus=42, constante EXIT_INACTIVITE) ni un watcher refusé
+#     car un autre tenait déjà le verrou d'instance unique du même projet
+#     (SuccessExitStatus=43, constante EXIT_VERROU_DEJA_PRIS, issue #908) —
+#     voir systemd/watcher@.service et watcher.py
 #
 # Plus besoin de cliquer « Lancer watcher » dans l'interface après un
 # redémarrage du PC ou un crash : systemd s'en charge.
