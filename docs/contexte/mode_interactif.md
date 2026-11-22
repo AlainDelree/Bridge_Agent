@@ -177,6 +177,37 @@ supprimé qu'une fois la fin de session entièrement traitée (commentaire post�
 ET fermeture/label réussis) — tant qu'il subsiste, il sert justement de
 marqueur « session déjà lancée, fin pas encore traitée ».
 
+Essais manuels de ce point 5 (étape de test #913, 22/11/2026) : la reprise
+elle-même fonctionnait (pas de relance de CCL), mais `_demarrer_traitement`
+— qui poste l'ACK et fait le commit de sauvegarde — était appelée
+INCONDITIONNELLEMENT par `_traiter_issue_synchrone`, AVANT même de savoir si
+l'issue était interactive, donc avant la décision de reprise ci-dessus.
+Chaque redémarrage pendant une session interactive vivante refaisait donc un
+second ACK et un second commit de sauvegarde (issue #914) — ce dernier
+engloutissait dans la « sauvegarde » le travail déjà fait par CCL avant le
+redémarrage, et faisait glisser sous les pieds d'une session encore active
+la référence « depuis la sauvegarde » qu'utilisent le commentaire de fin
+sans rapport (point 2 ci-dessus) et le repli verdict illisible (#777).
+Corrigé par `watcher._interactif_deja_amorce` (mêmes trois conditions que
+ci-dessus : rapport, session, script orphelin), consultée par
+`_traiter_issue_synchrone` AVANT `_demarrer_traitement` — jamais vrai pour
+une issue automatique, donc sans aucun effet sur ce chemin, `RELANCE` (#725)
+compris. Quand elle est vraie, `_demarrer_traitement` (paramètre
+`reprise_interactive_vivante`) : ne poste pas d'ACK (le commentaire de
+reprise déjà posté par `_traiter_issue_interactive` suffit) et ne refait pas
+de commit de sauvegarde — `tete_avant_traitement`/`commit_sauvegarde_watcher`
+sont relus depuis l'état persisté au tout premier lancement réel
+(`_ecrire_etat_initial_interactif`/`_lire_etat_initial_interactif`,
+`logs/interactif/<projet>-issue<numero>.etat.json`, même emplacement et
+même convention que le rapport/la pause) plutôt que recalculés : la
+référence « depuis la sauvegarde » continue ainsi de désigner la sauvegarde
+ORIGINALE, quel que soit le nombre de redémarrages intervenus depuis. Repli
+best-effort si cet état est introuvable (écriture ratée au premier
+lancement) : toujours aucun second commit, mais la référence devient
+indisponible (`None`) plutôt qu'inventée. Ce fichier d'état est nettoyé à
+chacune des trois fins de session (rapport, TIMEOUT, pause trop longue),
+comme le script de lancement et la sentinelle de pause.
+
 ## Verrou d'instance unique du watcher et sessions tmux (issue #908)
 
 Le verrou d'instance unique par projet (`watcher.acquerir_verrou_processus`,
@@ -199,3 +230,17 @@ démarre.
 posté dans l'issue ET dans le journal, puis traitement automatique
 habituel (`claude --print`, chemin strictement inchangé) — jamais un échec
 silencieux.
+
+## Interface — pas de badge « tentative » (issue #914)
+
+`static/js/resultats.js::calculerBadgeTempsRestant` est pensé pour le chemin
+automatique (budget = TIMEOUT × tentatives) — appliqué tel quel à une issue
+interactive, il affichait à tort un badge « tentative 2/3 » dès qu'une pause
+d'attente d'Alain (issue #909) faisait dépasser le premier cycle, alors
+qu'une session interactive n'a JAMAIS de deuxième tentative (invariant
+« aucune relance »). `majBadges()` passe désormais `opts.interactif`
+(`estIssueInteractive(labels)`, vrai si le label `mode_interactif` est
+présent) ; quand il est vrai, un indicateur sobre et fixe (« 🖥️ session
+interactive », classe CSS `tr-interactif`) remplace tout le calcul
+tentative/budget — sans toucher à l'affichage d'une issue automatique
+(`opts.interactif` n'est jamais vrai pour elle).

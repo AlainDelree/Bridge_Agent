@@ -12,6 +12,7 @@ import {
   libelleModele,
   calculerBadgeSansRedacteur,
   calculerBadgeSansComplexite,
+  estIssueInteractive,
   estAgentSecondaire,
   planifierEvenementSse,
   fusionnerChargement,
@@ -84,6 +85,32 @@ test('badge temps : dépassement déjà vérifié → « rafraîchir ↻ », pas
   const r = calculerBadgeTempsRestant(t, T0, { verifie: true });
   assert.match(r.texte, /rafraîchir ↻/);
   assert.notEqual(r.budgetEpuise, true);        // ne reprogramme aucun fetch
+});
+
+// Issue #914 : une issue interactive n'a jamais de deuxième tentative — le
+// badge « tentative N/M » (même au-delà du 1er cycle, même budget épuisé) ne
+// doit jamais s'afficher pour elle, remplacé par un indicateur sobre.
+test('badge temps : issue interactive → jamais de compteur de tentatives, même au-delà du 1er cycle', () => {
+  const t = { debut: ilYA(360), timeout: 300, max_essais: 3, backoff: 0 };
+  const r = calculerBadgeTempsRestant(t, T0, { interactif: true });
+  assert.doesNotMatch(r.texte, /tentative/);
+  assert.match(r.texte, /session interactive/);
+  assert.match(r.classe, /tr-interactif/);
+});
+
+test('badge temps : issue interactive → jamais de « budget épuisé » non plus', () => {
+  const t = { debut: ilYA(1000), timeout: 300, max_essais: 3, backoff: 0 };
+  const r = calculerBadgeTempsRestant(t, T0, { interactif: true });
+  assert.doesNotMatch(r.texte, /budget épuisé/);
+  assert.notEqual(r.budgetEpuise, true);
+  assert.match(r.classe, /tr-interactif/);
+});
+
+test('badge temps : issue automatique inchangée (interactif absent/false)', () => {
+  const t = { debut: ilYA(360), timeout: 300, max_essais: 3, backoff: 0 };
+  const r = calculerBadgeTempsRestant(t, T0);
+  assert.match(r.texte, /tentative 2\/3/);
+  assert.match(r.classe, /tr-retry/);
 });
 
 // ─── calculerBadgeEstimation ─────────────────────────────────────────────────
@@ -197,6 +224,18 @@ test('badge sans COMPLEXITE : reconnaît le format objet {name} de gh issue list
 
 test('badge sans COMPLEXITE : insensible à la casse du label', () => {
   assert.equal(calculerBadgeSansComplexite(['Sans-Complexite']).afficher, true);
+});
+
+// ─── estIssueInteractive (issue #914) ────────────────────────────────────────
+test('estIssueInteractive : faux sans le label mode_interactif', () => {
+  assert.equal(estIssueInteractive([]), false);
+  assert.equal(estIssueInteractive(null), false);
+  assert.equal(estIssueInteractive(['bridge', 'for-linux', 'mode_write']), false);
+});
+
+test('estIssueInteractive : vrai avec le label mode_interactif, formats liste et objet', () => {
+  assert.equal(estIssueInteractive(['bridge', 'mode_interactif']), true);
+  assert.equal(estIssueInteractive([{ name: 'mode_interactif' }]), true);
 });
 
 // ─── estAgentSecondaire (issue #772) ─────────────────────────────────────────

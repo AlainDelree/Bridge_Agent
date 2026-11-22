@@ -62,6 +62,19 @@ export function calculerBadgeTempsRestant(t, maintenant, opts = {}) {
     return { classe: 'ligne-tempsrestant tr-attente', texte: '⏳ en file',
              titre: 'En attente de prise en charge par le watcher' };
   }
+  // Issue #914 : une issue interactive n'a JAMAIS de deuxième tentative
+  // (invariant « aucune relance », étude #888) — le calcul de
+  // tentative/budget ci-dessous, pensé pour le chemin automatique, n'a donc
+  // aucun sens ici (et affichait à tort un compteur « tentative 2/3 » dès
+  // qu'une pause d'attente d'Alain faisait dépasser le premier cycle).
+  // Remplacé par un indicateur sobre, sans toucher à l'affichage des issues
+  // automatiques (`opts.interactif` n'est jamais vrai pour elles).
+  if (opts.interactif) {
+    return { classe: 'ligne-tempsrestant tr-interactif', texte: '🖥️ session interactive',
+             titre: 'Issue interactive (étude #888) : CCL tourne dans une session tmux '
+                  + 'dédiée, surveillée sans jamais de nouvelle tentative — voir les '
+                  + "commentaires de l'issue pour la commande d'attache (tmux attach)." };
+  }
   if (t.sans_limite) {
     return { classe: 'ligne-tempsrestant tr-illimite', texte: '⏳ en cours (pas de limite)',
              titre: 'Priorité haute/critique : réessais illimités, pas de deadline' };
@@ -224,6 +237,18 @@ export function calculerBadgeSansComplexite(labels) {
   const noms = normaliserNomsLabels(labels);
   if (!noms.includes(LABEL_SANS_COMPLEXITE)) return { afficher: false };
   return { afficher: true, titre: 'Complexité absente ou non reconnue — comptée comme « normal »' };
+}
+
+// Label GitHub posé à la création (champ INTERACTIF — voir watcher.LABEL_INTERACTIF)
+// quand une issue tourne dans une session tmux interactive (étude #888).
+// Invariant « aucune relance » : une issue interactive n'a jamais de
+// deuxième tentative — voir calculerBadgeTempsRestant ci-dessous (issue #914).
+export const LABEL_MODE_INTERACTIF = 'mode_interactif';
+
+// Vrai si `labels` porte le label mode_interactif — même patron que
+// calculerBadgeSansRedacteur()/calculerBadgeSansComplexite() ci-dessus.
+export function estIssueInteractive(labels) {
+  return normaliserNomsLabels(labels).includes(LABEL_MODE_INTERACTIF);
 }
 
 // Décide, à partir de l'état courant et d'un événement /stream, l'action CIBLÉE
@@ -631,7 +656,11 @@ export function majBadges() {
     }
     const badge = ligne.querySelector('.ligne-tempsrestant');
     if (!badge) return;
-    const etat = calculerBadgeTempsRestant(t, t0, { verifie: depassementVerifie.has(cle) });
+    const it = issues[cle];
+    const etat = calculerBadgeTempsRestant(t, t0, {
+      verifie: depassementVerifie.has(cle),
+      interactif: estIssueInteractive((it && it.labels) || []),
+    });
     appliquerBadge(badge, etat, 'ligne-tempsrestant');
     if (etat.budgetEpuise) programmerFetchDepassement(ligne.dataset.projet, ligne.dataset.numero);
   });

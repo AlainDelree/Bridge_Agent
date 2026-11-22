@@ -771,6 +771,72 @@ def _chemin_pause_interactif(nom_projet: str, numero: int) -> Path:
     return DOSSIER_RAPPORTS_INTERACTIFS / f"{_nom_projet_assaini(nom_projet)}-issue{numero}.pause"
 
 
+def _chemin_etat_initial_interactif(nom_projet: str, numero: int) -> Path:
+    """Chemin FIXE de l'état initial d'une session interactive (issue #914) :
+    `logs/interactif/<projet>-issue<numero>.etat.json` — même dossier et même
+    convention de nom que `_chemin_rapport_interactif`/`_chemin_pause_interactif`
+    (hors worktree, jamais happé par un commit, retrouvable à l'identique
+    après un redémarrage du watcher). Capture, au tout premier lancement
+    RÉEL de la session tmux (jamais à une reprise), `tete_avant_traitement`
+    et `commit_sauvegarde_watcher` : un redémarrage du watcher pendant que la
+    session est vivante ne doit JAMAIS refaire de commit de sauvegarde ni
+    déplacer la référence « depuis la sauvegarde » — elle doit rester celle
+    de la sauvegarde ORIGINALE, quel que soit le nombre de redémarrages
+    intervenus depuis. Voir `_ecrire_etat_initial_interactif`/
+    `_lire_etat_initial_interactif` et `_interactif_deja_amorce`."""
+    return DOSSIER_RAPPORTS_INTERACTIFS / f"{_nom_projet_assaini(nom_projet)}-issue{numero}.etat.json"
+
+
+def _ecrire_etat_initial_interactif(nom_projet: str, numero: int,
+                                     tete_avant_traitement: str | None,
+                                     commit_sauvegarde_watcher: str | None,
+                                     backup_watcher_nouveaux_suivis: tuple[str, ...]) -> None:
+    """Persiste l'état initial d'une session interactive (issue #914) — voir
+    `_chemin_etat_initial_interactif`. Best-effort pur, comme le reste de
+    l'écriture de fichiers hors worktree pour le mode interactif : une
+    écriture ratée (disque plein...) ne doit jamais faire échouer le
+    lancement de la session, juste priver une reprise ultérieure de cette
+    référence (repli alors sur l'ancien comportement, voir
+    `_lire_etat_initial_interactif`)."""
+    try:
+        DOSSIER_RAPPORTS_INTERACTIFS.mkdir(parents=True, exist_ok=True)
+        _ecrire_json_atomique(
+            _chemin_etat_initial_interactif(nom_projet, numero),
+            {
+                "tete_avant_traitement": tete_avant_traitement,
+                "commit_sauvegarde_watcher": commit_sauvegarde_watcher,
+                "backup_watcher_nouveaux_suivis": list(backup_watcher_nouveaux_suivis),
+            },
+        )
+    except OSError as e:
+        log.warning(
+            f"  ⚠ Issue #{numero} : écriture de l'état initial interactif "
+            f"impossible ({e}) — une reprise après redémarrage du watcher ne "
+            f"retrouvera pas la référence de sauvegarde d'origine (issue #914)."
+        )
+
+
+def _lire_etat_initial_interactif(nom_projet: str, numero: int
+                                   ) -> tuple[str | None, str | None, tuple[str, ...]] | None:
+    """Relit l'état initial écrit par `_ecrire_etat_initial_interactif` — ou
+    `None` si le fichier est absent ou illisible (fichier antérieur à l'issue
+    #914, disque corrompu...), auquel cas l'appelant (`_demarrer_traitement`)
+    doit replier sur l'ancien comportement plutôt que d'inventer une
+    référence : pas de nouveau commit de sauvegarde quand même (la reprise
+    est déjà, par ailleurs, reconnue comme telle), mais sans pouvoir situer
+    « depuis la sauvegarde » avec certitude."""
+    chemin = _chemin_etat_initial_interactif(nom_projet, numero)
+    try:
+        donnees = json.loads(chemin.read_text(encoding="utf-8"))
+        return (
+            donnees.get("tete_avant_traitement"),
+            donnees.get("commit_sauvegarde_watcher"),
+            tuple(donnees.get("backup_watcher_nouveaux_suivis") or ()),
+        )
+    except (OSError, ValueError):
+        return None
+
+
 def _heure_debut_pause(chemin_pause: Path) -> float | None:
     """Lit l'heure de début de pause (horloge murale, epoch — écrite par
     `scripts/hook_pause_interactif.py`) depuis le contenu de la sentinelle.
@@ -814,6 +880,35 @@ def _tmux_session_existe(nom_session: str) -> bool:
         return resultat.returncode == 0
     except (OSError, subprocess.TimeoutExpired):
         return False
+
+
+def _interactif_deja_amorce(nom_projet: str, numero: int) -> bool:
+    """True si une session interactive a déjà été amorcée pour cette issue
+    AVANT cet appel — rapport de clôture déjà écrit, session tmux encore
+    vivante, ou script de lancement encore présent sans session ni rapport
+    (session terminée pendant qu'aucun watcher n'a pu traiter sa fin) :
+    exactement les trois conditions testées par `_traiter_issue_interactive`
+    pour décider de REPRENDRE plutôt que de relancer CCL (issue #901, point
+    5 ; #903, point 5).
+
+    Issue #914 : utilisé plus tôt, par `_traiter_issue_synchrone` AVANT
+    `_demarrer_traitement`, pour éviter EN PLUS un second commentaire d'ACK
+    et un second commit de sauvegarde à chaque redémarrage du watcher pendant
+    qu'une telle session est vivante ou en attente de traitement de sa fin —
+    ces deux effets de bord n'étaient jusqu'ici empêchés par aucun garde-fou,
+    `_demarrer_traitement` étant appelée INCONDITIONNELLEMENT avant même de
+    savoir si l'issue est interactive. Jamais vrai pour une issue automatique
+    (son comportement, y compris la reprise de worktree d'une relance #725
+    avec son propre commit de sauvegarde, reste strictement inchangé — seul
+    l'appelant, qui ne consulte ce prédicat que pour une issue interactive
+    effective, en décide)."""
+    nom_session = _nom_session_tmux(nom_projet, numero)
+    chemin_script = DOSSIER_TMUX / f"{nom_session}.sh"
+    return (
+        _chemin_rapport_interactif(nom_projet, numero).exists()
+        or _tmux_session_existe(nom_session)
+        or chemin_script.exists()
+    )
 
 
 def _ecrire_script_lancement_tmux(nom_session: str, cmd: list[str], cwd: Path,
@@ -8123,7 +8218,8 @@ def _preparer_controle_outil(chemin_outil_lecture_exec: Path | None, dry_run: bo
 
 
 def _demarrer_traitement(numero: int, titre: str, body: str, mode: str, mode_txt: str,
-                          dry_run: bool, cwd_effectif: Path
+                          dry_run: bool, cwd_effectif: Path,
+                          reprise_interactive_vivante: bool = False
                           ) -> tuple[bool, float, int, tuple[dict, float] | None, str | None,
                                      float | None, dict, str | None, tuple[str, ...]]:
     """Tout ce qui précède la première tentative `lancer_claude` : détection
@@ -8168,7 +8264,22 @@ def _demarrer_traitement(numero: int, titre: str, body: str, mode: str, mode_txt
     ou essai à blanc, comportement conservé à l'identique), ou si la
     tentative de commit a échoué (repli sur la consigne de prompt
     historique — voir `_commit_sauvegarde_watcher`, best-effort, jamais
-    bloquant)."""
+    bloquant).
+
+    `reprise_interactive_vivante` (issue #914, False partout ailleurs —
+    comportement automatique, y compris `RELANCE` #725, strictement
+    inchangé) : True uniquement quand l'appelant (`_traiter_issue_synchrone`)
+    a détecté, via `_interactif_deja_amorce`, qu'une session interactive
+    avait déjà été amorcée pour cette MÊME issue AVANT cet appel — watcher
+    redémarré pendant qu'elle était vivante, ou pendant l'attente de
+    traitement de sa fin. Dans ce seul cas : aucun second commentaire d'ACK
+    (le commentaire de reprise posté par `_traiter_issue_interactive` suffit
+    déjà), et aucun second commit de sauvegarde — `tete_avant_traitement`/
+    `commit_sauvegarde_watcher`/`backup_watcher_nouveaux_suivis` sont relus
+    tels quels depuis `_lire_etat_initial_interactif` (état persisté au tout
+    premier lancement) plutôt que recalculés, pour que « depuis la
+    sauvegarde » continue de désigner la sauvegarde ORIGINALE quel que soit
+    le nombre de redémarrages intervenus depuis."""
     # Détection RELANCE (champ RELANCE, issue #516) AVANT l'ACK courante
     # (issue #592) : un commentaire d'échec définitif déjà présent dans
     # l'historique de l'issue signale que le worktree peut contenir du
@@ -8178,11 +8289,21 @@ def _demarrer_traitement(numero: int, titre: str, body: str, mode: str, mode_txt
     # calibration TIMEOUT (maj_calibration_timeout).
     est_relance = _issue_est_relance(_lister_commentaires(numero))
 
-    commenter_issue(
-        numero,
-        f"✅ ACK — Issue #{numero} reçue par watcher.py ({CFG.libelle_agent_effectif}, projet {CFG.nom}). "
-        f"Mode : **{mode_txt}**. Traitement en cours..."
-    )
+    if reprise_interactive_vivante:
+        # Issue #914 : le commentaire de reprise posté par
+        # _traiter_issue_interactive (session tmux déjà en cours, ou
+        # finalisation immédiate via rapport/script déjà présents) suffit —
+        # un second ACK ne serait que du bruit.
+        log.info(
+            f"  Issue #{numero} : reprise d'une session interactive déjà "
+            f"amorcée — pas de nouvel ACK (issue #914)."
+        )
+    else:
+        commenter_issue(
+            numero,
+            f"✅ ACK — Issue #{numero} reçue par watcher.py ({CFG.libelle_agent_effectif}, projet {CFG.nom}). "
+            f"Mode : **{mode_txt}**. Traitement en cours..."
+        )
     # Rafraîchissement SSE de l'onglet Résultats dès le DÉBUT réel du
     # traitement (issue #515), pas seulement à sa fin — couvre le cas d'une
     # issue encore inconnue du navigateur (ex. créée via issues_inbox
@@ -8220,8 +8341,15 @@ def _demarrer_traitement(numero: int, titre: str, body: str, mode: str, mode_txt
     # (commits) d'une tentative précédente tuée par le TIMEOUT — voir le bloc
     # de prompt correspondant dans lancer_claude. Best-effort : None si hors
     # dépôt git ou en dry-run (aucun lancement réel de claude).
+    #
+    # Issue #914 : à une reprise de session interactive déjà amorcée, HEAD
+    # courant n'est PAS la référence voulue — il inclut déjà le travail fait
+    # par CCL avant le redémarrage. La référence à utiliser est celle lue
+    # ci-dessous depuis l'état persisté au tout premier lancement.
     tete_avant_traitement = (
-        _tete_git(cwd_effectif) if (mode == MODE_ECRITURE and not dry_run) else None
+        _tete_git(cwd_effectif)
+        if (mode == MODE_ECRITURE and not dry_run and not reprise_interactive_vivante)
+        else None
     )
 
     # Commit de sauvegarde fait par le watcher lui-même (issue #846) : tout
@@ -8230,12 +8358,34 @@ def _demarrer_traitement(numero: int, titre: str, body: str, mode: str, mode_txt
     # commande de sauvegarde PERSONNALISÉE (CMD_BACKUP renseigné et non
     # reconnu comme la commande standard — issue #847, voir
     # `_cmd_backup_est_standard` — conservée à l'identique, voir
-    # lancer_claude) ou si tete_avant_traitement est None (hors dépôt git ou
-    # essai à blanc).
+    # lancer_claude), si tete_avant_traitement est None (hors dépôt git ou
+    # essai à blanc), OU (issue #914) si c'est la REPRISE d'une session
+    # interactive déjà amorcée — ce commit a DÉJÀ été fait au tout premier
+    # lancement, le refaire mélangerait le travail de CCL fait avant le
+    # redémarrage dans la « sauvegarde ».
     commit_sauvegarde_watcher: str | None = None
     backup_watcher_nouveaux_suivis: tuple[str, ...] = ()
     cmd_backup_personnalisee = bool(CFG.cmd_backup) and not _cmd_backup_est_standard(CFG.cmd_backup)
-    if tete_avant_traitement is not None and not cmd_backup_personnalisee:
+    if reprise_interactive_vivante:
+        etat_initial = _lire_etat_initial_interactif(CFG.nom, numero)
+        if etat_initial is not None:
+            tete_avant_traitement, commit_sauvegarde_watcher, backup_watcher_nouveaux_suivis = etat_initial
+        else:
+            # Repli best-effort (issue #914) : état initial introuvable
+            # (écriture ratée au premier lancement, ou fichier antérieur à
+            # cette issue) — on ne peut pas reconstituer la référence
+            # d'origine avec certitude, mais on ne refait SURTOUT PAS de
+            # commit de sauvegarde pour autant (ce serait exactement l'effet
+            # de bord à corriger). `tete_avant_traitement`/
+            # `commit_sauvegarde_watcher` restent None : les contrôles qui
+            # en dépendent s'effacent proprement plutôt que d'afficher une
+            # référence fausse.
+            log.warning(
+                f"  ⚠ Issue #{numero} : reprise d'une session interactive sans état "
+                f"initial persisté — référence « depuis la sauvegarde » indisponible "
+                f"pour ce traitement (issue #914)."
+            )
+    elif tete_avant_traitement is not None and not cmd_backup_personnalisee:
         commit_sauvegarde_watcher, backup_watcher_nouveaux_suivis = \
             _commit_sauvegarde_watcher(numero, titre, cwd_effectif)
 
@@ -9439,6 +9589,7 @@ def _finaliser_session_interactive_sans_rapport(numero: int, nom_session: str,
     if _fermer_issue_sans_done(numero):
         _issues_en_cours_retirer(numero)
         chemin_script.unlink(missing_ok=True)
+        _chemin_etat_initial_interactif(CFG.nom, numero).unlink(missing_ok=True)
     else:
         log.warning(
             f"  Fermeture (sans label 'done') de l'issue #{numero} incomplète — "
@@ -9483,6 +9634,7 @@ def _cloturer_session_interactive_via_rapport(numero: int, nom_session: str,
         )
         _tuer_session_tmux(nom_session)
     chemin_script.unlink(missing_ok=True)
+    _chemin_etat_initial_interactif(CFG.nom, numero).unlink(missing_ok=True)
     try:
         return chemin_rapport.read_text(encoding="utf-8", errors="replace")
     except OSError as e:
@@ -9640,6 +9792,17 @@ def _traiter_issue_interactive(numero: int, titre: str, body: str, mode: str,
             f"Pour t'y attacher depuis n'importe quel terminal :\n```\ntmux attach -t {nom_session}\n```\n"
             f"Pour t'en détacher sans y mettre fin : `Ctrl-b d`.\n\n{note_survie}"
         )
+        # Issue #914 : capture, UNIQUEMENT à ce tout premier lancement réel
+        # (jamais à une reprise — les deux branches ci-dessus retournent ou
+        # tombent ici sans jamais passer par ce `else`), la référence
+        # ORIGINALE « depuis la sauvegarde » — relue par `_demarrer_traitement`
+        # (via `_lire_etat_initial_interactif`) à chaque reprise ultérieure de
+        # cette même session après un redémarrage du watcher, plutôt que
+        # recalculée (ce qui ferait glisser cette référence et refaire un
+        # commit de sauvegarde à chaque redémarrage).
+        _ecrire_etat_initial_interactif(
+            CFG.nom, numero, tete_avant_traitement, commit_sauvegarde_watcher,
+            backup_watcher_nouveaux_suivis)
 
     echeance = time.monotonic() + timeout
     log.info(
@@ -9677,6 +9840,7 @@ def _traiter_issue_interactive(numero: int, titre: str, body: str, mode: str,
             _issue_write_bloquee_ajouter(numero)
         chemin_script.unlink(missing_ok=True)
         chemin_pause.unlink(missing_ok=True)
+        _chemin_etat_initial_interactif(CFG.nom, numero).unlink(missing_ok=True)
         return True, None
 
     if resultat == "pause_trop_longue":
@@ -9709,6 +9873,7 @@ def _traiter_issue_interactive(numero: int, titre: str, body: str, mode: str,
             _issue_write_bloquee_ajouter(numero)
         chemin_script.unlink(missing_ok=True)
         chemin_pause.unlink(missing_ok=True)
+        _chemin_etat_initial_interactif(CFG.nom, numero).unlink(missing_ok=True)
         return True, None
 
     # resultat == "terminee" : session disparue sans rapport de clôture.
@@ -9793,10 +9958,23 @@ def _traiter_issue_synchrone(issue: dict, dry_run: bool, chemin_worktree: Path |
             return
         statut_outil_avant = _preparer_controle_outil(chemin_outil_lecture_exec, dry_run)
 
+        # Issue #914 : détecté AVANT _demarrer_traitement (et non après, comme
+        # le reste du mode interactif ci-dessous) pour lui éviter, à une
+        # reprise, un second ACK et un second commit de sauvegarde — jamais
+        # vrai pour une issue automatique (_interactif_deja_amorce n'est
+        # consultée QUE si `est_interactif` l'est déjà, voir son propre
+        # docstring), donc sans aucun effet sur ce chemin, `RELANCE` (#725)
+        # compris.
+        interactif_effectif = est_interactif(labels, mode)[0]
+        reprise_interactive_vivante = (
+            interactif_effectif and not dry_run and _interactif_deja_amorce(CFG.nom, numero)
+        )
+
         est_relance, debut_traitement, nb_projets_actifs_debut, empreinte_configs_avant, \
             tete_avant_traitement, timeout_suggere_lancement, estimation_lancement, \
             commit_sauvegarde_watcher, backup_watcher_nouveaux_suivis = \
-            _demarrer_traitement(numero, titre, body, mode, mode_txt, dry_run, cwd_effectif)
+            _demarrer_traitement(numero, titre, body, mode, mode_txt, dry_run, cwd_effectif,
+                                  reprise_interactive_vivante=reprise_interactive_vivante)
 
         # Mode interactif, étape 2 (étude #888 — issue #901), étendue par la
         # détection de fin par fichier de rapport (étape 3 — issue #903) :
@@ -9810,7 +9988,7 @@ def _traiter_issue_synchrone(issue: dict, dry_run: bool, chemin_worktree: Path |
         # un rapport de clôture a été trouvé et lu — réutilise à l'identique
         # la chaîne de clôture habituelle (_finaliser_succes), EXACTEMENT
         # comme pour une tentative automatique réussie.
-        if est_interactif(labels, mode)[0]:
+        if interactif_effectif:
             pris_en_charge, sortie_rapport = _traiter_issue_interactive(
                 numero, titre, body, mode, timeout, modele,
                 perimetre_effectif, cwd_effectif, chemin_scratch,
