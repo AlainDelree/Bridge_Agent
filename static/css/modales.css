@@ -42,3 +42,16 @@ button.danger-plein:disabled:hover{background:#ccc}
 .overlay-arret .msg{color:#fff;font-size:18px;font-weight:600;line-height:1.5;
   max-width:520px}
 .overlay-arret button{font-size:15px;padding:11px 24px}
+/* Voile de veille (issue #917) — flux normal (position:absolute, pas fixed),
+   recouvre tout le body (position:relative), comme #overlay-arret ci-dessus,
+   mais gris semi-opaque (pas noir quasi-opaque) et cliquable (réveil) plutôt
+   que bloquant. z-index sous #overlay-arret : un arrêt serveur RÉEL reste
+   prioritaire si les deux devaient coexister. */
+.voile-veille{position:absolute;top:0;left:0;width:100%;min-height:100%;
+  background:rgba(60,58,54,.75);display:none;flex-direction:column;
+  justify-content:center;align-items:center;gap:16px;padding:60px 20px;
+  z-index:1900;text-align:center;cursor:pointer}
+.voile-veille.actif{display:flex}
+.voile-veille .msg{color:#fff;font-size:17px;font-weight:600;line-height:1.5;max-width:520px}
+.voile-veille.erreur .msg{color:#ffd0d0}
+.voile-veille button{font-size:14px;padding:9px 20px;cursor:pointer}

@@ -30,6 +30,18 @@
        rafraichirReplisRepTravail() (polling /watchers, static/js/app.js). ─ -->
   <div id="bandeau-repli-rep-travail" class="bandeau-eval-windows orange" style="display:none"></div>
 
+  <!-- ─── Bandeau global : connexion au serveur de l'interface perdue (issue
+       #917 point 8) — DISTINCT du voile gris de veille (voile_veille.html) et
+       de l'overlay bloquant #overlay-arret (arrêt volontaire du serveur,
+       événement SSE « shutdown », inchangé) : ce bandeau couvre le cas d'une
+       coupure brutale (serveur tué sans signal, détectée par
+       sourceEvents.onerror, static/js/app.js) — il s'affiche après quelques
+       secondes d'échecs répétés et disparaît automatiquement à la reprise
+       (sourceEvents.onopen), sans recharger la page. ─ -->
+  <div id="bandeau-connexion-perdue" class="bandeau-eval-windows rouge" style="display:none">
+    🔴 Connexion au serveur de l'interface perdue — nouvelle tentative en cours…
+  </div>
+
   <!-- ─── Bandeau global : sélecteur de projet (pilote tous les onglets) ─ -->
   <div class="bandeau-projet">
 

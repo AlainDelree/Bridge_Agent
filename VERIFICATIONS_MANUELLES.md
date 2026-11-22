@@ -533,6 +533,52 @@
         presse-papier) reste, elle, affichée jusqu'au clic sur sa croix —
         aucune régression de la persistance par défaut (issue #730).
 
+## Veille, réveil, rafraîchissement périodique et copie du rapport (issue #917)
+
+> Nouveau mécanisme — aucune infrastructure de test de navigateur dans le
+> dépôt, donc RIEN de ce qui suit n'a pu être vérifié automatiquement. En
+> particulier, la détection d'activité quand la fenêtre n'a PAS le focus
+> (autre application au premier plan) dépend du système de fenêtrage/
+> navigateur, pas seulement du code — à vérifier ici en priorité.
+
+- [ ] **(a)** Régler le délai de veille à 1 minute (panneau Infrastructure,
+      partie globale, sous l'interrupteur de son), ne rien toucher : le voile
+      gris « Interface en veille — cliquez pour la réveiller » apparaît après
+      1 minute, couvrant toute l'interface. Un clic (n'importe où sur le
+      voile) le fait passer à « Mise à jour… », puis il disparaît une fois les
+      données arrivées — jamais avant, jamais de disparition silencieuse.
+- [ ] Pendant la veille : appuyer une touche au clavier (sans cliquer) lève
+      aussi le voile — ET cette touche ne doit avoir AUCUN autre effet visible
+      (pas de caractère tapé dans un champ, pas de raccourci déclenché).
+- [ ] Onglet Réseau (F12) pendant la veille : **aucune** requête `/issues-liste`
+      ni `/issues-en-attente` pendant toute la durée de la veille.
+- [ ] **(b)** Interface éveillée, déposer une issue du projet sélectionné dans
+      le filtre Résultats (`issues_inbox/` ou formulaire) : elle apparaît
+      d'elle-même en moins d'un intervalle de rafraîchissement réglé (défaut
+      60s). Déposer une issue PENDANT la veille : elle n'apparaît qu'APRÈS le
+      réveil (pas pendant la veille elle-même).
+- [ ] **(c)** Revenir sur un onglet resté ouvert plus d'une heure (ou simuler
+      une session expirée) et cocher la case d'une issue terminée : message
+      « Préparation du rapport… » dès le clic, puis la copie réussit, ou la
+      fenêtre de repli (texte à copier manuellement, ou message d'erreur avec
+      bouton « Réessayer ») s'ouvre en moins de 30s — jamais de silence,
+      jamais confondu avec « réponse pas encore disponible ».
+- [ ] Désactiver la veille (délai = 0) : le voile ne doit plus jamais
+      apparaître, quelle que soit la durée d'inactivité.
+- [ ] Changer l'intervalle de rafraîchissement : effet visible (onglet Réseau)
+      sans recharger la page ; valeur < 15 remontée au minimum (15) ;
+      l'estimation « ≈ N appel(s) GitHub/h » affichée à côté se met à jour.
+- [ ] (Dé)sélectionner un projet dans le filtre pastille Résultats : le
+      projet qui vient d'être (ré)sélectionné se recharge à ce moment-là
+      (onglet Réseau) ; un projet désélectionné ne déclenche plus aucun appel
+      périodique tant qu'il reste masqué.
+- [ ] L'affichage « sync HH:MM:SS » (près du ↻) devient rouge/gras quand la
+      dernière synchro dépasse trois fois l'intervalle réglé.
+- [ ] Couper le réseau (Wi-Fi) quelques minutes, interface éveillée : le
+      rafraîchissement périodique continue de retenter (espacement croissant),
+      jamais d'arrêt définitif ; le reconnecter fait réussir la tentative
+      suivante sans action manuelle.
+
 ## Panneau latéral (Infrastructure)
 
 > Sorti d'`app.js` vers `static/js/panneau_lateral.js` par l'issue #628
@@ -861,7 +907,15 @@ plus d'`onclick=`/`onchange=`/`oninput=` inline.)*
       (si tâche mode_write hors worktree) s'affichent sur tous les onglets.
 - [ ] **Bouton « Quitter »** : demande confirmation, arrête le serveur, l'overlay
       « Serveur arrêté » s'affiche.
-- [ ] Couper le serveur (Ctrl+C) : l'overlay d'arrêt apparaît côté navigateur.
+- [ ] Couper le serveur par Ctrl+C (arrêt propre, signal géré) : l'overlay
+      d'arrêt bloquant apparaît côté navigateur (inchangé).
+- [ ] **(d, issue #917)** Couper le serveur plus brutalement (ex. `kill -9` du
+      process, ou simplement débrancher le réseau quelques secondes) : un
+      **bandeau rouge** « connexion perdue » (NON bloquant, distinct du voile
+      gris de veille et de l'overlay d'arrêt) apparaît après quelques
+      secondes — l'interface reste par ailleurs utilisable. Relancer le
+      serveur (ou reconnecter le réseau) : le bandeau **disparaît tout seul**,
+      sans recharger la page.
 - [ ] Déconnexion (mode `--externe`) redirige vers le login.
 
 ## Modes de lancement

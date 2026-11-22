@@ -625,15 +625,22 @@ export function issueEnCours(it, estIssueEnEchecFn) {
   return !fermee && !estIssueEnEchecFn(it);
 }
 
+// Issue #917 point 7 : une vraie erreur (délai dépassé, coupure réseau, ou
+// une session expirée qui renvoie une page de connexion au lieu du JSON
+// attendu — api.get lève alors déjà une ErreurApi « Réponse non-JSON ») n'est
+// plus avalée en silence pour retomber sur une liste vide traitée comme
+// « réponse pas encore disponible » (texteVide) : elle est désormais
+// PROPAGÉE telle quelle, pour que copierModerne/lancerCopie la traitent
+// comme un véritable échec (fenêtre de repli ou message explicite avec
+// possibilité de réessayer), jamais en silence.
 async function detailIssue(projet, numero) {
   const cle = cleIC(projet, numero);
   const c = detailCache.get(cle);
   if (c && (Date.now() - c.ts) < DETAIL_TTL_MS) return c.it;
-  let it = null;
-  try {
-    it = await api.get('/issue/' + enc(projet) + '/' + enc(normaliserNumero(numero)), { silencieux: true });
-  } catch (e) { return null; }
-  if (!it || it.erreur) return null;
+  const it = await api.get('/issue/' + enc(projet) + '/' + enc(normaliserNumero(numero)), { silencieux: true });
+  if (!it || it.erreur) {
+    throw new Error((it && it.erreur) || 'Détail de l\'issue indisponible.');
+  }
   detailCache.set(cle, { ts: Date.now(), it });
   return it;
 }
@@ -698,7 +705,6 @@ async function sectionFichiersModifies(projet, it) {
 // ne concerne que ces deux variantes, pas texteDiff.
 async function texteReponse(projet, numero) {
   const it = await detailIssue(projet, numero);
-  if (!it) return '';
   let corps = appelerAncien('reponseCompleteCcl', it) || '';
   // Pas encore répondue (corps vide) : pas de section, pour rester détecté
   // par texteVide en amont comme avant ce correctif.
@@ -710,7 +716,6 @@ async function texteReponse(projet, numero) {
 }
 async function texteAll(projet, numero) {
   const it = await detailIssue(projet, numero);
-  if (!it) return '';
   let texte = appelerAncien('reponseCompleteCcl', it) || '';
   const hashes = appelerAncien('hashesDeCommit', it) || [];
   const diffs = await diffCommits(projet, hashes);
@@ -719,7 +724,6 @@ async function texteAll(projet, numero) {
 }
 async function texteDiff(projet, numero) {
   const it = await detailIssue(projet, numero);
-  if (!it) return '';
   const hashes = appelerAncien('hashesDeCommit', it) || [];
   if (!hashes.length) { const e = new Error('aucun'); e.aucun = true; throw e; }
   return (await diffCommits(projet, hashes)).join('\n\n');
@@ -909,13 +913,17 @@ function construireDetailEchecCopie(e, mode, debut, texte) {
 // telechargerOuSignalerVolumineux) portent `mode`/`debut` sans avoir à les
 // faire transiter partout. `messagePrincipal` (issue #832 point 4b) transite
 // tel quel jusqu'à signalerEchecCopie, pour le cas précis où la préparation a
-// dépassé la fenêtre d'activation du geste.
-function envelopperFeedbackEchec(feedback, mode, debut) {
+// dépassé la fenêtre d'activation du geste. `onReessayer` (issue #917 point
+// 7, facultatif) : transmis en 5e argument à `echec`, pour qu'un échec SANS
+// texte de secours (la préparation elle-même a échoué — délai dépassé,
+// session expirée...) garde toujours la possibilité de réessayer, jamais un
+// simple message sans issue.
+function envelopperFeedbackEchec(feedback, mode, debut, onReessayer) {
   if (!feedback || typeof feedback.echec !== 'function') return feedback;
   return {
     ...feedback,
     echec: (e, texte, messagePrincipal) =>
-      feedback.echec(e, texte, construireDetailEchecCopie(e, mode, debut, texte), messagePrincipal),
+      feedback.echec(e, texte, construireDetailEchecCopie(e, mode, debut, texte), messagePrincipal, onReessayer),
   };
 }
 
@@ -997,7 +1005,8 @@ function copierModerne(projet, numero, producteur, feedback) {
   const monGen = ++generationCopieModerne;
   const variante = variantDuProducteur(producteur);
   const debut = Date.now();   // début de la copie (issue #824) : référence du délai de la ligne de détail
-  const feedbackAvecDetail = envelopperFeedbackEchec(feedback, 'moderne', debut);
+  const feedbackAvecDetail = envelopperFeedbackEchec(feedback, 'moderne', debut,
+    () => lancerCopie(projet, numero, producteur, feedback));
 
   // Chemin rapide (issue #832 point 2, conservé) : le texte de cette variante
   // est déjà préparé et encore valide → promesse déjà résolue. Sinon, la
@@ -1147,12 +1156,20 @@ function viderPressePapier() {
 //     texteEstValide) → copie synchrone execCommand ; sinon feedback « en
 //     préparation » + préchargement (texte absent OU périmé, issue #832
 //     point 3 : un texte périmé n'est jamais écrit tel quel).
-// `variante` ∈ {all, diff, reponse}. `feedback` = { succes, echec, vide, aucun, nonPret }.
+// `variante` ∈ {all, diff, reponse}. `feedback` = { succes, echec, vide, aucun,
+// nonPret, preparation? }.
 // Vide IMMÉDIATEMENT le presse-papier (issue #857, voir viderPressePapier) —
 // avant même de savoir si une préparation sera nécessaire : les 4 boutons qui
 // passent par ce point d'entrée (case à cocher, badges ✅/Diff/All) en
 // bénéficient donc tous, sans code dupliqué.
 function lancerCopie(projet, numero, producteur, feedback) {
+  // Dès le clic, AVANT tout réseau (issue #917 point 7) : « préparation du
+  // rapport… », y compris en mode moderne où l'écriture elle-même est déjà
+  // engagée synchroniquement — la PRÉPARATION du contenu (fetch /issue,
+  // /diff, /inventaire-commit) peut, elle, encore prendre plusieurs secondes.
+  // Facultatif dans le contrat `feedback` (badges existants non concernés par
+  // ce point précis restent inchangés).
+  if (feedback.preparation) feedback.preparation();
   const videTermine = viderPressePapier();
   if (modeCopie() === 'moderne') {
     // Attend la fin RÉELLE du vidage (issue #865) avant d'engager l'écriture
@@ -1163,7 +1180,8 @@ function lancerCopie(projet, numero, producteur, feedback) {
     return;
   }
   const debut = Date.now();   // début de la copie (issue #824) : référence du délai de la ligne de détail
-  const feedbackAvecDetail = envelopperFeedbackEchec(feedback, 'repli', debut);
+  const feedbackAvecDetail = envelopperFeedbackEchec(feedback, 'repli', debut,
+    () => lancerCopie(projet, numero, producteur, feedback));
   // Mode repli (--lan) : texte requis AVANT le clic.
   const cle = cleIC(projet, numero);
   const variante = variantDuProducteur(producteur);
@@ -1486,12 +1504,17 @@ export const MESSAGE_PREPARATION_TROP_LONGUE = 'Préparation trop longue pour le
 // #832 point 4b) remplace MESSAGE_ECHEC_COPIE dans le SEUL cas où l'écriture a
 // été refusée pour geste expiré/préparation trop longue (voir
 // gesteExpireOuPreparationLente) — absent, le message par défaut s'applique,
-// inchangé pour toute autre cause d'échec.
-export function signalerEchecCopie(texte, detail, messagePrincipal) {
+// inchangé pour toute autre cause d'échec. `onReessayer` (issue #917 point 7,
+// facultatif) : bouton « Réessayer » du toast (voir toasts.js) — pour qu'un
+// échec SANS texte de secours (la préparation elle-même a échoué, rien à
+// copier manuellement) garde toujours un moyen de reprendre l'action, jamais
+// un simple message sans issue.
+export function signalerEchecCopie(texte, detail, messagePrincipal, onReessayer) {
   if (detail) console.warn(detail);
   toasts.erreur(messagePrincipal || MESSAGE_ECHEC_COPIE, true, {
     texteSecours: texte || undefined,
     detailTechnique: detail || undefined,
+    onReessayer: onReessayer || undefined,
   });
 }
 
@@ -1499,11 +1522,17 @@ export function signalerEchecCopie(texte, detail, messagePrincipal) {
 // n'est en pratique jamais appelé ici : la case ne copie que 'reponse' (issue
 // #787), jamais soumise au téléchargement (issue #790 point 5) — gardé pour
 // que l'objet reste un contrat complet, au cas où un futur appelant l'utilise.
+// `preparation` (issue #917 point 7) : affichée dès le clic, AVANT tout
+// réseau — y compris en mode moderne, où seule l'ÉCRITURE presse-papier est
+// engagée synchroniquement, pas la préparation du contenu (fetch /issue,
+// /diff, /inventaire-commit), qui peut rester lente.
 function feedbackToast() {
   return {
+    preparation: () => toasts.info('Préparation du rapport…', false, { duree: 15000, cle: 'copie-preparation' }),
     succes: () => toasts.succes('Rapport copié dans le presse-papier.', false),
     fichier: (message) => toasts.avertissement(message),
-    echec: (e, texte, detail, messagePrincipal) => signalerEchecCopie(texte, detail, messagePrincipal),
+    echec: (e, texte, detail, messagePrincipal, onReessayer) =>
+      signalerEchecCopie(texte, detail, messagePrincipal, onReessayer),
     vide: () => toasts.avertissement(TITRE_COPIE_VIDE),
     nonPret: () => toasts.info('Préparation de la copie en cours — recoche dans un instant.', false),
   };
@@ -1543,11 +1572,12 @@ function feedbackToastAvecDiagnostic(projet, numero, ligne, cb) {
   if (!diagnosticActif()) return original;
   const ctx = (resultat) => ({ ...contexteDiagnosticCopie(projet, numero, ligne, cb), etape: 'ecriture', resultat });
   return {
+    preparation: () => original.preparation(),
     succes: () => { diagnostiquer(ctx('succes')); original.succes(); },
     fichier: (message) => { diagnostiquer(ctx('fichier_telecharge')); original.fichier(message); },
-    echec: (e, texte, detail, messagePrincipal) => {
+    echec: (e, texte, detail, messagePrincipal, onReessayer) => {
       diagnostiquer(ctx('echec'));
-      original.echec(e, texte, detail, messagePrincipal);
+      original.echec(e, texte, detail, messagePrincipal, onReessayer);
     },
     vide: () => { diagnostiquer(ctx('vide')); original.vide(); },
     nonPret: () => { diagnostiquer(ctx('non_pret')); original.nonPret(); },
@@ -1605,9 +1635,11 @@ function feedbackBadge(badge) {
   const restaurer = () => { if (badge) { badge.textContent = original; badge.title = titre; } };
   const flash = (symbole) => { if (badge) { badge.textContent = symbole; setTimeout(restaurer, 1500); } };
   return {
+    preparation: () => toasts.info('Préparation du rapport…', false, { duree: 15000, cle: 'copie-preparation' }),
     succes: () => flash('✓'),
     fichier: (message) => { flash('⬇'); toasts.avertissement(message); },
-    echec: (e, texte, detail, messagePrincipal) => signalerEchecCopie(texte, detail, messagePrincipal),
+    echec: (e, texte, detail, messagePrincipal, onReessayer) =>
+      signalerEchecCopie(texte, detail, messagePrincipal, onReessayer),
     vide: () => { if (badge) { badge.textContent = '⚠'; badge.title = TITRE_COPIE_VIDE; setTimeout(restaurer, 2000); } },
     aucun: () => flash('∅'),
     nonPret: () => { toasts.info('Contenu en préparation — reclique dans un instant.', false); },

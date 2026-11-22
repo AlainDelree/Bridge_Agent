@@ -359,6 +359,19 @@ function detailToast() {
   return elementsCrees.find((e) => e.className === 'socle-toast-detail');
 }
 
+// Bouton « Réessayer » (onReessayer, issue #917 point 7) du dernier toast
+// d'échec affiché — voir definirContenuToast dans toasts.js.
+function boutonReessayerToast() {
+  return elementsCrees.find((e) => e.className === 'socle-toast-reessayer');
+}
+
+async function attendreBoutonReessayer(tentativesMax = 50) {
+  for (let i = 0; i < tentativesMax && !boutonReessayerToast(); i++) {
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  return boutonReessayerToast();
+}
+
 test('badge Diff, diff volumineux (> seuil) : fichier téléchargé, pas de copie', async () => {
   const telechargements = fixerEnvironnement((hash) => (hash === 'aaa1111' ? DIFF_VOLUMINEUX : 'DIFF-' + hash));
   interdireCopiePressePapier();
@@ -438,6 +451,45 @@ test('badge Diff, diff volumineux (> seuil) ET téléchargement en SUCCÈS : le 
   assert.ok(messages.some((m) => /téléchargé/.test(m)), 'le succès du téléchargement doit toujours être annoncé');
   assert.ok(!zoneSecoursToast(), 'aucune zone de secours ne doit apparaître en cas de succès');
 });
+
+// ─── Issue #917 point 7 : préparation échouée (délai dépassé/session
+//     expirée) → échec RÉEL, jamais confondu avec « réponse pas encore
+//     disponible » ; « Préparation du rapport… » dès le clic ──────────────
+
+test('case à cocher : affiche « Préparation du rapport… » dès le clic, avant tout résultat', async () => {
+  fixerEnvironnement();
+  const copie = attendreProchaineCopie();
+  resultatsCoches.basculer(evenementCase(), PROJET, 501);
+  assert.ok(texteDesToasts().includes('Préparation du rapport…'),
+    'le message de préparation doit apparaître synchroniquement au clic, avant toute réponse réseau');
+  await copie;
+});
+
+test('case à cocher : session expirée (page de connexion au lieu du JSON attendu) → échec RÉEL avec bouton Réessayer, jamais « réponse pas encore disponible »', async () => {
+  fixerEnvironnement();
+  const fetchOriginal = global.fetch;
+  global.fetch = async (url, options) => {
+    if (url.startsWith('/issue/')) {
+      // Simule une session expirée : la route /issue/<projet>/<numero> répond
+      // 200 avec la page de connexion HTML au lieu du JSON attendu.
+      return { ok: true, text: async () => '<html>Connexion requise</html>' };
+    }
+    return fetchOriginal(url, options);
+  };
+  resultatsCoches.basculer(evenementCase(), PROJET, 502);
+  const bouton = await attendreBoutonReessayer();
+  assert.ok(bouton, 'un bouton « Réessayer » doit être proposé puisqu\'aucun texte de secours n\'est disponible');
+  const messages = texteDesToasts();
+  assert.ok(messages.some((m) => m === 'Copie impossible — le presse-papier n\'a pas pu être écrit.'),
+    'doit être traité comme un échec réel, jamais avalé en silence');
+  assert.ok(!messages.includes('Réponse pas encore disponible — réessaie dans quelques secondes'),
+    'ne doit jamais être confondu avec une réponse simplement pas encore prête');
+});
+
+// Le délai maximum générique (api.js::TIMEOUT_DEFAUT_MS, AbortController) est
+// testé directement dans static/js/socle/tests/api.test.js — pas ré-exercé
+// ici via la chaîne complète (30s par défaut, non paramétrable depuis ce
+// module), pour ne pas ralentir cette suite.
 
 // ─── Issue #824 : la cause réelle de l'échec de copie atteint l'affichage ────
 

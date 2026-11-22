@@ -141,6 +141,24 @@ def ligne_resume_precharge(horodatage, nb_issues_preparees, nb_requetes,
     }, ensure_ascii=False)
 
 
+def ligne_evenement_stream(horodatage, type_evenement, projet, nb_abonnes) -> str:
+    """Ligne JSON d'un événement diffusé sur /stream (issue #917, point 9) —
+    pure, mêmes garanties que ligne_echantillon/ligne_resume_precharge
+    ci-dessus : SEULEMENT le type d'événement, le projet concerné (None pour
+    un événement sans projet, ex. fichier_recu) et le nombre de pages
+    actuellement abonnées — jamais le contenu de l'événement (titre, labels,
+    timing, fichier, motif...). Sert à corréler après coup une liste restée
+    périmée avec un flux qui n'a pas livré ses événements (voir l'étude
+    #916 : 22 minutes sans requête ciblée après un debut_issue)."""
+    return json.dumps({
+        "type": "evenement_stream",
+        "horodatage": horodatage,
+        "type_evenement": type_evenement,
+        "projet": projet,
+        "nb_abonnes": nb_abonnes,
+    }, ensure_ascii=False)
+
+
 def ecrire_ligne(ligne: str) -> None:
     """Ajoute une ligne (déjà construite par ligne_echantillon/
     ligne_resume_precharge) au journal dédié, rotation par taille incluse."""

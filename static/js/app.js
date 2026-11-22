@@ -627,6 +627,11 @@ function construireBoutonsFiltre(noms) {
     + 'Résultats (liste + décomptes + cases cochées).';
   syncInfo.textContent = (window.Bridge && window.Bridge.resultats
     && window.Bridge.resultats.texteDerniereSync && window.Bridge.resultats.texteDerniereSync()) || '';
+  // Coloré si la synchro est ancienne — au-delà de 3x l'intervalle de
+  // rafraîchissement périodique réglé (issue #917 point 6).
+  const syncAncienne = !!(window.Bridge && window.Bridge.veille
+    && window.Bridge.veille.syncEstAncienne && window.Bridge.veille.syncEstAncienne());
+  syncInfo.classList.toggle('resultats-derniere-sync-ancienne', syncAncienne);
   zone.appendChild(syncInfo);
   // Pastilles de notification sur les boutons de filtre projet (issue #381),
   // calculées depuis les données déjà en mémoire — voir majPastillesFiltres().
@@ -715,6 +720,9 @@ function basculerFiltreProjet(nom) {
   if (window.Bridge && window.Bridge.resultatsCoches) {
     window.Bridge.resultatsCoches.precharderVisibles();
   }
+  // Un projet qui vient d'être sélectionné n'est rechargé QU'À CE MOMENT
+  // (issue #917 point 3) — jamais pendant qu'il était désélectionné.
+  if (window.Bridge && window.Bridge.veille) window.Bridge.veille.surSelectionChangee();
 }
 
 // Bascule « Tous » entre deux états (issue #262) : un vrai toggle, pas une
@@ -754,6 +762,8 @@ function basculerTousLesFiltres() {
   if (window.Bridge && window.Bridge.resultatsCoches) {
     window.Bridge.resultatsCoches.precharderVisibles();
   }
+  // Voir basculerFiltreProjet ci-dessus (issue #917 point 3).
+  if (window.Bridge && window.Bridge.veille) window.Bridge.veille.surSelectionChangee();
 }
 
 // Projets actifs dans le filtre de l'onglet Résultats (issue #428) : le
@@ -2991,6 +3001,22 @@ function afficherOverlayArret() {
   if (ov) ov.classList.add('actif');
 }
 
+// Bandeau rouge « connexion perdue » (issue #917 point 8) — DISTINCT de
+// l'overlay bloquant ci-dessus (réservé à l'arrêt VOLONTAIRE du serveur,
+// événement « shutdown » explicite, inchangé) et du voile gris de veille
+// (static/js/veille.js) : signale une coupure brutale (serveur tué sans
+// signal, détectée par sourceEvents.onerror ci-dessous) sans bloquer
+// l'interface ni exiger de rechargement — disparaît automatiquement à la
+// reprise (sourceEvents.onopen).
+function afficherBandeauConnexionPerdue() {
+  const b = document.getElementById('bandeau-connexion-perdue');
+  if (b) b.style.display = 'block';
+}
+function masquerBandeauConnexionPerdue() {
+  const b = document.getElementById('bandeau-connexion-perdue');
+  if (b) b.style.display = 'none';
+}
+
 // Heartbeat périodique : signale au serveur que l'onglet est toujours ouvert.
 function envoyerHeartbeat() {
   fetch('/heartbeat', {method: 'POST'}).catch(() => {});
@@ -3051,19 +3077,25 @@ function demarrerCycleVie() {
     afficherOverlayArret();
   });
 
-  // Connexion (r)établie : annule une éventuelle alerte en attente.
+  // Connexion (r)établie : annule une éventuelle alerte en attente ET masque
+  // le bandeau rouge si une coupure brutale l'avait affiché (issue #917
+  // point 8 : « disparaît à la reprise »).
   sourceEvents.onopen = function() {
     if (timerErreurArret) { clearTimeout(timerErreurArret); timerErreurArret = null; }
+    masquerBandeauConnexionPerdue();
   };
 
   // Coupure brutale (serveur tué sans signal) : la connexion SSE tombe en
-  // erreur. Délai de 3 s avant l'overlay pour ne pas réagir à un micro-freeze ;
-  // si la connexion se rétablit entre-temps, onopen annule le timer.
+  // erreur. Délai de 3 s avant le bandeau pour ne pas réagir à un
+  // micro-freeze ; si la connexion se rétablit entre-temps, onopen l'annule.
+  // Issue #917 point 8 : affiche désormais le bandeau rouge NON BLOQUANT
+  // (auto-récupérable), plutôt que l'overlay bloquant — réservé, lui, à
+  // l'arrêt volontaire explicite (événement « shutdown » ci-dessus, inchangé).
   sourceEvents.onerror = function() {
     if (timerErreurArret) return;
     timerErreurArret = setTimeout(function() {
       timerErreurArret = null;
-      afficherOverlayArret();
+      afficherBandeauConnexionPerdue();
     }, 3000);
   };
 }

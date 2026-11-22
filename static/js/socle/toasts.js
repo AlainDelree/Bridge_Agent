@@ -43,6 +43,13 @@
 //     dans le panneau « Messages » (journal) sous l'entrée correspondante —
 //     ne change ni le message principal ni `texteSecours`. Comme `texteSecours`,
 //     rend la clé anti-empilement unique (jamais fusionnée/effacée).
+//   - toasts.erreur/avertissement(texte, comptabilise, {onReessayer}) (issue
+//     #917 point 7) : ajoute un bouton « Réessayer » au toast — pour une
+//     erreur où aucun texte de secours n'est disponible (ex. la préparation
+//     elle-même a échoué, rien à copier manuellement), l'utilisateur garde
+//     toujours un moyen de reprendre l'action sans tout refaire depuis le
+//     début. Le clic appelle `onReessayer()` puis ferme le toast. Comme
+//     `texteSecours`/`detailTechnique`, rend la clé anti-empilement unique.
 //
 //   Tous les messages affichés (quel que soit l'appelant) sont en outre
 //   journalisés (voir `journaliser`) dans un historique borné
@@ -410,6 +417,10 @@ function injecterStyles() {
 .socle-toast-fermer{pointer-events:auto;flex:0 0 auto;background:none;border:none;
   color:#fff;opacity:.8;cursor:pointer;font-size:15px;line-height:1;padding:0}
 .socle-toast-fermer:hover{opacity:1}
+.socle-toast-reessayer{pointer-events:auto;flex:0 0 auto;background:rgba(255,255,255,.18);
+  border:1px solid rgba(255,255,255,.5);color:#fff;border-radius:5px;cursor:pointer;
+  font-size:11px;font-weight:600;line-height:1;padding:4px 8px}
+.socle-toast-reessayer:hover{background:rgba(255,255,255,.3)}
 .toasts-journal-bouton{position:relative;background:none;border:none;cursor:pointer;
   font-size:16px;line-height:1;padding:4px 7px;border-radius:6px;color:inherit}
 .toasts-journal-bouton:hover{background:rgba(0,0,0,.08)}
@@ -455,13 +466,25 @@ function fermerToast(cle) {
 // de détail technique discrète optionnelle (`detailTechnique`, issue #824),
 // + zone sélectionnable optionnelle (`texteSecours`, issue #782 — voir
 // `afficher`).
-function definirContenuToast(toast, texte, avecFermeture, onFermer, texteSecours, detailTechnique) {
+function definirContenuToast(toast, texte, avecFermeture, onFermer, texteSecours, detailTechnique, onReessayer) {
   toast.textContent = '';
   const conteneur = doc().createElement('span');
   conteneur.className = 'socle-toast-contenu';
   const span = doc().createElement('span');
   span.textContent = texte;
   conteneur.appendChild(span);
+  if (onReessayer) {
+    const boutonRetry = doc().createElement('button');
+    boutonRetry.type = 'button';
+    boutonRetry.className = 'socle-toast-reessayer';
+    boutonRetry.textContent = 'Réessayer';
+    boutonRetry.addEventListener('click', (evenement) => {
+      evenement.stopPropagation();
+      onReessayer();
+      onFermer();
+    });
+    conteneur.appendChild(boutonRetry);
+  }
   if (avecFermeture) {
     const bouton = doc().createElement('button');
     bouton.type = 'button';
@@ -514,7 +537,7 @@ export function cleEffective(type, texte, texteSecours, compteurUnique, cleDeman
 let compteurCleSecours = 0;
 
 function afficher(texte, type, comptabiliseDemande = true, options = {}) {
-  const { texteSecours, duree: dureeDemandee, cle: cleDemandee, detailTechnique } = options || {};
+  const { texteSecours, duree: dureeDemandee, cle: cleDemandee, detailTechnique, onReessayer } = options || {};
   const d = doc();
   if (!d) { return; }
   injecterStyles();
@@ -522,13 +545,14 @@ function afficher(texte, type, comptabiliseDemande = true, options = {}) {
 
   // `options.duree`/`options.cle` (issue #807) : voir dureeEffective/
   // cleEffective ci-dessus — sans effet si absents (comportement inchangé).
-  // `detailTechnique` (issue #824) rend aussi la clé UNIQUE, au même titre que
-  // `texteSecours` (voir le commentaire de cleToast) : un détail technique
-  // change à chaque occurrence (délai, focus...), il ne doit jamais être
-  // silencieusement effacé par la fusion anti-empilement.
+  // `detailTechnique` (issue #824)/`onReessayer` (issue #917 point 7) rendent
+  // aussi la clé UNIQUE, au même titre que `texteSecours` (voir le commentaire
+  // de cleToast) : un détail technique ou un bouton de reprise change à
+  // chaque occurrence (délai, focus, action à refaire...), il ne doit jamais
+  // être silencieusement effacé par la fusion anti-empilement.
   const duree = dureeEffective(type, dureeDemandee);
   const remplacer = cleDemandee != null;
-  const payloadUnique = texteSecours || detailTechnique;
+  const payloadUnique = texteSecours || detailTechnique || onReessayer;
   const cle = cleEffective(type, texte, payloadUnique, payloadUnique ? ++compteurCleSecours : undefined, cleDemandee);
   const actif = payloadUnique ? null : toastsActifs.get(cle);
   if (actif) {
@@ -552,7 +576,7 @@ function afficher(texte, type, comptabiliseDemande = true, options = {}) {
   }
   const toast = d.createElement('div');
   toast.className = `socle-toast ${type}`;
-  definirContenuToast(toast, texte, duree === null, () => fermerToast(cle), texteSecours, detailTechnique);
+  definirContenuToast(toast, texte, duree === null, () => fermerToast(cle), texteSecours, detailTechnique, onReessayer);
   conteneur.appendChild(toast);
   // Forcer un reflow puis lancer la transition d'apparition.
   requestAnimationFrame(() => toast.classList.add('visible'));
@@ -628,8 +652,11 @@ export const toasts = {
   // qui ne fait que confirmer une action déclenchée et vue par l'utilisateur —
   // il s'affiche et se journalise normalement, mais n'incrémente pas la
   // pastille. Sans effet sur erreur/avertissement (toujours comptabilisés).
-  info: (texte, comptabilise = true) => afficher(texte, 'info', comptabilise),
-  succes: (texte, comptabilise = true) => afficher(texte, 'succes', comptabilise),
+  // `options` (issue #917 point 7) : désormais transmis comme pour erreur/
+  // avertissement ci-dessous (ex. `duree`/`cle` pour un message « en cours »
+  // qu'un appel suivant doit pouvoir remplacer plutôt qu'empiler).
+  info: (texte, comptabilise = true, options) => afficher(texte, 'info', comptabilise, options),
+  succes: (texte, comptabilise = true, options) => afficher(texte, 'succes', comptabilise, options),
   // `options.texteSecours` (issue #782) : jointe au toast dans une zone
   // sélectionnable — pour qu'un texte qui a échoué à être copié (presse-papier
   // refusé, execCommand en échec…) reste accessible pour un Ctrl+C manuel,

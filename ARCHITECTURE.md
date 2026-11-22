@@ -435,7 +435,7 @@ variable/DOM ancien), retiré avec le reste.
 | Zone | Fragment (`templates/fragments/`) |
 |------|-----------------------------------|
 | Entête (titre, rate-limit, Quitter, Déconnexion) | `entete.html` |
-| Bandeaux (échéances annuaire, repli REP_TRAVAIL, sélecteur projet) | `bandeaux.html` |
+| Bandeaux (échéances annuaire, repli REP_TRAVAIL, connexion perdue #917, sélecteur projet) | `bandeaux.html` |
 | Barre d'onglets | `onglets.html` |
 | Onglet Nouvelle issue | `onglet_creation.html` |
 | Onglet Résultats (+ inclut le panneau latéral) | `onglet_resultats.html` |
@@ -445,6 +445,7 @@ variable/DOM ancien), retiré avec le reste.
 | Onglet CCW | `onglet_ccw.html` |
 | Onglet En attente (champ `ATTENTE`, #713/#714) | `onglet_attente.html` |
 | Modales | `modale_confirmation.html`, `modale_nouveau_projet.html`, `modale_supprimer_projet.html`, `modale_recherche_titre.html`, `modale_interrompre.html`, `overlay_arret.html` |
+| Voile de veille/réveil (issue #917) | `voile_veille.html` |
 | Scripts (importmap + Jinja + app.js + module) | `scripts.html` |
 
 **Feuilles CSS** — chargées dans cet ORDRE dans `<head>` (ordre = cascade ;
@@ -455,7 +456,7 @@ concaténation byte-identique à l'ancien `style.css`, vérifiée) :
 | 1 | `base.css` | reset, mise en page, primitives de formulaire |
 | 2 | `composants.css` | boutons, messages, aperçu, rappels Nouveau projet, terminal |
 | 3 | `resultats.css` | onglet Résultats (liste, détail, panneau latéral, diff) |
-| 4 | `modales.css` | overlay/carte de modale, boutons destructifs, overlay d'arrêt |
+| 4 | `modales.css` | overlay/carte de modale, boutons destructifs, overlay d'arrêt, voile de veille (#917) |
 | 5 | `recherche-interruption.css` | recherche par titre + interruption (zone Résultats) — **DOIT rester après `modales.css`** (`.modal-recherche-titre` surcharge `.modal-carte` à specificité égale) |
 | 6 | `inbox.css` | reliquat de l'ancien onglet « Résultats inbox » (supprimé, issue #639) : badge d'alerte (onglet Résultats) + historique du watcher spool (panneau latéral) |
 | 7 | `attente.css` | onglet En attente (champ `ATTENTE`, #713/#714 ; boutons monter/descendre, #819 ; bouton copier le titre, #823) |
@@ -471,8 +472,10 @@ issue ouverte + son par issue, issue #641, étape 6), `ccw.js` (onglet CCW,
 pilotage du PC fixe Windows, issue #649), `journal.js` (onglet Journal
 watcher, issue #650), `config.js` (onglet Configuration + zone dangereuse
 de suppression de projet, issue #651, étape 12), `creation.js` (formulaire
-« Nouvelle issue » complet, issue #652) et `attente.js` (onglet En attente,
-champ `ATTENTE` #713/#714, ordre manuel #819, bouton copier le titre #823).
+« Nouvelle issue » complet, issue #652), `attente.js` (onglet En attente,
+champ `ATTENTE` #713/#714, ordre manuel #819, bouton copier le titre #823)
+et `veille.js` (voile de veille/réveil, rafraîchissement périodique du projet
+sélectionné, issue #917 — voir docs/contexte/interface_rafraichissement.md).
 Futurs modules (ex.
 `nouveau_projet.js`) suivent le même patron,
 `nouveau_projet.js`) suivent le même patron.
@@ -876,6 +879,28 @@ le panneau) reste en place — simplement plus utilisé par l'interface,
 > maximale d'une préparation, mode de copie — est envoyé en `POST
 > /mesure-precharge` (`silencieux:true`, échec sans incidence sur
 > l'interface). Voir §14 pour le format de ligne et le rapport.
+
+> **Module `static/js/veille.js` (issue #917)** : voile de veille/réveil,
+> rafraîchissement périodique du projet sélectionné et réglages associés —
+> détail complet dans `docs/contexte/interface_rafraichissement.md` (état
+> actuel du mécanisme, pas l'historique). Résumé : après `delaiVeilleMin`
+> minutes d'inactivité (défaut 30, 0 désactive), un voile gris
+> (`#voile-veille`, `templates/fragments/voile_veille.html`) couvre
+> l'interface et absorbe le premier clic/la première touche ; ce geste lance
+> `resultats.rafraichirSelection(projetsActifsDansFiltreResultats())` — une
+> variante de `rafraichir()` RESTREINTE à la sélection courante (liste +
+> timing, jamais `chargerTimingTous()` qui reste réservée au ↻ complet
+> inchangé) — plus le panneau Infrastructure et le préchargement des rapports
+> visibles, avec un délai maximum (30s) et un état d'erreur explicite +
+> bouton Réessayer. Hors veille, le même rafraîchissement ciblé se reprogramme
+> lui-même à `intervalleSec` (défaut 60, plancher 15), avec attente croissante
+> plafonnée après un échec (`prochainDelaiMs`). Réglages (`CLES.veilleDelaiMin`/
+> `veilleIntervalleSec`/`veilleRattrapageSec`, `persistance.js`) affichés dans
+> le panneau Infrastructure, partie globale (`#pl-zone-veille`, juste après
+> l'interrupteur de son). Le bandeau rouge « connexion perdue » (point 8,
+> distinct du voile) et la fenêtre de repli de la copie du rapport (point 7)
+> restent hors de ce module — voir respectivement `static/js/app.js`
+> (`sourceEvents.onerror`/`onopen`) et `static/js/resultats_coches.js`.
 
 > **Note parallélisme** : HTML et JS se découpent proprement par zone. Le CSS
 > est plus contraint : la cascade impose de garder l'ordre source, donc quelques

@@ -63,6 +63,11 @@ import { initierVibeModele } from '../vibe_modele.js';
 // ATTENTE. Pas d'entrée dans onglets.js::initialisationsPour — ce module
 // s'abonne directement à store.ongletActif, comme resultats.js (issue #632).
 import { initAttente } from '../attente.js';
+// Module par fonctionnalité — voile de veille/réveil, rafraîchissement
+// périodique du projet sélectionné et ses réglages (issue #917). Comme
+// resultats.js/attente.js : indépendant de l'onglet actif, initialisé une
+// fois ici.
+import { initVeille, veille } from '../veille.js';
 
 // Délégation : les modules par fonctionnalité (onglets.js, panneau_lateral.js)
 // enregistrent leurs propres règles via dom.surAction(...) ; ceci (ré)installe
@@ -78,6 +83,10 @@ installerPont({
   // app.js (script classique), qui appelle window.Bridge.panneGithub.
   // signalerEchecPossible(...) sur ses propres fetch('/issue/...')/fetch('/relancer-issue').
   panneGithub: { signalerEchecPossible },
+  // Voile de veille/réveil (issue #917) : surSelectionChangee (appelée par
+  // basculerFiltreProjet/basculerTousLesFiltres) et syncEstAncienne (appelée
+  // par construireBoutonsFiltre) — voir static/js/veille.js.
+  veille,
 });
 
 // Onglet Résultats (issue #627) : ouvre l'UNIQUE connexion /stream et s'abonne
@@ -132,6 +141,15 @@ initierVibeModele();
 // de store.ongletActif.
 initAttente();
 
+// Voile de veille/réveil, rafraîchissement périodique du projet sélectionné
+// et ses réglages (issue #917) : installé après que resultats.js/
+// panneau_lateral.js/resultats_coches.js existent déjà (il les consomme,
+// liste via import ES, panneau via la globale publiée par
+// initPanneauLateral ci-dessus) — mais avant l'activation de l'onglet par
+// défaut n'a aucune importance ici (indépendant de l'onglet actif, comme
+// initAttente()).
+initVeille();
+
 // Journal des messages éphémères (issue #730) : icône + pastille de l'en-tête
 // (templates/fragments/entete.html), panneau construit à la demande par
 // toasts.js — aucun autre module n'a besoin d'être modifié pour y apparaître.
@@ -159,3 +177,4 @@ console.debug('[socle] actions sur la ligne (needs-human/interrompre/son) active
 console.debug('[socle] onglet Journal watcher piloté par import direct (issue #650).');
 console.debug('[socle] onglet Configuration piloté par import direct (issue #651).');
 console.debug('[socle] journal des messages (toasts) consultable (issue #730).');
+console.debug('[socle] voile de veille/réveil et rafraîchissement périodique actifs (issue #917).');

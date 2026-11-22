@@ -327,21 +327,6 @@ export function formaterHeureSync(ms) {
   return 'sync. ' + pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());
 }
 
-// Fusionne un chargement de liste en CONSERVANT les issues des projets non
-// refetchés ET des projets dont le fetch a ÉCHOUÉ (correctif anomalie #3 :
-// un projet en échec ne disparaît plus en silence). `chargements` =
-// [{projet, succes, issues}]. Renvoie un tableau trié par date décroissante.
-export function fusionnerChargement(anciennes, nomsFetch, chargements) {
-  const fetchSet = new Set(nomsFetch);
-  const echecs = new Set(chargements.filter(c => !c.succes).map(c => c.projet));
-  const conservees = (anciennes || []).filter(
-    it => !fetchSet.has(it.projet) || echecs.has(it.projet));
-  const nouvelles = chargements.filter(c => c.succes).flatMap(
-    c => (c.issues || []).map(it => Object.assign({}, it, { projet: c.projet })));
-  return conservees.concat(nouvelles)
-    .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
-}
-
 // Délai de convergence laissé à `gh issue list` (issue #634) : une issue tout
 // juste créée peut manquer quelques secondes de la réponse de
 // /issues-en-attente (indexation GitHub pas encore à jour côté API). En
@@ -349,6 +334,50 @@ export function fusionnerChargement(anciennes, nomsFetch, chargements) {
 // CONSERVE. Au-delà, une absence prolongée signale une vraie fin d'issue
 // (clôture, needs-human — voir #523) — on la retire.
 export const FENETRE_RECENTE_TIMING_MS = 30000;
+
+// Même décalage d'indexation GitHub que FENETRE_RECENTE_TIMING_MS ci-dessus,
+// mais pour le rechargement COMPLET de la liste (/issues-liste, issue #917
+// point 4 — même famille de problème que #634, établie par relecture du code
+// à la demande de l'étude #916 : le rechargement périodique introduit par
+// cette issue peut désormais retomber, quelques secondes après un
+// `creation_issue`, sur une réponse de `gh issue list` qui n'a pas encore
+// indexé la toute nouvelle issue). Fenêtre plus large que celle du timing
+// (2 min au lieu de 30s) : un rechargement complet peut se répéter plusieurs
+// fois (rafraîchissement périodique) avant que GitHub ne rattrape son retard,
+// alors que le timing n'est, lui, recalculé qu'une fois par transition.
+export const FENETRE_RECENTE_LISTE_MS = 120000;
+
+// Fusionne un chargement de liste en CONSERVANT les issues des projets non
+// refetchés ET des projets dont le fetch a ÉCHOUÉ (correctif anomalie #3 :
+// un projet en échec ne disparaît plus en silence). `chargements` =
+// [{projet, succes, issues}].
+//
+// Issue #917 point 4 : une issue OUVERTE et RÉCENTE (< FENETRE_RECENTE_LISTE_MS),
+// connue par un événement `creation_issue` mais ABSENTE de la réponse d'un
+// projet pourtant refetché AVEC SUCCÈS (décalage d'indexation GitHub, même
+// famille que #634 — avant ce correctif, cette fonction remplaçait
+// INCONDITIONNELLEMENT toute la liste d'un projet réussi par le contenu de la
+// réponse, effaçant une telle issue) est désormais CONSERVÉE — fusion plutôt
+// que remplacement pur. Une issue absente et soit FERMÉE soit trop ancienne
+// est retirée normalement (vraie fin d'issue, ou issue dont `gh` n'a plus
+// trace). `maintenant` (ms) : injecté par l'appelant pour rester testable.
+// Renvoie un tableau trié par date décroissante.
+export function fusionnerChargement(anciennes, nomsFetch, chargements, maintenant = Date.now()) {
+  const fetchSet = new Set(nomsFetch);
+  const echecs = new Set(chargements.filter(c => !c.succes).map(c => c.projet));
+  const nouvelles = chargements.filter(c => c.succes).flatMap(
+    c => (c.issues || []).map(it => Object.assign({}, it, { projet: c.projet })));
+  const presentes = new Set(nouvelles.map(it => cleIssue(it.projet, it.number)));
+  const conservees = (anciennes || []).filter((it) => {
+    if (!fetchSet.has(it.projet)) return true;                          // projet non refetché : inchangé
+    if (echecs.has(it.projet)) return true;                             // fetch en échec : conservé tel quel
+    if (presentes.has(cleIssue(it.projet, it.number))) return false;    // remplacée par la version fraîche
+    const age = it.createdAt ? maintenant - new Date(it.createdAt).getTime() : Infinity;
+    return (it.state || '').toUpperCase() !== 'CLOSED' && age < FENETRE_RECENTE_LISTE_MS;
+  });
+  return conservees.concat(nouvelles)
+    .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+}
 
 // Fusionne une réponse /issues-en-attente(nom) dans le timing existant, SANS
 // jamais effacer l'entrée d'une issue OUVERTE et récente que le navigateur
@@ -726,7 +755,7 @@ function appliquerBadgeSansComplexite(badge, decision) {
 // ─── Chargement de la liste (initial / ↻ / rafraîchissement action) ──────────
 async function chargerListe(nomsAFetcher) {
   const noms = nomsProjets();
-  if (!noms.length) { appelerAncien('__resultatsListeVide'); return; }
+  if (!noms.length) { appelerAncien('__resultatsListeVide'); return { succes: true }; }
   const nomsFetch = Array.isArray(nomsAFetcher)
     ? nomsAFetcher.filter(n => noms.includes(n))
     : noms;
@@ -763,9 +792,15 @@ async function chargerListe(nomsAFetcher) {
       if (!c.succes) signalerEchecPossible(extraireJsonErreur(c.erreur));
     }
   }
-  const fusionnee = fusionnerChargement(listeCourante(), nomsFetch, chargements);
+  const fusionnee = fusionnerChargement(listeCourante(), nomsFetch, chargements, maintenant());
   store.remplacerIssues(fusionnee);
   rendreListeComplete();
+  // Renvoie le succès global (issue #917 point 2) : le voile de réveil doit
+  // savoir si des données ont RÉELLEMENT été rattrapées pour disparaître, ou
+  // s'il doit passer à son état d'échec — chargerListe() ne lève jamais
+  // (erreurs déjà affichées par toast ci-dessus), donc l'appelant ne peut pas
+  // s'appuyer sur un rejet pour le détecter.
+  return { succes: echecs.length === 0 };
 }
 
 // ─── Données de temps (décompte + estimation) ────────────────────────────────
@@ -820,6 +855,43 @@ async function chargerTimingTous() {
                        true, { duree: 10000, cle: 'resultats-decompte-non-recharge' });
   }
   majBadges();
+}
+
+// Variante de chargerTimingTous() RESTREINTE à une liste de projets (issue
+// #917 point 3) : le rafraîchissement périodique/réveil de la veille ne doit
+// JAMAIS recharger le décompte d'un projet qui n'est pas celui actuellement
+// sélectionné dans le filtre Résultats, pour ne pas augmenter la
+// consommation de la limite de débit GitHub — chargerTimingTous() (toujours
+// TOUS les projets, utilisée par le chargement initial, le rattrapage #729
+// et le ↻ complet) reste inchangée pour ces chemins existants.
+async function chargerTimingSelection(noms) {
+  const liste = noms || [];
+  const echecs = [];
+  await Promise.all(liste.map(async (nom) => {
+    const resultat = await chargerTimingProjet(nom);
+    if (resultat === null) echecs.push(nom);
+  }));
+  if (echecs.length) {
+    toasts.avertissement('Résultats — décompte non rechargé : ' + echecs.join(', ')
+                       + ' (badges précédents conservés).',
+                       true, { duree: 10000, cle: 'resultats-decompte-non-recharge' });
+  }
+  majBadges();
+  return { succes: echecs.length === 0 };
+}
+
+// Rafraîchissement CIBLÉ liste + timing d'une sélection de projets (issue
+// #917 points 2/3 — voile de veille/réveil et rafraîchissement périodique),
+// SANS les cases cochées (purement local, hors périmètre de cette issue) ni
+// la purge du cache détail (réservée au ↻ explicite, rafraichirResultats
+// d'app.js) : volontairement plus léger que rafraichir() ci-dessous. `noms`
+// vide → rien à faire, succès trivial (jamais d'appel réseau à vide).
+async function rafraichirSelection(noms) {
+  const liste = (noms || []).filter(Boolean);
+  if (!liste.length) return { succes: true };
+  const r1 = await chargerListe(liste);
+  const r2 = await chargerTimingSelection(liste);
+  return { succes: !!(r1 && r1.succes) && !!(r2 && r2.succes) };
 }
 
 // ─── Fetch unique au dépassement du TIMEOUT (issue #334) ─────────────────────
@@ -1186,4 +1258,12 @@ export const resultats = {
   // initial, ↻, resynchro #705/#729), donc toujours à jour sans abonnement
   // dédié.
   texteDerniereSync: () => formaterHeureSync(derniereSyncListeMs),
+  // Horodatage BRUT (ms epoch) de la dernière synchro réseau de la liste, ou
+  // null — consommé par static/js/veille.js (issue #917 point 6) pour
+  // décider si l'affichage « sync HH:MM:SS » doit être coloré comme ancien.
+  dernierSyncMs: () => derniereSyncListeMs,
+  // Rafraîchissement CIBLÉ liste + timing d'une sélection de projets (issue
+  // #917 points 2/3), consommé par static/js/veille.js pour le réveil et le
+  // rafraîchissement périodique — voir rafraichirSelection ci-dessus.
+  rafraichirSelection,
 };

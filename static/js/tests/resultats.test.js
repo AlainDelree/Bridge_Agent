@@ -19,6 +19,7 @@ import {
   fusionnerTimingProjet,
   construireIssueCreation,
   FENETRE_RECENTE_TIMING_MS,
+  FENETRE_RECENTE_LISTE_MS,
   fautResynchroniserApresMasquage,
   fautResynchroniserApresReconnexionSse,
   SEUIL_RESYNC_MASQUAGE_MS,
@@ -371,6 +372,49 @@ test('fusionnerChargement : projets non refetchés conservés, tri par date déc
   assert.equal(fusion.length, 2);
   assert.equal(fusion[0].projet, 'a');   // 2026-06 avant 2026-05
   assert.equal(fusion[1].projet, 'c');
+});
+
+// ─── fusionnerChargement : décalage d'indexation GitHub (issue #917 point 4,
+//     même famille que #634 ci-dessous mais pour le rechargement COMPLET de
+//     la liste, pas seulement le timing) ───────────────────────────────────
+test('fusionnerChargement : issue ouverte et récente absente d\'un fetch réussi → conservée', () => {
+  const anciennes = [
+    { projet: 'a', number: 42, state: 'OPEN', createdAt: ilYA(5) },   // créée il y a 5s
+  ];
+  const fusion = fusionnerChargement(anciennes, ['a'], [
+    { projet: 'a', succes: true, issues: [] },   // gh pas encore à jour : absente de la réponse
+  ], T0);
+  const cles = fusion.map(it => it.projet + '#' + it.number);
+  assert.ok(cles.includes('a#42'), 'issue récente non effacée par le rechargement complet');
+});
+
+test('fusionnerChargement : issue absente mais ANCIENNE (hors fenêtre) → retirée', () => {
+  const anciennes = [
+    { projet: 'a', number: 42, state: 'OPEN', createdAt: new Date(T0 - FENETRE_RECENTE_LISTE_MS - 1000).toISOString() },
+  ];
+  const fusion = fusionnerChargement(anciennes, ['a'], [
+    { projet: 'a', succes: true, issues: [] },
+  ], T0);
+  assert.equal(fusion.length, 0, 'absence prolongée : vraie fin d\'issue, retirée normalement');
+});
+
+test('fusionnerChargement : issue absente mais FERMÉE → retirée même récente', () => {
+  const anciennes = [
+    { projet: 'a', number: 42, state: 'CLOSED', createdAt: ilYA(5) },
+  ];
+  const fusion = fusionnerChargement(anciennes, ['a'], [
+    { projet: 'a', succes: true, issues: [] },
+  ], T0);
+  assert.equal(fusion.length, 0, 'une issue déjà fermée ne doit jamais être retenue par la fenêtre de récence');
+});
+
+test('fusionnerChargement : issue présente dans la nouvelle réponse → version fraîche, pas de doublon', () => {
+  const anciennes = [{ projet: 'a', number: 42, state: 'OPEN', title: 'ancien titre', createdAt: ilYA(5) }];
+  const fusion = fusionnerChargement(anciennes, ['a'], [
+    { projet: 'a', succes: true, issues: [{ number: 42, state: 'OPEN', title: 'titre à jour', createdAt: ilYA(5) }] },
+  ], T0);
+  assert.equal(fusion.length, 1);
+  assert.equal(fusion[0].title, 'titre à jour');
 });
 
 // ─── fusionnerTimingProjet (issue #634 : décalage GitHub après création) ─────

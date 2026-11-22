@@ -51,6 +51,29 @@
             <button type="button" class="pl-btn-mini" id="pl-btn-tester-son" data-action="pl-tester-son" disabled title="Aucune ligne sélectionnée">Tester le son</button>
           </div>
         </div>
+        <!-- Réglages de veille/réveil de l'interface (issue #917) — partie
+             GLOBALE du panneau (comme #pl-zone-son ci-dessus) : une seule
+             valeur par réglage pour toute l'interface, jamais par projet.
+             Piloté par static/js/veille.js (initZoneVeille()) : lu/écrit via
+             window.Bridge.persistance (seul point d'accès au localStorage),
+             effet immédiat sans rechargement de page. Voir
+             docs/contexte/interface_rafraichissement.md pour le détail. -->
+        <div id="pl-zone-veille" class="pl-zone-son">
+          <div class="pl-resume-titre">Veille et rafraîchissement</div>
+          <div class="pl-ligne" title="0 désactive la veille — l'interface ne s'assombrit jamais.">
+            <span class="pl-ligne-libelle">Veille après (min)</span>
+            <input type="number" id="pl-veille-delai" class="pl-input-reglage" min="0" step="1">
+          </div>
+          <div class="pl-ligne" title="Minimum 15s pour protéger le quota GitHub.">
+            <span class="pl-ligne-libelle">Rafraîchir toutes les (s)</span>
+            <input type="number" id="pl-veille-intervalle" class="pl-input-reglage" min="15" step="1">
+          </div>
+          <div class="pl-ligne">
+            <span class="pl-ligne-libelle">Rattrapage création (s)</span>
+            <input type="number" id="pl-veille-rattrapage" class="pl-input-reglage" min="1" step="1">
+          </div>
+          <div class="pl-sous" id="pl-veille-cout" title="Ordre de grandeur, pour le(s) projet(s) actuellement sélectionné(s) dans le filtre Résultats."></div>
+        </div>
         <!-- Zone réservée aux futurs boutons (issue #380) : occupée par le
              watcher spool (rendrePanneauLateralExtras) — voir commentaire
              d'en-tête. -->

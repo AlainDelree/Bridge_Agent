@@ -1,0 +1,17 @@
+<!-- ─── Voile de veille (issue #917) ──────────────────────────────────────
+     Grise semi-opaque, couvre toute l'interface après une période
+     d'inactivité configurable (panneau Infrastructure, partie globale,
+     voir panneau_lateral.html). Piloté par static/js/veille.js :
+       - état « veille »  : #voile-veille-texte = « Interface en veille —
+         cliquez pour la réveiller ». Le premier clic/la première touche
+         est absorbé par CE voile (il couvre tout, rien dessous ne le reçoit).
+       - état « reveil »  : #voile-veille-texte = « Mise à jour… », pendant
+         le rechargement du projet sélectionné + le panneau Infrastructure.
+       - état « erreur »  : message d'échec explicite + #voile-veille-reessayer
+         visible (jamais de disparition silencieuse sans données).
+     position:absolute (comme #overlay-arret) : le body est position:relative.
+-->
+<div id="voile-veille" class="voile-veille">
+  <div id="voile-veille-texte" class="msg">Interface en veille — cliquez pour la réveiller</div>
+  <button id="voile-veille-reessayer" style="display:none">Réessayer</button>
+</div>

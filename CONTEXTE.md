@@ -66,3 +66,4 @@ documents de référence ci-dessous, voir issue #890) :
   l'onglet CCW.
 - `BRIDGE_AGENT_DOC.md §3.16` — à lire avant de toucher au champ `ATTENTE`
   d'`issues_inbox/`.
+- `docs/contexte/interface_rafraichissement.md` — veille/réveil/copie du rapport.

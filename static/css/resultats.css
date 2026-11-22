@@ -65,6 +65,9 @@
    conditionnel). */
 .resultats-derniere-sync{font-size:11px;color:#9a978f;font-style:italic;
   margin:0 2px;user-select:none}
+/* Synchro ancienne (issue #917 point 6) : au-delà de 3x l'intervalle de
+   rafraîchissement périodique réglé — voir static/js/veille.js::estSyncAncienne. */
+.resultats-derniere-sync-ancienne{color:#a32d2d;font-weight:600;font-style:normal}
 /* Bouton « Cocher tout » (issue #381), même gabarit que les boutons de filtre. */
 .btn-cocher-tout{font-size:12px;padding:5px 11px;border:1px solid #ccc;
   border-radius:14px;background:#fff;color:#555;cursor:pointer;user-select:none;
@@ -393,6 +396,10 @@
 .pl-son-opt:hover{background:#eee}
 .pl-son-opt.actif{background:#185FA5;color:#fff}
 .pl-sep{border:none;border-top:1px solid #e0dfda;margin:14px 0}
+/* Réglages de veille/réveil (issue #917) : mêmes marges que .pl-zone-son
+   ci-dessus (partie globale du panneau), champs numériques compacts. */
+.pl-input-reglage{width:56px;padding:2px 6px;font-size:12px;border:1px solid #ccc;
+  border-radius:5px;text-align:right}
 .pl-actions{display:flex;flex-direction:column;gap:8px}
 .pl-actions button{width:100%}
 /* Retour visuel pendant l'appel réseau de /interrompre (issue #748, bouton

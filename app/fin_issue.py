@@ -33,11 +33,18 @@ inbox », §3.8) et non plus seulement pendant que l'onglet Résultats est actif
 
 import json
 import queue
+import sys
+from pathlib import Path
 from threading import Lock
 
 from flask import Response, current_app, jsonify, request
 
 from app.auth import login_requis  # noqa: F401 (exporté pour l'enregistrement des routes)
+
+DOSSIER_SCRIPT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(DOSSIER_SCRIPT))
+
+import mesure_charge_interface as mci  # noqa: E402 — journal de l'interface (issue #917, point 9)
 
 DELAI_PING = 30   # s — garde la connexion /stream ouverte (proxys, navigateur)
 
@@ -50,13 +57,25 @@ def _diffuser(nom_evenement: str, payload: dict) -> None:
     Cœur commun à `_pousser_evenement` (fin/début d'issue) et aux émetteurs
     des événements issues_inbox (issue #631) — factorise la construction du
     message SSE et la copie sous verrou de la liste d'abonnés, seule partie
-    qui différait déjà entre les deux avant #631."""
+    qui différait déjà entre les deux avant #631.
+
+    Journalise aussi une ligne dans logs/charge_interface.log (issue #917,
+    point 9) : type d'événement, projet concerné (None si l'événement n'en
+    porte pas, ex. fichier_recu) et nombre de pages abonnées au moment de la
+    diffusion — JAMAIS le contenu de l'événement (titre, labels, timing,
+    fichier, motif...). Best-effort strict : une erreur d'écriture du journal
+    ne doit jamais empêcher la diffusion SSE elle-même."""
     evenement = f"event: {nom_evenement}\ndata: " + json.dumps(payload) + "\n\n"
     abonnes = current_app.config.setdefault("FIN_ISSUE_ABONNES", [])
     with _verrou_abonnes:
         cibles = list(abonnes)
     for file_attente in cibles:
         file_attente.put(evenement)
+    try:
+        mci.ecrire_ligne(mci.ligne_evenement_stream(
+            mci.horodatage(), nom_evenement, payload.get("projet"), len(cibles)))
+    except Exception:
+        pass
 
 
 def _pousser_evenement(nom_evenement: str):

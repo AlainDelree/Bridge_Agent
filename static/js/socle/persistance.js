@@ -106,6 +106,13 @@ export const CLES = {
   notifPc: 'bridge_notif_pc',
   prefixeCacheDetail: 'bridge_cache_detail_',   // + nom + '_' + numero
   prefixeCocheResultat: 'resultat-coche:',      // + projet + ':' + numero
+  // Réglages de veille/réveil de l'interface (issue #917) — préférences
+  // locales au navigateur, UNE valeur par réglage (jamais par projet) : voir
+  // static/js/veille.js pour les défauts/bornes et docs/contexte/
+  // interface_rafraichissement.md pour le détail.
+  veilleDelaiMin: 'bridge_veille_delai_min',
+  veilleIntervalleSec: 'bridge_veille_intervalle_sec',
+  veilleRattrapageSec: 'bridge_veille_rattrapage_sec',
 };
 
 // Construit la clé de cache détail d'une issue précise.
