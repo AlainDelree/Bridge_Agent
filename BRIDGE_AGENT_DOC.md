@@ -352,7 +352,7 @@ lignes distinctes.
 | `notif_gsm` | Ajoute une notification push (ntfy) |
 | `notif_tous` | notify-send + ntfy |
 | `mode_scratch` | **ARME le mode lecture active** — écriture confinée au dossier scratch, voir §5 |
-| `mode_interactif` | Marqueur « interactif » (étude #888), **orthogonal** aux labels de mode ci-dessus — posé via le champ `INTERACTIF` (§6, spécifique à `issues_inbox/`). Exclut l'issue de la calibration automatique du TIMEOUT (§19). Depuis l'issue #901 (étape 2) : CCL est lancé dans une session **tmux** détachée (à laquelle Alain peut s'attacher, voir la commande postée dans l'issue) et surveillé de façon non bloquante jusqu'à la fin de la session ou l'expiration du TIMEOUT. Depuis l'issue #903 (étape 3) : la fin de session ne laisse plus jamais l'issue relançable — rapport de clôture écrit par CCL sur confirmation d'Alain (chemin fixe hors worktree) ⇒ clôture identique au chemin automatique (label `done`) ; session disparue sans rapport ⇒ fermeture SANS `done` ; TIMEOUT ⇒ label `needs-human`. Jamais retenu en lecture seule ni sur une issue destinée à Windows (`for-windows`) : comportement automatique appliqué, avec avertissement informatif, voir `watcher.est_interactif()`. Détail complet : `docs/contexte/mode_interactif.md`. |
+| `mode_interactif` | Marqueur « interactif » (étude #888), **orthogonal** aux labels de mode ci-dessus — posé via le champ `INTERACTIF` (§6, spécifique à `issues_inbox/`). Exclut l'issue de la calibration automatique du TIMEOUT (§19). Depuis l'issue #901 (étape 2) : CCL est lancé dans une session **tmux** détachée (à laquelle Alain peut s'attacher, voir la commande postée dans l'issue) et surveillé de façon non bloquante jusqu'à la fin de la session ou l'expiration du TIMEOUT. Depuis l'issue #903 (étape 3) : la fin de session ne laisse plus jamais l'issue relançable — rapport de clôture écrit par CCL sur confirmation d'Alain (chemin fixe hors worktree) ⇒ clôture identique au chemin automatique (label `done`) ; session disparue sans rapport ⇒ fermeture SANS `done` ; TIMEOUT ⇒ label `needs-human`. Depuis l'issue #909 (étape 4) : le TIMEOUT est désormais suspendu pendant que CCL attend Alain (sentinelle de pause posée/retirée par des hooks Claude Code dédiés, réglages hors worktree) — une pause ne dure pas indéfiniment (limite absolue `DUREE_MAX_PAUSE_INTERACTIVE_S`, 12h), au-delà de laquelle c'est traité comme un TIMEOUT dépassé (`needs-human`, jamais une relance). Jamais retenu en lecture seule ni sur une issue destinée à Windows (`for-windows`) : comportement automatique appliqué, avec avertissement informatif, voir `watcher.est_interactif()`. Détail complet : `docs/contexte/mode_interactif.md`. |
 | `sans-redacteur` | Posé automatiquement quand `REDACTEUR` est absent de l'en-tête — signale une issue rédigée sans déclarer son projet d'origine, pour repérer un projet qui rédige à la place d'un autre, voir §3.4 |
 | `sans-complexite` | Posé automatiquement quand `COMPLEXITE` est absente ou non reconnue dans l'en-tête — signale une erreur de rédaction à corriger, l'issue ayant été traitée avec le repli `normal`, voir §6 |
 | `agent-claude` | Posé automatiquement à la clôture — **agent d'exécution** Claude Code (clé `AGENT` du `.conf`, issue #768) |
@@ -1340,7 +1340,38 @@ estimation que celle déjà affichée, sans dupliquer ce calcul.
 
 ---
 
-*Dernière mise à jour : 22 novembre 2026 — issue #908, instance unique par
+*Dernière mise à jour : 22 novembre 2026 — issue #909, mode interactif,
+étape 4 (étude #888) : le TIMEOUT était jusqu'ici un délai brut de bout en
+bout — une pause de réflexion ou une absence d'Alain pouvait le faire
+dépasser et tuer la session alors que CCL ne travaillait plus. Il est
+désormais suspendu pendant que CCL attend Alain, via une sentinelle de
+pause (`logs/interactif/<projet>-issue<numero>.pause`, même emplacement et
+convention que le rapport de clôture de l'issue #903) posée/retirée par
+quatre hooks Claude Code (signal retenu depuis l'étude #888 : `Stop`/
+`Notification` = CCL attend Alain, `UserPromptSubmit`/`SessionEnd` = il
+reprend ou la session se termine), eux-mêmes appelés par un petit script
+autonome (`scripts/hook_pause_interactif.py`, ne lève jamais, code de
+sortie toujours 0, écriture atomique). Les réglages de hooks sont écrits
+pour chaque session (`logs/tmux/<session>.settings.json`, hors du worktree
+du projet piloté, jamais capté par un commit) et passés via `claude
+--settings <chemin>` — jamais pour le chemin automatique. Tant que la
+sentinelle existe, chaque sondage de `_surveiller_session_tmux` recule
+l'échéance de la durée dormie (ligne de log au début et à la fin de chaque
+pause, avec sa durée) ; durée maximale absolue `DUREE_MAX_PAUSE_INTERACTIVE_S`
+(12h, constante nommée) au-delà de laquelle c'est traité comme un TIMEOUT
+dépassé (session tuée, `needs-human`, jamais une relance, commentaire
+distinct précisant qu'il s'agit d'une pause trop longue). Redémarrage du
+watcher pendant une pause : la sentinelle (hors worktree, horloge murale)
+survit sans changement ; solution prudente retenue (échéance fraîche à la
+reprise, comme pour toute session déjà existante) plutôt qu'une
+reconstitution précise du temps déjà écoulé — ne risque jamais de tuer une
+session à tort, la limite absolue des 12h restant comptée depuis la VRAIE
+heure de début. Sentinelle toujours retirée par watcher.py à chaque fin de
+session (rapport, sans rapport, TIMEOUT, pause trop longue) : jamais
+orpheline. Chemin automatique strictement inchangé.
+Détail complet : `docs/contexte/mode_interactif.md`.*
+
+*Mise à jour précédente : 22 novembre 2026 — issue #908, instance unique par
 projet (§1) : `watcher.py` pose désormais, au tout début de son démarrage,
 un verrou système (flock POSIX / verrouillage de plage Windows, pas un
 simple fichier PID) propre au projet (`logs/verrous/watcher-processus-

@@ -88,8 +88,71 @@ un commit) :
    garde-fou déjà existant en tête de `_guards_precoces_et_bootstrap`.
 
 Verrou et place de parallélisme libérés dans les trois cas par le mécanisme
-déjà existant (`_nettoyer_apres_traitement`). Étapes suivantes de l'étude
-#888 : suspension du délai pendant l'attente d'Alain, alerte.
+déjà existant (`_nettoyer_apres_traitement`). Étape suivante de l'étude
+#888 : alerte quand CCL attend Alain.
+
+## Suspension du TIMEOUT pendant l'attente d'Alain (étape 4, issue #909)
+
+Le TIMEOUT était jusqu'ici un délai brut de bout en bout : une pause de
+réflexion ou une absence d'Alain pouvait le faire dépasser et tuer la
+session alors que CCL ne travaillait plus. Une sentinelle de pause,
+`watcher._chemin_pause_interactif(nom_projet, numero)` =
+`logs/interactif/<projet>-issue<numero>.pause` (même dossier et convention
+que le rapport de clôture, hors worktree), suspend maintenant le TIMEOUT
+tant qu'elle existe.
+
+- **Pose/retrait** : quatre hooks Claude Code (étude #888, signal retenu dès
+  l'issue #901 via les variables d'environnement `BRIDGE_PROJET`/
+  `BRIDGE_ISSUE`, déjà exportées par le script de lancement tmux) — `Stop`
+  et `Notification` (CCL a fini son tour ou demande quelque chose = il
+  attend Alain) posent la sentinelle (contenu : heure de début, horloge
+  murale) ; `UserPromptSubmit` (Alain a répondu) et `SessionEnd` (fin de
+  session) la retirent. Un seul petit script autonome,
+  `scripts/hook_pause_interactif.py`, appelé pour les quatre (argument
+  `debut`/`fin`) — ne lève jamais, code de sortie toujours 0, aucune sortie
+  stdout/stderr, écriture atomique (fichier temporaire + `os.replace`).
+- **Réglages** : `watcher._ecrire_reglages_hooks_interactif` écrit, pour
+  CHAQUE session tmux interactive, un fichier de réglages JSON
+  (`logs/tmux/<session>.settings.json`, hors du worktree du projet piloté,
+  gitignoré, jamais capté par un commit) passé via `claude --settings
+  <chemin>` (`_construire_cmd_claude_interactif`) — le chemin automatique
+  (`_construire_cmd_claude`) n'a ni ce paramètre ni cette option, et n'écrit
+  jamais ce fichier. Les hooks appellent `scripts/hook_pause_interactif.py`
+  par chemin absolu (`sys.executable` + chemin absolu du script), jamais par
+  nom nu : indépendant du PATH et d'un shell interactif de la session.
+- **Calcul** : `watcher._surveiller_session_tmux` teste à chaque sondage si
+  la sentinelle existe ; si oui, le sondage ne compte pas contre l'échéance
+  (reculée d'exactement la durée dormie) — une ligne de log est écrite au
+  début et à la fin de chaque pause, avec sa durée. L'heure de début est lue
+  depuis le contenu de la sentinelle (`watcher._heure_debut_pause`, repli
+  sur `st_mtime` si contenu corrompu, jamais `None` tant que le fichier
+  existe) : c'est une horloge murale, insensible à un redémarrage du
+  watcher.
+- **Durée maximale absolue** : `watcher.DUREE_MAX_PAUSE_INTERACTIVE_S` (12h,
+  constante nommée) — au-delà, `_surveiller_session_tmux` retourne
+  `"pause_trop_longue"`, traité par `_traiter_issue_interactive` EXACTEMENT
+  comme un TIMEOUT dépassé (session tuée, verrou et place libérés, label
+  `needs-human`, jamais de relance), avec un commentaire GitHub distinct
+  précisant qu'il s'agit d'une pause trop longue et non d'un dépassement du
+  délai de travail.
+- **Redémarrage du watcher pendant une pause** : la sentinelle (hors
+  worktree, horloge murale persistée sur disque) survit sans changement à
+  un redémarrage. Comme au point 5 ci-dessus (reprise d'une session déjà
+  existante), le watcher redémarré donne une échéance fraîche de `timeout`
+  secondes à la reprise de la surveillance — solution prudente retenue
+  plutôt qu'une reconstitution précise du temps déjà écoulé : elle ne risque
+  JAMAIS de tuer une session à tort après un redémarrage, pause ou pas. Si
+  une pause était déjà en cours, la sentinelle (contenu non réinitialisé)
+  continue d'être prise en compte normalement dès le premier sondage, y
+  compris pour la limite absolue des 12h (comptée depuis la VRAIE heure de
+  début, pas depuis le redémarrage).
+- **Fin de session** : la sentinelle est retirée par watcher.py lui-même à
+  CHAQUE fin de session (rapport, sans rapport, TIMEOUT, pause trop longue)
+  — jamais de sentinelle orpheline qui fausserait une session ultérieure du
+  même numéro.
+- **Hors mode interactif** : les hooks ne sont jamais actifs (aucun fichier
+  de réglages écrit, aucun `--settings`) — chemin automatique strictement
+  inchangé.
 
 ## Survie à un redémarrage du watcher (point 5, issue #901, étendu #903)
 
