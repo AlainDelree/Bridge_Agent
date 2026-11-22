@@ -708,6 +708,19 @@ PREFIXE_SESSION_TMUX = "bridge"
 # avec une granularité raisonnable.
 INTERVALLE_SURVEILLANCE_TMUX_S = 15
 
+# Mode interactif, étape 4 (étude #888 — issue #909) : suspension du TIMEOUT
+# pendant que CCL attend Alain. Script de hook appelé par les réglages écrits
+# par _ecrire_reglages_hooks_interactif (CHEMIN unique, même emplacement que
+# SCRIPT_BIP_PARTAGE ci-dessus — un petit script du dépôt Bridge_Agent par
+# chemin absolu, jamais par nom nu).
+CHEMIN_HOOK_PAUSE_INTERACTIF = DOSSIER_SCRIPT / "scripts" / "hook_pause_interactif.py"
+
+# Durée maximale absolue d'une pause (constante nommée, facile à changer) :
+# au-delà, une session oubliée en pause ne doit pas garder indéfiniment le
+# verrou et la place de parallélisme — traitée comme un TIMEOUT dépassé (voir
+# _surveiller_session_tmux, "pause_trop_longue").
+DUREE_MAX_PAUSE_INTERACTIVE_S = 12 * 3600
+
 
 def _nom_projet_assaini(nom_projet: str) -> str:
     """Nom de projet assaini pour un usage en identifiant système (nom de
@@ -742,6 +755,42 @@ def _chemin_rapport_interactif(nom_projet: str, numero: int) -> Path:
     jamais le watcher, qui ne fait que le lire et le conserver comme trace
     une fois la clôture faite."""
     return DOSSIER_RAPPORTS_INTERACTIFS / f"{_nom_projet_assaini(nom_projet)}-issue{numero}.md"
+
+
+def _chemin_pause_interactif(nom_projet: str, numero: int) -> Path:
+    """Chemin FIXE de la sentinelle de pause (étude #888, étape 4 — issue
+    #909) : `logs/interactif/<projet>-issue<numero>.pause` — même dossier et
+    même convention de nom que `_chemin_rapport_interactif` (suffixe
+    `.pause` au lieu de `.md`), pour la même raison (hors worktree, jamais
+    happée par un commit, retrouvable à l'identique après un redémarrage du
+    watcher). Posée par `scripts/hook_pause_interactif.py` (hooks `Stop`/
+    `Notification`), retirée par lui (`UserPromptSubmit`/`SessionEnd`) — et
+    par watcher.py lui-même à CHAQUE fin de session, quelle que soit la
+    cause (point 6 : jamais de sentinelle orpheline qui fausserait une
+    session ultérieure du même numéro)."""
+    return DOSSIER_RAPPORTS_INTERACTIFS / f"{_nom_projet_assaini(nom_projet)}-issue{numero}.pause"
+
+
+def _heure_debut_pause(chemin_pause: Path) -> float | None:
+    """Lit l'heure de début de pause (horloge murale, epoch — écrite par
+    `scripts/hook_pause_interactif.py`) depuis le contenu de la sentinelle.
+    Contenu illisible ou corrompu : repli sur la date de modification du
+    fichier lui-même (`st_mtime`, également une horloge murale persistée sur
+    disque, donc tout aussi insensible à un redémarrage du watcher) plutôt
+    que de renoncer purement et simplement — un contenu corrompu ne doit
+    jamais permettre à une pause de suspendre le TIMEOUT indéfiniment sans
+    jamais pouvoir être reconnue comme « trop longue » (point 4). Ne retourne
+    None que si le fichier a disparu entre les deux lectures (course bénigne
+    avec la fin de la pause) : l'appelant ne doit alors jamais en déduire une
+    pause trop longue, voir _surveiller_session_tmux."""
+    try:
+        return float(chemin_pause.read_text(encoding="utf-8").strip())
+    except (OSError, ValueError):
+        pass
+    try:
+        return chemin_pause.stat().st_mtime
+    except OSError:
+        return None
 
 
 def _tmux_disponible() -> bool:
@@ -793,6 +842,44 @@ def _ecrire_script_lancement_tmux(nom_session: str, cmd: list[str], cwd: Path,
     chemin_script.write_text("\n".join(lignes) + "\n", encoding="utf-8")
     chemin_script.chmod(0o700)
     return chemin_script
+
+
+def _ecrire_reglages_hooks_interactif(nom_session: str) -> Path:
+    """Écrit le fichier de réglages de hooks Claude Code (étude #888, étape 4
+    — issue #909) passé à `claude --settings <chemin>` pour UNE session
+    interactive tmux — HORS du worktree du projet piloté (même emplacement
+    que le script de lancement, DOSSIER_TMUX, gitignoré : ni ajouté au dépôt
+    du projet, ni capté par un commit), et jamais pour le chemin automatique
+    (`claude --print`, qui ne reçoit jamais `--settings`) ni pour un autre
+    projet (fichier propre à CETTE session, passé en argument CLI explicite
+    de CETTE seule invocation de `claude`).
+
+    Quatre hooks, tous le même petit script du dépôt Bridge_Agent
+    (CHEMIN_HOOK_PAUSE_INTERACTIF), appelé via `sys.executable` (chemin
+    absolu de l'interpréteur qui fait tourner CE watcher) + le chemin absolu
+    du script — jamais par un nom nu : indépendant du PATH et d'un shell
+    interactif de la session tmux. `Stop`/`Notification` (CCL a fini son
+    tour ou demande quelque chose = il attend Alain) posent la sentinelle de
+    pause (argument "debut") ; `UserPromptSubmit`/`SessionEnd` (Alain a
+    répondu / la session se termine) la retirent (argument "fin") — voir
+    scripts/hook_pause_interactif.py et _chemin_pause_interactif/
+    _surveiller_session_tmux pour la suite (suspension du TIMEOUT)."""
+    DOSSIER_TMUX.mkdir(parents=True, exist_ok=True)
+    chemin = DOSSIER_TMUX / f"{nom_session}.settings.json"
+    interpreteur = shlex.quote(sys.executable)
+    script = shlex.quote(str(CHEMIN_HOOK_PAUSE_INTERACTIF))
+    commande_debut = f"{interpreteur} {script} debut"
+    commande_fin = f"{interpreteur} {script} fin"
+    reglages = {
+        "hooks": {
+            "Stop": [{"hooks": [{"type": "command", "command": commande_debut}]}],
+            "Notification": [{"hooks": [{"type": "command", "command": commande_debut}]}],
+            "UserPromptSubmit": [{"hooks": [{"type": "command", "command": commande_fin}]}],
+            "SessionEnd": [{"hooks": [{"type": "command", "command": commande_fin}]}],
+        }
+    }
+    _ecrire_json_atomique(chemin, reglages)
+    return chemin
 
 
 def _lancer_session_tmux(nom_session: str, cmd: list[str], cwd: Path,
@@ -882,17 +969,19 @@ def _taille_fichier_rapport_interactif(chemin_rapport: Path) -> int | None:
         return None
 
 
-def _surveiller_session_tmux(nom_session: str, echeance: float, chemin_rapport: Path) -> str:
+def _surveiller_session_tmux(nom_session: str, echeance: float, chemin_rapport: Path,
+                              chemin_pause: Path | None = None) -> str:
     """Surveillance NON BLOQUANTE (issue #901, point 2 — étendue #903, étape
-    3) — remplace, pour les issues interactives, l'attente bloquante
-    `proc.communicate(timeout=...)` du chemin automatique par un sondage
-    périodique, toutes les INTERVALLE_SURVEILLANCE_TMUX_S, qui teste À CHAQUE
-    FOIS la taille de `chemin_rapport` (voir _chemin_rapport_interactif) AVANT
-    l'existence de la session tmux : c'est Alain qui décide de la fin d'une
-    issue interactive en lui faisant écrire ce rapport (voir le bloc de
-    prompt dédié dans lancer_claude), donc sa présence prime sur tout —
-    qu'elle soit détectée alors que la session tourne encore (Alain resté
-    dedans après l'avoir fait écrire) ou après qu'elle a disparu.
+    3, puis #909, étape 4) — remplace, pour les issues interactives,
+    l'attente bloquante `proc.communicate(timeout=...)` du chemin automatique
+    par un sondage périodique, toutes les INTERVALLE_SURVEILLANCE_TMUX_S, qui
+    teste À CHAQUE FOIS la taille de `chemin_rapport` (voir
+    _chemin_rapport_interactif) AVANT l'existence de la session tmux : c'est
+    Alain qui décide de la fin d'une issue interactive en lui faisant écrire
+    ce rapport (voir le bloc de prompt dédié dans lancer_claude), donc sa
+    présence prime sur tout — qu'elle soit détectée alors que la session
+    tourne encore (Alain resté dedans après l'avoir fait écrire) ou après
+    qu'elle a disparu.
 
     Un rapport n'est considéré au complet ET lu que lorsque sa taille est
     IDENTIQUE à deux sondages consécutifs (jamais au premier sondage où il
@@ -905,14 +994,83 @@ def _surveiller_session_tmux(nom_session: str, echeance: float, chemin_rapport: 
     session est constatée (écriture du rapport puis sortie de la session dans
     le même intervalle).
 
-    Retourne "rapport" (rapport détecté — complet par stabilité si la session
-    tourne encore, ou par disparition de la session sinon — prioritaire sur
-    tout le reste), "terminee" (session disparue avant l'échéance SANS aucun
-    rapport) ou "timeout" (encore présente à l'échéance, toujours sans
-    rapport stable — l'appelant doit alors la nettoyer, voir _tuer_session_tmux)."""
+    `chemin_pause` (étude #888, étape 4 — issue #909 ; None par défaut, pour
+    un appelant qui ne connaît pas encore de sentinelle de pause) : chemin de
+    la sentinelle posée par scripts/hook_pause_interactif.py pendant que CCL
+    attend Alain (`Stop`/`Notification`) et retirée quand il reprend ou que
+    la session se termine (`UserPromptSubmit`/`SessionEnd`). Tant qu'elle
+    existe, un sondage ne compte JAMAIS contre `echeance` : elle est repoussée
+    d'exactement la durée dormie à ce sondage — aucune pause de réflexion ni
+    absence d'Alain ne peut donc faire dépasser le TIMEOUT. Une ligne de log
+    est écrite au début et à la fin de chaque pause, avec sa durée. Si la
+    pause dépasse DUREE_MAX_PAUSE_INTERACTIVE_S (lue depuis le contenu de la
+    sentinelle — horloge murale, jamais remise à zéro par un redémarrage du
+    watcher, voir _heure_debut_pause), retourne "pause_trop_longue" :
+    l'appelant doit alors traiter cette session comme un TIMEOUT dépassé
+    (needs-human, jamais une relance), avec un message distinct précisant
+    qu'il s'agit d'une pause trop longue et non d'un dépassement du délai de
+    travail.
+
+    Retourne "rapport" (prioritaire sur tout le reste), "terminee" (session
+    disparue avant l'échéance SANS aucun rapport), "timeout" (encore présente
+    à l'échéance, toujours sans rapport stable — l'appelant doit alors la
+    nettoyer, voir _tuer_session_tmux) ou "pause_trop_longue" (voir
+    ci-dessus)."""
     taille_precedente = _taille_fichier_rapport_interactif(chemin_rapport)
-    while time.monotonic() < echeance:
-        time.sleep(max(0.0, min(INTERVALLE_SURVEILLANCE_TMUX_S, echeance - time.monotonic())))
+    en_pause = False
+    heure_debut_pause_connue: float | None = None
+    while True:
+        maintenant = time.monotonic()
+        pause_active = chemin_pause is not None and chemin_pause.exists()
+
+        if pause_active:
+            debut = _heure_debut_pause(chemin_pause)
+            if debut is not None:
+                heure_debut_pause_connue = debut
+            if not en_pause:
+                en_pause = True
+                if heure_debut_pause_connue is not None:
+                    deja = max(0.0, time.time() - heure_debut_pause_connue)
+                    log.info(
+                        f"  Session tmux interactive '{nom_session}' : pause en cours "
+                        f"(CCL attend Alain depuis {deja:.0f}s — étude #888, étape 4 ; "
+                        f"TIMEOUT suspendu)."
+                    )
+                else:
+                    log.info(
+                        f"  Session tmux interactive '{nom_session}' : pause en cours "
+                        f"(CCL attend Alain — étude #888, étape 4 ; TIMEOUT suspendu, "
+                        f"heure de début illisible)."
+                    )
+            if heure_debut_pause_connue is not None and (
+                time.time() - heure_debut_pause_connue > DUREE_MAX_PAUSE_INTERACTIVE_S
+            ):
+                return "pause_trop_longue"
+        elif en_pause:
+            en_pause = False
+            duree = (
+                f"{max(0.0, time.time() - heure_debut_pause_connue):.0f}s"
+                if heure_debut_pause_connue is not None else "durée inconnue"
+            )
+            log.info(
+                f"  Session tmux interactive '{nom_session}' : pause terminée ({duree}) "
+                f"— reprise du décompte du TIMEOUT (issue #909)."
+            )
+            heure_debut_pause_connue = None
+
+        if maintenant >= echeance and not pause_active:
+            break
+
+        attente = (
+            INTERVALLE_SURVEILLANCE_TMUX_S if pause_active
+            else max(0.0, min(INTERVALLE_SURVEILLANCE_TMUX_S, echeance - maintenant))
+        )
+        time.sleep(attente)
+        if pause_active:
+            # Ce sondage ne compte pas contre le TIMEOUT (issue #909) :
+            # l'échéance est repoussée d'exactement la durée dormie.
+            echeance += attente
+
         taille_courante = _taille_fichier_rapport_interactif(chemin_rapport)
         if taille_courante is not None and taille_courante == taille_precedente:
             return "rapport"
@@ -924,16 +1082,18 @@ def _surveiller_session_tmux(nom_session: str, echeance: float, chemin_rapport: 
             # cette relecture immédiate ne perd jamais ce cas.
             taille_apres_mort = _taille_fichier_rapport_interactif(chemin_rapport)
             return "rapport" if taille_apres_mort is not None else "terminee"
-    # Échéance dépassée : un dernier sondage avant de conclure "timeout" — un
-    # rapport déjà stable à cet instant précis ne doit jamais être perdu au
-    # profit d'un TIMEOUT (même priorité que ci-dessus).
+    # Échéance dépassée (et aucune pause en cours) : un dernier sondage avant
+    # de conclure "timeout" — un rapport déjà stable à cet instant précis ne
+    # doit jamais être perdu au profit d'un TIMEOUT (même priorité que
+    # ci-dessus).
     taille_finale = _taille_fichier_rapport_interactif(chemin_rapport)
     if taille_finale is not None and taille_finale == taille_precedente:
         return "rapport"
     return "terminee" if not _tmux_session_existe(nom_session) else "timeout"
 
 
-def _construire_cmd_claude_interactif(mode: str, modele: str, prompt: str) -> list[str]:
+def _construire_cmd_claude_interactif(mode: str, modele: str, prompt: str,
+                                       chemin_reglages: Path | None = None) -> list[str]:
     """Même construction que `_construire_cmd_claude` (--model,
     --dangerously-skip-permissions selon le mode, prompt positionnel), SANS
     `--print` : lancée dans une session tmux interactive (issue #901) plutôt
@@ -942,8 +1102,16 @@ def _construire_cmd_claude_interactif(mode: str, modele: str, prompt: str) -> li
     n'est jamais en lecture seule (voir est_interactif), ce cas ne se
     présente donc jamais en pratique — gardé absent plutôt que dupliqué sans
     pouvoir être exercé, pour que cette fonction reste un vrai sous-ensemble
-    évident de `_construire_cmd_claude`."""
+    évident de `_construire_cmd_claude`.
+
+    `chemin_reglages` (étude #888, étape 4 — issue #909 ; None par défaut,
+    jamais fourni par le chemin automatique) : fichier de réglages de hooks
+    écrit par `_ecrire_reglages_hooks_interactif`, passé via `--settings` —
+    seul moyen, pour une session interactive, de suspendre le TIMEOUT pendant
+    que CCL attend Alain (voir _surveiller_session_tmux)."""
     cmd = ["claude"]
+    if chemin_reglages is not None:
+        cmd += ["--settings", str(chemin_reglages)]
     if modele:
         cmd += ["--model", modele]
     if mode != MODE_LECTURE:
@@ -5895,8 +6063,22 @@ Si la tâche échoue, remplace la toute première ligne par {MARQUEUR_VERDICT_EC
                 f"Mode interactif tmux non pris en charge pour l'agent "
                 f"'{CFG.agent}' (seul 'claude' l'est, issue #901)."
             )
-        cmd_tmux = _construire_cmd_claude_interactif(mode, modele, prompt)
         nom_session = _nom_session_tmux(CFG.nom, numero)
+        # Issue #909 (étude #888, étape 4) : réglages de hooks propres à
+        # cette session, hors worktree (voir _ecrire_reglages_hooks_
+        # interactif) — repli SANS hooks (session lancée normalement, mais
+        # sans suspension du TIMEOUT pendant les pauses) si l'écriture
+        # échoue, jamais un blocage du lancement pour autant.
+        try:
+            chemin_reglages = _ecrire_reglages_hooks_interactif(nom_session)
+        except OSError as e:
+            log.warning(
+                f"Réglages de hooks de pause interactive impossibles à écrire ({e}) — "
+                f"session '{nom_session}' lancée SANS suspension du TIMEOUT pendant les "
+                f"pauses (issue #909)."
+            )
+            chemin_reglages = None
+        cmd_tmux = _construire_cmd_claude_interactif(mode, modele, prompt, chemin_reglages)
         env_extra = {"BRIDGE_PROJET": CFG.nom, "BRIDGE_ISSUE": str(numero)}
         return _lancer_session_tmux(nom_session, cmd_tmux, cwd_effectif, env_extra)
 
@@ -9205,7 +9387,8 @@ def _resume_worktree_sans_rapport(cwd_effectif: Path, tete_avant_traitement: str
 def _finaliser_session_interactive_sans_rapport(numero: int, nom_session: str,
                                                  chemin_script: Path, cwd_effectif: Path,
                                                  tete_avant_traitement: str | None,
-                                                 commit_sauvegarde_watcher: str | None) -> None:
+                                                 commit_sauvegarde_watcher: str | None,
+                                                 chemin_pause: Path | None = None) -> None:
     """Repli « fin de session sans rapport » (issue #903, point 3) : la
     session tmux interactive de l'issue `numero` a disparu — Alain a quitté
     Claude ou fermé la fenêtre, volontairement ou non — SANS qu'aucun
@@ -9227,7 +9410,15 @@ def _finaliser_session_interactive_sans_rapport(numero: int, nom_session: str,
     Le script de lancement (`chemin_script`) n'est supprimé QUE si la
     fermeture a réussi : s'il échoue (réseau), le script reste le marqueur
     qui permet à `_traiter_issue_interactive` de retenter cette même
-    finalisation au prochain cycle plutôt que de relancer CCL à tort."""
+    finalisation au prochain cycle plutôt que de relancer CCL à tort.
+
+    `chemin_pause` (issue #909, point 6 — None par défaut) : sentinelle de
+    pause retirée inconditionnellement, dès l'entrée dans cette fonction —
+    la session est de toute façon déjà terminée (plus aucun hook ne peut
+    plus la reposer), jamais laissée orpheline quelle que soit l'issue de la
+    fermeture GitHub ci-dessous."""
+    if chemin_pause is not None:
+        chemin_pause.unlink(missing_ok=True)
     resume = _resume_worktree_sans_rapport(cwd_effectif, tete_avant_traitement, commit_sauvegarde_watcher)
     log.warning(
         f"  Issue #{numero} : session tmux interactive '{nom_session}' disparue "
@@ -9260,7 +9451,8 @@ def _cloturer_session_interactive_via_rapport(numero: int, nom_session: str,
                                                chemin_rapport: Path, chemin_script: Path,
                                                cwd_effectif: Path,
                                                tete_avant_traitement: str | None,
-                                               commit_sauvegarde_watcher: str | None) -> str | None:
+                                               commit_sauvegarde_watcher: str | None,
+                                               chemin_pause: Path | None = None) -> str | None:
     """Rapport de clôture interactif trouvé et stable (issue #903, point 2) —
     qu'il vienne d'être détecté par `_surveiller_session_tmux` ou qu'il soit
     déjà présent à la reprise après un redémarrage du watcher (point 5) :
@@ -9273,9 +9465,16 @@ def _cloturer_session_interactive_via_rapport(numero: int, nom_session: str,
     transmette tel quel à `_finaliser_succes` — EXACTEMENT la chaîne de
     clôture habituelle (verdict, commentaire, fermeture, label).
 
+    `chemin_pause` (issue #909, point 6 — None par défaut) : sentinelle de
+    pause retirée inconditionnellement, comme dans
+    `_finaliser_session_interactive_sans_rapport` — un rapport trouvé est
+    toujours une fin définitive, jamais de sentinelle orpheline.
+
     Retourne None si la lecture du fichier échoue malgré sa présence : repli
     immédiat sur la fin sans rapport, déjà entièrement géré ICI dans ce cas
     — l'appelant n'a alors plus rien à faire."""
+    if chemin_pause is not None:
+        chemin_pause.unlink(missing_ok=True)
     if _tmux_session_existe(nom_session):
         log.info(
             f"  Issue #{numero} : rapport de clôture interactif trouvé alors que la "
@@ -9293,7 +9492,7 @@ def _cloturer_session_interactive_via_rapport(numero: int, nom_session: str,
         )
         _finaliser_session_interactive_sans_rapport(
             numero, nom_session, chemin_script, cwd_effectif,
-            tete_avant_traitement, commit_sauvegarde_watcher)
+            tete_avant_traitement, commit_sauvegarde_watcher, chemin_pause)
         return None
 
 
@@ -9307,13 +9506,14 @@ def _traiter_issue_interactive(numero: int, titre: str, body: str, mode: str,
                                 commit_sauvegarde_watcher: str | None,
                                 backup_watcher_nouveaux_suivis: tuple[str, ...],
                                 dry_run: bool) -> tuple[bool, str | None]:
-    """Issue #901 (étude #888, étape 2, étendue #903 étape 3) : lance (ou
-    retrouve) CCL dans une session tmux détachée pour une issue
-    `mode_interactif` effective (voir est_interactif), et la surveille de
-    façon NON BLOQUANTE jusqu'à sa fin — rapport de clôture, TIMEOUT, ou
-    disparition de la session sans rapport — remplace, pour ces seules
-    issues, l'attente bloquante `proc.communicate(timeout=...)` du chemin
-    automatique (lancer_claude, cmd/Popen inchangés). Appelée par
+    """Issue #901 (étude #888, étape 2, étendue #903 étape 3, puis #909 étape
+    4) : lance (ou retrouve) CCL dans une session tmux détachée pour une
+    issue `mode_interactif` effective (voir est_interactif), et la surveille
+    de façon NON BLOQUANTE jusqu'à sa fin — rapport de clôture, TIMEOUT
+    (suspendu pendant les pauses d'attente d'Alain, issue #909), pause trop
+    longue, ou disparition de la session sans rapport — remplace, pour ces
+    seules issues, l'attente bloquante `proc.communicate(timeout=...)` du
+    chemin automatique (lancer_claude, cmd/Popen inchangés). Appelée par
     `_traiter_issue_synchrone` juste avant sa boucle de tentatives
     habituelle, à laquelle elle ne touche pas.
 
@@ -9323,9 +9523,10 @@ def _traiter_issue_interactive(numero: int, titre: str, body: str, mode: str,
       posté un avertissement explicite dans l'issue et le journal. L'appelant
       doit alors poursuivre EXACTEMENT comme si cette issue n'était pas
       interactive (chemin automatique inchangé), jamais un échec silencieux.
-    - (True, None) : fin de session entièrement traitée ICI (TIMEOUT +
-      `needs-human` posé, ou repli « fin sans rapport » + fermeture sans
-      `done`), ou dry-run. L'appelant doit `return` immédiatement.
+    - (True, None) : fin de session entièrement traitée ICI (TIMEOUT ou pause
+      trop longue + `needs-human` posé, ou repli « fin sans rapport » +
+      fermeture sans `done`), ou dry-run. L'appelant doit `return`
+      immédiatement.
     - (True, <texte>) : rapport de clôture interactif trouvé et stable — le
       texte est le contenu intégral du rapport, à transmettre tel quel à
       `_finaliser_succes` par l'appelant (réutilisation à l'identique de la
@@ -9341,6 +9542,7 @@ def _traiter_issue_interactive(numero: int, titre: str, body: str, mode: str,
     `_guards_precoces_et_bootstrap`."""
     nom_session = _nom_session_tmux(CFG.nom, numero)
     chemin_rapport = _chemin_rapport_interactif(CFG.nom, numero)
+    chemin_pause = _chemin_pause_interactif(CFG.nom, numero)
     chemin_script = DOSSIER_TMUX / f"{nom_session}.sh"
 
     if not dry_run and chemin_rapport.exists():
@@ -9351,7 +9553,7 @@ def _traiter_issue_interactive(numero: int, titre: str, body: str, mode: str,
         # la session). Jamais une relance dans aucun des deux cas.
         sortie_rapport = _cloturer_session_interactive_via_rapport(
             numero, nom_session, chemin_rapport, chemin_script, cwd_effectif,
-            tete_avant_traitement, commit_sauvegarde_watcher)
+            tete_avant_traitement, commit_sauvegarde_watcher, chemin_pause)
         return True, sortie_rapport
 
     if not dry_run and _tmux_session_existe(nom_session):
@@ -9388,7 +9590,7 @@ def _traiter_issue_interactive(numero: int, titre: str, body: str, mode: str,
         )
         _finaliser_session_interactive_sans_rapport(
             numero, nom_session, chemin_script, cwd_effectif,
-            tete_avant_traitement, commit_sauvegarde_watcher)
+            tete_avant_traitement, commit_sauvegarde_watcher, chemin_pause)
         return True, None
     else:
         succes, sortie = lancer_claude(
@@ -9443,14 +9645,15 @@ def _traiter_issue_interactive(numero: int, titre: str, body: str, mode: str,
     log.info(
         f"  Issue #{numero} : surveillance non bloquante de la session tmux "
         f"'{nom_session}' (échéance {timeout}s, issue #901 point 2 — rapport "
-        f"de clôture guetté à chaque sondage, issue #903)..."
+        f"de clôture guetté à chaque sondage, issue #903 — TIMEOUT suspendu "
+        f"pendant une pause, issue #909)..."
     )
-    resultat = _surveiller_session_tmux(nom_session, echeance, chemin_rapport)
+    resultat = _surveiller_session_tmux(nom_session, echeance, chemin_rapport, chemin_pause)
 
     if resultat == "rapport":
         sortie_rapport = _cloturer_session_interactive_via_rapport(
             numero, nom_session, chemin_rapport, chemin_script, cwd_effectif,
-            tete_avant_traitement, commit_sauvegarde_watcher)
+            tete_avant_traitement, commit_sauvegarde_watcher, chemin_pause)
         return True, sortie_rapport
 
     if resultat == "timeout":
@@ -9466,13 +9669,46 @@ def _traiter_issue_interactive(numero: int, titre: str, body: str, mode: str,
             f"verrou et la place de parallélisme sont libérés ; label `{LABEL_ECHEC}` "
             f"posé : cette issue ne sera plus retraitée (ni relancée) automatiquement "
             f"tant que ce label n'est pas retiré manuellement par Alain (étude #888, "
-            f"étape 3 — la suspension du délai pendant l'attente d'Alain reste une "
-            f"étape suivante)."
+            f"étape 3 — le TIMEOUT est suspendu pendant une pause d'attente d'Alain, "
+            f"issue #909 ; ce délai n'a donc compté QUE du temps de travail réel)."
         )
         ajouter_label(numero, LABEL_ECHEC)
         if mode == MODE_ECRITURE:
             _issue_write_bloquee_ajouter(numero)
         chemin_script.unlink(missing_ok=True)
+        chemin_pause.unlink(missing_ok=True)
+        return True, None
+
+    if resultat == "pause_trop_longue":
+        # Issue #909, point 4 : une pause ne dure pas indéfiniment — au-delà
+        # de DUREE_MAX_PAUSE_INTERACTIVE_S, traitée comme un TIMEOUT dépassé
+        # (session tuée, verrou et place libérés, needs-human, jamais une
+        # relance), avec un message distinct : ce n'est PAS un dépassement du
+        # délai de travail (celui-ci était suspendu), mais une pause trop
+        # longue.
+        heures = DUREE_MAX_PAUSE_INTERACTIVE_S // 3600
+        log.warning(
+            f"  Issue #{numero} : pause trop longue (> {heures}h) pendant la session "
+            f"tmux interactive '{nom_session}' — nettoyage (issue #909)."
+        )
+        _tuer_session_tmux(nom_session)
+        commenter_issue(
+            numero,
+            f"⏱️ Pause trop longue (> {heures}h, limite absolue — étude #888, étape 4) "
+            f"pendant la session interactive de l'issue #{numero} — session tmux "
+            f"`{nom_session}` fermée automatiquement. **Il ne s'agit PAS d'un "
+            f"dépassement du délai de travail (TIMEOUT)** : CCL a passé trop longtemps "
+            f"à attendre une réponse d'Alain, pause suspendue depuis le début mais "
+            f"bornée à {heures}h pour ne pas garder indéfiniment le verrou et la place "
+            f"de parallélisme. Label `{LABEL_ECHEC}` posé : cette issue ne sera plus "
+            f"retraitée (ni relancée) automatiquement tant que ce label n'est pas "
+            f"retiré manuellement par Alain."
+        )
+        ajouter_label(numero, LABEL_ECHEC)
+        if mode == MODE_ECRITURE:
+            _issue_write_bloquee_ajouter(numero)
+        chemin_script.unlink(missing_ok=True)
+        chemin_pause.unlink(missing_ok=True)
         return True, None
 
     # resultat == "terminee" : session disparue sans rapport de clôture.
@@ -9482,7 +9718,7 @@ def _traiter_issue_interactive(numero: int, titre: str, body: str, mode: str,
     )
     _finaliser_session_interactive_sans_rapport(
         numero, nom_session, chemin_script, cwd_effectif,
-        tete_avant_traitement, commit_sauvegarde_watcher)
+        tete_avant_traitement, commit_sauvegarde_watcher, chemin_pause)
     return True, None
 
 

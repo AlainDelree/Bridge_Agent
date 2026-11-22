@@ -360,7 +360,8 @@ def test_traiter_issue_interactive_lance_et_surveille_jusqu_a_fin_normale(cfg, m
     `done`, jamais une issue laissée ouverte sans label — invariant #903)."""
     monkeypatch.setattr(watcher, "_tmux_session_existe", lambda nom: False)
     monkeypatch.setattr(watcher, "lancer_claude", lambda *a, **k: (True, "hors_groupe"))
-    monkeypatch.setattr(watcher, "_surveiller_session_tmux", lambda nom, echeance, chemin_rapport: "terminee")
+    monkeypatch.setattr(watcher, "_surveiller_session_tmux",
+                         lambda nom, echeance, chemin_rapport, chemin_pause=None: "terminee")
     fermetures = []
     monkeypatch.setattr(watcher, "_fermer_issue_sans_done", lambda numero: fermetures.append(numero) or True)
     monkeypatch.setattr(watcher, "_issues_en_cours_retirer", lambda numero: None)
@@ -389,7 +390,8 @@ def test_traiter_issue_interactive_timeout_pose_needs_human(cfg, monkeypatch, tm
     labels_poses = []
     monkeypatch.setattr(watcher, "_tmux_session_existe", lambda nom: False)
     monkeypatch.setattr(watcher, "lancer_claude", lambda *a, **k: (True, "meme_groupe"))
-    monkeypatch.setattr(watcher, "_surveiller_session_tmux", lambda nom, echeance, chemin_rapport: "timeout")
+    monkeypatch.setattr(watcher, "_surveiller_session_tmux",
+                         lambda nom, echeance, chemin_rapport, chemin_pause=None: "timeout")
     monkeypatch.setattr(watcher, "_tuer_session_tmux", lambda nom: appels_kill.append(nom))
     monkeypatch.setattr(watcher, "ajouter_label", lambda numero, label: labels_poses.append((numero, label)))
 
@@ -415,7 +417,8 @@ def test_traiter_issue_interactive_reprise_session_existante_ne_relance_pas(cfg,
     def jamais_appele(*a, **k):
         raise AssertionError("lancer_claude ne doit pas être appelé si la session existe déjà")
     monkeypatch.setattr(watcher, "lancer_claude", jamais_appele)
-    monkeypatch.setattr(watcher, "_surveiller_session_tmux", lambda nom, echeance, chemin_rapport: "terminee")
+    monkeypatch.setattr(watcher, "_surveiller_session_tmux",
+                         lambda nom, echeance, chemin_rapport, chemin_pause=None: "terminee")
     monkeypatch.setattr(watcher, "_fermer_issue_sans_done", lambda numero: True)
     monkeypatch.setattr(watcher, "_issues_en_cours_retirer", lambda numero: None)
 
