@@ -17,17 +17,24 @@
 # redémarrage du PC ou un crash : systemd s'en charge.
 #
 # ─────────────────────────────────────────────────────────────────────────────
-# UNIFIÉ AVEC LE BOUTON « Lancer / Arrêter watcher » DE L'INTERFACE (issue #596)
+# MODE DE LANCEMENT SÉPARÉ DE CELUI DE L'INTERFACE (issue #682)
 # ─────────────────────────────────────────────────────────────────────────────
-# Avant #596, ce service systemd et app/watchers.py (demarrer_watcher /
-# arreter_watcher, derrière le bouton « Lancer / Arrêter watcher » de
-# l'interface web) étaient deux mécanismes indépendants qui NE SE VOYAIENT PAS
-# — risque de double process. Depuis #596, demarrer_watcher()/arreter_watcher()
-# appellent eux-mêmes `systemctl --user start|restart|stop watcher@<projet>` :
-# les boutons de l'interface ET ce service systemd sont désormais la même
-# source de vérité, plus de doublon possible. `watcher_actif()` continue de
-# lire logs/watcher-<nom>.pid, désormais publié par watcher.py lui-même à son
-# démarrage (quel que soit son mode de lancement).
+# Entre #596 et #682, demarrer_watcher()/arreter_watcher() (derrière le bouton
+# « Lancer / Arrêter watcher » de l'interface web, app/watchers.py)
+# appelaient eux-mêmes `systemctl --user start|restart|stop watcher@<projet>` :
+# les boutons de l'interface ET ce service systemd étaient alors la même
+# source de vérité. Depuis #682, demarrer_watcher()/arreter_watcher() lancent/
+# arrêtent `watcher.py` directement (subprocess.Popen / SIGTERM), portable
+# Linux/Windows, sans dépendance à systemd — ce service est redevenu un mode
+# de lancement INDÉPENDANT de celui de l'interface, non activé par ce script
+# (seul `systemctl --user start` est appelé ci-dessous, jamais `enable`),
+# surtout utile pour tester un redémarrage de watcher (Restart=on-failure,
+# linger). `watcher_actif()` continue de lire logs/watcher-<nom>.pid,
+# publié par watcher.py lui-même à son démarrage quel que soit son mode de
+# lancement — ce qui permet au verrou d'instance unique posé par watcher.py
+# (issue #908) d'empêcher tout doublon entre les deux modes, quel que soit
+# celui qui démarre en premier (cause du doublon constaté le 18/11/2026,
+# avant #908, entre l'interface et une instance systemd lancée pour test).
 # ─────────────────────────────────────────────────────────────────────────────
 
 set -euo pipefail
@@ -107,5 +114,7 @@ echo "Terminé. Diagnostic :"
 echo "  systemctl --user status watcher@${PROJETS[0]}"
 echo "  journalctl --user -u watcher@${PROJETS[0]} -f"
 echo
-echo "Le bouton « Lancer / Arrêter watcher » de l'interface pilote désormais"
-echo "ces mêmes services systemd (issue #596) — plus de risque de doublon."
+echo "Le bouton « Lancer / Arrêter watcher » de l'interface lance watcher.py"
+echo "directement (issue #682), indépendamment de ce service systemd — le"
+echo "verrou d'instance unique de watcher.py (issue #908) empêche tout"
+echo "doublon entre les deux modes de lancement."
