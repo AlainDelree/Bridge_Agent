@@ -41,11 +41,22 @@ sys.path.insert(0, str(RACINE))
 sys.path.insert(0, str(RACINE / "scripts"))
 
 import flask  # noqa: E402
+import pytest  # noqa: E402
 
 import app.issues_inbox as ii  # noqa: E402
 import watcher_issues_inbox as w  # noqa: E402
 
 APP_FLASK = flask.Flask(__name__)
+
+
+@pytest.fixture
+def _tmp_dir_factory(tmp_path_factory):
+    compteur = {"n": 0}
+
+    def _make():
+        compteur["n"] += 1
+        return tmp_path_factory.mktemp(f"sigattente{compteur['n']}")
+    return _make
 
 
 def _route_cfg(tmp: Path) -> "w.ConfigInbox":
@@ -64,23 +75,23 @@ def _ecrire(chemin: Path, contenu: str, age_s: float) -> None:
 
 # ─── 1. _signature_attente — fonction pure sur le disque ──────────────────
 
-def test_dossier_absent_chaine_vide(tmp_dir_factory):
-    tmp = tmp_dir_factory()
+def test_dossier_absent_chaine_vide(_tmp_dir_factory):
+    tmp = _tmp_dir_factory()
     cfg = w.ConfigInbox(rep_travail=tmp, inbox_dir=tmp / "issues_inbox",
                          rejected_dir=tmp / "issues_inbox" / "rejected")
     assert ii._signature_attente(cfg) == ""
     return {}
 
 
-def test_dossier_vide_chaine_vide(tmp_dir_factory):
-    tmp = tmp_dir_factory()
+def test_dossier_vide_chaine_vide(_tmp_dir_factory):
+    tmp = _tmp_dir_factory()
     cfg = _route_cfg(tmp)
     assert ii._signature_attente(cfg) == ""
     return {}
 
 
-def test_stable_sans_changement(tmp_dir_factory):
-    tmp = tmp_dir_factory()
+def test_stable_sans_changement(_tmp_dir_factory):
+    tmp = _tmp_dir_factory()
     cfg = _route_cfg(tmp)
     _ecrire(cfg.en_attente_dir / "a.txt", "contenu a", 10)
     _ecrire(cfg.en_attente_dir / "b.txt", "contenu b", 5)
@@ -91,8 +102,8 @@ def test_stable_sans_changement(tmp_dir_factory):
     return {"signature": sig1}
 
 
-def test_change_sur_ajout(tmp_dir_factory):
-    tmp = tmp_dir_factory()
+def test_change_sur_ajout(_tmp_dir_factory):
+    tmp = _tmp_dir_factory()
     cfg = _route_cfg(tmp)
     _ecrire(cfg.en_attente_dir / "a.txt", "contenu a", 10)
     avant = ii._signature_attente(cfg)
@@ -102,8 +113,8 @@ def test_change_sur_ajout(tmp_dir_factory):
     return {}
 
 
-def test_change_sur_retrait(tmp_dir_factory):
-    tmp = tmp_dir_factory()
+def test_change_sur_retrait(_tmp_dir_factory):
+    tmp = _tmp_dir_factory()
     cfg = _route_cfg(tmp)
     _ecrire(cfg.en_attente_dir / "a.txt", "contenu a", 10)
     cible = cfg.en_attente_dir / "b.txt"
@@ -115,12 +126,12 @@ def test_change_sur_retrait(tmp_dir_factory):
     return {}
 
 
-def test_change_sur_remplacement_meme_nom_mtime_et_taille_differentes(tmp_dir_factory):
+def test_change_sur_remplacement_meme_nom_mtime_et_taille_differentes(_tmp_dir_factory):
     """Le cas visé par l'issue : Alain écrase un fichier d'en_attente/ par
     une version modifiée de la MÊME issue (même nom, cf.
     _remplacer_item_en_attente, #820) — le NOMBRE d'éléments ne change pas,
     mais la signature doit changer."""
-    tmp = tmp_dir_factory()
+    tmp = _tmp_dir_factory()
     cfg = _route_cfg(tmp)
     cible = cfg.en_attente_dir / "mono.txt"
     _ecrire(cible, "| PROJET | bridge_agent |\n| ATTENTE | ancienne |\n\n#Titre: T.\nAncien corps.\n", 20)
@@ -136,11 +147,11 @@ def test_change_sur_remplacement_meme_nom_mtime_et_taille_differentes(tmp_dir_fa
     return {"avant": avant, "apres": apres}
 
 
-def test_change_sur_remplacement_meme_taille_mtime_differente(tmp_dir_factory):
+def test_change_sur_remplacement_meme_taille_mtime_differente(_tmp_dir_factory):
     """Même LONGUEUR de contenu (donc même taille), seule la date de
     modification change — la signature doit tout de même changer (elle ne
     dépend pas QUE de la taille)."""
-    tmp = tmp_dir_factory()
+    tmp = _tmp_dir_factory()
     cfg = _route_cfg(tmp)
     cible = cfg.en_attente_dir / "mono.txt"
     _ecrire(cible, "contenu identique", 20)
@@ -153,11 +164,11 @@ def test_change_sur_remplacement_meme_taille_mtime_differente(tmp_dir_factory):
     return {}
 
 
-def test_ignore_sous_dossier_ordre(tmp_dir_factory):
+def test_ignore_sous_dossier_ordre(_tmp_dir_factory):
     """Le sous-dossier .ordre/ (DOSSIER_ORDRE_ATTENTE, #819) n'est jamais un
     fichier d'issue — écrire l'ordre persisté ne doit pas changer la
     signature."""
-    tmp = tmp_dir_factory()
+    tmp = _tmp_dir_factory()
     cfg = _route_cfg(tmp)
     _ecrire(cfg.en_attente_dir / "a.txt", "contenu a", 10)
     _ecrire(cfg.en_attente_dir / "b.txt", "contenu b", 5)
@@ -173,8 +184,8 @@ def test_ignore_sous_dossier_ordre(tmp_dir_factory):
 
 # ─── 2. Route GET /issues-inbox/etat ───────────────────────────────────────
 
-def test_route_etat_inbox_expose_signature_attente(tmp_dir_factory):
-    tmp = tmp_dir_factory()
+def test_route_etat_inbox_expose_signature_attente(_tmp_dir_factory):
+    tmp = _tmp_dir_factory()
     cfg = _route_cfg(tmp)
     _ecrire(cfg.en_attente_dir / "a.txt", "contenu a", 10)
     ii.CHEMIN_PID = tmp / "logs" / "watcher-inexistant.pid"
@@ -188,8 +199,8 @@ def test_route_etat_inbox_expose_signature_attente(tmp_dir_factory):
     return {"signature_attente": corps["signature_attente"]}
 
 
-def test_route_etat_inbox_signature_changee_par_remplacement_nombre_inchange(tmp_dir_factory):
-    tmp = tmp_dir_factory()
+def test_route_etat_inbox_signature_changee_par_remplacement_nombre_inchange(_tmp_dir_factory):
+    tmp = _tmp_dir_factory()
     cfg = _route_cfg(tmp)
     cible = cfg.en_attente_dir / "mono.txt"
     _ecrire(cible, "| PROJET | bridge_agent |\n| ATTENTE | ancienne |\n\n#Titre: T.\nAncien.\n", 20)
@@ -209,8 +220,8 @@ def test_route_etat_inbox_signature_changee_par_remplacement_nombre_inchange(tmp
     return {}
 
 
-def test_route_etat_inbox_signature_inchangee_par_simple_deplacement(tmp_dir_factory):
-    tmp = tmp_dir_factory()
+def test_route_etat_inbox_signature_inchangee_par_simple_deplacement(_tmp_dir_factory):
+    tmp = _tmp_dir_factory()
     cfg = _route_cfg(tmp)
     _ecrire(cfg.en_attente_dir / "a.txt", "contenu a", 10)
     _ecrire(cfg.en_attente_dir / "b.txt", "contenu b", 5)
@@ -233,7 +244,7 @@ def main() -> int:
     tmp_racine = tempfile.TemporaryDirectory()
     compteur = {"n": 0}
 
-    def tmp_dir_factory():
+    def _tmp_dir_factory():
         compteur["n"] += 1
         chemin = Path(tmp_racine.name) / f"t{compteur['n']}"
         chemin.mkdir(parents=True, exist_ok=True)
@@ -255,7 +266,7 @@ def main() -> int:
     echecs = 0
     for nom, fn in tests:
         try:
-            rap = fn(tmp_dir_factory)
+            rap = fn(_tmp_dir_factory)
             print(f"  ✓ {nom}  ({rap})")
         except AssertionError as e:
             echecs += 1
