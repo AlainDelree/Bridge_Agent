@@ -136,7 +136,7 @@ def _enregistrer_routes(app: Flask) -> None:
     from app.github_status import route_statut_github
     from app.vibe_modele import (etat_vibe_modele, activer_vibe_modele,
                                  ajouter_vibe_modele, retirer_vibe_modele)
-    from app.charge_interface import route_resume_precharge
+    from app.charge_interface import route_resume_precharge, route_reouverture_stream
     from app.diagnostic_copie import route_diagnostic_copie
     from app.vues import index
 
@@ -269,6 +269,11 @@ def _enregistrer_routes(app: Flask) -> None:
     # #835 point 4) : à la fin de chaque série de préparations de la précharge
     # (file vide) — mêmes règles de connexion que le reste de l'interface.
     app.add_url_rule("/mesure-precharge", "route_resume_precharge", login_requis(route_resume_precharge), methods=["POST"])
+    # ─── Journal de diagnostic de la surveillance du flux /stream (issue
+    # #937 point 4) : une ligne à chaque réouverture décidée par
+    # static/js/veille.js (ancienneté du dernier message au moment de la
+    # décision) — mêmes règles de connexion que le reste de l'interface.
+    app.add_url_rule("/journal-reouverture-stream", "route_reouverture_stream", login_requis(route_reouverture_stream), methods=["POST"])
     # ─── Journal de diagnostic de la copie presse-papier (issue #878), envoyé
     # par la page à chaque clic sur une case de copie — DÉSACTIVÉ par défaut
     # (voir identite.diagnostic_copie()/DIAGNOSTIC_COPIE de identite_locale.conf),

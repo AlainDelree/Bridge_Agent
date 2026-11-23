@@ -47,16 +47,25 @@
 //     deux fois de suite pour une même issue (watcher.py) : regroupé, un seul
 //     rechargement par fenêtre (voir doitRechargerSurFin). Rien pendant la
 //     veille.
-//   - Surveillance du flux /stream (issue #933 point 4) : sans rafraîchissement
-//     périodique, une coupure silencieuse du flux ne se verrait plus. Un
-//     minuteur local (aucun appel GitHub) vérifie périodiquement l'ancienneté
-//     du dernier message reçu (événement ou battement serveur) ; au-delà de
-//     SEUIL_STREAM_SILENCIEUX_MS (trois fois l'intervalle des battements
-//     serveur, voir app/fin_issue.py::DELAI_PING), le flux est fermé puis
-//     rouvert explicitement, et le(s) projet(s) sélectionné(s) rechargés (pas
-//     d'appel GitHub supplémentaire au-delà de cette liste). Suspendu pendant
-//     la veille ; vérifié explicitement au réveil (avant le rechargement
-//     normal du réveil).
+//   - Surveillance du flux /stream (issue #933 point 4, corrigée par #937) :
+//     sans rafraîchissement périodique, une coupure silencieuse du flux ne se
+//     verrait plus. Un minuteur local (aucun appel GitHub) vérifie
+//     périodiquement l'ancienneté du dernier message reçu (événement OU
+//     battement serveur — depuis #937, un événement SSE nommé `battement`
+//     que le navigateur transmet réellement, voir sse.js ; avant #937 c'était
+//     un commentaire SSE invisible du navigateur, jamais compté comme une
+//     activité). Au-delà de SEUIL_STREAM_SILENCIEUX_MS (trois fois
+//     l'intervalle des battements serveur, voir app/fin_issue.py::DELAI_PING)
+//     ET d'un délai de grâce équivalent depuis la dernière connexion ou
+//     réouverture explicite (issue #937, fautDeclarerStreamSilencieux — sans
+//     quoi la toute première ouverture, ou une réouverture pas encore
+//     confirmée, serait jugée silencieuse à tort, voire empêchée de jamais
+//     réussir) : le flux est fermé puis rouvert explicitement, l'ancienneté
+//     constatée journalisée (logs/charge_interface.log), et le(s) projet(s)
+//     sélectionné(s) rechargés UNE SEULE FOIS par épisode de silence (pas à
+//     chaque vérification si le flux reste réellement muet). Suspendu
+//     pendant la veille ; vérifié explicitement au réveil (avant le
+//     rechargement normal du réveil), qui réarme aussi ce délai de grâce.
 //   - À la (dé)sélection d'un projet dans le filtre Résultats (pastilles) :
 //     surSelectionChangee(), appelée depuis app.js (basculerFiltreProjet/
 //     basculerTousLesFiltres via le pont) — un projet qui vient d'être
@@ -150,6 +159,36 @@ export function fautRouvrirStream(depuisDernierMessageMs, seuilMs = SEUIL_STREAM
   return depuisDernierMessageMs == null || depuisDernierMessageMs >= seuilMs;
 }
 
+// ─── Grâce/réouverture — pas de déclenchement en boucle (issue #937) ────────
+// `fautRouvrirStream` seul répond « oui » dans deux cas qui ne sont PAS un
+// flux silencieux : (a) juste après le chargement de la page, avant qu'une
+// première ouverture ait pu être confirmée (`depuisDernierMessageMs` vaut
+// encore `null`) ; (b) juste après une fermeture/réouverture EXPLICITE
+// décidée par cette même surveillance, tant que l'ouverture n'a pas eu le
+// temps d'être confirmée. Sans garde-fou, le cas (b) est même auto-entretenu :
+// rouvrir détruit la tentative de connexion en cours avant qu'elle n'ait pu
+// réussir, ce qui la fait paraître encore « jamais ouverte » à la vérification
+// suivante (constat du 23/11/2026, juste après un redémarrage de l'interface).
+// `depuisReferenceMs` porte l'ancienneté du dernier point de départ de grâce
+// connu (connexion initiale OU dernière réouverture explicite — voir
+// demarrerSurveillanceStream/verifierEtRouvrirStreamSiSilencieux ci-dessous) :
+// le silence n'est déclaré que si CE délai a, lui aussi, dépassé le seuil.
+export function fautDeclarerStreamSilencieux(
+  depuisDernierMessageMs, depuisReferenceMs, seuilMs = SEUIL_STREAM_SILENCIEUX_MS,
+) {
+  return fautRouvrirStream(depuisDernierMessageMs, seuilMs) && depuisReferenceMs >= seuilMs;
+}
+
+// true si CE silence doit encore déclencher un rechargement de la liste
+// (issue #937 point 3) : si le flux reste réellement muet, la surveillance
+// continue de le rouvrir à chaque vérification au-delà du seuil, mais UN
+// SEUL rechargement par épisode de silence — pas un par vérification.
+// `episodeDejaSignale` est remis à faux dès que le flux redonne signe de vie
+// (voir verifierEtRouvrirStreamSiSilencieux).
+export function doitRechargerListePourSilence(episodeDejaSignale) {
+  return !episodeDejaSignale;
+}
+
 // true si l'affichage « sync HH:MM:SS » doit être coloré comme ancien (issue
 // #917 point 6) : jamais synchronisé, ou plus ancien que `seuilMs` — depuis
 // #933 (plus d'intervalle de rafraîchissement réglable), ce seuil est le même
@@ -186,6 +225,17 @@ let minuteurDebounceSelection = null;
 // Dernier rechargement déclenché par un fin_issue, par issue (issue #933
 // point 2) — clé "projet#numero" -> horodatage ms, voir doitRechargerSurFin.
 const dernierRechargementFin = new Map();
+// Point de départ de grâce de la surveillance du flux (issue #937) — réarmé
+// à chaque (re)démarrage de la surveillance (connexion initiale, réveil) ET
+// à chaque réouverture explicite décidée par elle-même (voir
+// demarrerSurveillanceStream/verifierEtRouvrirStreamSiSilencieux) : tant que
+// ce délai n'a pas, lui aussi, dépassé le seuil, le silence n'est jamais
+// déclaré (voir fautDeclarerStreamSilencieux).
+let referenceSilenceStreamMs = null;
+// Un seul rechargement de liste par épisode de silence (issue #937 point 3)
+// — vrai dès le premier rechargement déclenché pour l'épisode en cours,
+// remis à faux dès que le flux redonne signe de vie.
+let episodeSilenceStreamSignale = false;
 
 function maintenant() { return Date.now(); }
 
@@ -363,21 +413,46 @@ function arreterSurveillanceStream() {
 
 function demarrerSurveillanceStream() {
   arreterSurveillanceStream();
+  // Point de départ de la grâce (issue #937, voir referenceSilenceStreamMs) :
+  // repart de zéro à chaque (re)démarrage de la surveillance — connexion
+  // initiale (page chargée) comme réveil — pour ne jamais juger un flux
+  // silencieux avant qu'une ouverture n'ait eu le temps d'être confirmée.
+  referenceSilenceStreamMs = maintenant();
+  episodeSilenceStreamSignale = false;
   minuteurVerifStream = setInterval(verifierEtRouvrirStreamSiSilencieux, INTERVALLE_VERIF_STREAM_MS);
 }
 
 // Vérifie l'ancienneté du dernier message reçu sur /stream (événement ou
-// battement serveur) ; au-delà du seuil, ferme et rouvre explicitement le
-// canal puis recharge la liste du/des projet(s) sélectionné(s) SEULEMENT
-// (aucun autre appel GitHub). Rien pendant la veille (appelée aussi au
-// réveil, AVANT le rechargement normal — voir executerReveil).
+// battement serveur, issue #937 — AVANT ce correctif, le battement serveur
+// était un commentaire SSE invisible du navigateur, voir sse.js) ; au-delà
+// du seuil ET du délai de grâce depuis la dernière connexion/réouverture
+// (fautDeclarerStreamSilencieux), ferme et rouvre explicitement le canal,
+// journalise l'ancienneté constatée (logs/charge_interface.log, issue #937
+// point 4), puis recharge la liste du/des projet(s) sélectionné(s) — UNE
+// SEULE FOIS par épisode de silence (issue #937 point 3), pas à chaque
+// vérification si le flux reste réellement muet. Aucun autre appel GitHub.
+// Rien pendant la veille (appelée aussi au réveil, AVANT le rechargement
+// normal — voir executerReveil).
 function verifierEtRouvrirStreamSiSilencieux() {
   if (enVeilleActif) return;
-  const depuis = resultats.derniereActiviteStreamMs();
-  if (!fautRouvrirStream(depuis)) return;
+  const maintenantMs = maintenant();
+  const depuisActivite = resultats.derniereActiviteStreamMs();
+  if (depuisActivite != null && !fautRouvrirStream(depuisActivite)) {
+    // Flux sain : fin de l'épisode de silence en cours, s'il y en avait un.
+    episodeSilenceStreamSignale = false;
+    return;
+  }
+  const depuisReference = maintenantMs - referenceSilenceStreamMs;
+  if (!fautDeclarerStreamSilencieux(depuisActivite, depuisReference)) return;
+  resultats.journaliserReouvertureStream(depuisActivite);
   resultats.reconnecterStream();
+  referenceSilenceStreamMs = maintenantMs;
+  if (!doitRechargerListePourSilence(episodeSilenceStreamSignale)) return;
   const projets = projetsSelectionnes();
-  if (projets.length) resultats.chargerListe(projets, { raison: 'flux_silencieux' });
+  if (projets.length) {
+    episodeSilenceStreamSignale = true;
+    resultats.chargerListe(projets, { raison: 'flux_silencieux' });
+  }
 }
 
 // ─── Rechargement sur création/début/fin de traitement d'une issue ──────────

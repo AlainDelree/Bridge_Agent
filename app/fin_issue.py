@@ -46,7 +46,14 @@ sys.path.insert(0, str(DOSSIER_SCRIPT))
 
 import mesure_charge_interface as mci  # noqa: E402 — journal de l'interface (issue #917, point 9)
 
-DELAI_PING = 30   # s — garde la connexion /stream ouverte (proxys, navigateur)
+DELAI_PING = 30   # s — intervalle des battements /stream : garde la connexion
+                  # ouverte (proxys) ET compte comme activité du flux côté
+                  # navigateur (issue #937) — voir generer() ci-dessous :
+                  # événement SSE NOMMÉ `battement`, pas un commentaire SSE
+                  # (lignes commençant par ':'), que le navigateur n'expose à
+                  # AUCUN gestionnaire JavaScript (EventSource les absorbe en
+                  # silence) et qui ne comptait donc jamais comme une
+                  # activité réelle avant ce correctif.
 
 _verrou_abonnes = Lock()
 
@@ -220,7 +227,11 @@ def stream_fin_issue():
     """GET /stream — SSE dédié à l'onglet Résultats (issues #350, #515) :
     un événement `fin_issue` ou `debut_issue` par transition détectée côté
     watcher. Une file dédiée par connexion (plusieurs onglets possibles),
-    ping toutes les DELAI_PING s pour maintenir la connexion. Le try/finally
+    battement (événement SSE nommé `battement`, corps vide) toutes les
+    DELAI_PING s pour maintenir la connexion ET pour que le navigateur
+    compte ce battement comme une activité du flux (issue #937 — voir
+    static/js/socle/sse.js, gestionnaire 'battement', et
+    docs/contexte/interface_rafraichissement.md §3bis). Le try/finally
     couvre la déconnexion du navigateur (GeneratorExit levée dans le
     générateur quand Flask cesse de le consommer), pour toujours retirer la
     file de la liste des abonnés."""
@@ -236,7 +247,7 @@ def stream_fin_issue():
                 try:
                     yield file_attente.get(timeout=DELAI_PING)
                 except queue.Empty:
-                    yield ": ping\n\n"
+                    yield "event: battement\ndata: {}\n\n"
         finally:
             with _verrou_abonnes:
                 if file_attente in abonnes:

@@ -18,6 +18,8 @@ import {
   doitEntrerEnVeille,
   doitRechargerSurFin,
   fautRouvrirStream,
+  fautDeclarerStreamSilencieux,
+  doitRechargerListePourSilence,
   estSyncAncienne,
 } from '../veille.js';
 
@@ -100,6 +102,41 @@ test('fautRouvrirStream : au seuil ou au-delà → rouvrir', () => {
 test('fautRouvrirStream : seuil = 3x l\'intervalle réel des battements serveur (30s)', () => {
   assert.equal(INTERVALLE_BATTEMENT_STREAM_SEC, 30);
   assert.equal(SEUIL_STREAM_SILENCIEUX_MS, 90000);
+});
+
+// ─── fautDeclarerStreamSilencieux (issue #937 point 2) ───────────────────────
+// Grâce avant la première ouverture (valeur absente) : ne déclare jamais le
+// silence tant que le délai de grâce depuis la connexion/réouverture n'a pas
+// lui-même dépassé le seuil — sans quoi un simple redémarrage retarderait la
+// réouverture au lieu de la faciliter.
+test('fautDeclarerStreamSilencieux : jamais d\'activité (null) mais grâce pas écoulée → pas de silence', () => {
+  assert.equal(fautDeclarerStreamSilencieux(null, 0), false);
+  assert.equal(fautDeclarerStreamSilencieux(null, SEUIL_STREAM_SILENCIEUX_MS - 1), false);
+});
+
+test('fautDeclarerStreamSilencieux : jamais d\'activité (null) et grâce écoulée → silence', () => {
+  assert.equal(fautDeclarerStreamSilencieux(null, SEUIL_STREAM_SILENCIEUX_MS), true);
+});
+
+test('fautDeclarerStreamSilencieux : juste après une réouverture (grâce pas écoulée) → pas de silence même si l\'activité est ancienne', () => {
+  assert.equal(fautDeclarerStreamSilencieux(SEUIL_STREAM_SILENCIEUX_MS + 60000, 0), false);
+});
+
+test('fautDeclarerStreamSilencieux : activité récente (sous le seuil) → jamais de silence, quelle que soit la grâce', () => {
+  assert.equal(fautDeclarerStreamSilencieux(0, SEUIL_STREAM_SILENCIEUX_MS + 60000), false);
+});
+
+test('fautDeclarerStreamSilencieux : seuil dépassé des deux côtés → silence', () => {
+  assert.equal(fautDeclarerStreamSilencieux(SEUIL_STREAM_SILENCIEUX_MS, SEUIL_STREAM_SILENCIEUX_MS), true);
+});
+
+// ─── doitRechargerListePourSilence (issue #937 point 3) ──────────────────────
+test('doitRechargerListePourSilence : premier silence de l\'épisode → recharge', () => {
+  assert.equal(doitRechargerListePourSilence(false), true);
+});
+
+test('doitRechargerListePourSilence : épisode déjà signalé → pas de second rechargement', () => {
+  assert.equal(doitRechargerListePourSilence(true), false);
 });
 
 // ─── estSyncAncienne ──────────────────────────────────────────────────────────

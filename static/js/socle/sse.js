@@ -120,6 +120,19 @@ function surEvenementCase(e) {
   } catch { /* données non-JSON ignorées */ }
 }
 
+// /stream émet aussi, toutes les DELAI_PING s (app/fin_issue.py), un
+// battement : événement SSE NOMMÉ 'battement', corps vide — issue #937.
+// AVANT ce correctif, ce battement était un simple commentaire du protocole
+// SSE (ligne ": ping\n\n") : le navigateur ne transmet JAMAIS une ligne de
+// commentaire à un gestionnaire JavaScript (EventSource l'absorbe en
+// silence), si bien qu'un flux parfaitement sain mais sans ÉVÉNEMENT pendant
+// plus de 90s était à tort jugé silencieux par static/js/veille.js. Un
+// événement nommé, lui, passe par addEventListener comme les autres
+// (ci-dessus) et déclenche donc bien `handlerAvecActivite` dans
+// creerCanalSse ; ce handler n'a volontairement AUCUN autre effet (rien à
+// afficher pour un battement).
+function surBattement() { /* seule l'activité du flux compte, voir ci-dessus */ }
+
 export const sse = {
   stream: creerCanalSse('/stream', {
     debut_issue: surEvenementIssue,
@@ -128,5 +141,6 @@ export const sse = {
     fichier_recu: surEvenementFichier,
     fichier_refuse: surEvenementFichier,
     case_decochee: surEvenementCase,
+    battement: surBattement,
   }),
 };

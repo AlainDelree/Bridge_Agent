@@ -880,7 +880,7 @@ le panneau) reste en place — simplement plus utilisé par l'interface,
 > /mesure-precharge` (`silencieux:true`, échec sans incidence sur
 > l'interface). Voir §14 pour le format de ligne et le rapport.
 
-> **Module `static/js/veille.js` (issue #917, revu par #933)** : voile de
+> **Module `static/js/veille.js` (issue #917, revu par #933 et #937)** : voile de
 > veille/réveil, rechargement CIBLÉ de la liste sur événements et surveillance
 > du flux `/stream` — détail complet dans
 > `docs/contexte/interface_rafraichissement.md` (état actuel du mécanisme,
@@ -900,8 +900,13 @@ le panneau) reste en place — simplement plus utilisé par l'interface,
 > CONCERNÉ, comme `creation_issue` (rattrapage à durée FIXE désormais,
 > `RATTRAPAGE_CREATION_SEC`, plus réglable). Un minuteur local (sans appel
 > GitHub) surveille en parallèle le silence du flux `/stream` lui-même (3×
-> l'intervalle des battements serveur) pour le rouvrir explicitement si
-> besoin. Réglage (`CLES.veilleDelaiMin`, `persistance.js`) affiché dans le
+> l'intervalle des battements serveur, un événement SSE NOMMÉ `battement`
+> depuis #937 — `sse.js`, PAS un commentaire SSE invisible du navigateur
+> comme avant ce correctif) pour le rouvrir explicitement si besoin, avec un
+> délai de grâce avant la première ouverture et après chaque réouverture
+> explicite (#937, sans quoi la surveillance s'auto-entretenait en boucle) et
+> un seul rechargement de liste par épisode de silence. Réglage
+> (`CLES.veilleDelaiMin`, `persistance.js`) affiché dans le
 > panneau Infrastructure, partie globale (`#pl-zone-veille`, juste après
 > l'interrupteur de son). Le bandeau rouge « connexion perdue » (point 8,
 > distinct du voile) et la fenêtre de repli de la copie du rapport (point 7)

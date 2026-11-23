@@ -578,17 +578,38 @@
       doit partir avant le réveil).
 - [ ] Déposer une issue PENDANT la veille : elle n'apparaît qu'APRÈS le
       réveil (pas pendant la veille elle-même).
-- [ ] **(issue #933 point 4)** Interface éveillée depuis plus de 90s sans
-      aucun événement `/stream` (ou, plus simple : via l'onglet Réseau,
-      observer que le canal `/stream` reçoit bien un `: ping` ou un
-      événement au moins une fois toutes les ~90s) : si le flux est
-      artificiellement coupé côté serveur sans que le navigateur le détecte,
+- [ ] **(issue #933 point 4, corrigé par #937)** Interface éveillée depuis
+      plus de 90s sans aucun événement `/stream` : via l'onglet Réseau,
+      cliquer sur la connexion `/stream` (type EventSource, onglet
+      « EventStream » de Chrome/Edge) et observer qu'un événement NOMMÉ
+      `battement` (pas une ligne `: ping` invisible) arrive bien au moins
+      une fois toutes les ~30s. Si le flux est artificiellement coupé côté
+      serveur sans que le navigateur le détecte (ex. coupure de tunnel),
       l'onglet Réseau doit montrer une fermeture + réouverture de `/stream`
-      au plus 15-30s après le dépassement du seuil, suivie d'un rechargement
-      de `/issues-liste` du SEUL projet sélectionné (raison
-      `flux_silencieux` dans le journal) — difficile à provoquer sans
-      outillage réseau dédié, best-effort à vérifier si l'occasion se
-      présente (ex. coupure de tunnel).
+      au plus 15-30s après le dépassement du seuil, suivie d'un SEUL
+      rechargement de `/issues-liste` du SEUL projet sélectionné (raison
+      `flux_silencieux` dans le journal, précédé d'une ligne
+      `reouverture_stream` portant l'ancienneté constatée) — pas d'un
+      rechargement répété si la coupure se prolonge. Difficile à provoquer
+      sans outillage réseau dédié, best-effort à vérifier si l'occasion se
+      présente.
+- [ ] **(a, #937)** Redémarrer l'interface (watcher ou `new_issue.py`),
+      recharger la page de force (Ctrl+Maj+R) juste après : consulter
+      `logs/charge_interface.log` dans la minute qui suit — AUCUNE ligne
+      `flux_silencieux` ni `reouverture_stream` ne doit apparaître (le délai
+      de grâce doit couvrir le temps que le flux s'ouvre réellement après un
+      redémarrage).
+- [ ] **(b, #937)** Laisser la page ouverte au repos, sans y toucher, au
+      moins 10 minutes, avec plusieurs projets sélectionnés dans le filtre
+      Résultats : AUCUNE ligne `flux_silencieux` dans le journal pendant
+      toute cette durée (donc aucun rechargement de liste déclenché sans
+      véritable événement) — l'onglet Réseau doit montrer le battement
+      `battement` arriver régulièrement sur `/stream` pendant ce temps.
+- [ ] **(c, #937)** Arrêter puis relancer l'interface avec la page laissée
+      ouverte (sans la recharger) : au plus UNE ligne `flux_silencieux` dans
+      le journal (la coupure réelle du serveur), suivie d'une ligne
+      `reouverture_stream`, puis plus rien ensuite — pas de répétition
+      toutes les 15s.
 - [ ] **(c, issue #835)** Revenir sur un onglet resté ouvert plus d'une heure
       (ou simuler une session expirée) et cocher la case d'une issue
       terminée : message « Préparation du rapport… » dès le clic, puis la

@@ -128,7 +128,7 @@ pour objectiver, à l'usage, s'il en reste.
   appelée depuis `app.js::basculerFiltreProjet`/`basculerTousLesFiltres` via
   le pont, débounce 300ms) — jamais pendant qu'il était désélectionné.
 
-### 3bis. Surveillance du flux `/stream` (issue #933 point 4)
+### 3bis. Surveillance du flux `/stream` (issue #933 point 4, corrigée par #937)
 
 Sans rafraîchissement périodique, une coupure SILENCIEUSE du flux `/stream`
 (EventSource qui ne détecte pas la coupure, ex. proxy/tunnel qui l'absorbe
@@ -141,11 +141,46 @@ l'intervalle réel des battements serveur**, soit `SEUIL_STREAM_SILENCIEUX_MS`
 = 3 × 30s = 90s — l'intervalle de 30s est celui de `app/fin_issue.py::DELAI_PING`
 (canal `/stream` lui-même, PAS le canal `/events` du cycle de vie serveur,
 dont le heartbeat JS suit sa propre logique inchangée dans `static/js/app.js`
-— vérifié par relecture avant de fixer ce seuil). Au-delà : `resultats.reconnecterStream()`
-(ferme puis rouvre le canal `/stream`, purement local) puis
-`resultats.chargerListe(projets sélectionnés, {raison: 'flux_silencieux'})` —
+— vérifié par relecture avant de fixer ce seuil).
+
+**Nature du battement (issue #937)** : AVANT ce correctif, le battement de
+`app/fin_issue.py` (`yield ": ping\n\n"`) était un simple COMMENTAIRE du
+protocole SSE (ligne commençant par `:`) — EventSource ne transmet JAMAIS une
+telle ligne à un gestionnaire JavaScript, qui ne comptait donc jamais comme
+une activité réelle, même un flux parfaitement sain. Il est désormais un
+ÉVÉNEMENT SSE NOMMÉ (`yield "event: battement\ndata: {}\n\n"`), écouté côté
+client par `sse.js` (gestionnaire `battement`, sans AUCUN effet visible —
+seule la mise à jour de l'horodatage d'activité, commune à tout événement,
+compte) : un flux sain sans ÉVÉNEMENT métier pendant 90s n'est donc plus
+jugé silencieux à tort.
+
+**Grâce/réouverture, pas de déclenchement en boucle (issue #937)** :
+`fautRouvrirStream` seul (ancienneté du dernier message ≥ seuil, ou valeur
+absente) répond « oui » dans deux cas qui ne sont PAS un vrai silence : juste
+après le chargement de la page (aucune ouverture encore confirmée) et juste
+après une fermeture/réouverture EXPLICITE décidée par cette même
+surveillance (l'ouverture n'a pas encore eu le temps d'être confirmée) — ce
+second cas est même auto-entretenu sans garde-fou : rouvrir détruit la
+tentative de connexion en cours avant qu'elle n'ait pu réussir, qui reparaît
+alors « jamais ouverte » à la vérification suivante (15s plus tard), d'où une
+boucle fermeture/réouverture/rechargement toutes les 15s observée le
+23/11/2026 juste après un redémarrage de l'interface — et un retard de plus
+d'une minute avant la première ouverture confirmée, le temps que la boucle
+elle-même cesse de l'empêcher. `veille.js::fautDeclarerStreamSilencieux`
+ne déclare donc le silence que si, EN PLUS, un délai de grâce — le même seuil
+de 90s, réarmé à la connexion initiale ET à chaque réouverture explicite
+(`referenceSilenceStreamMs`) — est lui aussi écoulé.
+
+Au-delà de ces deux conditions : `resultats.reconnecterStream()` (ferme puis
+rouvre le canal `/stream`, purement local), `resultats.journaliserReouvertureStream()`
+(POST `/journal-reouverture-stream`, best-effort, voir §9bis) puis, UNE SEULE
+FOIS par épisode de silence (`doitRechargerListePourSilence`,
+`episodeSilenceStreamSignale` remis à faux dès que le flux redonne signe de
+vie — issue #937 point 3, pour limiter le coût si le flux reste réellement
+muet) : `resultats.chargerListe(projets sélectionnés, {raison: 'flux_silencieux'})`.
 AUCUN autre appel GitHub. Suspendu pendant la veille ; vérifié explicitement
-au réveil, AVANT le rechargement normal (voir ci-dessus).
+au réveil, AVANT le rechargement normal (voir ci-dessus) — le réveil, comme
+le chargement de la page, réarme aussi le délai de grâce.
 
 ## 4. Réglage (modifiable par Alain, sans rechargement de page)
 
@@ -267,3 +302,20 @@ l'étude #933 (ligne absente au début/à la fin de traitement) subsiste et
 d'où il vient : aucune autre action n'est tentée automatiquement en réponse
 à cet avertissement (pas de ligne provisoire, pas de série de rattrapages —
 décision d'Alain, voir le rapport de l'issue #933).
+
+## 9bis. Journal des réouvertures du flux `/stream` (issue #937 point 4)
+
+Réutilise le MÊME journal que les §8/§9 ci-dessus. Une ligne `reouverture_stream`
+(`mci.ligne_reouverture_stream`, POST `/journal-reouverture-stream`,
+`app/charge_interface.py::route_reouverture_stream`) est écrite par le
+serveur CHAQUE fois que la surveillance du flux (§3bis) décide de le rouvrir
+— y compris quand ce n'est PAS la première réouverture de l'épisode de
+silence en cours et qu'aucun rechargement de liste n'en découle (issue #937
+point 3) : seule la décision de rouvrir compte ici, pas celle de recharger.
+Champ unique au-delà du type/horodatage : `age_dernier_message_ms`,
+l'ancienneté EN MILLISECONDES du dernier message reçu sur `/stream` au
+moment de la décision côté navigateur (`None` si aucune activité n'avait
+encore été enregistrée, ex. juste après le chargement de la page). Route
+purement LOCALE (aucun appel GitHub), best-effort strict comme le reste de
+ce journal — sert à juger, à l'usage, si cette surveillance se déclenche à
+tort (voir le rapport de l'issue #937).

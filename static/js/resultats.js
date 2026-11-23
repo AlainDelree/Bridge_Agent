@@ -1220,6 +1220,17 @@ function reconnecterStream() {
   sse.stream.connecter({ onOuvert: surOuvertureSse });
 }
 
+// Journalise côté serveur (logs/charge_interface.log, POST
+// /journal-reouverture-stream) l'ancienneté du dernier message au moment où
+// static/js/veille.js décide de rouvrir le flux /stream jugé silencieux
+// (issue #937 point 4) — pour juger à l'usage si cette surveillance se
+// déclenche à tort. Best-effort strict, aucun toast d'erreur : un journal de
+// diagnostic ne doit jamais se faire remarquer d'un échec réseau.
+function journaliserReouvertureStream(depuisDernierMessageMs) {
+  api.post('/journal-reouverture-stream',
+    { age_dernier_message_ms: depuisDernierMessageMs }, { silencieux: true }).catch(() => {});
+}
+
 // ─── Amorçage (appelé une fois par index.js) ─────────────────────────────────
 function initialiser() {
   // Purge de l'ancienne clé de redimensionnement de la colonne titre (issue
@@ -1298,4 +1309,7 @@ export const resultats = {
   // explicite du canal quand il est resté silencieux trop longtemps.
   derniereActiviteStreamMs,
   reconnecterStream,
+  // Journal de diagnostic de la réouverture du flux (issue #937 point 4),
+  // consommé par static/js/veille.js juste après reconnecterStream().
+  journaliserReouvertureStream,
 };

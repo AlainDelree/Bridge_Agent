@@ -213,6 +213,22 @@ def ligne_avertissement_issue_absente(horodatage, projet, numero, age_s, raison)
     }, ensure_ascii=False)
 
 
+def ligne_reouverture_stream(horodatage, age_dernier_message_ms) -> str:
+    """Ligne JSON d'une réouverture du flux /stream décidée par la
+    surveillance de silence côté navigateur (static/js/veille.js, issue
+    #937 point 4) — pure, mêmes garanties que les autres lignes de ce
+    journal : seulement l'ancienneté EN MILLISECONDES du dernier message
+    reçu au moment de la décision (None si aucune activité n'avait encore
+    été enregistrée, ex. juste après le chargement de la page), pour juger
+    à l'usage si cette surveillance se déclenche à tort (voir
+    docs/contexte/interface_rafraichissement.md §3bis)."""
+    return json.dumps({
+        "type": "reouverture_stream",
+        "horodatage": horodatage,
+        "age_dernier_message_ms": age_dernier_message_ms,
+    }, ensure_ascii=False)
+
+
 def ecrire_ligne(ligne: str) -> None:
     """Ajoute une ligne (déjà construite par ligne_echantillon/
     ligne_resume_precharge) au journal dédié, rotation par taille incluse."""

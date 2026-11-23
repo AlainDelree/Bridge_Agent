@@ -94,3 +94,24 @@ def route_resume_precharge():
         mci.horodatage(), valeurs["nb_issues_preparees"], valeurs["nb_requetes"],
         valeurs["duree_totale_ms"], valeurs["duree_max_ms"], mode))
     return jsonify(succes=True)
+
+
+def route_reouverture_stream():
+    """POST /journal-reouverture-stream (issue #937 point 4) — reçoit,
+    best-effort, l'ancienneté (ms) du dernier message reçu sur le flux
+    /stream au moment où static/js/veille.js décide de le rouvrir après
+    l'avoir jugé silencieux. Corps JSON {"age_dernier_message_ms": nombre
+    >= 0, ou null si aucune activité n'avait encore été enregistrée}
+    UNIQUEMENT — rien d'autre n'est jamais journalisé. Un échec
+    d'écriture ne doit jamais remonter au navigateur (appel silencieux)."""
+    brut = request.get_data()
+    if len(brut) > TAILLE_MAX_CORPS_RESUME:
+        return _erreur_resume("Corps trop volumineux.")
+    corps = request.get_json(silent=True)
+    if not isinstance(corps, dict) or set(corps.keys()) != {"age_dernier_message_ms"}:
+        return _erreur_resume("Champs inattendus ou manquants.")
+    age = corps["age_dernier_message_ms"]
+    if age is not None and (isinstance(age, bool) or not isinstance(age, (int, float)) or age < 0):
+        return _erreur_resume("Champ 'age_dernier_message_ms' numérique >= 0 ou null requis.")
+    mci.ecrire_ligne(mci.ligne_reouverture_stream(mci.horodatage(), age))
+    return jsonify(succes=True)
