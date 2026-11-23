@@ -7288,7 +7288,8 @@ def _nettoyer_orphelin_verrou_perime(verrou: Path) -> None:
         )
 
 
-def acquerir_verrou(rep_travail: Path, timeout_projet: int, mode: str = "") -> Path | None:
+def acquerir_verrou(rep_travail: Path, timeout_projet: int, mode: str = "",
+                     numero: int | None = None) -> Path | None:
     """Tente de poser un verrou exclusif sur `rep_travail`. Retourne le chemin du
     verrou si acquis, ou None si un AUTRE traitement le détient déjà (verrou
     vivant) — l'appelant doit alors s'abstenir de lancer claude.
@@ -7299,6 +7300,16 @@ def acquerir_verrou(rep_travail: Path, timeout_projet: int, mode: str = "") -> P
     mémoire), de savoir si la tâche en cours pour un projet est un mode_write
     tournant directement dans REP_TRAVAIL plutôt que dans un worktree isolé
     (repli #589) — l'information que new_issue.py doit signaler visiblement.
+
+    `numero` (issue #946) : numéro de l'issue réellement en cours de
+    traitement, consigné dans le champ `numero=`, placé comme `mode=`/
+    `projet=`/`pid=` AVANT `rep=` — jamais après — pour ne jamais dépendre du
+    contenu de `rep=`, seul champ dont la valeur (un chemin) peut contenir un
+    espace (voir plus bas). None (appelant qui ne connaît pas de numéro,
+    notamment les anciens appels directs des tests) ⇒ champ écrit vide
+    (`numero=`), relu comme numéro inconnu par taches_en_cours ci-dessous —
+    même traitement qu'un verrou ancien, posé avant cette issue, qui n'a pas
+    du tout ce champ.
 
     Un verrou plus vieux que la durée de traitement plausible d'une issue est
     considéré comme PÉRIMÉ (orphelin d'un watcher tué sans passer par le finally)
@@ -7395,11 +7406,14 @@ def acquerir_verrou(rep_travail: Path, timeout_projet: int, mode: str = "") -> P
         log.warning(f"Pose du verrou {verrou} impossible ({e}) — on poursuit sans verrou fichier.")
         return verrou   # dégradé, comme ci-dessus
     try:
-        # `rep=` reste en DERNIÈRE position (avant #609 comme après) : c'est le
-        # seul champ dont la valeur (un chemin) pourrait en théorie contenir un
-        # caractère imprévu — le garder en fin de ligne évite de perturber le
-        # parsing par regex des champs mode/projet/pid qui le précèdent.
-        os.write(fd, f"pid={os.getpid()} projet={CFG.nom} mode={mode} rep={rep_travail}\n".encode("utf-8"))
+        # `rep=` reste en DERNIÈRE position (avant #609 comme après, et #946
+        # pour `numero=`) : c'est le seul champ dont la valeur (un chemin)
+        # pourrait en théorie contenir un caractère imprévu — le garder en fin
+        # de ligne évite de perturber le parsing par regex des champs
+        # mode/projet/pid/numero qui le précèdent.
+        numero_champ = "" if numero is None else str(numero)
+        os.write(fd, (f"pid={os.getpid()} projet={CFG.nom} mode={mode} "
+                       f"numero={numero_champ} rep={rep_travail}\n").encode("utf-8"))
     finally:
         os.close(fd)
     return verrou
@@ -7431,9 +7445,16 @@ def taches_en_cours(nom_projet: str) -> list[dict]:
     n'est plus vivant est ignoré : verrou périmé (watcher mort brutalement),
     pas une tâche active — même sonde (_pid_vivant) que acquerir_verrou.
 
-    Retourne une liste de dict {"rep": str, "mode": str} — une entrée par
-    verrou actif de ce projet (plusieurs si MAX_WRITE_PARALLELE > 1), vide si
-    aucune tâche en cours."""
+    `numero` (issue #946) : numéro de l'issue protégée par ce verrou, lu
+    depuis le champ `numero=` quand présent et valide (entier), sinon None —
+    verrou ancien posé avant cette issue (champ absent), ou valeur
+    corrompue/vide : le numéro est alors simplement inconnu, jamais une
+    erreur. Ne change rien à la décision « en cours » ci-dessus, fondée
+    uniquement sur `pid=`.
+
+    Retourne une liste de dict {"rep": str, "mode": str, "numero": int | None}
+    — une entrée par verrou actif de ce projet (plusieurs si
+    MAX_WRITE_PARALLELE > 1), vide si aucune tâche en cours."""
     resultat = []
     if not DOSSIER_VERROUS.is_dir():
         return resultat
@@ -7452,7 +7473,11 @@ def taches_en_cours(nom_projet: str) -> list[dict]:
             vivant = False
         if not vivant:
             continue
-        resultat.append({"rep": champs.get("rep", ""), "mode": champs.get("mode", "")})
+        try:
+            numero = int(champs.get("numero") or "")
+        except ValueError:
+            numero = None
+        resultat.append({"rep": champs.get("rep", ""), "mode": champs.get("mode", ""), "numero": numero})
     return resultat
 
 
@@ -8151,7 +8176,7 @@ def _acquerir_verrou_pour_issue(numero: int, cwd_effectif: Path, timeout: int, m
     dans CE process ; le verrou fichier étend la protection entre process.
     Retourne None si le verrou n'a pas pu être acquis (issue déjà retirée de
     issues_en_cours par cette fonction)."""
-    verrou = acquerir_verrou(cwd_effectif, timeout, mode)
+    verrou = acquerir_verrou(cwd_effectif, timeout, mode, numero)
     if verrou is None:
         log.warning(
             f"  Issue #{numero} différée : un autre traitement détient déjà le verrou "

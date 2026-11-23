@@ -96,8 +96,9 @@ def tache_en_cours(cfg: Config) -> list[dict]:
     réellement (issue #609). S'appuie sur les verrous fichier posés par
     watcher.py pour TOUTE issue (watcher.taches_en_cours), pas sur
     `issues_en_cours` qui reste en mémoire du process watcher, invisible ici.
-    Retourne une liste de dict {"rep": str, "mode": str} — vide si le watcher
-    n'a aucune tâche en cours à l'instant de l'appel."""
+    Retourne une liste de dict {"rep": str, "mode": str, "numero": int | None}
+    (champ `numero` ajouté par l'issue #946, non exploité ici) — vide si le
+    watcher n'a aucune tâche en cours à l'instant de l'appel."""
     return _taches_en_cours_watcher(cfg.nom)
 
 

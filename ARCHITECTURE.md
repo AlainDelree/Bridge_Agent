@@ -1433,8 +1433,15 @@ libellé).
 Un verrou (`watcher.py::acquerir_verrou`/`liberer_verrou`/`_chemin_verrou`)
 protège chaque `REP_TRAVAIL`/worktree pendant son traitement — fichier
 `<basename>-<empreinte_sha1>.lock` sous `DOSSIER_VERROUS` (gitignoré),
-contenu `pid=<watcher> projet=<nom> mode=<lecture|ecriture> rep=<chemin>`. Un
-verrou est considéré périmé (repris par un autre traitement) soit par
+contenu `pid=<watcher> projet=<nom> mode=<lecture|ecriture> numero=<issue>
+rep=<chemin>`. `numero=` (issue #946) identifie l'issue réellement protégée
+par ce verrou, dans les trois modes (écriture, lecture active, lecture
+simple — un seul point d'écriture, `_acquerir_verrou_pour_issue`) ; toujours
+placé AVANT `rep=`, comme `mode=`/`projet=`/`pid=`, pour ne jamais dépendre
+du chemin (seule valeur pouvant contenir un espace). Compatibilité : un
+verrou posé avant cette issue (champ absent) ou une valeur corrompue sont lus
+exactement comme avant, numéro simplement inconnu (None), jamais une erreur.
+Un verrou est considéré périmé (repris par un autre traitement) soit par
 ancienneté (`max_essais × (timeout + pause) + marge`), soit — filet
 complémentaire #584 — si le PID propriétaire (`pid=`) n'est plus vivant
 (sondé via `_pid_vivant`, voir §11.2) : dans ce cas la reprise est immédiate,
