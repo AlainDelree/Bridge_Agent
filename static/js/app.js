@@ -613,7 +613,7 @@ function construireBoutonsFiltre(noms) {
   rafr.className = 'btn-rafraichir';
   rafr.title = 'Rafraîchir depuis GitHub';
   rafr.textContent = '↻';
-  rafr.onclick = rafraichirResultats;
+  rafr.onclick = () => rafraichirResultats('clic');
   zone.appendChild(rafr);
   // Heure de dernière synchronisation réseau de la liste (issue #729), juste
   // après le ↻ : repère discret pour voir d'un coup d'œil si l'affichage peut
@@ -1832,7 +1832,7 @@ async function lancerRechercheTitre() {
 // Bouton rafraîchir (issue #56) : vide le cache localStorage (liste + tous les
 // détails) puis recharge tout depuis GitHub. Contourne le TTL du cache détail,
 // qui peut montrer une issue « ouverte » alors que le watcher l'a fermée.
-async function rafraichirResultats() {
+async function rafraichirResultats(raison) {
   // Mémorise l'issue affichée AVANT le rechargement : la liste est réécrite par
   // resultats.js en auto-sélectionnant la première ligne (sans charger son
   // détail, voir selectionnerLigne). On mémorise aussi si ce détail avait été
@@ -1864,7 +1864,12 @@ async function rafraichirResultats() {
   // Résultats (issue #627) — restreinte aux projets filtrés, sauf si « Tous »
   // est actif (undefined → tous les projets).
   if (window.Bridge && window.Bridge.resultats) {
-    await window.Bridge.resultats.rafraichir(rechargeTout ? undefined : nomsActifs);
+    // `raison` (issue #933 point 5, journal des rechargements de liste) :
+    // transmise par le bouton ↻ explicite ('clic') ; absente quand ce même
+    // rechargement est rejoué par resynchroniserResultatsAuRetour (retour de
+    // masquage / reconnexion SSE, issue #705) — ne pas l'étiqueter 'clic' à
+    // tort dans ce cas.
+    await window.Bridge.resultats.rafraichir(rechargeTout ? undefined : nomsActifs, raison ? { raison } : undefined);
   }
   // Ne recharge l'issue affichée que si son détail avait été explicitement
   // chargé — pas seulement sélectionnée (issue #261).

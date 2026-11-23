@@ -1,25 +1,31 @@
-// veille.js — voile de veille/réveil, rafraîchissement périodique du projet
-// sélectionné et réglages associés (issue #917).
+// veille.js — voile de veille/réveil, rechargement CIBLÉ de la liste sur
+// événements (début/fin de traitement, création), surveillance du flux
+// /stream et réglage associé (issues #917, réduit par #933).
 //
 // POURQUOI CE MODULE EXISTE
-//   Avant cette issue, aucun rechargement périodique de la liste Résultats
+//   Avant l'issue #917, aucun rechargement périodique de la liste Résultats
 //   n'avait jamais existé (voir l'étude #916) : la liste n'était alimentée
 //   que par les événements /stream et des rattrapages ponctuels (retour de
-//   masquage de l'onglet, reconnexion SSE, ↻ explicite). Décision d'Alain :
-//   ne pas dépendre du flux /stream seul, ne pas prolonger indéfiniment des
-//   délais de cache, mais rendre l'état de l'interface visible et la remettre
-//   à jour au premier geste, avec des réglages qu'il ajuste lui-même.
+//   masquage de l'onglet, reconnexion SSE, ↻ explicite). #917 avait ajouté
+//   un rafraîchissement périodique du projet sélectionné, en BACKUP du flux
+//   /stream. L'étude #933 a montré que ce polling à intervalle fixe n'était
+//   ni nécessaire (les transitions utiles — création, début, fin de
+//   traitement — sont déjà des événements identifiables) ni suffisant (une
+//   ligne pouvait rester absente plusieurs secondes après sa création, sans
+//   lien avec l'intervalle réglé) : il a donc été RETIRÉ par #933, remplacé
+//   par un rechargement déclenché par ces événements eux-mêmes.
 //
 // CE QUE CE MODULE FAIT
 //   - Détecte l'inactivité (mouvement de souris, clic, clavier, défilement ;
 //     fenêtre au premier plan ou non — voir l'en-tête de installerDetectionActivite
 //     pour ce qui n'a PAS pu être vérifié sans navigateur réel) et affiche un
 //     voile gris semi-opaque (#voile-veille, templates/fragments/voile_veille.html)
-//     après `delaiVeilleMin` minutes sans activité (0 désactive la veille).
-//   - Pendant la veille : AUCUN appel réseau périodique (le rafraîchissement
-//     ci-dessous s'arrête) ; les petites requêtes locales existantes
-//     (battement, watchers, panneau Infrastructure à 30s, badge inbox…) ne
-//     sont PAS touchées par ce module.
+//     après `delaiVeilleMin` minutes sans activité (0 désactive la veille —
+//     SEUL réglage restant de ce module, issue #933 point 3).
+//   - Pendant la veille : AUCUN appel réseau GitHub (les rechargements
+//     déclenchés par événement ci-dessous sont suspendus) ; les petites
+//     requêtes locales existantes (battement, watchers, panneau
+//     Infrastructure à 30s, badge inbox…) ne sont PAS touchées par ce module.
 //   - Le premier clic ou la première touche est ABSORBÉ par le voile (aucune
 //     action sur ce qui se trouve dessous) : il lance le rechargement CIBLÉ
 //     du/des projet(s) actuellement sélectionné(s) dans le filtre Résultats
@@ -28,31 +34,47 @@
 //     une rafale sur tous les projets configurés. Délai maximum
 //     (DELAI_MAX_REVEIL_MS) : au-delà, état d'erreur explicite avec bouton
 //     Réessayer — jamais de disparition silencieuse du voile sans données.
-//   - Hors veille : rafraîchissement périodique CIBLÉ (même périmètre que
-//     ci-dessus) à `intervalleSec`, qui se reprogramme lui-même après chaque
-//     tentative — succès → délai normal, échec → attente croissante plafonnée
-//     (prochainDelaiMs), jamais d'arrêt définitif.
-//   - À la création d'une issue (événement SSE `creation_issue`, dépôt de
-//     fichier ou formulaire — tous deux finissent par le même événement, voir
-//     app/fin_issue.py) : rechargement ciblé immédiat du PROJET CONCERNÉ par
-//     l'événement, puis un second après `rattrapageSec` — en BACKUP du flux
-//     /stream, qui a pu ne pas livrer ou pas être appliqué (cas réel observé
-//     le 22/11/2026, étude #916 : 22 minutes sans requête ciblée après un
-//     debut_issue). Rien pendant la veille (rattrapé par le réveil).
+//     Avant ce rechargement, le flux /stream est rouvert s'il est resté
+//     silencieux trop longtemps (issue #933 point 4, voir §flux ci-dessous).
+//   - À la création d'une issue (événement SSE `creation_issue`) : rechargement
+//     ciblé immédiat du PROJET CONCERNÉ, puis un second après
+//     RATTRAPAGE_CREATION_SEC (valeur FIXE, plus réglable depuis #933) — en
+//     BACKUP du flux /stream. Rien pendant la veille (rattrapé par le réveil).
+//   - Au DÉBUT et à la FIN de traitement d'une issue (événements SSE
+//     `debut_issue`/`fin_issue`, issue #933 point 2) : rechargement ciblé de
+//     la liste du PROJET CONCERNÉ seulement (`resultats.chargerListe`), avec
+//     la raison transmise au journal serveur. Pour la fin, l'événement arrive
+//     deux fois de suite pour une même issue (watcher.py) : regroupé, un seul
+//     rechargement par fenêtre (voir doitRechargerSurFin). Rien pendant la
+//     veille.
+//   - Surveillance du flux /stream (issue #933 point 4) : sans rafraîchissement
+//     périodique, une coupure silencieuse du flux ne se verrait plus. Un
+//     minuteur local (aucun appel GitHub) vérifie périodiquement l'ancienneté
+//     du dernier message reçu (événement ou battement serveur) ; au-delà de
+//     SEUIL_STREAM_SILENCIEUX_MS (trois fois l'intervalle des battements
+//     serveur, voir app/fin_issue.py::DELAI_PING), le flux est fermé puis
+//     rouvert explicitement, et le(s) projet(s) sélectionné(s) rechargés (pas
+//     d'appel GitHub supplémentaire au-delà de cette liste). Suspendu pendant
+//     la veille ; vérifié explicitement au réveil (avant le rechargement
+//     normal du réveil).
 //   - À la (dé)sélection d'un projet dans le filtre Résultats (pastilles) :
 //     surSelectionChangee(), appelée depuis app.js (basculerFiltreProjet/
 //     basculerTousLesFiltres via le pont) — un projet qui vient d'être
-//     sélectionné n'est rechargé QU'À CE MOMENT, pas avant (point 3 de
-//     l'issue : « jamais les projets désélectionnés, qui ne sont rechargés
-//     qu'à leur sélection ou sur action explicite »).
-//   - Réglages modifiables par Alain (délai de veille, intervalle de
-//     rafraîchissement, délai de rattrapage) : stockés via
+//     sélectionné n'est rechargé QU'À CE MOMENT, pas avant.
+//   - Réglage modifiable par Alain (délai de veille) : stocké via
 //     window.Bridge.persistance (seul point d'accès autorisé au
-//     localStorage), une seule valeur par réglage pour toute l'interface
-//     (jamais par projet), effet immédiat sans rechargement de page — voir
-//     initZoneVeille(). Affichés dans le panneau Infrastructure, partie
+//     localStorage), effet immédiat sans rechargement de page — voir
+//     initZoneVeille(). Affiché dans le panneau Infrastructure, partie
 //     globale, près de l'interrupteur de son (templates/fragments/
 //     panneau_lateral.html, #pl-zone-veille).
+//
+// CE QUE CE MODULE NE FAIT PLUS (retiré par l'issue #933)
+//   - Rafraîchissement périodique à intervalle fixe du projet sélectionné
+//     (réglage « Rafraîchir toutes les (s) », coût GitHub/h affiché) : les
+//     événements début/fin de traitement ci-dessus en tiennent désormais
+//     lieu, sans jamais interroger GitHub en l'absence de transition réelle.
+//   - Réglage « Rattrapage création (s) » : le rattrapage à la création
+//     reste, mais sa durée est désormais FIXE dans le code (RATTRAPAGE_CREATION_SEC).
 //
 // CE QUE CE MODULE NE FAIT PAS
 //   - Il ne gère ni le bandeau rouge « connexion perdue » (issue #917 point
@@ -61,8 +83,9 @@
 //     7 — static/js/resultats_coches.js).
 //   - Il ne touche jamais au décompte TOUS projets (chargerTimingTous) ni au
 //     ↻ explicite (rafraichirResultats, app.js) : ces chemins existants
-//     restent inchangés, seul ce module utilise resultats.rafraichirSelection
-//     (périmètre strictement restreint à la sélection courante).
+//     restent inchangés, seul ce module utilise resultats.rafraichirSelection/
+//     resultats.chargerListe (périmètre strictement restreint au(x) projet(s)
+//     concerné(s)).
 
 import { store } from './socle/store.js';
 import * as dom from './socle/dom.js';
@@ -76,9 +99,6 @@ import { resultatsCoches } from './resultats_coches.js';
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const DEFAUT_DELAI_VEILLE_MIN = 30;
-export const DEFAUT_INTERVALLE_RAFRAICHISSEMENT_SEC = 60;
-export const MIN_INTERVALLE_RAFRAICHISSEMENT_SEC = 15;
-export const DEFAUT_DELAI_RATTRAPAGE_SEC = 10;
 
 // Valeur absente ou invalide → défaut (issue #917 point 5). 0 est une valeur
 // valide pour le délai de veille (désactivation explicite) — distincte d'une
@@ -92,22 +112,6 @@ export function normaliserDelaiVeilleMin(valeur) {
   return Math.round(n);
 }
 
-// Minimum 15s pour protéger le quota GitHub (issue #917 point 5) — toute
-// valeur en dessous (y compris 0 ou négative) est remontée au minimum,
-// jamais rejetée en silence vers le défaut (Alain a explicitement demandé un
-// PLANCHER, pas un simple défaut de repli).
-export function normaliserIntervalleRafraichissementSec(valeur) {
-  const n = Number(valeur);
-  if (!Number.isFinite(n) || n <= 0) return DEFAUT_INTERVALLE_RAFRAICHISSEMENT_SEC;
-  return Math.max(MIN_INTERVALLE_RAFRAICHISSEMENT_SEC, Math.round(n));
-}
-
-export function normaliserDelaiRattrapageSec(valeur) {
-  const n = Number(valeur);
-  if (!Number.isFinite(n) || n <= 0) return DEFAUT_DELAI_RATTRAPAGE_SEC;
-  return Math.max(1, Math.round(n));
-}
-
 // true si l'interface doit entrer en veille — delaiVeilleMin <= 0 désactive
 // la veille (jamais vrai). `derniereActiviteMs` null (aucune activité jamais
 // enregistrée, ex. tests) → jamais de veille par défaut d'horloge manquante.
@@ -117,36 +121,43 @@ export function doitEntrerEnVeille(derniereActiviteMs, maintenantMs, delaiVeille
   return (maintenantMs - derniereActiviteMs) >= delaiVeilleMin * 60000;
 }
 
-// Attente croissante plafonnée (issue #917 point 3) : après N échecs
-// consécutifs du rafraîchissement périodique, le délai double à chaque fois
-// (plafonné à 10 échecs pour éviter tout dépassement numérique), jusqu'à
-// `plafondMs` — jamais d'arrêt définitif, toujours une prochaine tentative.
-export const PLAFOND_ATTENTE_ECHEC_MS = 10 * 60 * 1000;   // 10 min
-export function prochainDelaiMs(nbEchecsConsecutifs, intervalleBaseMs, plafondMs = PLAFOND_ATTENTE_ECHEC_MS) {
-  if (!nbEchecsConsecutifs || nbEchecsConsecutifs <= 0) return intervalleBaseMs;
-  const delai = intervalleBaseMs * Math.pow(2, Math.min(nbEchecsConsecutifs, 10));
-  return Math.min(plafondMs, delai);
+// Rattrapage à la création d'une issue (issue #917 point 3) : valeur FIXE
+// depuis #933 (n'est plus un réglage — voir l'en-tête de ce module).
+export const RATTRAPAGE_CREATION_SEC = 10;
+
+// ─── Regroupement des doublons de fin_issue (issue #933 point 2) ────────────
+// watcher.py poste deux fois `fin_issue` à quelques secondes d'intervalle
+// pour une même issue (constat de l'étude #933) : un seul rechargement par
+// fenêtre, pas un par événement. Logique pure, testable sans minuteur réel :
+// `dernierRechargementMs` est l'horodatage du dernier rechargement déjà
+// déclenché pour CETTE issue (null si aucun encore).
+export const FENETRE_REGROUPEMENT_FIN_MS = 3000;
+export function doitRechargerSurFin(dernierRechargementMs, maintenantMs, fenetreMs = FENETRE_REGROUPEMENT_FIN_MS) {
+  if (dernierRechargementMs == null) return true;
+  return (maintenantMs - dernierRechargementMs) >= fenetreMs;
 }
 
-// Ordre de grandeur du coût en appels GitHub par heure (issue #917 point 5),
-// affiché à titre indicatif près du réglage d'intervalle. Un cycle de
-// rafraichirSelection() fait DEUX appels `gh` par projet sélectionné
-// (/issues-liste + /issues-en-attente, voir app/issues.py) — les cases
-// cochées et le panneau Infrastructure sont purement locaux, hors compte.
-export const APPELS_GH_PAR_CYCLE = 2;
-export function calculerCoutGithubParHeure(intervalleSec, nbProjetsSelectionnes = 1, appelsParCycle = APPELS_GH_PAR_CYCLE) {
-  if (!intervalleSec || intervalleSec <= 0) return 0;
-  const nb = Math.max(0, nbProjetsSelectionnes || 0);
-  return Math.round(appelsParCycle * nb * 3600 / intervalleSec);
+// ─── Surveillance du flux /stream (issue #933 point 4) ──────────────────────
+// Intervalle réel des battements serveur du flux /stream (app/fin_issue.py,
+// DELAI_PING = 30s — PAS le canal /events du cycle de vie serveur, dont le
+// heartbeat suit sa propre logique, inchangée, dans static/js/app.js).
+// Seuil retenu : trois fois cet intervalle, demandé par l'issue — au-delà,
+// le flux est considéré silencieux (coupure non détectée par EventSource,
+// ex. proxy/tunnel qui absorbe la coupure sans déclencher onerror).
+export const INTERVALLE_BATTEMENT_STREAM_SEC = 30;
+export const SEUIL_STREAM_SILENCIEUX_MS = 3 * INTERVALLE_BATTEMENT_STREAM_SEC * 1000;
+export function fautRouvrirStream(depuisDernierMessageMs, seuilMs = SEUIL_STREAM_SILENCIEUX_MS) {
+  return depuisDernierMessageMs == null || depuisDernierMessageMs >= seuilMs;
 }
 
 // true si l'affichage « sync HH:MM:SS » doit être coloré comme ancien (issue
-// #917 point 6) : jamais synchronisé, ou plus ancien que trois fois
-// l'intervalle réglé. `facteur` exposé pour la testabilité, défaut 3 (valeur
-// demandée par l'issue).
-export function estSyncAncienne(dernierSyncMs, maintenantMs, intervalleSec, facteur = 3) {
+// #917 point 6) : jamais synchronisé, ou plus ancien que `seuilMs` — depuis
+// #933 (plus d'intervalle de rafraîchissement réglable), ce seuil est le même
+// que celui de la surveillance du flux ci-dessus plutôt qu'un multiple d'un
+// réglage disparu.
+export function estSyncAncienne(dernierSyncMs, maintenantMs, seuilMs = SEUIL_STREAM_SILENCIEUX_MS) {
   if (dernierSyncMs == null) return true;
-  return (maintenantMs - dernierSyncMs) >= intervalleSec * 1000 * facteur;
+  return (maintenantMs - dernierSyncMs) >= seuilMs;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -160,15 +171,21 @@ const INTERVALLE_VERIF_INACTIVITE_MS = 5000;   // vérif locale, aucun réseau
 // délai ; celui-ci borne la séquence ENTIÈRE liste+timing du réveil).
 const DELAI_MAX_REVEIL_MS = 30000;
 const DELAI_DEBOUNCE_SELECTION_MS = 300;
+// Fréquence de vérification du flux (issue #933 point 4) — locale, aucun
+// réseau tant que rien d'anormal n'est détecté ; plus fine que le seuil lui-
+// même pour le détecter avec une marge raisonnable.
+const INTERVALLE_VERIF_STREAM_MS = 15000;
 
 let derniereActiviteMs = null;
 let enVeilleActif = false;          // true dès l'entrée en veille, jusqu'au réveil RÉUSSI
 let etatVoile = 'eveille';          // 'eveille' | 'veille' | 'reveil' | 'erreur'
 let generationReveil = 0;           // un réveil supplanté (nouvelle entrée en veille) devient silencieux
 let minuteurVerifInactivite = null;
-let minuteurPeriodique = null;
-let nbEchecsConsecutifs = 0;
+let minuteurVerifStream = null;
 let minuteurDebounceSelection = null;
+// Dernier rechargement déclenché par un fin_issue, par issue (issue #933
+// point 2) — clé "projet#numero" -> horodatage ms, voir doitRechargerSurFin.
+const dernierRechargementFin = new Map();
 
 function maintenant() { return Date.now(); }
 
@@ -176,10 +193,6 @@ function lireReglages() {
   return {
     delaiVeilleMin: normaliserDelaiVeilleMin(
       persistance.lire(persistance.CLES.veilleDelaiMin, DEFAUT_DELAI_VEILLE_MIN)),
-    intervalleSec: normaliserIntervalleRafraichissementSec(
-      persistance.lire(persistance.CLES.veilleIntervalleSec, DEFAUT_INTERVALLE_RAFRAICHISSEMENT_SEC)),
-    rattrapageSec: normaliserDelaiRattrapageSec(
-      persistance.lire(persistance.CLES.veilleRattrapageSec, DEFAUT_DELAI_RATTRAPAGE_SEC)),
   };
 }
 
@@ -246,7 +259,7 @@ function masquerVoile() {
 function entrerEnVeille() {
   enVeilleActif = true;
   etatVoile = 'veille';
-  arreterRafraichissementPeriodique();
+  arreterSurveillanceStream();
   afficherVoile();
 }
 
@@ -255,14 +268,18 @@ function sortirDeVeille() {
   etatVoile = 'eveille';
   derniereActiviteMs = maintenant();
   masquerVoile();
-  demarrerRafraichissementPeriodique();
+  demarrerSurveillanceStream();
 }
 
-// Séquence réelle du réveil : rechargement ciblé liste+timing + panneau
+// Séquence réelle du réveil : vérifie d'abord l'ancienneté du dernier message
+// du flux /stream et le rouvre si besoin (issue #933 point 4, AVANT le
+// rechargement normal — aucun appel GitHub supplémentaire, rouvrir le flux
+// est purement local), puis rechargement ciblé liste+timing + panneau
 // Infrastructure + préchargement des rapports visibles (file plafonnée
 // existante, issue #835) — jamais une rafale sur tous les projets.
 async function executerReveil(projets) {
-  const resultat = await resultats.rafraichirSelection(projets);
+  verifierEtRouvrirStreamSiSilencieux();
+  const resultat = await resultats.rafraichirSelection(projets, { raison: 'reveil' });
   rafraichirPanneauInfra();
   if (typeof resultatsCoches.precharderVisibles === 'function') resultatsCoches.precharderVisibles();
   return resultat;
@@ -339,60 +356,72 @@ function installerAbsorptionVoile() {
   }
 }
 
-// ─── Rafraîchissement périodique (hors veille) ───────────────────────────────
-function arreterRafraichissementPeriodique() {
-  if (minuteurPeriodique) { clearTimeout(minuteurPeriodique); minuteurPeriodique = null; }
+// ─── Surveillance du flux /stream (issue #933 point 4) ──────────────────────
+function arreterSurveillanceStream() {
+  if (minuteurVerifStream) { clearInterval(minuteurVerifStream); minuteurVerifStream = null; }
 }
 
-function programmerProchainRafraichissement(delaiMs) {
-  arreterRafraichissementPeriodique();
-  minuteurPeriodique = setTimeout(executerRafraichissementPeriodique, delaiMs);
+function demarrerSurveillanceStream() {
+  arreterSurveillanceStream();
+  minuteurVerifStream = setInterval(verifierEtRouvrirStreamSiSilencieux, INTERVALLE_VERIF_STREAM_MS);
 }
 
-async function executerRafraichissementPeriodique() {
-  if (enVeilleActif) return;   // garde-fou : le minuteur est arrêté à l'entrée en veille
+// Vérifie l'ancienneté du dernier message reçu sur /stream (événement ou
+// battement serveur) ; au-delà du seuil, ferme et rouvre explicitement le
+// canal puis recharge la liste du/des projet(s) sélectionné(s) SEULEMENT
+// (aucun autre appel GitHub). Rien pendant la veille (appelée aussi au
+// réveil, AVANT le rechargement normal — voir executerReveil).
+function verifierEtRouvrirStreamSiSilencieux() {
+  if (enVeilleActif) return;
+  const depuis = resultats.derniereActiviteStreamMs();
+  if (!fautRouvrirStream(depuis)) return;
+  resultats.reconnecterStream();
   const projets = projetsSelectionnes();
-  const reglages = lireReglages();
-  if (!projets.length) {
-    programmerProchainRafraichissement(reglages.intervalleSec * 1000);
-    return;
-  }
-  let resultat;
-  try {
-    resultat = await resultats.rafraichirSelection(projets);
-  } catch (e) {
-    resultat = { succes: false };
-  }
-  rafraichirPanneauInfra();
-  if (enVeilleActif) return;   // entré en veille PENDANT ce rafraîchissement
-  if (resultat && resultat.succes) {
-    nbEchecsConsecutifs = 0;
-    programmerProchainRafraichissement(lireReglages().intervalleSec * 1000);
-  } else {
-    nbEchecsConsecutifs += 1;
-    programmerProchainRafraichissement(prochainDelaiMs(nbEchecsConsecutifs, lireReglages().intervalleSec * 1000));
-  }
+  if (projets.length) resultats.chargerListe(projets, { raison: 'flux_silencieux' });
 }
 
-function demarrerRafraichissementPeriodique() {
-  nbEchecsConsecutifs = 0;
-  programmerProchainRafraichissement(lireReglages().intervalleSec * 1000);
+// ─── Rechargement sur création/début/fin de traitement d'une issue ──────────
+// En BACKUP du flux /stream (qui a déjà, de son côté, traité l'événement de
+// façon optimiste/ciblée — voir resultats.js::traiterNotif) : un VRAI
+// rechargement réseau de la LISTE du projet concerné, jamais pendant la
+// veille (rattrapé par le réveil). `rechargerListeProjetPourIssue` transmet
+// au journal serveur la raison et, si l'issue est déjà connue localement, son
+// `createdAt` (pour que le serveur calcule une ancienneté en cas
+// d'avertissement — jamais un appel GitHub supplémentaire pour l'obtenir).
+function rechargerListeProjetPourIssue(projet, numero, raison) {
+  const connue = store.lireIssue(projet, numero);
+  const opts = { raison, numero };
+  if (connue && connue.createdAt) opts.creeLe = connue.createdAt;
+  resultats.chargerListe([projet], opts);
 }
 
-// ─── Rattrapage à la création d'une issue (issue #917 point 3) ──────────────
-// En BACKUP du flux /stream (qui a déjà, de son côté, affiché la ligne
-// optimiste depuis les données de l'événement — voir surCreationIssue,
-// resultats.js) : un VRAI rechargement réseau du projet concerné, immédiat
-// puis après le délai de rattrapage réglé — jamais pendant la veille (rien à
-// afficher tant que l'interface n'est pas réveillée).
+// creation_issue (issue #917 point 3, rattrapage désormais à durée FIXE,
+// issue #933) : rechargement ciblé IMMÉDIAT du projet concerné, puis un
+// second après RATTRAPAGE_CREATION_SEC.
 function surNotifCreation(notif) {
   if (!notif || notif.type !== 'creation_issue' || !notif.projet || enVeilleActif) return;
   const projet = notif.projet;
-  resultats.rafraichirSelection([projet]);
-  const rattrapageMs = lireReglages().rattrapageSec * 1000;
+  resultats.chargerListe([projet], { raison: 'creation' });
   setTimeout(() => {
-    if (!enVeilleActif) resultats.rafraichirSelection([projet]);
-  }, rattrapageMs);
+    if (!enVeilleActif) resultats.chargerListe([projet], { raison: 'rattrapage' });
+  }, RATTRAPAGE_CREATION_SEC * 1000);
+}
+
+// debut_issue/fin_issue (issue #933 point 2) : rechargement ciblé de la
+// liste du projet concerné. Pour fin_issue, regroupe les doublons rapprochés
+// (watcher.py le poste deux fois de suite pour une même issue) — un seul
+// rechargement par fenêtre, voir doitRechargerSurFin.
+function surNotifDebutOuFin(notif) {
+  if (!notif || !notif.projet || notif.numero == null || enVeilleActif) return;
+  if (notif.type === 'debut_issue') {
+    rechargerListeProjetPourIssue(notif.projet, notif.numero, 'debut');
+  } else if (notif.type === 'fin_issue') {
+    const cle = notif.projet + '#' + notif.numero;
+    const maintenantMs = maintenant();
+    if (!doitRechargerSurFin(dernierRechargementFin.get(cle), maintenantMs)) return;
+    dernierRechargementFin.set(cle, maintenantMs);
+    rechargerListeProjetPourIssue(notif.projet, notif.numero, 'fin');
+  }
 }
 
 // ─── (Dé)sélection d'un projet dans le filtre Résultats ─────────────────────
@@ -402,7 +431,6 @@ function surNotifCreation(notif) {
 // Débounce court : plusieurs pastilles cliquées très vite ne déclenchent
 // qu'UN seul rechargement de l'ensemble final.
 function surSelectionChangee() {
-  majAfficheCoutGithub();
   if (enVeilleActif) return;
   clearTimeout(minuteurDebounceSelection);
   minuteurDebounceSelection = setTimeout(() => {
@@ -411,48 +439,16 @@ function surSelectionChangee() {
   }, DELAI_DEBOUNCE_SELECTION_MS);
 }
 
-// ─── Réglages (panneau Infrastructure, partie globale) ──────────────────────
-function majAfficheCoutGithub() {
-  const zone = dom.$('#pl-veille-cout');
-  if (!zone) return;
-  const nbProjets = Math.max(1, projetsSelectionnes().length);
-  const cout = calculerCoutGithubParHeure(lireReglages().intervalleSec, nbProjets);
-  zone.textContent = '≈ ' + cout + ' appel(s) GitHub/h pour ' + nbProjets
-    + ' projet(s) actuellement sélectionné(s) dans le filtre Résultats.';
-}
-
+// ─── Réglage (panneau Infrastructure, partie globale) ───────────────────────
 function initZoneVeille() {
   const inputDelai = dom.$('#pl-veille-delai');
-  const inputIntervalle = dom.$('#pl-veille-intervalle');
-  const inputRattrapage = dom.$('#pl-veille-rattrapage');
   const reglages = lireReglages();
   if (inputDelai) inputDelai.value = String(reglages.delaiVeilleMin);
-  if (inputIntervalle) inputIntervalle.value = String(reglages.intervalleSec);
-  if (inputRattrapage) inputRattrapage.value = String(reglages.rattrapageSec);
-  majAfficheCoutGithub();
 
   if (inputDelai) {
     inputDelai.addEventListener('change', () => {
       persistance.ecrire(persistance.CLES.veilleDelaiMin, normaliserDelaiVeilleMin(inputDelai.value));
       inputDelai.value = String(lireReglages().delaiVeilleMin);
-    });
-  }
-  if (inputIntervalle) {
-    inputIntervalle.addEventListener('change', () => {
-      persistance.ecrire(persistance.CLES.veilleIntervalleSec,
-        normaliserIntervalleRafraichissementSec(inputIntervalle.value));
-      inputIntervalle.value = String(lireReglages().intervalleSec);
-      majAfficheCoutGithub();
-      // Effet immédiat (issue #917 point 5), sans attendre le prochain tick
-      // déjà programmé avec l'ancien intervalle.
-      if (!enVeilleActif) programmerProchainRafraichissement(lireReglages().intervalleSec * 1000);
-    });
-  }
-  if (inputRattrapage) {
-    inputRattrapage.addEventListener('change', () => {
-      persistance.ecrire(persistance.CLES.veilleRattrapageSec,
-        normaliserDelaiRattrapageSec(inputRattrapage.value));
-      inputRattrapage.value = String(lireReglages().rattrapageSec);
     });
   }
 }
@@ -461,7 +457,7 @@ function initZoneVeille() {
 // Appelée par l'ancien app.js (construireBoutonsFiltre, via le pont) à chaque
 // (re)construction de la barre près du ↻, comme texteDerniereSync().
 function syncEstAncienne() {
-  return estSyncAncienne(resultats.dernierSyncMs(), maintenant(), lireReglages().intervalleSec);
+  return estSyncAncienne(resultats.dernierSyncMs(), maintenant());
 }
 
 // ─── Amorçage (appelé une fois par index.js) ─────────────────────────────────
@@ -471,9 +467,10 @@ export function initVeille() {
   installerAbsorptionVoile();
   installerDetectionActivite();
   store.abonnerCle('derniereNotifIssue', (notif) => surNotifCreation(notif));
+  store.abonnerCle('derniereNotifIssue', (notif) => surNotifDebutOuFin(notif));
   if (minuteurVerifInactivite) clearInterval(minuteurVerifInactivite);
   minuteurVerifInactivite = setInterval(verifierInactivite, INTERVALLE_VERIF_INACTIVITE_MS);
-  demarrerRafraichissementPeriodique();
+  demarrerSurveillanceStream();
 }
 
 // Objet publié sous window.Bridge.veille (via installerPont dans index.js) :

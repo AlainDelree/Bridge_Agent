@@ -1,25 +1,23 @@
-// Tests de logique pure de static/js/veille.js (issue #917) : bascule en
-// veille après inactivité, valeurs par défaut/bornes des réglages,
-// reprogrammation après erreur avec attente croissante plafonnée, coût
-// GitHub indicatif, ancienneté de synchro. L'orchestration DOM (voile réel,
-// absorption du premier clic/touche, minuteurs) n'est PAS testable sans
-// navigateur — voir VERIFICATIONS_MANUELLES.md.
+// Tests de logique pure de static/js/veille.js (issue #917, revu par #933) :
+// bascule en veille après inactivité, borne du seul réglage restant (délai de
+// veille), regroupement des doublons de fin_issue, décision de rouvrir le
+// flux /stream selon l'ancienneté du dernier message, ancienneté de synchro.
+// L'orchestration DOM (voile réel, absorption du premier clic/touche,
+// minuteurs) n'est PAS testable sans navigateur — voir
+// VERIFICATIONS_MANUELLES.md.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
   DEFAUT_DELAI_VEILLE_MIN,
-  DEFAUT_INTERVALLE_RAFRAICHISSEMENT_SEC,
-  MIN_INTERVALLE_RAFRAICHISSEMENT_SEC,
-  DEFAUT_DELAI_RATTRAPAGE_SEC,
-  PLAFOND_ATTENTE_ECHEC_MS,
-  APPELS_GH_PAR_CYCLE,
+  RATTRAPAGE_CREATION_SEC,
+  FENETRE_REGROUPEMENT_FIN_MS,
+  INTERVALLE_BATTEMENT_STREAM_SEC,
+  SEUIL_STREAM_SILENCIEUX_MS,
   normaliserDelaiVeilleMin,
-  normaliserIntervalleRafraichissementSec,
-  normaliserDelaiRattrapageSec,
   doitEntrerEnVeille,
-  prochainDelaiMs,
-  calculerCoutGithubParHeure,
+  doitRechargerSurFin,
+  fautRouvrirStream,
   estSyncAncienne,
 } from '../veille.js';
 
@@ -44,32 +42,6 @@ test('normaliserDelaiVeilleMin : valeur valide arrondie', () => {
   assert.equal(normaliserDelaiVeilleMin('10.6'), 11);
 });
 
-// ─── normaliserIntervalleRafraichissementSec ─────────────────────────────────
-test('normaliserIntervalleRafraichissementSec : valeur absente/invalide → défaut (60)', () => {
-  assert.equal(normaliserIntervalleRafraichissementSec(undefined), DEFAUT_INTERVALLE_RAFRAICHISSEMENT_SEC);
-  assert.equal(normaliserIntervalleRafraichissementSec('x'), DEFAUT_INTERVALLE_RAFRAICHISSEMENT_SEC);
-  assert.equal(normaliserIntervalleRafraichissementSec(0), DEFAUT_INTERVALLE_RAFRAICHISSEMENT_SEC);
-  assert.equal(normaliserIntervalleRafraichissementSec(-10), DEFAUT_INTERVALLE_RAFRAICHISSEMENT_SEC);
-});
-
-test('normaliserIntervalleRafraichissementSec : plancher à 15s, jamais rejeté vers le défaut', () => {
-  assert.equal(normaliserIntervalleRafraichissementSec(5), MIN_INTERVALLE_RAFRAICHISSEMENT_SEC);
-  assert.equal(normaliserIntervalleRafraichissementSec(15), 15);
-  assert.equal(normaliserIntervalleRafraichissementSec(120), 120);
-});
-
-// ─── normaliserDelaiRattrapageSec ────────────────────────────────────────────
-test('normaliserDelaiRattrapageSec : valeur absente/invalide → défaut (10)', () => {
-  assert.equal(normaliserDelaiRattrapageSec(undefined), DEFAUT_DELAI_RATTRAPAGE_SEC);
-  assert.equal(normaliserDelaiRattrapageSec(0), DEFAUT_DELAI_RATTRAPAGE_SEC);
-  assert.equal(normaliserDelaiRattrapageSec(-3), DEFAUT_DELAI_RATTRAPAGE_SEC);
-});
-
-test('normaliserDelaiRattrapageSec : valeur valide conservée (plancher à 1s)', () => {
-  assert.equal(normaliserDelaiRattrapageSec(1), 1);
-  assert.equal(normaliserDelaiRattrapageSec(20), 20);
-});
-
 // ─── doitEntrerEnVeille ───────────────────────────────────────────────────────
 test('doitEntrerEnVeille : delaiVeilleMin <= 0 → jamais de veille', () => {
   assert.equal(doitEntrerEnVeille(T0 - 10 * 60000, T0, 0), false);
@@ -89,61 +61,62 @@ test('doitEntrerEnVeille : délai atteint ou dépassé → veille', () => {
   assert.equal(doitEntrerEnVeille(T0 - 45 * 60000, T0, 30), true);
 });
 
-// ─── prochainDelaiMs ──────────────────────────────────────────────────────────
-test('prochainDelaiMs : aucun échec → délai normal', () => {
-  assert.equal(prochainDelaiMs(0, 60000), 60000);
-  assert.equal(prochainDelaiMs(undefined, 60000), 60000);
+// ─── RATTRAPAGE_CREATION_SEC (issue #933 : valeur FIXE, plus un réglage) ────
+test('RATTRAPAGE_CREATION_SEC : valeur fixe attendue (10s)', () => {
+  assert.equal(RATTRAPAGE_CREATION_SEC, 10);
 });
 
-test('prochainDelaiMs : attente croissante (doublement) après chaque échec', () => {
-  assert.equal(prochainDelaiMs(1, 60000), 120000);
-  assert.equal(prochainDelaiMs(2, 60000), 240000);
-  assert.equal(prochainDelaiMs(3, 60000), 480000);
+// ─── doitRechargerSurFin (issue #933 point 2 : regroupement des doublons) ───
+test('doitRechargerSurFin : premier fin_issue connu pour cette issue → recharge', () => {
+  assert.equal(doitRechargerSurFin(null, T0), true);
+  assert.equal(doitRechargerSurFin(undefined, T0), true);
 });
 
-test('prochainDelaiMs : plafonnée, jamais d\'arrêt définitif', () => {
-  assert.equal(prochainDelaiMs(10, 60000), PLAFOND_ATTENTE_ECHEC_MS);
-  assert.equal(prochainDelaiMs(50, 60000), PLAFOND_ATTENTE_ECHEC_MS);   // pas d'explosion numérique
-  assert.ok(Number.isFinite(prochainDelaiMs(1000, 60000)));
+test('doitRechargerSurFin : doublon rapproché (sous la fenêtre) → pas de second rechargement', () => {
+  assert.equal(doitRechargerSurFin(T0 - 500, T0, FENETRE_REGROUPEMENT_FIN_MS), false);
+  assert.equal(doitRechargerSurFin(T0 - (FENETRE_REGROUPEMENT_FIN_MS - 1), T0, FENETRE_REGROUPEMENT_FIN_MS), false);
 });
 
-test('prochainDelaiMs : plafond personnalisé respecté', () => {
-  assert.equal(prochainDelaiMs(5, 60000, 90000), 90000);
+test('doitRechargerSurFin : au-delà de la fenêtre → nouveau rechargement autorisé', () => {
+  assert.equal(doitRechargerSurFin(T0 - FENETRE_REGROUPEMENT_FIN_MS, T0, FENETRE_REGROUPEMENT_FIN_MS), true);
+  assert.equal(doitRechargerSurFin(T0 - 10000, T0, FENETRE_REGROUPEMENT_FIN_MS), true);
 });
 
-// ─── calculerCoutGithubParHeure ──────────────────────────────────────────────
-test('calculerCoutGithubParHeure : défauts (60s, 1 projet) → 2 appels/cycle × 60 cycles/h', () => {
-  assert.equal(calculerCoutGithubParHeure(60, 1), APPELS_GH_PAR_CYCLE * 60);
+// ─── fautRouvrirStream (issue #933 point 4) ──────────────────────────────────
+test('fautRouvrirStream : aucune activité connue (null) → rouvrir', () => {
+  assert.equal(fautRouvrirStream(null), true);
 });
 
-test('calculerCoutGithubParHeure : plusieurs projets sélectionnés → coût multiplié', () => {
-  assert.equal(calculerCoutGithubParHeure(60, 3), APPELS_GH_PAR_CYCLE * 60 * 3);
+test('fautRouvrirStream : sous le seuil (3x l\'intervalle des battements) → pas besoin', () => {
+  assert.equal(fautRouvrirStream(SEUIL_STREAM_SILENCIEUX_MS - 1), false);
+  assert.equal(fautRouvrirStream(0), false);
 });
 
-test('calculerCoutGithubParHeure : intervalle plus long → coût réduit', () => {
-  assert.ok(calculerCoutGithubParHeure(120, 1) < calculerCoutGithubParHeure(60, 1));
+test('fautRouvrirStream : au seuil ou au-delà → rouvrir', () => {
+  assert.equal(fautRouvrirStream(SEUIL_STREAM_SILENCIEUX_MS), true);
+  assert.equal(fautRouvrirStream(SEUIL_STREAM_SILENCIEUX_MS + 60000), true);
 });
 
-test('calculerCoutGithubParHeure : intervalle invalide → 0, jamais une exception', () => {
-  assert.equal(calculerCoutGithubParHeure(0, 1), 0);
-  assert.equal(calculerCoutGithubParHeure(-5, 1), 0);
+test('fautRouvrirStream : seuil = 3x l\'intervalle réel des battements serveur (30s)', () => {
+  assert.equal(INTERVALLE_BATTEMENT_STREAM_SEC, 30);
+  assert.equal(SEUIL_STREAM_SILENCIEUX_MS, 90000);
 });
 
 // ─── estSyncAncienne ──────────────────────────────────────────────────────────
 test('estSyncAncienne : jamais synchronisé (null) → ancienne', () => {
-  assert.equal(estSyncAncienne(null, T0, 60), true);
+  assert.equal(estSyncAncienne(null, T0), true);
 });
 
-test('estSyncAncienne : sous 3x l\'intervalle → pas ancienne', () => {
-  assert.equal(estSyncAncienne(T0 - 179 * 1000, T0, 60), false);
+test('estSyncAncienne : sous le seuil → pas ancienne', () => {
+  assert.equal(estSyncAncienne(T0 - (SEUIL_STREAM_SILENCIEUX_MS - 1), T0), false);
 });
 
-test('estSyncAncienne : à 3x l\'intervalle ou au-delà → ancienne', () => {
-  assert.equal(estSyncAncienne(T0 - 180 * 1000, T0, 60), true);
-  assert.equal(estSyncAncienne(T0 - 600 * 1000, T0, 60), true);
+test('estSyncAncienne : au seuil ou au-delà → ancienne', () => {
+  assert.equal(estSyncAncienne(T0 - SEUIL_STREAM_SILENCIEUX_MS, T0), true);
+  assert.equal(estSyncAncienne(T0 - 600 * 1000, T0), true);
 });
 
-test('estSyncAncienne : facteur personnalisé respecté', () => {
-  assert.equal(estSyncAncienne(T0 - 119 * 1000, T0, 60, 2), false);
-  assert.equal(estSyncAncienne(T0 - 120 * 1000, T0, 60, 2), true);
+test('estSyncAncienne : seuil personnalisé respecté', () => {
+  assert.equal(estSyncAncienne(T0 - 119 * 1000, T0, 120000), false);
+  assert.equal(estSyncAncienne(T0 - 120 * 1000, T0, 120000), true);
 });

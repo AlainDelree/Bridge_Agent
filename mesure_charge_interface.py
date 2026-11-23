@@ -17,6 +17,14 @@ AUCUN contenu d'issue, titre, numéro ni secret n'est jamais écrit : seulement
 des nombres, un horodatage et un gabarit de route Flask (ex.
 « /issue/<nom_projet>/<numero> », jamais la valeur réelle substituée).
 
+EXCEPTION DOCUMENTÉE (issue #933 point 5) : `ligne_rechargement_liste` et
+`ligne_avertissement_issue_absente` ci-dessous portent un NUMÉRO D'ISSUE
+GitHub (jamais un titre, un label, ni aucun autre contenu) — ce journal est
+le point de corrélation choisi pour diagnostiquer un rechargement de liste
+qui ne retrouve pas l'issue attendue (voir l'étude #933 et
+docs/contexte/interface_rafraichissement.md) ; un numéro d'issue n'est pas
+une donnée sensible (déjà public sur le dépôt concerné).
+
 Compteurs protégés par un verrou (_VERROU) : le serveur de développement
 Flask tourne avec threaded=True (new_issue.py), plusieurs requêtes peuvent
 donc appeler enregistrer_requete() en même temps. Les crochets eux-mêmes
@@ -156,6 +164,52 @@ def ligne_evenement_stream(horodatage, type_evenement, projet, nb_abonnes) -> st
         "type_evenement": type_evenement,
         "projet": projet,
         "nb_abonnes": nb_abonnes,
+    }, ensure_ascii=False)
+
+
+def ligne_rechargement_liste(horodatage, projet, nb_issues, numero_plus_recent, duree_gh_s, raison) -> str:
+    """Ligne JSON d'un rechargement de la liste d'un projet (`/issues-liste`,
+    issue #933 point 5) — SEULE exception documentée à la règle « aucun
+    numéro d'issue » qui s'applique aux autres lignes de ce journal
+    (ligne_echantillon, ligne_resume_precharge, ligne_evenement_stream
+    ci-dessus/ci-dessous) : un numéro d'issue GitHub n'est pas une donnée
+    sensible (déjà public sur le dépôt), et cette ligne existe justement
+    pour corréler un rechargement avec l'issue qu'il devait révéler — voir
+    l'étude #933 (une ligne tout juste créée parfois absente de la liste au
+    moment du début/fin de traitement).
+
+    `raison` : motif transmis par le client s'il le fournit (« creation »,
+    « rattrapage », « debut », « fin », « clic », « reveil », ou tout autre
+    texte libre — ex. « flux_silencieux », réouverture du flux /stream) ;
+    None si l'appelant ne l'a pas transmis (ex. un appel antérieur à #933)."""
+    return json.dumps({
+        "type": "rechargement_liste",
+        "horodatage": horodatage,
+        "projet": projet,
+        "nb_issues": nb_issues,
+        "numero_plus_recent": numero_plus_recent,
+        "duree_gh_s": duree_gh_s,
+        "raison": raison,
+    }, ensure_ascii=False)
+
+
+def ligne_avertissement_issue_absente(horodatage, projet, numero, age_s, raison) -> str:
+    """Ligne JSON d'avertissement (issue #933 point 5) : un rechargement de
+    la liste déclenché par l'événement de DÉBUT ou de FIN de traitement
+    d'une issue précise ne l'a PAS retrouvée dans la réponse `gh issue
+    list`. `age_s` : ancienneté connue de l'issue en secondes, calculée à
+    partir du `createdAt` transmis par le navigateur s'il le connaît déjà
+    (None si inconnu — jamais recalculée par un appel GitHub supplémentaire
+    ici, voir app/issues.py::_journaliser_rechargement_liste). Permet, à
+    l'usage, de confirmer ou d'infirmer l'hypothèse d'un simple retard
+    d'indexation côté GitHub (voir docs/contexte/interface_rafraichissement.md)."""
+    return json.dumps({
+        "type": "avertissement_issue_absente",
+        "horodatage": horodatage,
+        "projet": projet,
+        "numero": numero,
+        "age_s": age_s,
+        "raison": raison,
     }, ensure_ascii=False)
 
 

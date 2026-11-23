@@ -753,7 +753,15 @@ function appliquerBadgeSansComplexite(badge, decision) {
 }
 
 // ─── Chargement de la liste (initial / ↻ / rafraîchissement action) ──────────
-async function chargerListe(nomsAFetcher) {
+// `opts` (issue #933 point 5) : { raison, numero, creeLe } transmis au
+// journal serveur (logs/charge_interface.log) — raison du rechargement
+// (creation/rattrapage/debut/fin/clic/reveil/…), et pour debut/fin,
+// numero de l'issue attendue + son createdAt SI déjà connu localement
+// (store.lireIssue), pour que le serveur calcule une ancienneté en cas
+// d'avertissement SANS jamais faire d'appel GitHub supplémentaire pour
+// l'obtenir. Purement informatif : n'affecte ni la requête ni son
+// traitement côté client.
+async function chargerListe(nomsAFetcher, opts = {}) {
   const noms = nomsProjets();
   if (!noms.length) { appelerAncien('__resultatsListeVide'); return { succes: true }; }
   const nomsFetch = Array.isArray(nomsAFetcher)
@@ -763,9 +771,11 @@ async function chargerListe(nomsAFetcher) {
   appelerAncien('majIndicateurListe', true);
   const chargements = await Promise.all(nomsFetch.map(async (nom) => {
     try {
-      const liste = await api.get(
-        '/issues-liste/' + encodeURIComponent(nom) + '?limite=' + encodeURIComponent(lim),
-        { silencieux: true });
+      let url = '/issues-liste/' + encodeURIComponent(nom) + '?limite=' + encodeURIComponent(lim);
+      if (opts.raison) url += '&raison=' + encodeURIComponent(opts.raison);
+      if (opts.numero != null) url += '&numero=' + encodeURIComponent(opts.numero);
+      if (opts.creeLe) url += '&cree_le=' + encodeURIComponent(opts.creeLe);
+      const liste = await api.get(url, { silencieux: true });
       if (!Array.isArray(liste)) return { projet: nom, succes: false, issues: [] };
       return { projet: nom, succes: true, issues: liste };
     } catch (e) {
@@ -886,10 +896,10 @@ async function chargerTimingSelection(noms) {
 // la purge du cache détail (réservée au ↻ explicite, rafraichirResultats
 // d'app.js) : volontairement plus léger que rafraichir() ci-dessous. `noms`
 // vide → rien à faire, succès trivial (jamais d'appel réseau à vide).
-async function rafraichirSelection(noms) {
+async function rafraichirSelection(noms, opts = {}) {
   const liste = (noms || []).filter(Boolean);
   if (!liste.length) return { succes: true };
-  const r1 = await chargerListe(liste);
+  const r1 = await chargerListe(liste, opts);
   const r2 = await chargerTimingSelection(liste);
   return { succes: !!(r1 && r1.succes) && !!(r2 && r2.succes) };
 }
@@ -1169,8 +1179,8 @@ async function chargerInitial() {
 // l'appelant — rafraichirResultats d'app.js — via nomsAFetcher). Également
 // empruntée par la resynchronisation automatique #705
 // (resynchroniserResultatsAuRetour, app.js), qui rejoue le même ↻.
-async function rafraichir(nomsAFetcher) {
-  await chargerListe(nomsAFetcher);
+async function rafraichir(nomsAFetcher, opts = {}) {
+  await chargerListe(nomsAFetcher, opts);
   await chargerTimingTous();
   await resultatsCoches.rechargerCases(nomsAFetcher);
 }
@@ -1191,6 +1201,23 @@ function surOuvertureSse() {
   if (fautResynchroniserApresReconnexionSse(premiereOuverture)) {
     appelerAncien('resynchroniserResultatsAuRetour');
   }
+}
+
+// Millisecondes depuis le dernier message reçu sur /stream (événement ou
+// battement serveur), ou null avant toute activité — consommé par
+// static/js/veille.js (issue #933 point 4) pour détecter un flux resté
+// silencieux plus longtemps que prévu.
+function derniereActiviteStreamMs() {
+  return sse.stream.depuisDerniereActiviteMs();
+}
+
+// Ferme puis rouvre explicitement le canal /stream (issue #933 point 4) —
+// réutilise le MÊME onOuvert que l'ouverture initiale (surOuvertureSse),
+// pour que la resynchronisation #705 reste cohérente après une réouverture
+// forcée comme après une reconnexion native d'EventSource.
+function reconnecterStream() {
+  sse.stream.fermer();
+  sse.stream.connecter({ onOuvert: surOuvertureSse });
 }
 
 // ─── Amorçage (appelé une fois par index.js) ─────────────────────────────────
@@ -1263,7 +1290,12 @@ export const resultats = {
   // décider si l'affichage « sync HH:MM:SS » doit être coloré comme ancien.
   dernierSyncMs: () => derniereSyncListeMs,
   // Rafraîchissement CIBLÉ liste + timing d'une sélection de projets (issue
-  // #917 points 2/3), consommé par static/js/veille.js pour le réveil et le
-  // rafraîchissement périodique — voir rafraichirSelection ci-dessus.
+  // #917 points 2/3), consommé par static/js/veille.js pour le réveil et la
+  // (dé)sélection d'un projet — voir rafraichirSelection ci-dessus.
   rafraichirSelection,
+  // Surveillance du flux /stream (issue #933 point 4), consommées par
+  // static/js/veille.js : ancienneté du dernier message reçu, et réouverture
+  // explicite du canal quand il est resté silencieux trop longtemps.
+  derniereActiviteStreamMs,
+  reconnecterStream,
 };

@@ -1,10 +1,10 @@
-# Rafraîchissement de l'interface web — veille, réveil, copie du rapport (issue #917)
+# Rafraîchissement de l'interface web — veille, réveil, copie du rapport (issues #917, #933)
 
 État ACTUEL du mécanisme (pas l'historique — voir `CHANGELOG.md` pour le
-déroulé de l'issue #917, et l'étude #916 pour les faits qui l'ont motivée).
-Pas de référence courte dans `BRIDGE_AGENT_DOC.md` (document CC-facing, sans
-section sur les mécanismes internes de l'interface web) ; voir plutôt
-`ARCHITECTURE.md` §6 pour la carte générale du socle web.
+déroulé des issues #917/#933, et l'étude #916 pour les faits qui ont motivé
+#917). Pas de référence courte dans `BRIDGE_AGENT_DOC.md` (document
+CC-facing, sans section sur les mécanismes internes de l'interface web) ;
+voir plutôt `ARCHITECTURE.md` §6 pour la carte générale du socle web.
 
 ## 1. Flux de la liste Résultats et du panneau Infrastructure
 
@@ -30,18 +30,26 @@ section sur les mécanismes internes de l'interface web) ; voir plutôt
   par ce qui précède (`resumeProjetMonitoring`, `app.js`) — il ne refait
   JAMAIS lui-même un appel GitHub pour ces compteurs ; son fetch réseau
   propre (`/watchers`, `/issues-inbox/etat`) est purement LOCAL (pas GitHub).
-  Ce minuteur de 30s n'est PAS touché par la veille (issue #917) : il
-  continue de tourner même pendant la veille (petite requête locale
-  existante, hors périmètre de cette issue).
-- **Rafraîchissement périodique du projet sélectionné** (NOUVEAU, issue
-  #917, `static/js/veille.js`) : seul mécanisme qui, lui, refait un vrai
-  appel GitHub de façon périodique — voir §3 ci-dessous.
+  Ce minuteur de 30s n'est PAS touché par la veille : il continue de tourner
+  même pendant la veille (petite requête locale existante).
+- **Rechargement de la liste du PROJET CONCERNÉ sur événement** (issue #933,
+  `static/js/veille.js`) : à la création d'une issue (`creation_issue`,
+  inchangé depuis #917 hors durée fixe du rattrapage), et DÉSORMAIS aussi au
+  DÉBUT et à la FIN de son traitement (`debut_issue`/`fin_issue`) — voir §3.
+  Plus aucun rechargement PÉRIODIQUE (retiré par #933, voir §3 et §4) : seuls
+  ces événements déclenchent un vrai appel GitHub.
 
-Avant l'issue #917, aucun rechargement périodique de la liste n'avait jamais
-existé (constat de l'étude #916) : un flux `/stream` resté silencieux (cas
-réel observé le 22/11/2026, 22 minutes sans requête ciblée après un
-`debut_issue`) laissait la liste périmée jusqu'au prochain rattrapage
-ponctuel ou au ↻ manuel.
+Avant l'issue #917, aucun rechargement périodique ni déclenché par
+début/fin de traitement n'avait jamais existé (constat de l'étude #916) : un
+flux `/stream` resté silencieux (cas réel observé le 22/11/2026, 22 minutes
+sans requête ciblée après un `debut_issue`) laissait la liste périmée
+jusqu'au prochain rattrapage ponctuel ou au ↻ manuel. #917 avait comblé ce
+manque par un POLLING à intervalle fixe ; l'étude #933 (essais du
+23/11/2026) a montré que ce polling n'empêchait pas le symptôme (une ligne
+tout juste créée pouvait rester absente plusieurs secondes après le début de
+son traitement, sans lien avec l'intervalle réglé) : il a donc été remplacé
+par un rechargement déclenché par les événements eux-mêmes, moins coûteux en
+appels GitHub (voir §3) et mieux corrélé à la cause réelle.
 
 ## 2. Écrasement d'une issue connue par événement mais pas encore indexée par GitHub
 
@@ -58,10 +66,13 @@ Deux endroits distincts, même famille de problème (décalage d'indexation de
   projet refetché avec succès) : `fusionnerChargement` (`resultats.js`)
   conserve désormais, pour un projet refetché AVEC SUCCÈS, une issue absente
   de la réponse si elle est OUVERTE et RÉCENTE (< `FENETRE_RECENTE_LISTE_MS`
-  = 2 min — fenêtre plus large que celle du timing : un rechargement
-  périodique peut se répéter plusieurs fois avant que GitHub ne rattrape son
-  retard). Une issue fermée, ou absente au-delà de cette fenêtre, est
+  = 2 min). Une issue fermée, ou absente au-delà de cette fenêtre, est
   retirée normalement (vraie fin d'issue).
+
+Ce mécanisme reste la DERNIÈRE ligne de défense : §3 et §9 ci-dessous
+décrivent ce que l'issue #933 ajoute en AMONT (rechargement sur
+début/fin + journal) pour réduire le nombre de cas où il doit intervenir, et
+pour objectiver, à l'usage, s'il en reste.
 
 ## 3. Veille et réveil (`static/js/veille.js`)
 
@@ -69,49 +80,74 @@ Deux endroits distincts, même famille de problème (décalage d'indexation de
   `touchstart`/`scroll`/`keydown` (capture) sur `window`, mise à jour d'un
   horodatage. Vérifié toutes les 5s (local, aucun réseau). Après
   `delaiVeilleMin` minutes sans activité (défaut 30, réglage 0 = veille
-  désactivée), le voile gris `#voile-veille`
-  (`templates/fragments/voile_veille.html`) s'affiche. **Non vérifié sans
-  navigateur réel** : si ces écouteurs se déclenchent bien quand la fenêtre
-  n'a pas le focus (dépend du système de fenêtrage/navigateur, pas
-  seulement de ce code) — voir `VERIFICATIONS_MANUELLES.md`.
-- **Pendant la veille** : le rafraîchissement périodique ci-dessous
-  s'arrête (aucun appel GitHub) ; les événements `creation_issue` ne
-  déclenchent aucun rechargement réseau (rattrapés au réveil). Les requêtes
-  locales existantes (battement `/heartbeat`, `/watchers`, `/issues-inbox/etat`,
-  panneau Infrastructure) ne sont PAS arrêtées.
+  désactivée — SEUL réglage de ce module depuis #933, voir §4), le voile
+  gris `#voile-veille` (`templates/fragments/voile_veille.html`) s'affiche.
+  **Non vérifié sans navigateur réel** : si ces écouteurs se déclenchent bien
+  quand la fenêtre n'a pas le focus (dépend du système de fenêtrage/
+  navigateur, pas seulement de ce code) — voir `VERIFICATIONS_MANUELLES.md`.
+- **Pendant la veille** : AUCUN rechargement réseau déclenché par événement
+  (création/début/fin ci-dessous) ne part — rattrapés au réveil. La
+  surveillance du flux `/stream` (§3bis) est elle aussi suspendue. Les
+  requêtes locales existantes (battement `/heartbeat`, `/watchers`,
+  `/issues-inbox/etat`, panneau Infrastructure) ne sont PAS arrêtées.
 - **Réveil** : le voile absorbe le premier clic (listener posé directement
   sur `#voile-veille`) ou la première touche (listener `keydown` en phase de
   capture sur `window`, `preventDefault`/`stopPropagation` avant que
-  l'élément focus ne la reçoive). Déclenche
-  `resultats.rafraichirSelection(projets sélectionnés)` + le panneau
-  Infrastructure + `resultatsCoches.precharderVisibles()` (file plafonnée
-  existante, issue #835). Le voile passe à « Mise à jour… », puis :
+  l'élément focus ne la reçoive). Déclenche D'ABORD la vérification du flux
+  `/stream` (§3bis, réouverture locale si besoin — aucun appel GitHub), PUIS
+  `resultats.rafraichirSelection(projets sélectionnés, {raison: 'reveil'})` +
+  le panneau Infrastructure + `resultatsCoches.precharderVisibles()` (file
+  plafonnée existante, issue #835). Le voile passe à « Mise à jour… », puis :
   - données arrivées → voile masqué, horodatage d'activité réinitialisé,
-    rafraîchissement périodique relancé ;
+    surveillance du flux relancée ;
   - délai maximum dépassé (30s, `DELAI_MAX_REVEIL_MS`) ou échec → état
     d'erreur explicite + bouton « Réessayer », jamais de disparition
     silencieuse.
-- **Rafraîchissement périodique hors veille** : `resultats.rafraichirSelection`
-  (liste + timing, RESTREINT aux projets actuellement sélectionnés dans le
-  filtre pastille de l'onglet Résultats — `appelerAncien('projetsActifsDansFiltreResultats')`
-  — jamais `chargerTimingTous()`, réservée au ↻ complet) + le panneau
-  Infrastructure, à `intervalleSec` (défaut 60, plancher 15 — protège le
-  quota GitHub). Se reprogramme lui-même après CHAQUE tentative : succès →
-  délai réglé ; échec → attente croissante plafonnée (`prochainDelaiMs`,
-  doublement jusqu'à 10 minutes), jamais d'arrêt définitif.
+- **Rechargement sur DÉBUT et FIN de traitement** (événements SSE
+  `debut_issue`/`fin_issue`, issue #933 point 2 — REMPLACE le
+  rafraîchissement périodique de #917, retiré) : `resultats.chargerListe`
+  (liste SEULE, pas le timing — déjà géré en ciblé par
+  `resultats.js::surDebutIssue`/`surFinIssue`) du PROJET CONCERNÉ par
+  l'événement, raison `'debut'`/`'fin'` transmise au journal (§9). Pour
+  `fin_issue`, watcher.py poste l'événement DEUX FOIS de suite pour une même
+  issue (constat de l'étude #933) : regroupé côté client
+  (`doitRechargerSurFin`, fenêtre `FENETRE_REGROUPEMENT_FIN_MS` = 3s) — un
+  seul rechargement. Les deux événements portaient déjà `{projet, numero}`
+  (vérifié par relecture de `app/fin_issue.py`, aucune modification
+  nécessaire — voir le rapport de l'issue #933). Rien pendant la veille.
 - **Rattrapage à la création d'une issue** (événement SSE `creation_issue`,
   dépôt de fichier ou formulaire — les deux finissent par le même événement,
   voir `app/fin_issue.py::emettre_creation_issue`) : rechargement ciblé
   IMMÉDIAT du projet concerné par l'événement (pas forcément celui
-  sélectionné dans le filtre), puis un second après `rattrapageSec` (défaut
-  10s) — en BACKUP du flux `/stream` (décision d'Alain : ne pas dépendre du
-  flux seul). Rien pendant la veille.
+  sélectionné dans le filtre), puis un second après
+  `RATTRAPAGE_CREATION_SEC` (10s, valeur FIXE dans le code depuis #933 — ce
+  n'est plus un réglage, voir §4) — en BACKUP du flux `/stream`. Rien pendant
+  la veille.
 - **(Dé)sélection d'un projet dans le filtre pastille** : un projet qui vient
   d'être sélectionné est rechargé À CE MOMENT (`veille.surSelectionChangee`,
   appelée depuis `app.js::basculerFiltreProjet`/`basculerTousLesFiltres` via
   le pont, débounce 300ms) — jamais pendant qu'il était désélectionné.
 
-## 4. Réglages (modifiables par Alain, sans rechargement de page)
+### 3bis. Surveillance du flux `/stream` (issue #933 point 4)
+
+Sans rafraîchissement périodique, une coupure SILENCIEUSE du flux `/stream`
+(EventSource qui ne détecte pas la coupure, ex. proxy/tunnel qui l'absorbe
+sans déclencher `onerror`) ne se verrait plus. `static/js/veille.js` vérifie
+donc, toutes les 15s (local, aucun appel GitHub tant que rien n'est anormal),
+l'ancienneté du dernier message reçu sur CE canal (événement OU battement
+serveur — `sse.js::depuisDerniereActiviteMs`, exposé par
+`resultats.derniereActiviteStreamMs()`). Seuil retenu : **trois fois
+l'intervalle réel des battements serveur**, soit `SEUIL_STREAM_SILENCIEUX_MS`
+= 3 × 30s = 90s — l'intervalle de 30s est celui de `app/fin_issue.py::DELAI_PING`
+(canal `/stream` lui-même, PAS le canal `/events` du cycle de vie serveur,
+dont le heartbeat JS suit sa propre logique inchangée dans `static/js/app.js`
+— vérifié par relecture avant de fixer ce seuil). Au-delà : `resultats.reconnecterStream()`
+(ferme puis rouvre le canal `/stream`, purement local) puis
+`resultats.chargerListe(projets sélectionnés, {raison: 'flux_silencieux'})` —
+AUCUN autre appel GitHub. Suspendu pendant la veille ; vérifié explicitement
+au réveil, AVANT le rechargement normal (voir ci-dessus).
+
+## 4. Réglage (modifiable par Alain, sans rechargement de page)
 
 Panneau Infrastructure, partie GLOBALE, juste après l'interrupteur de son
 (`templates/fragments/panneau_lateral.html`, zone `#pl-zone-veille`) :
@@ -119,27 +155,30 @@ Panneau Infrastructure, partie GLOBALE, juste après l'interrupteur de son
 | Réglage | Clé `localStorage` (via `window.Bridge.persistance`) | Défaut | Borne |
 |---|---|---|---|
 | Délai avant veille (min) | `bridge_veille_delai_min` | 30 | 0 désactive la veille |
-| Intervalle de rafraîchissement (s) | `bridge_veille_intervalle_sec` | 60 | minimum 15 |
-| Délai de rattrapage après création (s) | `bridge_veille_rattrapage_sec` | 10 | minimum 1 |
 
-Valeur absente ou invalide → défaut (`normaliserDelaiVeilleMin`/
-`normaliserIntervalleRafraichissementSec`/`normaliserDelaiRattrapageSec`,
-`static/js/veille.js`). Préférences LOCALES AU NAVIGATEUR, une seule valeur
-par réglage pour toute l'interface (jamais par projet) — aucun fichier
-`configs/*.conf`, aucun mécanisme serveur. Un ordre de grandeur du coût en
-appels GitHub par heure (`#pl-veille-cout`, `calculerCoutGithubParHeure` : 2
-appels `gh` par cycle et par projet sélectionné — `/issues-liste` +
-`/issues-en-attente`) s'affiche à côté, recalculé à chaque changement
-d'intervalle ou de sélection pastille.
+Valeur absente ou invalide → défaut (`normaliserDelaiVeilleMin`,
+`static/js/veille.js`). Préférence LOCALE AU NAVIGATEUR, une seule valeur
+pour toute l'interface (jamais par projet) — aucun fichier `configs/*.conf`,
+aucun mécanisme serveur.
+
+**Retirés par l'issue #933** : « Rafraîchir toutes les (s) »
+(`bridge_veille_intervalle_sec`) et « Rattrapage création (s) »
+(`bridge_veille_rattrapage_sec`), ainsi que le rafraîchissement périodique
+qu'ils pilotaient et l'estimation « ≈ N appel(s) GitHub/h » qui leur était
+associée (`calculerCoutGithubParHeure`, `#pl-veille-cout`) — remplacés par le
+rechargement sur événements décrit au §3. Une valeur déjà enregistrée par
+Alain sous ces deux clés localStorage n'est simplement plus lue par aucun
+code (aucune purge nécessaire, aucune erreur).
 
 ## 5. Ancienneté visible de la synchro
 
 L'affichage « sync HH:MM:SS » près du ↻ (`#resultats-derniere-sync`,
 `app.js::construireBoutonsFiltre`) se colore (`.resultats-derniere-sync-ancienne`,
 rouge) quand `veille.syncEstAncienne()` répond vrai : jamais synchronisé, ou
-plus ancien que trois fois l'intervalle réglé (`estSyncAncienne`). Recalculé
-à chaque reconstruction de cette barre (chaque rechargement de liste, y
-compris le rafraîchissement périodique).
+plus ancien que `SEUIL_STREAM_SILENCIEUX_MS` (`estSyncAncienne`, 90s — depuis
+#933, même seuil que la surveillance du flux §3bis ; plus aucun réglage
+d'intervalle dont il aurait pu rester un multiple). Recalculé à chaque
+reconstruction de cette barre (chaque rechargement de liste).
 
 ## 6. Copie du rapport (case à cocher / badges ✅/Diff/All)
 
@@ -181,7 +220,7 @@ inchangé pour le reste) :
   à `sourceEvents.onopen` (reprise), sans recharger la page. Distinct du
   voile gris de veille (lequel ne signale jamais une panne serveur).
 
-## 8. Journal de diagnostic (`/stream`)
+## 8. Journal des événements `/stream`
 
 `app/fin_issue.py::_diffuser` (point UNIQUE de diffusion de tous les
 événements `/stream` : `debut_issue`, `fin_issue`, `creation_issue`,
@@ -191,4 +230,40 @@ diffusion SSE elle-même, une ligne dans `logs/charge_interface.log`
 concerné — `None` si l'événement n'en porte pas — et nombre de pages
 actuellement abonnées) — JAMAIS le contenu de l'événement (titre, labels,
 timing, fichier, motif). Best-effort strict : un échec d'écriture du journal
-n'empêche jamais la diffusion SSE.
+n'empêche jamais la diffusion SSE. `debut_issue`/`fin_issue` portent déjà
+`{projet, numero}` dans le message SSE lui-même (vérifié par l'issue #933,
+aucune modification nécessaire) — seule cette ligne de journal-ci n'inclut
+pas le numéro, par choix antérieur (#917) : voir §9 pour le journal qui, lui,
+en a besoin.
+
+## 9. Journal des rechargements de liste (issue #933 point 5)
+
+Réutilise le MÊME journal que le §8 ci-dessus (`logs/charge_interface.log`,
+`mesure_charge_interface.py`) plutôt qu'un nouveau fichier : c'est déjà le
+journal de diagnostic de l'interface, avec sa rotation et son usage établis
+pour corréler exactement ce genre de décalage (voir l'étude #916/#933).
+
+À CHAQUE appel de `app/issues.py::issues_liste` (route `/issues-liste/<nom>`,
+quel que soit le déclencheur), une ligne `rechargement_liste`
+(`mci.ligne_rechargement_liste`) : projet, nombre d'issues renvoyées, numéro
+de la plus récente (`None` si la liste est vide), durée de l'appel GitHub
+(`_lister_issues_labels`, en secondes), et la `raison` transmise par le
+client en paramètre de requête (`?raison=...` — `creation`, `rattrapage`,
+`debut`, `fin`, `clic`, `reveil`, ou `flux_silencieux` pour une réouverture
+du flux §3bis ; `None` si l'appelant ne la transmet pas, ex. un appel
+antérieur à #933).
+
+Quand `raison` vaut `debut` ou `fin` ET que le client transmet aussi
+`?numero=...` (l'issue qu'il attendait), si ce numéro n'est PAS dans la
+réponse : une seconde ligne `avertissement_issue_absente`
+(`mci.ligne_avertissement_issue_absente`) — projet, numéro, et une
+ancienneté `age_s` calculée à partir de `?cree_le=...` (createdAt ISO de
+cette issue, SI le navigateur le connaît déjà localement — `store.lireIssue`,
+jamais recalculé ici par un appel GitHub supplémentaire ; `None` si inconnu).
+Exception documentée à la règle « aucun numéro d'issue » du reste de ce
+journal (§8 inclus) — un numéro n'est pas une donnée sensible, et ces deux
+lignes existent justement pour objectiver, à l'usage, si le symptôme de
+l'étude #933 (ligne absente au début/à la fin de traitement) subsiste et
+d'où il vient : aucune autre action n'est tentée automatiquement en réponse
+à cet avertissement (pas de ligne provisoire, pas de série de rattrapages —
+décision d'Alain, voir le rapport de l'issue #933).

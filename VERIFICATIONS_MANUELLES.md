@@ -533,51 +533,78 @@
         presse-papier) reste, elle, affichée jusqu'au clic sur sa croix —
         aucune régression de la persistance par défaut (issue #730).
 
-## Veille, réveil, rafraîchissement périodique et copie du rapport (issue #917)
+## Veille, réveil, rechargement sur événements et copie du rapport (issues #917, #933)
 
 > Nouveau mécanisme — aucune infrastructure de test de navigateur dans le
 > dépôt, donc RIEN de ce qui suit n'a pu être vérifié automatiquement. En
 > particulier, la détection d'activité quand la fenêtre n'a PAS le focus
 > (autre application au premier plan) dépend du système de fenêtrage/
-> navigateur, pas seulement du code — à vérifier ici en priorité.
+> navigateur, pas seulement du code — à vérifier ici en priorité. Après
+> redémarrage de l'interface (issue #933) : les essais (a)/(b)/(c) ci-dessous
+> sont ceux demandés par cette issue — déposer une issue non interactive du
+> projet sélectionné sans rien toucher, laisser l'issue se terminer, répéter
+> plusieurs fois et consulter `logs/charge_interface.log`.
 
-- [ ] **(a)** Régler le délai de veille à 1 minute (panneau Infrastructure,
-      partie globale, sous l'interrupteur de son), ne rien toucher : le voile
-      gris « Interface en veille — cliquez pour la réveiller » apparaît après
-      1 minute, couvrant toute l'interface. Un clic (n'importe où sur le
-      voile) le fait passer à « Mise à jour… », puis il disparaît une fois les
-      données arrivées — jamais avant, jamais de disparition silencieuse.
+- [ ] **(a, #933)** Déposer une issue non interactive du projet SÉLECTIONNÉ
+      dans le filtre Résultats, SANS cliquer ↻ ni rien toucher : sa ligne
+      apparaît au plus tard au DÉBUT de son traitement (ACK du watcher) —
+      pas seulement à sa création ni à sa fin.
+- [ ] **(b, #933)** Laisser cette même issue se terminer : sa ligne (état
+      final) ET les compteurs du panneau Infrastructure se mettent à jour
+      SANS clic ↻.
+- [ ] **(c, #933)** Répéter (a)/(b) plusieurs fois (idéalement avec des
+      issues interactives et non interactives, comme les essais du
+      23/11/2026), puis consulter `logs/charge_interface.log` : chaque appel
+      de `/issues-liste/<projet>` y laisse une ligne `rechargement_liste`
+      (projet, nb_issues, numero_plus_recent, duree_gh_s, raison) ; AUCUNE
+      ligne `avertissement_issue_absente` n'est attendue — si certaines
+      apparaissent, elles montrent le retard de GitHub (projet, numéro, âge
+      en secondes) plutôt qu'un bug de l'interface.
+- [ ] **(d, #933)** Régler le délai de veille à 1 minute (panneau
+      Infrastructure, partie globale, sous l'interrupteur de son), ne rien
+      toucher : le voile gris « Interface en veille — cliquez pour la
+      réveiller » apparaît après 1 minute, couvrant toute l'interface. Un
+      clic (n'importe où sur le voile) le fait passer à « Mise à jour… »,
+      puis il disparaît une fois les données arrivées — jamais avant, jamais
+      de disparition silencieuse. Les réglages « Rafraîchir toutes les (s) »
+      et « Rattrapage création (s) » de l'issue #917 ont disparu du panneau
+      (retirés par #933) : seul « Veille après (min) » reste affiché.
 - [ ] Pendant la veille : appuyer une touche au clavier (sans cliquer) lève
       aussi le voile — ET cette touche ne doit avoir AUCUN autre effet visible
       (pas de caractère tapé dans un champ, pas de raccourci déclenché).
 - [ ] Onglet Réseau (F12) pendant la veille : **aucune** requête `/issues-liste`
-      ni `/issues-en-attente` pendant toute la durée de la veille.
-- [ ] **(b)** Interface éveillée, déposer une issue du projet sélectionné dans
-      le filtre Résultats (`issues_inbox/` ou formulaire) : elle apparaît
-      d'elle-même en moins d'un intervalle de rafraîchissement réglé (défaut
-      60s). Déposer une issue PENDANT la veille : elle n'apparaît qu'APRÈS le
+      ni `/issues-en-attente` pendant toute la durée de la veille — y compris
+      si une issue est créée, débute ou se termine PENDANT la veille (rien ne
+      doit partir avant le réveil).
+- [ ] Déposer une issue PENDANT la veille : elle n'apparaît qu'APRÈS le
       réveil (pas pendant la veille elle-même).
-- [ ] **(c)** Revenir sur un onglet resté ouvert plus d'une heure (ou simuler
-      une session expirée) et cocher la case d'une issue terminée : message
-      « Préparation du rapport… » dès le clic, puis la copie réussit, ou la
-      fenêtre de repli (texte à copier manuellement, ou message d'erreur avec
-      bouton « Réessayer ») s'ouvre en moins de 30s — jamais de silence,
-      jamais confondu avec « réponse pas encore disponible ».
+- [ ] **(issue #933 point 4)** Interface éveillée depuis plus de 90s sans
+      aucun événement `/stream` (ou, plus simple : via l'onglet Réseau,
+      observer que le canal `/stream` reçoit bien un `: ping` ou un
+      événement au moins une fois toutes les ~90s) : si le flux est
+      artificiellement coupé côté serveur sans que le navigateur le détecte,
+      l'onglet Réseau doit montrer une fermeture + réouverture de `/stream`
+      au plus 15-30s après le dépassement du seuil, suivie d'un rechargement
+      de `/issues-liste` du SEUL projet sélectionné (raison
+      `flux_silencieux` dans le journal) — difficile à provoquer sans
+      outillage réseau dédié, best-effort à vérifier si l'occasion se
+      présente (ex. coupure de tunnel).
+- [ ] **(c, issue #835)** Revenir sur un onglet resté ouvert plus d'une heure
+      (ou simuler une session expirée) et cocher la case d'une issue
+      terminée : message « Préparation du rapport… » dès le clic, puis la
+      copie réussit, ou la fenêtre de repli (texte à copier manuellement, ou
+      message d'erreur avec bouton « Réessayer ») s'ouvre en moins de 30s —
+      jamais de silence, jamais confondu avec « réponse pas encore
+      disponible ».
 - [ ] Désactiver la veille (délai = 0) : le voile ne doit plus jamais
       apparaître, quelle que soit la durée d'inactivité.
-- [ ] Changer l'intervalle de rafraîchissement : effet visible (onglet Réseau)
-      sans recharger la page ; valeur < 15 remontée au minimum (15) ;
-      l'estimation « ≈ N appel(s) GitHub/h » affichée à côté se met à jour.
 - [ ] (Dé)sélectionner un projet dans le filtre pastille Résultats : le
       projet qui vient d'être (ré)sélectionné se recharge à ce moment-là
       (onglet Réseau) ; un projet désélectionné ne déclenche plus aucun appel
-      périodique tant qu'il reste masqué.
+      réseau tant qu'il reste masqué.
 - [ ] L'affichage « sync HH:MM:SS » (près du ↻) devient rouge/gras quand la
-      dernière synchro dépasse trois fois l'intervalle réglé.
-- [ ] Couper le réseau (Wi-Fi) quelques minutes, interface éveillée : le
-      rafraîchissement périodique continue de retenter (espacement croissant),
-      jamais d'arrêt définitif ; le reconnecter fait réussir la tentative
-      suivante sans action manuelle.
+      dernière synchro dépasse 90s (3 × intervalle des battements du flux
+      `/stream`, depuis #933 — plus aucun réglage d'intervalle dont dépendre).
 
 ## Panneau latéral (Infrastructure)
 

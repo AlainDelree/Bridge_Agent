@@ -880,23 +880,29 @@ le panneau) reste en place — simplement plus utilisé par l'interface,
 > /mesure-precharge` (`silencieux:true`, échec sans incidence sur
 > l'interface). Voir §14 pour le format de ligne et le rapport.
 
-> **Module `static/js/veille.js` (issue #917)** : voile de veille/réveil,
-> rafraîchissement périodique du projet sélectionné et réglages associés —
-> détail complet dans `docs/contexte/interface_rafraichissement.md` (état
-> actuel du mécanisme, pas l'historique). Résumé : après `delaiVeilleMin`
-> minutes d'inactivité (défaut 30, 0 désactive), un voile gris
+> **Module `static/js/veille.js` (issue #917, revu par #933)** : voile de
+> veille/réveil, rechargement CIBLÉ de la liste sur événements et surveillance
+> du flux `/stream` — détail complet dans
+> `docs/contexte/interface_rafraichissement.md` (état actuel du mécanisme,
+> pas l'historique). Résumé : après `delaiVeilleMin` minutes d'inactivité
+> (défaut 30, 0 désactive — SEUL réglage restant du module), un voile gris
 > (`#voile-veille`, `templates/fragments/voile_veille.html`) couvre
-> l'interface et absorbe le premier clic/la première touche ; ce geste lance
+> l'interface et absorbe le premier clic/la première touche ; ce geste vérifie
+> d'abord l'ancienneté du flux `/stream` (le rouvre si besoin) puis lance
 > `resultats.rafraichirSelection(projetsActifsDansFiltreResultats())` — une
-> variante de `rafraichir()` RESTREINTE à la sélection courante (liste +
-> timing, jamais `chargerTimingTous()` qui reste réservée au ↻ complet
-> inchangé) — plus le panneau Infrastructure et le préchargement des rapports
-> visibles, avec un délai maximum (30s) et un état d'erreur explicite +
-> bouton Réessayer. Hors veille, le même rafraîchissement ciblé se reprogramme
-> lui-même à `intervalleSec` (défaut 60, plancher 15), avec attente croissante
-> plafonnée après un échec (`prochainDelaiMs`). Réglages (`CLES.veilleDelaiMin`/
-> `veilleIntervalleSec`/`veilleRattrapageSec`, `persistance.js`) affichés dans
-> le panneau Infrastructure, partie globale (`#pl-zone-veille`, juste après
+> variante de `rafraichir()` RESTREINTE à la sélection courante — plus le
+> panneau Infrastructure et le préchargement des rapports visibles, avec un
+> délai maximum (30s) et un état d'erreur explicite + bouton Réessayer. Le
+> rafraîchissement PÉRIODIQUE à intervalle fixe de #917 a été RETIRÉ par #933 :
+> hors veille, ce sont désormais les événements SSE `debut_issue`/`fin_issue`
+> (doublons rapprochés de `fin_issue` regroupés, `doitRechargerSurFin`) qui
+> déclenchent le rechargement ciblé (`resultats.chargerListe`) du PROJET
+> CONCERNÉ, comme `creation_issue` (rattrapage à durée FIXE désormais,
+> `RATTRAPAGE_CREATION_SEC`, plus réglable). Un minuteur local (sans appel
+> GitHub) surveille en parallèle le silence du flux `/stream` lui-même (3×
+> l'intervalle des battements serveur) pour le rouvrir explicitement si
+> besoin. Réglage (`CLES.veilleDelaiMin`, `persistance.js`) affiché dans le
+> panneau Infrastructure, partie globale (`#pl-zone-veille`, juste après
 > l'interrupteur de son). Le bandeau rouge « connexion perdue » (point 8,
 > distinct du voile) et la fenêtre de repli de la copie du rapport (point 7)
 > restent hors de ce module — voir respectivement `static/js/app.js`

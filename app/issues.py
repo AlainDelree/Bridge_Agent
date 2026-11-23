@@ -12,6 +12,7 @@ import re
 import subprocess
 import sys  # noqa: F401 (conservé pour parité avec les autres modules extraits)
 import tempfile
+import time
 import unicodedata
 from datetime import datetime, timezone
 from pathlib import Path
@@ -47,6 +48,11 @@ from etat_rate_limit import maj_rate_limit
 # (panne probable ou erreur normale) + suivi d'épisode, branchés sur les points
 # d'appel gh principaux de ce module (listes, détail, création, labels).
 from app import github_status
+# Journal des rechargements de liste (issue #933 point 5) — réutilise le
+# journal de charge/diagnostic de l'interface déjà existant (issue #835/#917),
+# plutôt qu'un nouveau fichier : app/projets (importé plus haut) a déjà inséré
+# la racine du dépôt dans sys.path.
+import mesure_charge_interface as mci
 
 log = logging.getLogger(__name__)
 
@@ -976,22 +982,75 @@ def _limite_issues_requete():
     return max(LIMITE_ISSUES_MIN, min(LIMITE_ISSUES_MAX, valeur))
 
 
+def _journaliser_rechargement_liste(nom_projet, issues, duree_gh_s, raison, numero_attendu, cree_le):
+    """Best-effort strict (issue #933 point 5) : une ligne de diagnostic dans
+    logs/charge_interface.log à CHAQUE appel de cette route (projet, nombre
+    d'issues renvoyées, numéro de la plus récente, durée de l'appel GitHub,
+    raison transmise par le client s'il y en a une), et en plus, quand le
+    client signale via `raison` ('debut'/'fin') attendre une issue précise
+    (`numero`) qui n'est PAS dans cette réponse, une ligne d'avertissement
+    distincte — SANS rien tenter d'autre (pas de nouvel appel gh : `age_s`
+    n'est calculé que si le navigateur a lui-même transmis `cree_le`, jamais
+    récupéré ici). Une erreur d'écriture du journal ne doit jamais faire
+    échouer la route elle-même."""
+    try:
+        numero_plus_recent = issues[0].get("number") if issues else None
+        horodatage = mci.horodatage()
+        mci.ecrire_ligne(mci.ligne_rechargement_liste(
+            horodatage, nom_projet, len(issues), numero_plus_recent, duree_gh_s, raison))
+    except Exception:
+        return
+    if raison not in ("debut", "fin") or not numero_attendu:
+        return
+    try:
+        numeros = {str(it.get("number")) for it in issues}
+        if str(numero_attendu) in numeros:
+            return
+        age_s = None
+        if cree_le:
+            try:
+                cree_dt = datetime.fromisoformat(str(cree_le).replace("Z", "+00:00"))
+                age_s = round((datetime.now(timezone.utc) - cree_dt).total_seconds(), 1)
+            except ValueError:
+                age_s = None
+        mci.ecrire_ligne(mci.ligne_avertissement_issue_absente(
+            horodatage, nom_projet, numero_attendu, age_s, raison))
+    except Exception:
+        pass
+
+
 def issues_liste(nom_projet):
     """Retourne les dernières issues bridge (labels for-linux/for-windows,
     tous états) du projet via gh, jusqu'à LIMITE_ISSUES_DEFAUT (30) sauf si
     le paramètre `limite` en fournit une autre (issue #271). Filtrage
     for-linux/for-windows appliqué côté gh, avant la limite (issue #479) —
-    voir `_lister_issues_labels`."""
+    voir `_lister_issues_labels`.
+
+    Paramètres de requête optionnels (issue #933 point 5, journal des
+    rechargements de liste — voir _journaliser_rechargement_liste) : `raison`
+    (motif du rechargement transmis par le client), `numero` (issue attendue,
+    pour un rechargement déclenché par un début/fin de traitement) et
+    `cree_le` (createdAt ISO de cette issue, SI déjà connu du navigateur —
+    jamais recalculé ici par un appel GitHub supplémentaire). Aucun effet sur
+    la réponse elle-même, seulement sur ce qui est journalisé."""
     cfg = projet_par_nom(nom_projet)
     if not cfg:
         return jsonify(erreur="Projet introuvable."), 404
     limite = _limite_issues_requete()
+    debut_gh = time.monotonic()
     issues, erreur = _lister_issues_labels(cfg.depot, limite)
+    duree_gh_s = round(time.monotonic() - debut_gh, 3)
     if erreur:
         return erreur
     # Modèle effectif (corps de chaque issue) + défaut projet (issue #638), body
     # retiré au passage — voir _enrichir_modele.
-    return jsonify(_enrichir_modele(_filtrer_issues_bridge(issues), cfg))
+    resultat = _enrichir_modele(_filtrer_issues_bridge(issues), cfg)
+    _journaliser_rechargement_liste(
+        nom_projet, resultat, duree_gh_s,
+        request.args.get("raison") or None,
+        request.args.get("numero") or None,
+        request.args.get("cree_le") or None)
+    return jsonify(resultat)
 
 
 def _normaliser_recherche(texte: str) -> str:

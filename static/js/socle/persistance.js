@@ -106,13 +106,16 @@ export const CLES = {
   notifPc: 'bridge_notif_pc',
   prefixeCacheDetail: 'bridge_cache_detail_',   // + nom + '_' + numero
   prefixeCocheResultat: 'resultat-coche:',      // + projet + ':' + numero
-  // Réglages de veille/réveil de l'interface (issue #917) — préférences
-  // locales au navigateur, UNE valeur par réglage (jamais par projet) : voir
-  // static/js/veille.js pour les défauts/bornes et docs/contexte/
-  // interface_rafraichissement.md pour le détail.
+  // Réglage de veille/réveil de l'interface (issue #917, réduit à ce seul
+  // réglage par #933 — rafraîchissement périodique et rattrapage retirés,
+  // voir static/js/veille.js) — préférence locale au navigateur, UNE valeur
+  // pour toute l'interface (jamais par projet) : voir static/js/veille.js
+  // pour les défauts/bornes et docs/contexte/interface_rafraichissement.md
+  // pour le détail. `veilleIntervalleSec`/`veilleRattrapageSec` (issue #917)
+  // ont existé sous ce nom jusqu'à l'issue #933 : une valeur encore présente
+  // sous ces clés dans le localStorage d'un navigateur n'est plus lue par
+  // aucun code (ignorée silencieusement, jamais une erreur).
   veilleDelaiMin: 'bridge_veille_delai_min',
-  veilleIntervalleSec: 'bridge_veille_intervalle_sec',
-  veilleRattrapageSec: 'bridge_veille_rattrapage_sec',
 };
 
 // Construit la clé de cache détail d'une issue précise.
