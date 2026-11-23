@@ -1586,6 +1586,17 @@ court. Logique pure testable (`cleInterruption`/`demarrerInterruption`/
 `window.Bridge.actionsLigne`) — seule l'application au DOM reste dans
 `app.js` (non testable sous Node, cf. `static/js/tests/README.md`).
 
+### 11.5 Boucle d'attente de `claude` (issue #948, préparation de l'étude #939)
+
+Dans `lancer_claude`, l'ancien `proc.communicate(timeout=timeout)` bloquant
+est remplacé par `_attendre_fin_claude` : une boucle de sondage par tours
+d'environ 3s (`INTERVALLE_SONDAGE_CLAUDE_S`), sans aucun changement de
+résultat observable (stdout/stderr/code retour, gestion du dépassement de
+délai identiques). Chaque tour appelle `_verifier_demande_interruption` —
+point d'extension qui ne fait encore rien aujourd'hui, prévu pour que #939
+(interruption d'une seule issue) puisse y brancher la détection d'une
+demande d'interruption propre à l'issue sans retoucher la boucle.
+
 ---
 
 ## 12. Plancher TIMEOUT pour les issues en écriture (issue #752)

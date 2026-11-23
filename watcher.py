@@ -5628,6 +5628,92 @@ def verifier_preflight_token(cwd: Path = None) -> None:
         pass
 
 
+# Durée d'un tour de la boucle d'attente de `claude` (issue #948, préparation
+# de l'étude #939) — remplace l'ancien `proc.communicate(timeout=timeout)`
+# bloquant par une boucle de sondage courte, afin qu'une future issue
+# (#939) puisse y brancher une vérification d'interruption propre à l'issue
+# SANS retoucher la structure de la boucle. Voir _attendre_fin_claude.
+INTERVALLE_SONDAGE_CLAUDE_S = 3
+
+
+def _verifier_demande_interruption(numero: int) -> bool:
+    """Point d'extension (issue #948, préparation de l'étude #939) : appelé à
+    chaque tour de `_attendre_fin_claude`, pendant l'attente de `claude` pour
+    l'issue `numero`. Ne fait encore RIEN — une issue suivante y branchera la
+    détection d'une demande d'interruption propre à CETTE issue (sentinelle
+    posée par l'interface), sans avoir à retoucher `_attendre_fin_claude`.
+    Retourne toujours False pour l'instant (jamais d'interruption demandée)."""
+    return False
+
+
+def _lire_flux_jusqu_a_fermeture(flux, resultat: list) -> None:
+    """Lit `flux` (stdout ou stderr du `claude` lancé par `lancer_claude`) en
+    continu jusqu'à sa fermeture, et place son contenu intégral dans
+    `resultat` (liste à un seul élément, servant de case mutable partagée
+    avec le thread appelant). Tourne dans un thread démon pendant toute la
+    boucle d'attente (issue #948) : `claude` ne doit jamais se retrouver
+    bloqué en écriture faute de lecteur côté watcher, même pour un très gros
+    volume de sortie — c'est exactement ce que faisait `proc.communicate()`
+    en une seule fois ; ceci reproduit le même effet pendant que le thread
+    principal sonde `proc` par tours plutôt que de lire lui-même."""
+    try:
+        resultat.append(flux.read())
+    except Exception:
+        resultat.append("")
+
+
+def _attendre_fin_claude(proc: subprocess.Popen, timeout: int, numero: int) -> tuple[str, str]:
+    """Remplace l'ancien `proc.communicate(timeout=timeout)` bloquant par une
+    boucle de sondage courte (issue #948, préparation de l'étude #939), SANS
+    changer le résultat observable : retourne (stdout, stderr) si `claude`
+    termine avant `timeout` secondes, lève `subprocess.TimeoutExpired`
+    sinon — exactement comme `communicate()`, donc sans toucher à la gestion
+    de ce cas côté appelant (message journalisé, nettoyage de l'arbre via
+    `_nettoyer_arbre_claude`, nombre de tentatives qui s'ensuit).
+
+    Pourquoi une boucle et pas un `communicate()` unique : l'étude #939
+    (interruption d'UNE SEULE issue, sans toucher aux autres) a besoin que le
+    watcher puisse regarder régulièrement une demande d'interruption pendant
+    l'attente, ce qu'un appel bloquant unique interdit. Chaque tour dure au
+    plus `INTERVALLE_SONDAGE_CLAUDE_S` (~3s) — voir
+    `_verifier_demande_interruption`, le point d'extension appelé à chaque
+    tour (ne fait encore rien). `proc.wait(timeout=...)` retourne dès que
+    `claude` termine, sans attendre la fin du tour en cours : la fin d'une
+    issue n'est donc pas retardée par cette boucle.
+
+    Deux threads démons (`_lire_flux_jusqu_a_fermeture`) lisent stdout/stderr
+    en continu dès le lancement, indépendamment du rythme des tours :
+    `proc.wait()` ne lit aucun tube, donc rien d'autre ici ne doit se
+    retrouver à drainer un gros volume de sortie en une seule fois.
+    """
+    sortie_stdout: list = []
+    sortie_stderr: list = []
+    thread_stdout = threading.Thread(
+        target=_lire_flux_jusqu_a_fermeture, args=(proc.stdout, sortie_stdout), daemon=True)
+    thread_stderr = threading.Thread(
+        target=_lire_flux_jusqu_a_fermeture, args=(proc.stderr, sortie_stderr), daemon=True)
+    thread_stdout.start()
+    thread_stderr.start()
+
+    debut = time.monotonic()
+    while True:
+        restant = timeout - (time.monotonic() - debut)
+        if restant <= 0:
+            raise subprocess.TimeoutExpired(proc.args, timeout)
+        try:
+            proc.wait(timeout=min(INTERVALLE_SONDAGE_CLAUDE_S, restant))
+            break  # processus terminé
+        except subprocess.TimeoutExpired:
+            _verifier_demande_interruption(numero)  # point d'extension (#948/#939)
+            continue
+
+    thread_stdout.join()
+    thread_stderr.join()
+    stdout = sortie_stdout[0] if sortie_stdout else ""
+    stderr = sortie_stderr[0] if sortie_stderr else ""
+    return stdout, stderr
+
+
 def lancer_claude(numero: int, titre: str, body: str, dry_run: bool,
                   mode: str = MODE_LECTURE,
                   timeout: int = None,
@@ -6149,7 +6235,7 @@ Si la tâche échoue, remplace la toute première ligne par {MARQUEUR_VERDICT_EC
     # fait vibe (--workdir) ; _construire_cmd_claude l'ignore délibérément.
     if mode_tmux:
         # Issue #901 — branche ENTIÈREMENT séparée du chemin automatique
-        # ci-dessous (cmd/Popen/communicate, inchangés) : réutilise le même
+        # ci-dessous (cmd/Popen/_attendre_fin_claude, inchangés) : réutilise le même
         # `prompt`, déjà construit plus haut, identique dans les deux cas.
         if os.name == "nt":
             return False, "Mode interactif tmux non disponible sous Windows (issue #901)."
@@ -6241,7 +6327,7 @@ Si la tâche échoue, remplace la toute première ligne par {MARQUEUR_VERDICT_EC
             # avant la fin du traitement (voir _nettoyer_orphelin_verrou_perime).
             _maj_verrou_pgid(verrou, proc.pid)
         try:
-            stdout, stderr = proc.communicate(timeout=timeout)
+            stdout, stderr = _attendre_fin_claude(proc, timeout, numero)
             # Code de retour et taille de la sortie capturée (issue #781,
             # incident chesscoach #127) : avant cette issue, seul l'ÉCHEC
             # loggait le code de retour, et jamais la taille de stdout/stderr
