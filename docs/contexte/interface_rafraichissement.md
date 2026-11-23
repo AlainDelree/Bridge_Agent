@@ -1,4 +1,4 @@
-# Rafraîchissement de l'interface web — veille, réveil, copie du rapport (issues #917, #933)
+# Rafraîchissement de l'interface web — veille, réveil, copie du rapport (issues #917, #933, #940)
 
 État ACTUEL du mécanisme (pas l'historique — voir `CHANGELOG.md` pour le
 déroulé des issues #917/#933, et l'étude #916 pour les faits qui ont motivé
@@ -319,3 +319,50 @@ encore été enregistrée, ex. juste après le chargement de la page). Route
 purement LOCALE (aucun appel GitHub), best-effort strict comme le reste de
 ce journal — sert à juger, à l'usage, si cette surveillance se déclenche à
 tort (voir le rapport de l'issue #937).
+
+## 9ter. Garde du focus d'une case à cocher (issue #878, bornée par #940)
+
+`static/js/app.js::rendreListeIssues` (resynchronisation complète) et
+`remplacerLigneIssue` (reconstruction d'une seule ligne, événements
+`debut_issue`/`fin_issue`) ne détruisent JAMAIS le nœud DOM d'une case
+`.coche-resultat` tant qu'elle détient le focus du navigateur
+(`coucheResultatEnInteraction`) — un checkbox reçoit le focus au `mousedown`,
+AVANT `click`/`change` : le détruire entre ces deux instants livrerait
+`click`/`change` à une cible morte, annulant le clic (issue #878 : « copie du
+rapport sans effet », intermittent). Le rendu bloqué est DIFFÉRÉ
+(`differerRenduSurCoche`), jamais sauté.
+
+**AVANT l'issue #940** : ce report durait jusqu'au `focusout` de la case,
+qui ne survenait JAMAIS si rien d'autre ne prenait ensuite le focus — une
+case cochée par un clic le garde indéfiniment tant qu'aucun autre clic ni
+touche n'intervient. Un rendu demandé pendant ce temps (liste complète au
+rechargement, ligne remplacée à un événement) attendait donc SANS LIMITE :
+symptôme observé le 23/11/2026, ligne d'une issue tout juste créée absente
+jusqu'au prochain ↻ manuel (déplaçant le focus), malgré des données déjà
+arrivées (voir §9 ci-dessus — ce n'était pas un défaut de rechargement, mais
+d'affichage).
+
+**DEPUIS l'issue #940**, le report ne dure que le temps du geste réellement
+en cours, deux mécanismes complémentaires :
+- `basculerCocheResultat` (onchange de la case) retire explicitement le
+  focus de la case (`cb.blur()`) une fois son changement relayé à
+  `resultatsCoches.basculer` — qui a déjà engagé, SYNCHRONEMENT, la copie
+  presse-papier avant ce retrait (fenêtre d'activation utilisateur
+  préservée, objectif de #878 inchangé). C'est le chemin NORMAL : le report
+  se conclut dès la fin réelle du clic, pas après.
+- `differerRenduSurCoche` (`static/js/app.js`) plafonne malgré tout
+  l'attente à `DELAI_MAX_REPORT_RENDU_MS` (1000 ms) — FILET DE SÉCURITÉ pour
+  les cas résiduels où aucun `change`/`focusout` ne survient (ex. case
+  focalisée au clavier sans être basculée) : au plafond, le rendu s'exécute
+  quand même, FORCÉ (appelle directement `executerRenduListeIssues`/
+  `executerRemplacementLigneIssue`, jamais `rendreListeIssues`/
+  `remplacerLigneIssue` elles-mêmes, pour ne pas réarmer la même garde), avec
+  les données les plus fraîches connues à cet instant.
+
+**Journal** (`logs/charge_interface.log`, même fichier que les §8/§9/§9bis,
+POST `/journal-rendu-differe`, `app/charge_interface.py::route_rendu_differe`) :
+une ligne `rendu_differe` à CHAQUE rendu différé puis exécuté — `type_rendu`
+(`liste` ou `ligne`) et `duree_report_ms` (durée RÉELLE du report, depuis la
+demande jusqu'à l'exécution). Sert à vérifier à l'usage que ce report reste
+court (proche de 0 dans le cas normal, jamais au-delà du plafond). Best-effort
+strict, comme le reste de ce journal.

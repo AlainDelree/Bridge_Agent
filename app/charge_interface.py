@@ -31,6 +31,11 @@ CHAMPS_NUMERIQUES_RESUME = ("nb_issues_preparees", "nb_requetes", "duree_totale_
 MODES_CONNUS = ("moderne", "repli")
 CHAMPS_ATTENDUS_RESUME = frozenset(CHAMPS_NUMERIQUES_RESUME) | {"mode"}
 
+# Types de rendu différé par la garde du focus (#878) connus (issue #940
+# point 4) — static/js/app.js::differerRenduSurCoche n'en envoie jamais
+# d'autre.
+TYPES_RENDU_CONNUS = ("liste", "ligne")
+
 
 def avant_requete():
     """Crochet before_request — rien d'autre qu'une lecture d'horloge posée
@@ -114,4 +119,29 @@ def route_reouverture_stream():
     if age is not None and (isinstance(age, bool) or not isinstance(age, (int, float)) or age < 0):
         return _erreur_resume("Champ 'age_dernier_message_ms' numérique >= 0 ou null requis.")
     mci.ecrire_ligne(mci.ligne_reouverture_stream(mci.horodatage(), age))
+    return jsonify(succes=True)
+
+
+def route_rendu_differe():
+    """POST /journal-rendu-differe (issue #940 point 4) — reçoit, best-effort,
+    le type et la durée réelle (ms) d'un rendu différé par la garde du focus
+    d'une case à cocher (#878 — static/js/app.js::differerRenduSurCoche) puis
+    exécuté, à la fin du geste ou au plafond DELAI_MAX_REPORT_RENDU_MS. Corps
+    JSON {"type_rendu": "liste"|"ligne", "duree_report_ms": nombre >= 0}
+    UNIQUEMENT — rien d'autre n'est jamais journalisé. Un échec d'écriture ne
+    doit jamais remonter au navigateur (appel silencieux, comme
+    route_reouverture_stream ci-dessus)."""
+    brut = request.get_data()
+    if len(brut) > TAILLE_MAX_CORPS_RESUME:
+        return _erreur_resume("Corps trop volumineux.")
+    corps = request.get_json(silent=True)
+    if not isinstance(corps, dict) or set(corps.keys()) != {"type_rendu", "duree_report_ms"}:
+        return _erreur_resume("Champs inattendus ou manquants.")
+    type_rendu = corps["type_rendu"]
+    if not isinstance(type_rendu, str) or type_rendu not in TYPES_RENDU_CONNUS:
+        return _erreur_resume("Champ 'type_rendu' invalide.")
+    duree = corps["duree_report_ms"]
+    if isinstance(duree, bool) or not isinstance(duree, (int, float)) or duree < 0:
+        return _erreur_resume("Champ 'duree_report_ms' numérique >= 0 requis.")
+    mci.ecrire_ligne(mci.ligne_rendu_differe(mci.horodatage(), type_rendu, duree))
     return jsonify(succes=True)

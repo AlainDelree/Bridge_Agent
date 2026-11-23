@@ -533,7 +533,7 @@
         presse-papier) reste, elle, affichée jusqu'au clic sur sa croix —
         aucune régression de la persistance par défaut (issue #730).
 
-## Veille, réveil, rechargement sur événements et copie du rapport (issues #917, #933)
+## Veille, réveil, rechargement sur événements et copie du rapport (issues #917, #933, #940)
 
 > Nouveau mécanisme — aucune infrastructure de test de navigateur dans le
 > dépôt, donc RIEN de ce qui suit n'a pu être vérifié automatiquement. En
@@ -626,6 +626,27 @@
 - [ ] L'affichage « sync HH:MM:SS » (près du ↻) devient rouge/gras quand la
       dernière synchro dépasse 90s (3 × intervalle des battements du flux
       `/stream`, depuis #933 — plus aucun réglage d'intervalle dont dépendre).
+- [ ] **(a, #940)** Après redémarrage de l'interface et rechargement forcé de
+      la page (Ctrl+Maj+R) : cocher une case de l'onglet Résultats, puis,
+      SANS rien toucher d'autre (aucun autre clic, aucune touche, aucun
+      changement de fenêtre), déposer une issue du projet SÉLECTIONNÉ dans le
+      filtre — sa ligne apparaît D'ELLE-MÊME, au plus tard au DÉBUT de son
+      traitement (ACK du watcher), sans attendre un clic sur ↻. AVANT ce
+      correctif, la ligne restait absente indéfiniment tant que la case
+      cochée gardait le focus.
+- [ ] **(b, #940)** Cocher une case PENDANT la fin d'une issue (clic au
+      moment précis où `fin_issue` redessine sa ligne, ou juste après) : le
+      clic garde son effet (case cochée, copie lancée) — pas de régression
+      sur #878 — et la liste se met à jour ensuite (ligne isolée reconstruite
+      peu après, sans attendre un clic sur ↻).
+- [ ] **(c, #940)** Après les essais (a)/(b), consulter
+      `logs/charge_interface.log` : chaque rendu différé par la case cochée
+      y laisse une ligne `rendu_differe` (`type_rendu` `liste` ou `ligne`,
+      `duree_report_ms`) — la durée doit rester COURTE (proche de 0 ms dans
+      le cas normal, puisque la case retrouve son focus décoché après son
+      `change` ; jamais au-delà de 1000 ms, le plafond de sécurité
+      `DELAI_MAX_REPORT_RENDU_MS`, même si la case est restée focalisée sans
+      être rebasculée).
 
 ## Panneau latéral (Infrastructure)
 

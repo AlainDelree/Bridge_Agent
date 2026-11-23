@@ -849,6 +849,16 @@ function basculerCocheResultat(event, projet, numero) {
   if (window.Bridge && window.Bridge.resultatsCoches) {
     window.Bridge.resultatsCoches.basculer(event, projet, numero);
   }
+  // Issue #940 : la garde #878 (coucheResultatEnInteraction) ne doit
+  // considérer cette case « en interaction » que pendant son geste RÉEL
+  // (mousedown → ce `change`), jamais au-delà simplement parce qu'elle garde
+  // le focus ensuite (ce qu'un clic de souris fait tant que rien d'autre ne
+  // le prend). `basculer` ci-dessus a déjà engagé, SYNCHRONEMENT, la copie
+  // presse-papier (étape 1 de basculer — dans la fenêtre d'activation
+  // utilisateur) : retirer le focus ICI ne peut donc plus annuler le clic
+  // (objectif de #878), et met fin à la garde dès que son effet a eu lieu.
+  const cb = event && event.target;
+  if (cb && cb.blur) cb.blur();
 }
 
 // Relit l'état serveur (depuis #636, voir estResultatCoche ci-dessus) et
@@ -1130,11 +1140,70 @@ function brancherEvenementsLigneIssue(ligne, it) {
 // rendreListeIssues remplaçaient jusqu'ici la case SANS AUCUNE garde,
 // contrairement à restaurerCasesCocheesResultats). Renvoie l'élément
 // `.coche-resultat` actif s'il est dans `racine`, sinon null.
+//
+// Bornée dans le temps depuis l'issue #940 (pas par cette fonction elle-même,
+// qui ne fait toujours qu'une lecture de focus) : `basculerCocheResultat`
+// retire désormais le focus de la case dès que son `change` est traité (fin
+// réelle du geste), et `differerRenduSurCoche` ci-dessous plafonne de toute
+// façon le report à DELAI_MAX_REPORT_RENDU_MS — AVANT #940, une case cochée
+// par un clic gardait le focus tant que rien d'autre ne le prenait (aucun
+// clic ailleurs, aucune touche), et un rendu demandé pendant ce temps
+// attendait alors INDÉFINIMENT (symptôme : ligne d'une issue tout juste
+// créée absente jusqu'au prochain ↻ manuel).
 function coucheResultatEnInteraction(racine) {
   const actif = document.activeElement;
   if (!actif || !actif.classList || !actif.classList.contains('coche-resultat')) return null;
   if (racine && racine.contains && !racine.contains(actif)) return null;
   return actif;
+}
+
+// Plafond du report d'un rendu différé par la garde #878 (issue #940 point
+// 3) — FILET DE SÉCURITÉ, pas le délai normal attendu : en usage normal,
+// `basculerCocheResultat` retire le focus de la case dès que son `change`
+// est traité, ce qui conclut `differerRenduSurCoche` ci-dessous bien avant
+// ce plafond (focusout immédiat). Il ne s'applique donc que dans les cas
+// résiduels où aucun `change`/`focusout` ne survient (ex. case focalisée au
+// clavier sans être basculée) — « de l'ordre de la seconde » demandé par la
+// tâche, pour qu'un rendu ne reste JAMAIS en attente plus longtemps, même si
+// le focus n'a pas bougé.
+const DELAI_MAX_REPORT_RENDU_MS = 1000;
+
+// Diffère l'exécution de `executer` (un rendu que la garde #878 vient de
+// bloquer — `coche` est l'élément renvoyé par coucheResultatEnInteraction)
+// jusqu'à la fin RÉELLE du geste en cours sur `coche`, et jamais plus tard
+// que DELAI_MAX_REPORT_RENDU_MS après cet appel (issue #940 points 2 et 3) :
+// le PREMIER de son `focusout` (déclenché dès que basculerCocheResultat lui
+// retire le focus après son `change`, ou si l'utilisateur déplace lui-même
+// le focus ailleurs) ou de ce plafond déclenche `executer`, jamais les deux.
+// Journalise (point 4) la durée RÉELLE du report, dans logs/charge_interface.log.
+function differerRenduSurCoche(coche, typeRendu, executer) {
+  const debut = Date.now();
+  let fait = false;
+  const conclure = () => {
+    if (fait) return;
+    fait = true;
+    clearTimeout(minuteur);
+    coche.removeEventListener('focusout', conclure);
+    journaliserRenduDiffere(typeRendu, Date.now() - debut);
+    executer();
+  };
+  coche.addEventListener('focusout', conclure, { once: true });
+  const minuteur = setTimeout(conclure, DELAI_MAX_REPORT_RENDU_MS);
+}
+
+// Journalise côté serveur (logs/charge_interface.log, POST
+// /journal-rendu-differe, issue #940 point 4) un rendu différé par la garde
+// #878 puis exécuté — type de rendu et durée RÉELLE du report en
+// millisecondes, pour vérifier à l'usage qu'il reste court. Best-effort
+// strict, comme le reste de ce journal (voir
+// resultats.js::journaliserReouvertureStream) : un échec réseau ne doit
+// jamais se faire remarquer, ni retarder le rendu lui-même (déjà exécuté par
+// differerRenduSurCoche avant cet appel).
+function journaliserRenduDiffere(typeRendu, dureeReportMs) {
+  if (window.Bridge && window.Bridge.api) {
+    window.Bridge.api.post('/journal-rendu-differe',
+      { type_rendu: typeRendu, duree_report_ms: dureeReportMs }, { silencieux: true }).catch(() => {});
+  }
 }
 
 function rendreListeIssues(reset) {
@@ -1143,15 +1212,30 @@ function rendreListeIssues(reset) {
   // resynchronisation complète (retour d'onglet après ≥30s masqué, ou
   // reconnexion SSE — static/js/resultats.js::surOuvertureSse) détruirait
   // TOUTES les cases, y compris celle sur laquelle l'utilisateur vient de
-  // cliquer à l'instant du retour. Reporté au `focusout` de cette case
-  // (qui survient dès que `change` a fait son effet ou que le focus part
-  // ailleurs) plutôt que sauté : la liste reste à jour, juste pas EN PLEIN
-  // GESTE.
+  // cliquer à l'instant du retour. Différé (durée bornée, voir
+  // differerRenduSurCoche ci-dessus — issue #940) plutôt que sauté : la
+  // liste reste à jour, juste pas EN PLEIN GESTE. Appelle DIRECTEMENT
+  // executerRenduListeIssues (PAS rendreListeIssues elle-même) : au plafond,
+  // le focus peut n'avoir toujours pas bougé — se rappeler ici réarmerait la
+  // même garde et reporterait indéfiniment malgré le plafond déjà écoulé
+  // (c'est précisément le report SANS LIMITE de l'issue #940 qu'il faut
+  // éviter). Le rendu forcé au plafond relit quand même les données les plus
+  // fraîches connues : executerRenduListeIssues lit listeIssuesResultats
+  // (variable globale) au moment où elle s'exécute, pas au moment de l'appel
+  // différé.
   const cocheActive = coucheResultatEnInteraction(zone);
   if (cocheActive) {
-    cocheActive.addEventListener('focusout', () => rendreListeIssues(reset), { once: true });
+    differerRenduSurCoche(cocheActive, 'liste', () => executerRenduListeIssues(reset));
     return;
   }
+  executerRenduListeIssues(reset);
+}
+
+// Corps RÉEL du rendu de la liste, extrait de rendreListeIssues (issue #940)
+// pour que le rendu forcé au plafond de differerRenduSurCoche ne repasse pas
+// par la garde #878 (voir rendreListeIssues ci-dessus).
+function executerRenduListeIssues(reset) {
+  const zone = document.getElementById('liste-issues');
   zone.innerHTML = '';
   if (!listeIssuesResultats.length) {
     zone.innerHTML = '<div class="issue-vide">Aucune issue à afficher</div>';
@@ -1234,17 +1318,31 @@ function trouverLigneIssue(projet, numero) {
 function remplacerLigneIssue(ligneAncienne, it) {
   const cocheActive = coucheResultatEnInteraction(ligneAncienne);
   if (cocheActive) {
-    // Reporté au `focusout` : relit les données les PLUS FRAÎCHES connues
-    // pour cette issue à cet instant (pas celles, potentiellement périmées,
-    // de cet appel différé) — même lecture que window.__resultatsRemplacerLigne.
-    cocheActive.addEventListener('focusout', () => {
+    // Différé (durée bornée, voir differerRenduSurCoche ci-dessus — issue
+    // #940) : relit les données les PLUS FRAÎCHES connues pour cette issue
+    // au moment de l'exécution (pas celles, potentiellement périmées, de cet
+    // appel différé) — même lecture que window.__resultatsRemplacerLigne.
+    // Appelle DIRECTEMENT executerRemplacementLigneIssue (PAS
+    // remplacerLigneIssue elle-même) : au plafond, le focus peut n'avoir
+    // toujours pas bougé — se rappeler ici réarmerait la même garde et
+    // reporterait indéfiniment malgré le plafond déjà écoulé (voir
+    // rendreListeIssues/executerRenduListeIssues ci-dessus, même raison).
+    differerRenduSurCoche(cocheActive, 'ligne', () => {
       const fraiche = listeIssuesResultats.find(
         (x) => x.projet === it.projet && String(x.number) === String(it.number));
       const ligneActuelle = trouverLigneIssue(it.projet, String(it.number));
-      if (fraiche && ligneActuelle) remplacerLigneIssue(ligneActuelle, fraiche);
-    }, { once: true });
+      if (fraiche && ligneActuelle) executerRemplacementLigneIssue(ligneActuelle, fraiche);
+    });
     return;
   }
+  executerRemplacementLigneIssue(ligneAncienne, it);
+}
+
+// Corps RÉEL du remplacement d'une ligne, extrait de remplacerLigneIssue
+// (issue #940) pour que le remplacement forcé au plafond de
+// differerRenduSurCoche ne repasse pas par la garde #878 (voir
+// remplacerLigneIssue ci-dessus).
+function executerRemplacementLigneIssue(ligneAncienne, it) {
   const nouvelle = construireLigneIssueDOM(it);
   brancherEvenementsLigneIssue(nouvelle, it);
   if (ligneAncienne.classList.contains('selectionnee')) nouvelle.classList.add('selectionnee');

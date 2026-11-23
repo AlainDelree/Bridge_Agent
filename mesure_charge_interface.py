@@ -213,6 +213,24 @@ def ligne_avertissement_issue_absente(horodatage, projet, numero, age_s, raison)
     }, ensure_ascii=False)
 
 
+def ligne_rendu_differe(horodatage, type_rendu, duree_report_ms) -> str:
+    """Ligne JSON d'un rendu différé par la garde du focus d'une case à
+    cocher (issue #878) puis exécuté (issue #940 point 4) — pure, mêmes
+    garanties que les autres lignes de ce journal : rien d'autre que le type
+    de rendu ('liste' pour rendreListeIssues, 'ligne' pour remplacerLigneIssue
+    — static/js/app.js) et la durée RÉELLE du report en millisecondes
+    (depuis la demande de rendu jusqu'à son exécution, à la fin du geste ou
+    au plafond DELAI_MAX_REPORT_RENDU_MS si le focus n'a pas bougé). Sert à
+    vérifier à l'usage que ce report reste court (voir
+    docs/contexte/interface_rafraichissement.md)."""
+    return json.dumps({
+        "type": "rendu_differe",
+        "horodatage": horodatage,
+        "type_rendu": type_rendu,
+        "duree_report_ms": duree_report_ms,
+    }, ensure_ascii=False)
+
+
 def ligne_reouverture_stream(horodatage, age_dernier_message_ms) -> str:
     """Ligne JSON d'une réouverture du flux /stream décidée par la
     surveillance de silence côté navigateur (static/js/veille.js, issue

@@ -136,7 +136,7 @@ def _enregistrer_routes(app: Flask) -> None:
     from app.github_status import route_statut_github
     from app.vibe_modele import (etat_vibe_modele, activer_vibe_modele,
                                  ajouter_vibe_modele, retirer_vibe_modele)
-    from app.charge_interface import route_resume_precharge, route_reouverture_stream
+    from app.charge_interface import route_resume_precharge, route_reouverture_stream, route_rendu_differe
     from app.diagnostic_copie import route_diagnostic_copie
     from app.vues import index
 
@@ -274,6 +274,11 @@ def _enregistrer_routes(app: Flask) -> None:
     # static/js/veille.js (ancienneté du dernier message au moment de la
     # décision) — mêmes règles de connexion que le reste de l'interface.
     app.add_url_rule("/journal-reouverture-stream", "route_reouverture_stream", login_requis(route_reouverture_stream), methods=["POST"])
+    # ─── Journal de diagnostic du report de rendu par la garde du focus
+    # (issues #878/#940) : une ligne à chaque rendu différé puis exécuté
+    # (type de rendu, durée réelle du report) — mêmes règles de connexion que
+    # le reste de l'interface.
+    app.add_url_rule("/journal-rendu-differe", "route_rendu_differe", login_requis(route_rendu_differe), methods=["POST"])
     # ─── Journal de diagnostic de la copie presse-papier (issue #878), envoyé
     # par la page à chaque clic sur une case de copie — DÉSACTIVÉ par défaut
     # (voir identite.diagnostic_copie()/DIAGNOSTIC_COPIE de identite_locale.conf),
