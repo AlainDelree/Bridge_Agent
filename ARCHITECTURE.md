@@ -1454,6 +1454,17 @@ verrou dont le PID propriétaire n'est plus vivant (mort OU zombie, voir
 le fichier lui-même (pas son rôle — seul `acquerir_verrou`, au moment de la
 REPRISE effective, le fait).
 
+Second consommateur (issue #947, prépare la fermeture propre d'une issue,
+étude #939) : `GET /issues-en-cours/<nom_projet>` (`app/watchers.py::
+issues_en_cours`, même famille que `/watchers`) renvoie, pour UN projet et à
+l'instant de l'appel, `{watcher_actif, issues: [{numero, mode}, ...]}` —
+numéro `null` pour un verrou ancien sans `numero=`. Source unique :
+`tache_en_cours`/`taches_en_cours` ci-dessus (aucun appel GitHub, aucune
+lecture de la liste d'issues de l'interface) ; limite héritée : un verrou
+ancien n'ayant pas de numéro, l'issue qu'il protège reste « inconnue ».
+Paramètre `?exclure=<numero>` optionnel pour obtenir « les autres issues en
+cours » — un numéro inconnu n'est jamais exclu par erreur.
+
 `watcher.nettoyer_verrous_perimes()` (issue #751), appelée une fois au
 démarrage de `new_issue.py`, est le SEUL endroit qui supprime un verrou
 proactivement, hors reprise par `acquerir_verrou` : elle parcourt

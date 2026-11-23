@@ -404,3 +404,45 @@ def statut(nom_projet):
         return jsonify(actif=False)
     actif, pid = watcher_actif(cfg)
     return jsonify(actif=actif, pid=pid)
+
+
+def issues_en_cours(nom_projet):
+    """Issues réellement en cours de traitement pour UN projet, à l'instant
+    précis de l'appel (issue #947, prépare la future fenêtre de fermeture
+    propre d'une issue — étude #939). Source UNIQUE : les verrous de
+    traitement, via tache_en_cours() ci-dessus (donc
+    watcher.taches_en_cours, issue #946) — aucun appel GitHub, aucune
+    lecture de la liste d'issues de l'interface (`app/issues.py`). Une tâche
+    dont le watcher propriétaire est mort n'est pas comptée : déjà filtré
+    par taches_en_cours elle-même (champ `pid=` du verrou), PAS dupliqué
+    ici — `watcher_actif()` (fichier PID publié par watcher.py) alimente
+    seulement l'indicateur `watcher_actif` de la réponse, jamais un filtre
+    sur la liste.
+
+    Cas limites, tous sans erreur ni appel GitHub :
+    - projet sans verrou → `issues` vide ;
+    - verrou ancien sans `numero=` (posé avant #946) → entrée avec
+      `numero: null` (inconnu), comptée quand même ;
+    - plusieurs issues en écriture en parallèle (MAX_WRITE_PARALLELE > 1) →
+      une entrée par verrou ;
+    - issue interactive en session tmux (mode lecture_active) → le verrou
+      suffit à la lister, tmux n'est jamais interrogé.
+
+    Paramètre de requête optionnel `exclure` (numéro d'issue) : retire de la
+    liste l'entrée portant ce numéro, pour que la future fenêtre de
+    fermeture obtienne directement « les AUTRES issues en cours ». Un
+    verrou dont le numéro est inconnu n'est JAMAIS exclu par erreur : dans
+    le doute il reste dans la liste (seule une égalité stricte avec un
+    numéro connu exclut)."""
+    cfg = projet_par_nom(nom_projet)
+    if not cfg:
+        return jsonify(erreur="Projet introuvable."), 404
+    actif, _ = watcher_actif(cfg)
+    exclure = request.args.get("exclure", type=int)
+    issues = []
+    for tache in tache_en_cours(cfg):
+        numero = tache["numero"]
+        if exclure is not None and numero == exclure:
+            continue
+        issues.append({"numero": numero, "mode": tache["mode"]})
+    return jsonify(watcher_actif=actif, issues=issues)
