@@ -1,4 +1,4 @@
-# Rafraîchissement de l'interface web — veille, réveil, copie du rapport (issues #917, #933, #940)
+# Rafraîchissement de l'interface web — veille, réveil, copie du rapport (issues #917, #933, #940, #943)
 
 État ACTUEL du mécanisme (pas l'historique — voir `CHANGELOG.md` pour le
 déroulé des issues #917/#933, et l'étude #916 pour les faits qui ont motivé
@@ -366,3 +366,40 @@ une ligne `rendu_differe` à CHAQUE rendu différé puis exécuté — `type_ren
 demande jusqu'à l'exécution). Sert à vérifier à l'usage que ce report reste
 court (proche de 0 dans le cas normal, jamais au-delà du plafond). Best-effort
 strict, comme le reste de ce journal.
+
+## 9quater. Conservation de la sélection à travers un rendu complet de la liste (issue #943)
+
+`static/js/app.js::executerRenduListeIssues` (corps réel de `rendreListeIssues`,
+§9ter ci-dessus) reconstruit `#liste-issues` À PARTIR DE RIEN (`zone.innerHTML =
+''` puis reconstruction ligne par ligne) à CHAQUE rendu complet — rechargement
+réseau (↻, réveil, flux silencieux §3bis) ET événement début/fin/création
+d'issue (§3). **AVANT l'issue #943**, ce rendu appelait ensuite INCONDITIONNELLEMENT
+`selectionnerPremiereVisible()`, qui abandonne la sélection courante
+(`projetCourant`/`numeroCourant`) pour la première ligne visible — y compris
+quand l'issue déjà sélectionnée (ouverte par double-clic) était toujours
+présente et visible. Le panneau Infrastructure (titre « Actions —
+<projet> #<numéro> », `panneau_lateral.js::rendrePanneauLateralActions` via
+`obtenirIssueSelectionnee`) suit directement `projetCourant`/`numeroCourant` :
+il changeait donc lui aussi d'issue à chaque rechargement, avec le risque
+qu'un de ses boutons (ex. « Interrompre et relancer ») s'applique à une autre
+issue que celle crue sélectionnée — symptôme observé par Alain (zone de
+détail « qui s'ouvre puis se referme »).
+
+**DEPUIS l'issue #943** : `restaurerSelectionApresRendu()` remplace cet appel
+inconditionnel. Si une issue est sélectionnée (`projetCourant`/`numeroCourant`
+non nuls) ET qu'elle est toujours présente dans la liste rafraîchie ET que sa
+ligne reconstruite n'est pas masquée (`style.display !== 'none'`, posé par
+`appliquerFiltresListe` juste avant), on se contente de remarquer cette ligne
+(classe `.selectionnee`) et de rafraîchir le panneau Infrastructure — SANS
+appeler `selectionnerLigne`/`afficherIssue` : la zone de détail n'est donc PAS
+réinitialisée ni rechargée. Dans tous les autres cas (aucune sélection, issue
+disparue de la liste, ou devenue masquée), comportement HISTORIQUE inchangé :
+`selectionnerPremiereVisible()` (issue #261).
+
+Un changement de PROJET actif ou de FILTRE pastille (`basculerFiltreProjet`/
+`basculerTousLesFiltres`/`basculerFiltreOuvriers`) ne passe PAS par ce chemin
+— ces fonctions ne reconstruisent pas la liste, elles (dé)masquent les lignes
+existantes puis appellent elles-mêmes `selectionnerPremiereVisible()` SI la
+ligne sélectionnée devient masquée (mécanisme antérieur à #943, inchangé) :
+un changement de contexte VOULU par l'utilisateur réinitialise donc toujours
+la sélection comme avant, volontairement hors périmètre de ce correctif.

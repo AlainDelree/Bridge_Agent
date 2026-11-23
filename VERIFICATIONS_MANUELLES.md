@@ -533,7 +533,7 @@
         presse-papier) reste, elle, affichée jusqu'au clic sur sa croix —
         aucune régression de la persistance par défaut (issue #730).
 
-## Veille, réveil, rechargement sur événements et copie du rapport (issues #917, #933, #940)
+## Veille, réveil, rechargement sur événements et copie du rapport (issues #917, #933, #940, #943)
 
 > Nouveau mécanisme — aucune infrastructure de test de navigateur dans le
 > dépôt, donc RIEN de ce qui suit n'a pu être vérifié automatiquement. En
@@ -647,6 +647,31 @@
       `change` ; jamais au-delà de 1000 ms, le plafond de sécurité
       `DELAI_MAX_REPORT_RENDU_MS`, même si la case est restée focalisée sans
       être rebasculée).
+- [ ] **(a, #943)** Après redémarrage de l'interface et rechargement forcé de
+      la page : double-cliquer une issue (zone de détail affichée, titre du
+      panneau Infrastructure « Actions — <projet> #<numéro> » sur cette
+      même issue), puis déposer une issue du projet sélectionné (ou en
+      laisser terminer une en cours) SANS rien re-cliquer : la liste se
+      recharge (ligne visible qui apparaît/se met à jour), mais la zone de
+      détail ET le titre du panneau d'actions restent sur l'issue ouverte au
+      double-clic — AVANT ce correctif, la sélection « sautait » à la
+      première ligne de la liste à chaque rechargement (création, début ou
+      fin de traitement depuis #933), avec le risque qu'un bouton du panneau
+      (ex. « Interrompre et relancer ») s'applique à une autre issue que
+      celle crue sélectionnée.
+- [ ] **(b, #943)** Même point de départ (issue ouverte au double-clic) :
+      cliquer sur ↻ — même résultat qu'en (a), zone de détail et panneau
+      d'actions inchangés.
+- [ ] **(c, #943)** Toujours avec une issue ouverte au double-clic : changer
+      de projet actif, ou (dé)sélectionner un projet dans le filtre pastille
+      Résultats : la sélection se réinitialise comme AVANT ce correctif
+      (première ligne visible du nouveau contexte) — ce cas-ci n'est pas
+      concerné par la conservation de sélection, volontairement.
+- [ ] **(d, #943)** Fermer/désélectionner l'issue actuellement sélectionnée
+      (ex. elle devient filtrée/masquée, ou disparaît de la liste), puis
+      déclencher un rechargement (↻) : la première ligne encore visible est
+      sélectionnée, comme avant ce correctif (non-régression du cas « rien
+      de sélectionné » ou « sélection disparue »).
 
 ## Panneau latéral (Infrastructure)
 

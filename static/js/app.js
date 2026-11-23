@@ -1098,7 +1098,9 @@ function construireLigneIssueDOM(it) {
 // (display:none) les lignes des projets inactifs. Chaque ligne est coloriée à la
 // couleur de son projet ; le clic simple sélectionne (selectionnerLigne), le
 // double-clic charge et affiche le détail (afficherIssue, issue #261). Si
-// reset=true, on sélectionne (sans charger) la première issue visible.
+// reset=true, la sélection courante est conservée si elle existe toujours
+// (voir restaurerSelectionApresRendu, issue #943) ; seule une sélection
+// absente/disparue retombe sur la première issue visible.
 // Câble le clic simple (sélection seule, issue #261), le ctrl+clic (détail +
 // défilement jusqu'au résultat CCL) et le double-clic (détail) d'une ligne.
 // Extrait de rendreListeIssues pour être réutilisé par remplacerLigneIssue
@@ -1252,7 +1254,34 @@ function executerRenduListeIssues(reset) {
   restaurerCasesCocheesResultats();
   if (window.Bridge && window.Bridge.resultats) window.Bridge.resultats.majBadges();
   majPastillesFiltres();
-  if (reset) selectionnerPremiereVisible();
+  if (reset) restaurerSelectionApresRendu();
+}
+
+// Après un rendu COMPLET de la liste (rechargement réseau — ↻, réveil, flux
+// silencieux — ou événement début/fin/création d'issue, issue #933) : la
+// reconstruction ci-dessus repart d'un #liste-issues vide, donc plus aucune
+// ligne ne porte .selectionnee. Issue #943 : si l'issue actuellement
+// sélectionnée (projetCourant/numeroCourant, INCHANGÉS par ce rendu) est
+// toujours présente ET visible dans la liste rafraîchie, on se contente de
+// remarquer sa ligne et de rafraîchir le panneau Infrastructure (purement
+// local, cf. docs/contexte/interface_rafraichissement.md) — zone de détail
+// ET panneau d'actions restent sur la MÊME issue, sans relancer son
+// chargement (on n'appelle PAS selectionnerLigne/afficherIssue). Un
+// changement de projet/filtre ne passe pas par ici (basculerFiltreProjet/
+// basculerTousLesFiltres/basculerFiltreOuvriers appellent directement
+// selectionnerPremiereVisible si la sélection devient masquée) : seuls les
+// cas « pas de sélection », « issue disparue de la liste » ou « issue
+// filtrée/masquée » retombent sur le comportement historique (issue #261).
+function restaurerSelectionApresRendu() {
+  if (projetCourant != null && numeroCourant != null) {
+    const ligne = trouverLigneIssue(projetCourant, numeroCourant);
+    if (ligne && ligne.style.display !== 'none') {
+      ligne.classList.add('selectionnee');
+      rafraichirPanneauLateralResultats();
+      return;
+    }
+  }
+  selectionnerPremiereVisible();
 }
 
 // Masque/affiche les lignes selon les projets actifs ET le filtre ouvriers
