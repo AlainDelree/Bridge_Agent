@@ -100,6 +100,12 @@ const socle = creerStore({
   filtres: { projetsActifs: [], ouvriers: false },
   projets: [],           // [{nom, depot, couleur, …}]
   watchers: {},          // { nomProjet: {pid, actif, …} }
+  // alertesWatchers (issue #945) : { nomProjet: {alerte, enFile} } — au moins
+  // une issue en file depuis plus du délai de grâce alors que le watcher est
+  // éteint. Calculé par static/js/panneau_lateral.js (evaluerAlertesWatchers,
+  // à chaque lecture de /watchers), lu par ce même module (ligne du panneau
+  // Infrastructure) et par static/js/app.js (badge du filtre projet).
+  alertesWatchers: {},
   // nbEnAttente (issue #713/#714) : nombre d'éléments mis de côté par le
   // champ ATTENTE, relu depuis /issues-inbox/etat à chaque cycle de
   // rafraichirInbox() (resultats.js) — source du badge de l'onglet « En

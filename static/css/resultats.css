@@ -38,6 +38,14 @@
    Cette règle ne concerne QUE les projets marqués .agent-secondaire ; les
    autres gardent leur bordure pilotée par la sélection, sans changement. */
 .filtre-projet.agent-secondaire{border-width:3px;border-color:#000}
+/* Alerte « en file, watcher éteint » (issue #945) : au moins une issue en
+   file depuis plus du délai de grâce alors que le watcher du projet est
+   éteint — sobre mais visible (bordure ambre), détail au survol (title, posé
+   par majAlertesBadgesProjets, static/js/app.js). N'écrase jamais la bordure
+   épaisse .agent-secondaire ci-dessus, posées sur des aspects différents
+   (largeur ici inchangée). */
+.filtre-projet.alerte-watcher{border-color:#c0392b;box-shadow:0 0 0 1px #c0392b inset}
+.filtre-projet.alerte-watcher::before{content:'⚠️';margin-right:2px}
 /* Champ « limite par projet » (issue #271), juste avant le bouton rafraîchir. */
 .limite-issues-label{display:inline-flex;align-items:center;gap:5px;
   font-size:12px;color:#555;user-select:none}
@@ -374,6 +382,13 @@
 .pl-btn-vm{margin:6px 0 2px}
 /* Résumé « en cours/en file » sous chaque watcher CCL (issue #381). */
 .pl-sous-projet{font-size:11px;color:#999;margin:-2px 0 6px;padding-left:1px}
+/* Alerte « en file, watcher éteint » (issue #945) : au moins une issue en
+   file depuis plus du délai de grâce alors que le watcher est éteint — sobre
+   mais visible, même famille de couleur que .message.avertissement
+   (composants.css), le bouton « ▶ Lancer » déjà affiché juste au-dessus reste
+   l'action proposée. */
+.pl-alerte-watcher{font-size:11px;font-weight:600;color:#856404;background:#fff3cd;
+  border-radius:4px;padding:2px 6px;margin:-2px 0 6px;display:inline-block}
 /* Boutons de relance groupée CCL côte à côte (issue #381) : « Lancer les
    éteints » (seulement si au moins un est éteint) et « Relancer tous les CCL »
    (toujours, actifs ou non). */

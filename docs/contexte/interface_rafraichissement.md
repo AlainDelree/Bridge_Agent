@@ -403,3 +403,25 @@ existantes puis appellent elles-mêmes `selectionnerPremiereVisible()` SI la
 ligne sélectionnée devient masquée (mécanisme antérieur à #943, inchangé) :
 un changement de contexte VOULU par l'utilisateur réinitialise donc toujours
 la sélection comme avant, volontairement hors périmètre de ce correctif.
+
+## 10. Alerte « en file, watcher éteint » (issue #945)
+
+Calculée à CHAQUE lecture de `/watchers` (`panneau_lateral.js::rafraichirWatchersPartages`,
+§1 — tourne en continu dès le chargement de la page, panneau Infrastructure
+ouvert ou non) : `evaluerAlertesWatchers(watchersMap)` croise, pour chaque
+projet, `resumeProjetMonitoring(nom).enFile` (déjà en mémoire, §1) et
+`watchersMap[nom].actif` — AUCUN appel GitHub ni réseau supplémentaire,
+exactement comme les compteurs « en cours/en file » existants. Un point de
+départ de grâce par projet (60s, `DELAI_GRACE_ALERTE_WATCHER_MS`) est réarmé
+dès que la condition (en file + watcher éteint) cesse d'être réunie — évite
+une fausse alerte pendant la fenêtre où `redemarrer_si_eteint`
+(`app/watchers.py`) vient de relancer le watcher au dépôt d'une issue mais
+n'a pas encore publié son fichier PID. Au-delà de ce délai : une ligne
+`⚠️ N en file, watcher éteint` sur la ligne du watcher dans le panneau
+Infrastructure et une marque (bordure + ⚠️) sur le badge du filtre projet de
+la liste des résultats (`store.alertesWatchers`, lu par `static/js/app.js`),
+plus un seul toast par épisode (`doitNotifierAlerteWatcher` — jamais un par
+cycle de 30s). Disparaît d'elle-même dès que le watcher redevient actif ou
+que plus aucune issue n'attend ; aucun redémarrage automatique déclenché.
+Voir `ARCHITECTURE.md` §16 pour le détail (trace d'arrêt + détection d'un
+arrêt non propre côté `watcher.py`, logique pure testée).

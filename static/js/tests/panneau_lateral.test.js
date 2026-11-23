@@ -11,6 +11,8 @@ import {
   etatsCasesNotif, afficherBoutonArreterWatcherCcl,
   selectionnerWatchersActifsARelancer, resumerRelanceActifs, relancerSequentiellement,
   sidebarDemarrerWatcherInbox,
+  enAttenteWatcherEteint, fautAlerterWatcherEteint, doitNotifierAlerteWatcher,
+  texteAlerteWatcher, DELAI_GRACE_ALERTE_WATCHER_MS,
 } from '../panneau_lateral.js';
 import { api } from '../socle/api.js';
 
@@ -189,4 +191,57 @@ test('sidebarDemarrerWatcherInbox : erreur réseau → bouton rétabli quand mê
 test('aucun élément de l\'ancienne boîte « durée du watcher spool » n\'est référencé (issue #754)', () => {
   const texte = readFileSync(new URL('../panneau_lateral.js', import.meta.url), 'utf8');
   assert.doesNotMatch(texte, /dwi-|modal-duree-watcher-inbox|pl-duree-watcher-|DureeWatcherInbox/);
+});
+
+// ─── Alerte « en file, watcher éteint » (issue #945) ───────────────────────
+
+test('enAttenteWatcherEteint : en file + watcher éteint → vrai', () => {
+  assert.equal(enAttenteWatcherEteint(1, false), true);
+  assert.equal(enAttenteWatcherEteint(3, false), true);
+});
+
+test('enAttenteWatcherEteint : rien en file (même watcher éteint) → faux', () => {
+  assert.equal(enAttenteWatcherEteint(0, false), false);
+  assert.equal(enAttenteWatcherEteint(undefined, false), false);
+});
+
+test('enAttenteWatcherEteint : watcher actif (même en file) → faux — l\'auto-extinction ne coupe jamais s\'il reste du travail, donc ce cas ne devrait de toute façon jamais durer', () => {
+  assert.equal(enAttenteWatcherEteint(2, true), false);
+});
+
+test('fautAlerterWatcherEteint : condition pas encore réunie (null) → jamais d\'alerte', () => {
+  assert.equal(fautAlerterWatcherEteint(null), false);
+});
+
+test('fautAlerterWatcherEteint : délai de grâce pas encore écoulé → pas d\'alerte', () => {
+  assert.equal(fautAlerterWatcherEteint(0), false);
+  assert.equal(fautAlerterWatcherEteint(DELAI_GRACE_ALERTE_WATCHER_MS - 1), false);
+});
+
+test('fautAlerterWatcherEteint : délai de grâce écoulé → alerte', () => {
+  assert.equal(fautAlerterWatcherEteint(DELAI_GRACE_ALERTE_WATCHER_MS), true);
+  assert.equal(fautAlerterWatcherEteint(DELAI_GRACE_ALERTE_WATCHER_MS + 60000), true);
+});
+
+test('fautAlerterWatcherEteint : seuil personnalisé respecté', () => {
+  assert.equal(fautAlerterWatcherEteint(5000, 10000), false);
+  assert.equal(fautAlerterWatcherEteint(10000, 10000), true);
+});
+
+test('doitNotifierAlerteWatcher : transition inactive → active, jamais signalée → notifie', () => {
+  assert.equal(doitNotifierAlerteWatcher(true, false), true);
+});
+
+test('doitNotifierAlerteWatcher : déjà signalée pour cet épisode → ne notifie plus', () => {
+  assert.equal(doitNotifierAlerteWatcher(true, true), false);
+});
+
+test('doitNotifierAlerteWatcher : alerte pas (encore) active → jamais de notification', () => {
+  assert.equal(doitNotifierAlerteWatcher(false, false), false);
+  assert.equal(doitNotifierAlerteWatcher(false, true), false);
+});
+
+test('texteAlerteWatcher : formulation attendue', () => {
+  assert.equal(texteAlerteWatcher(1), '1 en file, watcher éteint');
+  assert.equal(texteAlerteWatcher(3), '3 en file, watcher éteint');
 });

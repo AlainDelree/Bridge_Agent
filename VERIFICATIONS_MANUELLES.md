@@ -749,6 +749,51 @@
       directe dans REP_TRAVAIL », affiché sur tous les onglets en cas de
       repli — issue #628), pas deux pollings indépendants.
 
+## Trace d'arrêt, arrêt non propre, alerte « en file, watcher éteint » (issue #945)
+
+> Nécessite un accès terminal au ThinkPad (pour envoyer les signaux) en plus
+> du navigateur. Redémarrer l'interface (`new_issue.py`) et recharger la page
+> en forcé (Ctrl+Maj+R) avant de commencer, pour écarter tout ancien JS en
+> cache.
+
+- [ ] **Arrêt par SIGTERM** : relever le PID d'un watcher de projet actif
+      (`cat logs/watcher-<nom>.pid` ou la colonne `pid` de `/watchers`), puis
+      `kill -TERM <pid>` depuis un terminal. Dans `logs/watcher-<nom>.log` :
+      une ligne `Watcher arrêté par signal SIGTERM — arrêt demandé, sortie
+      propre.` apparaît, et le fichier `watcher-<nom>.pid` est retiré. Le
+      panneau Infrastructure passe ce watcher à ⚫ au rafraîchissement suivant
+      (≤ 30s), **sans** avertissement « arrêt non propre ».
+- [ ] **Arrêt non propre détecté au redémarrage suivant** : avec le watcher
+      du test précédent toujours éteint, `kill -KILL` un AUTRE watcher de
+      projet actif (ou relancer le même après l'avoir d'abord relancé puis
+      re-tué par `-KILL` — l'essentiel est qu'un fichier `watcher-<nom>.pid`
+      reste en place pour un process mort). Déposer une issue `for-linux` de
+      ce projet (formulaire ou fichier dans `issues_inbox/`) et attendre le
+      délai de grâce (~60s) : l'alerte « ⚠️ N en file, watcher éteint »
+      apparaît sur le badge du filtre projet (liste des résultats) ET sur sa
+      ligne du panneau Infrastructure, accompagnée d'**un seul** toast.
+      Relancer ce watcher avec le bouton « ▶ Lancer » : l'alerte disparaît
+      des deux endroits au rafraîchissement suivant, et
+      `logs/watcher-<nom>.log` affiche, tout en haut, une ligne
+      `⚠️ Arrêt précédent non propre détecté : ... pid <celui tué par
+      -KILL> ... Dernière ligne du journal avant ce démarrage : ...`.
+- [ ] **Pas de fausse alerte à l'auto-extinction** : laisser un watcher
+      s'éteindre seul par inactivité (`DELAI_INACTIVITE_MIN` du projet, ou
+      réduire temporairement ce réglage pour le test) — aucune alerte dans
+      l'interface, et aucun avertissement « arrêt non propre » au prochain
+      démarrage de ce watcher (son fichier PID a bien été retiré par
+      l'auto-extinction elle-même).
+- [ ] **Pas de fausse alerte pendant le lancement automatique** : déposer une
+      issue `for-linux` d'un projet dont le watcher est éteint (cas normal,
+      `redemarrer_si_eteint` le relance) : aucune alerte ne doit apparaître
+      durant la courte fenêtre entre le dépôt et la publication du fichier
+      PID (délai de grâce de 60s largement suffisant).
+- [ ] **Non vérifié par cette tâche** (à faire par Alain sur le déploiement
+      réel, hors de ce worktree isolé) : relire `logs/issues_inbox.log` et
+      `logs/new_issue.log` autour de 17:44 et 17:48 le 23/11/2026, pour
+      confirmer ou écarter l'hypothèse du PID recyclé retenue au point 4 du
+      rapport de l'issue #945 (voir `ARCHITECTURE.md` §16.5).
+
 ## Fusion « Résultats inbox » dans Résultats (issue #639)
 
 L'onglet « Résultats inbox » **n'existe plus** : ses lignes vivent désormais

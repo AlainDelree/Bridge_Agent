@@ -132,11 +132,15 @@ def _arreter_pid(pid: int) -> None:
     cf. doc `os.kill`) au lieu du couple `CREATE_NEW_PROCESS_GROUP` +
     `GenerateConsoleCtrlEvent` réservé à `CTRL_BREAK_EVENT`/`CTRL_C_EVENT`
     (watcher.py, `_nettoyer_arbre_claude`, cas différent : arrêt propre d'un
-    sous-process `claude`, pas terminaison directe). watcher.py n'installe
-    aucun gestionnaire pour SIGTERM (seul `KeyboardInterrupt`/SIGINT est géré
-    pour l'arrêt manuel en terminal) : la terminaison est donc immédiate des
-    deux côtés, sans étape de nettoyage interne — même brutalité qu'un
-    `systemctl --user stop` côté systemd. Ne tue PAS la descendance
+    sous-process `claude`, pas terminaison directe). Côté POSIX, watcher.py
+    installe désormais un gestionnaire SIGTERM (issue #945,
+    `_gestionnaire_signal_arret`) : il journalise le signal reçu puis sort
+    EXACTEMENT comme `KeyboardInterrupt`/SIGINT (retrait du fichier PID,
+    sortie 0) — un arrêt manuel reste donc quasi immédiat, désormais tracé et
+    sans fichier PID périmé derrière lui. Côté Windows, `TerminateProcess`
+    ci-dessus ne délivre aucun signal réel : ce gestionnaire n'y est jamais
+    invoqué, la terminaison y reste immédiate et sans trace (inchangé). Ne
+    tue PAS la descendance
     éventuelle (tâche `claude` en cours) : à la différence de l'ancien
     `systemctl --user stop`/`restart`, qui tuait tout le cgroup du service
     sans distinction (issue #609, incident relecture_bridge #73) — ce point

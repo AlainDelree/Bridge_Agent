@@ -695,6 +695,26 @@ function majPastillesFiltres() {
     }
     pastilleNotif.textContent = String(n);
   });
+  majAlertesBadgesProjets(window.Bridge && window.Bridge.store && window.Bridge.store.get('alertesWatchers'));
+}
+
+// Marqueur « ⚠️ N en file, watcher éteint » sur le badge du filtre projet
+// (issue #945) — calculé par static/js/panneau_lateral.js (evaluerAlertesWatchers,
+// store.alertesWatchers), AUCUN calcul ni fetch réseau ici : ce badge se
+// contente de refléter le résultat déjà écrit dans le store. Appelée à
+// chaque (re)construction des boutons de filtre (majPastillesFiltres) et à
+// chaque mise à jour de store.alertesWatchers (abonnement plus bas) — sans
+// quoi le marqueur disparaîtrait au premier rechargement de la liste suivant
+// sa pose.
+function majAlertesBadgesProjets(dict) {
+  document.querySelectorAll('#filtres-projets .filtre-projet[data-projet]').forEach(btn => {
+    const info = (dict || {})[btn.dataset.projet];
+    const enAlerte = !!(info && info.alerte);
+    btn.classList.toggle('alerte-watcher', enAlerte);
+    btn.title = enAlerte
+      ? ('⚠️ ' + info.enFile + ' en file, watcher éteint')
+      : '';
+  });
 }
 
 // Active/désactive un projet dans le filtre puis masque/affiche les lignes
@@ -3107,6 +3127,11 @@ function rafraichirReplisRepTravail(watchersMap) {
 window.addEventListener('DOMContentLoaded', function() {
   if (window.Bridge && window.Bridge.store) {
     window.Bridge.store.abonnerCle('watchers', rafraichirReplisRepTravail);
+    // Badge du filtre projet (issue #945) : se met à jour dès que
+    // panneau_lateral.js (evaluerAlertesWatchers) réécrit store.alertesWatchers
+    // — y compris quand le panneau Infrastructure est fermé (la lecture
+    // /watchers qui l'alimente tourne en continu, voir panneau_lateral.js).
+    window.Bridge.store.abonnerCle('alertesWatchers', majAlertesBadgesProjets);
   }
 });
 

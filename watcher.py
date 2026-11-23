@@ -10338,6 +10338,105 @@ def traiter_issue(issue: dict, dry_run: bool) -> None:
 
     _traiter_issue_synchrone(issue, dry_run)
 
+# ─── Trace d'arrêt + détection d'un arrêt non propre (issue #945) ──────────────
+# Contexte (étude #938) : le 23/11/2026, un watcher de projet a disparu
+# brutalement (aucun signal tracé, aucune exception, aucune auto-extinction) —
+# cause probable : un signal NON interceptable (SIGKILL, OOM killer), que
+# Python ne peut par construction jamais journaliser lui-même. Deux volets
+# complémentaires :
+#  1. _gestionnaire_signal_arret ci-dessous journalise tout arrêt dont le
+#     process PEUT connaître la cause (SIGTERM — seul signal qui termine un
+#     process Python sans passer par KeyboardInterrupt) ; le comportement
+#     d'arrêt lui-même ne change pas, il est seulement désormais tracé, exactement
+#     comme le KeyboardInterrupt existant (SIGINT) l'était déjà.
+#  2. detecter_arret_non_propre, appelée au démarrage SUIVANT, détecte après
+#     coup un arrêt dont la cause n'a PU être tracée (le fichier PID de la
+#     session précédente existe encore, alors que son process n'est plus vivant
+#     — aucune des sorties propres existantes, qui retirent toutes ce fichier,
+#     n'a donc eu l'occasion de s'exécuter).
+
+def _nom_signal(numero_signal: int) -> str:
+    """Nom lisible d'un numéro de signal (ex. 'SIGTERM'), replié sur le numéro
+    brut si `numero_signal` ne correspond à aucun membre connu de `signal.Signals`
+    (portabilité : certains numéros n'existent que sur certaines plateformes)."""
+    try:
+        return signal.Signals(numero_signal).name
+    except ValueError:
+        return str(numero_signal)
+
+
+def _gestionnaire_signal_arret(numero_signal: int, frame) -> None:
+    """Gestionnaire de SIGTERM (issue #945) : seul signal de terminaison qui,
+    SANS gestionnaire installé, tue un process Python immédiatement et
+    silencieusement (SIGINT, lui, lève déjà KeyboardInterrupt — voir son
+    traitement existant dans la boucle principale ci-dessous, inchangé).
+    Reproduit EXACTEMENT le même arrêt propre que ce traitement existant
+    (nettoyage du fichier PID, sortie 0) : le comportement d'arrêt ne change
+    pas, seule la trace — ce log.info — est ajoutée.
+
+    Sous Windows, `os.kill(pid, signal.SIGTERM)` (app/watchers.py::_arreter_pid)
+    appelle directement TerminateProcess : aucun signal n'y est réellement
+    délivré, ce gestionnaire n'y est donc jamais invoqué — sans changement,
+    déjà documenté dans _arreter_pid."""
+    log.info(f"Watcher arrêté par signal {_nom_signal(numero_signal)} — arrêt demandé, sortie propre.")
+    DOSSIER_LOGS.joinpath(f"watcher-{CFG.nom}.pid").unlink(missing_ok=True)
+    sys.exit(0)
+
+
+def _derniere_ligne_journal(fichier_log: Path) -> str:
+    """Dernière ligne non vide du journal `fichier_log` tel qu'il existait
+    avant ce démarrage (best-effort, pure lecture) — sert à dater la fin de la
+    session précédente dans l'avertissement d'arrêt non propre ci-dessous. Lit
+    seulement les derniers octets (pas tout le fichier, potentiellement
+    volumineux) : une ligne de log ne dépasse jamais quelques centaines
+    d'octets en pratique, 8 Kio laisse une large marge."""
+    try:
+        taille = fichier_log.stat().st_size
+        with open(fichier_log, "rb") as f:
+            f.seek(max(0, taille - 8192))
+            contenu = f.read().decode("utf-8", errors="replace")
+        lignes = [l for l in contenu.splitlines() if l.strip()]
+        return lignes[-1] if lignes else "(journal vide)"
+    except OSError:
+        return "(journal introuvable)"
+
+
+def formuler_avertissement_arret_non_propre(pid_ancien: int | None, derniere_ligne: str) -> str:
+    """Message pur (aucune I/O, testable sans mock) de l'avertissement journalisé
+    par detecter_arret_non_propre ci-dessous."""
+    pid_txt = str(pid_ancien) if pid_ancien is not None else "inconnu"
+    return (f"⚠️ Arrêt précédent non propre détecté : le fichier PID de la "
+            f"session précédente (pid {pid_txt}) existait encore à ce "
+            f"démarrage et son process n'est plus actif — aucune des sorties "
+            f"propres connues (auto-extinction, arrêt demandé) ne l'a donc "
+            f"retiré, cause probablement un signal non interceptable (issue "
+            f"#945). Dernière ligne du journal avant ce démarrage : {derniere_ligne}")
+
+
+def detecter_arret_non_propre(cfg: Config) -> None:
+    """Au démarrage d'un watcher de projet (issue #945), journalise un
+    avertissement net si le fichier PID laissé par le lancement précédent
+    existe encore et que son process n'est plus vivant. Appelée APRÈS
+    acquerir_verrou_processus (donc jamais en présence d'un watcher concurrent
+    réellement vivant pour ce même projet) et AVANT toute écriture dans ce
+    même fichier PID ou tout premier log.info de cette session — sans quoi la
+    « dernière ligne du journal » lue ci-dessous serait déjà la nôtre."""
+    pid_file = DOSSIER_LOGS / f"watcher-{cfg.nom}.pid"
+    if not pid_file.exists():
+        return
+    try:
+        pid_ancien = int(pid_file.read_text().strip())
+    except (OSError, ValueError):
+        pid_ancien = None
+    if pid_ancien is not None and _pid_vivant(pid_ancien):
+        # Prudence (voir docstring de _pid_vivant) : ne devrait pas arriver,
+        # acquerir_verrou_processus a déjà écarté tout watcher concurrent
+        # réellement vivant pour ce même projet — pas un arrêt non propre.
+        return
+    log.warning(formuler_avertissement_arret_non_propre(
+        pid_ancien, _derniere_ligne_journal(cfg.fichier_log)))
+
+
 # ─── Boucle principale ─────────────────────────────────────────────────────────
 
 def main():
@@ -10372,6 +10471,21 @@ def main():
                   f"process) — arrêt immédiat de CETTE instance, aucune issue ne sera "
                   f"traitée par elle (issue #908).")
         sys.exit(EXIT_VERROU_DEJA_PRIS)
+
+    # Détection d'un arrêt non propre de la session précédente (issue #945) —
+    # AVANT toute écriture du fichier PID ci-dessous (sinon plus rien à
+    # détecter, on vient de l'écraser) et avant le premier log.info de CETTE
+    # session (sinon la « dernière ligne » lue serait déjà la nôtre).
+    detecter_arret_non_propre(CFG)
+
+    # Trace de la cause d'un arrêt, volet signal (issue #945) : SIGTERM est le
+    # seul signal de terminaison qui, sans gestionnaire installé, tuerait ce
+    # process immédiatement et silencieusement — SIGINT lève déjà
+    # KeyboardInterrupt, déjà tracé et géré ci-dessous. Posé ici, après le
+    # verrou (jamais pour l'instance refusée ci-dessus, qui n'a pas encore de
+    # fichier PID à elle) et avant le fichier PID (pour que CFG.nom, lu par le
+    # gestionnaire, soit déjà celui de CETTE instance).
+    signal.signal(signal.SIGTERM, _gestionnaire_signal_arret)
 
     # Fichier PID auto-publié (issue #596) : jusqu'ici c'était le lanceur
     # (app/watchers.py::demarrer_watcher, via subprocess.Popen) qui écrivait
@@ -10520,7 +10634,11 @@ def main():
             if travail_a_faire:
                 derniere_activite = time.monotonic()
         except KeyboardInterrupt:
-            log.info("Watcher arrêté par l'utilisateur.")
+            # SIGINT (Ctrl+C en terminal) lève directement cette exception,
+            # sans passer par _gestionnaire_signal_arret — nom explicite
+            # (issue #945) pour rester cohérent avec sa trace.
+            log.info(f"Watcher arrêté par signal {_nom_signal(signal.SIGINT)} "
+                     f"— interruption terminal, sortie propre.")
             pid_file.unlink(missing_ok=True)
             sys.exit(0)
         except Exception as e:
@@ -10529,4 +10647,18 @@ def main():
         time.sleep(intervalle)
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except SystemExit:
+        raise
+    except BaseException as e:
+        # Filet de sécurité (issue #945) : toute exception qui échapperait à
+        # la boucle principale (laquelle attrape déjà `Exception` sans
+        # jamais s'arrêter, voir ci-dessus) — par exemple une exception levée
+        # AVANT la boucle (vérifications de démarrage) ou un type qui
+        # n'hérite pas d'Exception — est journalisée avant de se propager
+        # réellement : SystemExit (sorties propres déjà journalisées plus
+        # haut, y compris via _gestionnaire_signal_arret) est seul exclu.
+        log.critical(f"Watcher terminé par une exception non interceptée "
+                     f"({type(e).__name__}: {e}) — la boucle principale s'arrête.")
+        raise

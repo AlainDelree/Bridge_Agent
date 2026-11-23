@@ -1850,4 +1850,124 @@ naturellement du flux décrit en 15.4.
 
 ---
 
+## 16. Watchers : trace d'arrêt, arrêt non propre, alerte « en file, watcher éteint » (issue #945)
+
+### 16.1 Pourquoi
+
+Le 23/11/2026, un watcher de projet a disparu brutalement (aucun signal
+tracé, aucune exception, aucune auto-extinction) et l'issue suivante de ce
+projet est restée en file sans que rien ne le signale dans l'interface
+(étude #938). Trois volets, aucune supervision qui relancerait un watcher
+mort (ça reste hors périmètre, cf. #682) :
+
+### 16.2 Trace de la cause d'un arrêt (`watcher.py`)
+
+`signal.signal(signal.SIGTERM, _gestionnaire_signal_arret)`, posé dans
+`main()` juste après `acquerir_verrou_processus` (§11) — seul signal de
+terminaison qui, sans gestionnaire, tuerait le process immédiatement et
+silencieusement (SIGINT lève déjà `KeyboardInterrupt`, géré et tracé depuis
+toujours dans la boucle principale, désormais avec le nom du signal en plus).
+`_gestionnaire_signal_arret` journalise le nom du signal puis reproduit
+EXACTEMENT le même arrêt propre que `KeyboardInterrupt`/l'auto-extinction
+(retrait du fichier PID, `sys.exit(0)`) — le comportement d'arrêt ne change
+pas, seule la trace est ajoutée. `if __name__ == "__main__":` journalise en
+plus (`log.critical`) toute exception qui échapperait à `main()` sans passer
+par un de ces chemins déjà tracés, avant de se propager normalement. Un
+signal NON interceptable (SIGKILL, OOM killer) ne laisse par construction
+toujours rien — c'est le volet suivant qui le détecte après coup.
+
+### 16.3 Détection d'un arrêt non propre au démarrage suivant (`watcher.py`)
+
+`detecter_arret_non_propre(cfg)`, appelée dans `main()` juste après le
+verrou et AVANT que le fichier PID ne soit réécrit avec le PID de cette
+nouvelle instance : si `logs/watcher-<nom>.pid` existe encore et que son PID
+n'est plus vivant (`_pid_vivant`, §11.2), journalise un `log.warning` net
+(`formuler_avertissement_arret_non_propre`, logique pure) citant ce PID et
+la dernière ligne du journal lue AVANT ce démarrage
+(`_derniere_ligne_journal`). Les trois sorties propres existantes
+(auto-extinction, `KeyboardInterrupt`, et désormais `_gestionnaire_signal_arret`
+ci-dessus) retirent toutes ce fichier avant de sortir — aucune ne déclenche
+donc cet avertissement au démarrage suivant ; seul un arrêt dont la cause
+échappe entièrement au process (SIGKILL, OOM killer) le laisse en place.
+
+### 16.4 Alerte « en file, watcher éteint » dans l'interface
+
+Quand un projet a au moins une issue en file (`resumeProjetMonitoring.enFile`,
+`static/js/app.js`, déjà en mémoire) alors que son watcher est éteint
+(`store.watchers`, déjà en mémoire — **aucun appel GitHub supplémentaire**),
+depuis plus d'un délai de grâce de 60s (`DELAI_GRACE_ALERTE_WATCHER_MS`,
+`static/js/panneau_lateral.js`) — ce délai évite une fausse alerte pendant la
+fenêtre où `redemarrer_si_eteint` (app/watchers.py) vient de relancer le
+watcher au dépôt d'une issue mais n'a pas encore eu le temps de publier son
+fichier PID.
+
+`evaluerAlertesWatchers(watchersMap)` (`panneau_lateral.js`), appelée à
+chaque lecture de `/watchers` (`rafraichirWatchersPartages`, tourne en
+continu dès le chargement de la page, panneau Infrastructure ouvert ou non)
+est l'UNIQUE calcul : un point de départ de grâce par projet
+(`referenceAlerteWatcherMs`, réarmé dès que la condition cesse d'être
+réunie) et un épisode déjà signalé (`episodeAlerteWatcherSignale`) pour
+n'émettre qu'UN SEUL toast par épisode (`toasts.avertissement`, cf. §6.3) —
+même patron que la détection de silence du flux `/stream` (§14 du DOC,
+issue #937). Le résultat (`{nom: {alerte, enFile}}`) est écrit dans
+`store.alertesWatchers` et lu aux deux endroits demandés, sans second
+calcul :
+- la ligne du panneau Infrastructure (`rendrePanneauLateralMonitoring`) —
+  `<div class="pl-alerte-watcher">⚠️ N en file, watcher éteint</div>`, juste
+  sous le résumé « en cours/en file » existant, à côté du bouton « ▶ Lancer »
+  déjà présent ;
+- le badge du filtre projet de la liste des résultats (`majAlertesBadgesProjets`,
+  `static/js/app.js`, abonné à `store.alertesWatchers`) — classe CSS
+  `.filtre-projet.alerte-watcher` (bordure ambre + ⚠️) et `title` au survol.
+
+Logique pure testée sans DOM (`static/js/tests/panneau_lateral.test.js`) :
+`enAttenteWatcherEteint(enFile, watcherActif)`, `fautAlerterWatcherEteint(depuisMs,
+seuilMs)`, `doitNotifierAlerteWatcher(alerteActive, episodeDejaSignale)`,
+`texteAlerteWatcher(enFile)`. L'alerte disparaît d'elle-même (aucune action
+requise) dès que le watcher redevient actif ou que plus aucune issue n'attend
+— `evaluerAlertesWatchers` réévalue tout à chaque cycle de `/watchers`, sans
+mémoire d'un état « alerté » persistant au-delà de ces deux conditions.
+Aucun redémarrage automatique du watcher n'est déclenché par cette alerte.
+
+### 16.5 Lancement automatique au dépôt d'une issue — constat (sans changement de comportement)
+
+Deux composants lancent le watcher local **à la demande**, tous deux via
+`app/watchers.py::redemarrer_si_eteint(cfg)` → `demarrer_watcher(cfg,
+forcer=False)` (jamais `demarrer_watcher_ou_differer`, réservé au bouton
+manuel « Enregistrer et relancer »/panneau latéral, §13) :
+`app/issues.py::envoyer()` (formulaire web, issue #202) et
+`scripts/watcher_issues_inbox.py::_traiter_bloc` (spool `issues_inbox/`,
+issue #486 — chemin probable d'une issue déposée par CC). `demarrer_watcher(forcer=False)`
+ne (re)lance que si `watcher_actif(cfg)` répond `False` — lecture du fichier
+PID puis `_pid_vivant` (§11.2).
+
+Hypothèse retenue pour l'incident du 23/11/2026 (#937 non relancé alors que
+le watcher était mort depuis #934) : l'asymétrie VOLONTAIRE de `_pid_vivant`
+(« PID trouvé vivant, sonde en échec ⇒ `True` par prudence — un PID mort
+peut avoir été RECYCLÉ par l'OS », §11.2) s'applique ICI SANS le filet du
+verrou OS `acquerir_verrou_processus` (§11, issue #908) — celui-ci protège
+uniquement contre un SECOND watcher lancé par erreur, il n'intervient pas
+dans `watcher_actif()`/`redemarrer_si_eteint`. Si le PID resté dans
+`logs/watcher-<nom>.pid` après le crash a été RECYCLÉ par l'OS pour un autre
+process quelconque avant 17:48:46, `watcher_actif()` répond alors (à tort)
+`actif=True` et `demarrer_watcher(forcer=False)` ne relance rien — sans la
+moindre trace (ni exception, ni log.warning, cohérent avec le constat de
+#938). L'hypothèse zombie est écartée : `_pid_vivant` détecte déjà
+spécifiquement ce cas (`'Z'` ⇒ `False`, §11.2), qui aurait donc correctement
+permis la relance.
+
+Non vérifié avec les journaux réels de l'incident (`logs/issues_inbox.log`,
+`logs/new_issue.log`) : ces fichiers n'existent pas dans ce worktree isolé
+(gitignorés, propres au déploiement réel, hors périmètre de ce worktree) —
+à confirmer par Alain sur le déploiement. Correctif le plus simple si
+confirmé : ne plus se fier à la seule liveness du PID dans
+`watcher_actif()`/`redemarrer_si_eteint` pour un fichier PID plus ancien que
+l'auto-extinction la plus longue observée, ou faire porter à ce fichier une
+empreinte supplémentaire (heure de démarrage du process lue sur
+`/proc/<pid>/stat`, comparée à l'écriture) pour distinguer un PID recyclé —
+non implémenté ici (pas « quelques lignes » évidentes, et nécessite une
+vérification sur le déploiement réel avant tout correctif).
+
+---
+
 *Document technique interne — voir `BRIDGE_AGENT_DOC.md` pour l'usage du bridge.*

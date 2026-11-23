@@ -135,6 +135,48 @@ export function etatsCasesNotif(nomsLabels) {
   };
 }
 
+// ─── Alerte « en file, watcher éteint » (issue #945) ───────────────────────
+// Un projet a au moins une issue « en file » (ouverte, ni needs-human ni
+// done — resumeProjetMonitoring côté app.js) alors que son watcher CCL est
+// éteint : personne ne la traitera jusqu'à une relance manuelle. Même patron
+// que le silence de flux /stream (veille.js #937) : un point de départ de
+// grâce par projet, réarmé dès que la condition cesse d'être réunie
+// (evaluerAlertesWatchers ci-dessous, orchestration), et un épisode déjà
+// signalé pour n'émettre qu'UNE notification par épisode.
+//
+// Délai de grâce ~60 s (issue #945) : un watcher relancé automatiquement au
+// dépôt d'une issue (redemarrer_si_eteint, app/watchers.py) met un instant à
+// publier son fichier PID — sans ce délai, la fenêtre entre le dépôt et ce
+// court lancement afficherait une fausse alerte à chaque création d'issue.
+export const DELAI_GRACE_ALERTE_WATCHER_MS = 60000;
+
+// Condition brute (issue #945), sans tenir compte du délai de grâce ni de
+// l'épisode déjà signalé — ceux-ci restent du ressort de
+// fautAlerterWatcherEteint/doitNotifierAlerteWatcher ci-dessous.
+export function enAttenteWatcherEteint(enFile, watcherActif) {
+  return (enFile || 0) > 0 && !watcherActif;
+}
+
+// `depuisMs` : ancienneté (ms) du dernier instant où enAttenteWatcherEteint
+// est devenue vraie EN CONTINU pour ce projet — null si la condition n'est
+// pas réunie à cet instant. True seulement une fois le délai de grâce dépassé.
+export function fautAlerterWatcherEteint(depuisMs, seuilMs = DELAI_GRACE_ALERTE_WATCHER_MS) {
+  return depuisMs != null && depuisMs >= seuilMs;
+}
+
+// Un seul déclenchement (toast) par épisode d'alerte (issue #945) — même
+// principe que doitRechargerListePourSilence (veille.js #937) : vrai
+// seulement à la transition qui fait passer l'alerte d'inactive à active.
+export function doitNotifierAlerteWatcher(alerteActive, episodeDejaSignale) {
+  return alerteActive && !episodeDejaSignale;
+}
+
+// Texte affiché sur le badge projet et la ligne du panneau Infrastructure
+// (issue #945) — identique aux deux endroits.
+export function texteAlerteWatcher(enFile) {
+  return `${enFile} en file, watcher éteint`;
+}
+
 // ─── Bouton « Avancement » (issue #887) : commits + fichiers (committés/non
 // committés) du worktree dédié à l'issue sélectionnée, lecture seule (GET
 // /avancement/<projet>/<numero>) — pour estimer l'avancement d'une tâche en
@@ -291,7 +333,51 @@ async function rafraichirWatchersPartages() {
     const dict = {};
     (liste || []).forEach(w => { dict[w.nom] = w; });
     store.set('watchers', dict);
+    evaluerAlertesWatchers(dict);
   } catch (e) { /* best-effort, silencieux : le store garde son dernier état connu */ }
+}
+
+// ─── Orchestration de l'alerte « en file, watcher éteint » (issue #945) ────
+// État par projet, UNIQUE source (point de départ de grâce + épisode déjà
+// signalé — voir les fonctions pures ci-dessus) : appelée depuis la seule
+// lecture périodique de /watchers ci-dessus (rafraichirWatchersPartages,
+// tourne en continu dès le chargement de la page, panneau ouvert ou non —
+// condition nécessaire pour que le badge projet de la liste des résultats,
+// toujours visible, reste à jour même si le panneau Infrastructure est
+// fermé). Écrit le résultat dans store.alertesWatchers ({ nom: {alerte,
+// enFile} }), lu par rendrePanneauLateralMonitoring ci-dessous ET par
+// static/js/app.js (badge du filtre projet) — un seul calcul, deux affichages,
+// jamais deux notifications pour le même épisode. Aucun appel réseau
+// supplémentaire : watchersMap vient du fetch /watchers déjà en cours,
+// resumeProjetMonitoring (app.js) lit listeIssuesResultats déjà en mémoire.
+const referenceAlerteWatcherMs = new Map();    // nom -> ms (Date.now() du début de l'attente)
+const episodeAlerteWatcherSignale = new Map(); // nom -> bool (toast déjà émis pour cet épisode)
+
+function evaluerAlertesWatchers(watchersMap) {
+  const noms = appelerAncien('nomsProjetsDisponibles') || [];
+  const maintenant = Date.now();
+  const dict = {};
+  noms.forEach(function(nom) {
+    const actif = !!(watchersMap[nom] && watchersMap[nom].actif);
+    const resume = appelerAncien('resumeProjetMonitoring', nom) || { enCours: 0, enFile: 0 };
+    if (!enAttenteWatcherEteint(resume.enFile, actif)) {
+      referenceAlerteWatcherMs.delete(nom);
+      episodeAlerteWatcherSignale.delete(nom);
+      dict[nom] = { alerte: false, enFile: resume.enFile };
+      return;
+    }
+    if (!referenceAlerteWatcherMs.has(nom)) referenceAlerteWatcherMs.set(nom, maintenant);
+    const alerte = fautAlerterWatcherEteint(maintenant - referenceAlerteWatcherMs.get(nom));
+    if (doitNotifierAlerteWatcher(alerte, !!episodeAlerteWatcherSignale.get(nom))) {
+      episodeAlerteWatcherSignale.set(nom, true);
+      toasts.avertissement(
+        '⚠️ Projet « ' + nom + ' » : ' + texteAlerteWatcher(resume.enFile) + '.',
+        true, { cle: 'alerte-watcher-' + nom },
+      );
+    }
+    dict[nom] = { alerte: alerte, enFile: resume.enFile };
+  });
+  store.set('alertesWatchers', dict);
 }
 
 // ─── Zone haute : monitoring infrastructure (watchers CCL + services CCW) ──
@@ -300,6 +386,7 @@ async function rendrePanneauLateralMonitoring() {
   if (!zone) return;
   await rafraichirWatchersPartages();
   const watchersMap       = store.get('watchers') || {};
+  const alertesWatchers   = store.get('alertesWatchers') || {};
   const noms              = appelerAncien('nomsProjetsDisponibles') || [];
   const ccwProjetsConnus  = obtenirCcwProjetsConnus() || [];
 
@@ -313,6 +400,7 @@ async function rendrePanneauLateralMonitoring() {
     const actif = !!(watchersMap[nom] && watchersMap[nom].actif);
     if (!actif) cclEteints.push(nom); else cclActifs.push(nom);
     const resume = appelerAncien('resumeProjetMonitoring', nom) || { enCours: 0, enFile: 0 };
+    const enAlerte = !!(alertesWatchers[nom] && alertesWatchers[nom].alerte);
     html += '<div class="pl-ligne">'
           + '<span class="pl-ligne-libelle">' + (actif ? '🟢' : '⚫') + ' ' + dom.echapperHtml(nom) + '</span>'
           + '<span class="pl-ligne-btns">'
@@ -323,7 +411,10 @@ async function rendrePanneauLateralMonitoring() {
               : '')
           + '</span>'
           + '</div>'
-          + '<div class="pl-sous-projet">' + resume.enCours + ' en cours, ' + resume.enFile + ' en file</div>';
+          + '<div class="pl-sous-projet">' + resume.enCours + ' en cours, ' + resume.enFile + ' en file</div>'
+          + (enAlerte
+              ? '<div class="pl-alerte-watcher">⚠️ ' + dom.echapperHtml(texteAlerteWatcher(resume.enFile)) + '</div>'
+              : '');
   });
   if (noms.length) {
     html += '<div class="pl-boutons-ccl">';
