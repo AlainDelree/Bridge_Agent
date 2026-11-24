@@ -57,19 +57,26 @@ test('boutonsActionLigne : en file (timing connu, debut absent) → ["annuler"]'
   assert.deepEqual(boutonsActionLigne([], { debut: null }), ['annuler']);
 });
 
-test('boutonsActionLigne : en cours en LECTURE (aucun label mode_write) → ["interrompre"]', () => {
-  assert.deepEqual(boutonsActionLigne(['for-linux'], { debut: '2026-09-26T10:00:00Z' }), ['interrompre']);
-  assert.deepEqual(boutonsActionLigne([], { debut: '2026-09-26T10:00:00Z' }), ['interrompre']);
+test('boutonsActionLigne : en cours en LECTURE (aucun label mode_write) → ["interrompre", "fermer"] (issue #951)', () => {
+  assert.deepEqual(boutonsActionLigne(['for-linux'], { debut: '2026-09-26T10:00:00Z' }), ['interrompre', 'fermer']);
+  assert.deepEqual(boutonsActionLigne([], { debut: '2026-09-26T10:00:00Z' }), ['interrompre', 'fermer']);
 });
 
-test('boutonsActionLigne : en cours en ÉCRITURE (label mode_write) → ["interrompre"]', () => {
-  assert.deepEqual(boutonsActionLigne(['mode_write'], { debut: '2026-09-26T10:00:00Z' }), ['interrompre']);
+test('boutonsActionLigne : en cours en ÉCRITURE (label mode_write) → ["interrompre", "fermer"] (issue #951)', () => {
+  assert.deepEqual(boutonsActionLigne(['mode_write'], { debut: '2026-09-26T10:00:00Z' }), ['interrompre', 'fermer']);
 });
 
-test('boutonsActionLigne : en cours sans limite (sans_limite, debut posé) → ["interrompre"]', () => {
+test('boutonsActionLigne : en cours sans limite (sans_limite, debut posé) → ["interrompre", "fermer"]', () => {
   assert.deepEqual(
     boutonsActionLigne(['mode_write'], { debut: '2026-09-26T10:00:00Z', sans_limite: true }),
-    ['interrompre'],
+    ['interrompre', 'fermer'],
+  );
+});
+
+test('boutonsActionLigne : en cours INTERACTIVE (mode_interactif, debut posé) → ["interrompre", "fermer"] (issue #951, point 3)', () => {
+  assert.deepEqual(
+    boutonsActionLigne(['mode_interactif'], { debut: '2026-09-26T10:00:00Z' }),
+    ['interrompre', 'fermer'],
   );
 });
 
@@ -100,7 +107,7 @@ test('boutonsActionLigne : accepte des labels objets {name} comme des chaînes',
   );
   assert.deepEqual(
     boutonsActionLigne([{ name: 'mode_scratch' }], { debut: '2026-09-26T10:00:00Z' }),
-    ['interrompre'],
+    ['interrompre', 'fermer'],
   );
 });
 

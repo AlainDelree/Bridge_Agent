@@ -2429,16 +2429,15 @@ async function annulerIssue(nom, numero) {
   }
 }
 
-// Ferme définitivement une issue interrompue/needs-human, puis rafraîchit
-// l'affichage et la combobox (issue #80). Appelée depuis le bouton
-// « Fermer » de la ligne (issue #950, fermerDepuisLigne) — plus jamais
-// depuis le panneau Infrastructure. Texte VRAI (issue #950, #938 point
-// 2.1 appliqué ici aussi par cohérence) : NE touche QUE GitHub (gh issue
-// close), jamais le watcher ni les autres issues du projet.
-async function fermerIssue(nom, numero) {
-  if (!confirm("Fermer définitivement l'issue #" + numero + " ?\n\n"
-             + "Ferme l'issue sur GitHub sans toucher au watcher ni aux autres "
-             + "issues de ce projet. Irréversible.")) return;
+// Cœur technique d'une fermeture GitHub (POST /fermer-issue, issue #80,
+// factorisé de fermerIssue() par l'issue #951 pour être réutilisé par la
+// séquence de fermeture d'une issue EN COURS ci-dessous, une fois — et
+// seulement une fois — son arrêt confirmé) : un seul `gh issue close`
+// (app.issues.fermer_issue, qui retire aussi needs-human APRÈS la fermeture
+// depuis #951, voir sa docstring), puis rechargement de la liste et
+// réaffichage de la même issue si sa ligne reste visible. AUCUNE
+// confirmation ici — à l'appelant de l'avoir déjà obtenue.
+async function _executerFermetureGh(nom, numero) {
   try {
     const rep = await fetch('/fermer-issue/' + encodeURIComponent(nom)
                             + '/' + encodeURIComponent(numero), {method: 'POST'});
@@ -2459,6 +2458,436 @@ async function fermerIssue(nom, numero) {
     .find(l => l.dataset.projet === nom && l.dataset.numero === numStr);
   if (ligne && ligne.style.display !== 'none') {
     await afficherIssue(nom, numStr);
+  }
+}
+
+// Ferme définitivement une issue interrompue/needs-human (issue #80),
+// appelée depuis le bouton « Fermer » de la ligne (issue #950,
+// fermerDepuisLigne) quand l'issue porte DÉJÀ needs-human — elle est donc
+// déjà arrêtée, rien à attendre. Plus jamais depuis le panneau
+// Infrastructure. Texte VRAI (issue #950, #938 point 2.1 appliqué ici aussi
+// par cohérence) : NE touche QUE GitHub (gh issue close), jamais le watcher
+// ni les autres issues du projet. Distincte de la séquence de fermeture
+// d'une issue ENCORE EN COURS (issue #951, voir
+// fermerIssueEnCoursDepuisLigne ci-dessous), qui doit d'abord l'arrêter.
+async function fermerIssue(nom, numero) {
+  if (!confirm("Fermer définitivement l'issue #" + numero + " ?\n\n"
+             + "Ferme l'issue sur GitHub sans toucher au watcher ni aux autres "
+             + "issues de ce projet. Irréversible.")) return;
+  await _executerFermetureGh(nom, numero);
+}
+
+// ─── Fermeture propre d'une issue EN COURS (issue #951, étude #939/#946/
+// #947/#948/#949/#950) ──────────────────────────────────────────────────────
+// Avant cette issue, le bouton « Fermer » de la ligne n'existait QUE pour une
+// issue déjà needs-human/interrompue (ci-dessus) — fermer une issue encore
+// en traitement obligeait à utiliser l'ancien bouton « Interrompre et
+// fermer » du détail (retiré par #950) qui arrêtait TOUT le watcher du
+// projet puis fermait avec un commentaire trompeur (#938 point 2.1). Règle
+// d'Alain (voir docs/contexte/interruption_issue.md) : fermer une issue
+// proprement sans toucher aux AUTRES issues du projet si possible (cas
+// normal, interruption CIBLÉE #949 : SEULE cette issue est concernée) ;
+// sinon (issue interactive, #949 ne la couvre pas), ne le faire que si les
+// autres issues du projet sont interrompues ou s'il n'y en a pas — avec un
+// choix explicite proposé à Alain, jamais une décision automatique.
+//
+// Invariant central, dans les deux cas : NE JAMAIS fermer l'issue tant que
+// son traitement tourne encore — toujours déposer/attendre l'ARRÊT avant
+// d'appeler _executerFermetureGh() ci-dessus.
+
+// Délai maximal d'attente de l'arrêt (de l'ordre de 30s, #951 point 2) et
+// intervalle de sondage de /issues-en-cours (purement local, aucun appel
+// GitHub — voir app.watchers.issues_en_cours) — partagés par la fermeture
+// normale (attend CETTE issue) et la fermeture interactive avec d'autres
+// issues en cours (attend les AUTRES avant d'arrêter le watcher).
+const DELAI_MAX_ATTENTE_ARRET_FERMETURE_MS = 30000;
+const INTERVALLE_SONDAGE_FERMETURE_MS = 3000;
+
+// Labels d'une issue déjà CONNUS localement, pour décider du mécanisme de
+// fermeture — PAS d'appel GitHub supplémentaire (contrainte de l'issue
+// #951) : lus en priorité depuis le store du socle (window.Bridge.store,
+// alimenté par /issues-liste pour TOUTES les issues ouvertes connues,
+// static/js/socle/store.js), plus complet que labelsIssueDepuisCache
+// ci-dessus (qui ne connaît que les issues dont le DÉTAIL a déjà été
+// affiché) — utile ici pour une issue qui n'a peut-être jamais été ouverte,
+// y compris une AUTRE issue du même projet (cas interactif, voir plus bas).
+// Repli sur labelsIssueDepuisCache si le store est indisponible ou muet.
+function labelsIssueCourante(nom, numero) {
+  const store = window.Bridge && window.Bridge.store;
+  const issue = store ? store.lireIssue(nom, Number(numero)) : null;
+  if (issue && Array.isArray(issue.labels)) {
+    return issue.labels.map(l => (l && l.name) || l || '').filter(Boolean);
+  }
+  return labelsIssueDepuisCache(nom, numero);
+}
+
+// Ensemble des couples (projet, numéro) dont la FERMETURE est actuellement
+// en cours (issue #951, même patron que _interruptionsEnCours/#748) —
+// DISTINCT de _interruptionsEnCours : une fermeture engage elle-même une
+// interruption (ciblée ou watcher entier) comme étape intermédiaire, mais
+// c'est tout le GESTE « Fermer » (dépôt + attente + close) qu'un second clic
+// ne doit jamais dédoubler, pas seulement son étape d'interruption.
+const _fermeturesEnCours = new Set();
+
+// Désactive/réactive visuellement le bouton « Fermer » (et « Interrompre »,
+// pour éviter une action concurrente sur la même ligne pendant l'attente) —
+// même patron que _marquerInterruptionEnCours ci-dessus. Comme pour elle,
+// posé par querySelector AU MOMENT de l'appel : un rendu complet survenant
+// PENDANT l'attente (ex. fin_issue d'une AUTRE issue du même projet)
+// reconstruit la ligne sans cet état — limite déjà acceptée pour
+// _marquerInterruptionEnCours, pas une régression propre à cette issue.
+function _marquerFermetureEnCours(nom, numero, active) {
+  const numStr = String(numero);
+  const ligne = [...document.querySelectorAll('#liste-issues .ligne-issue')]
+    .find(l => l.dataset.projet === nom && l.dataset.numero === numStr);
+  if (!ligne) return;
+  const boutonFermer = ligne.querySelector('.btn-fermer-ligne');
+  if (boutonFermer) {
+    boutonFermer.disabled = active;
+    boutonFermer.classList.toggle('action-ligne-attente', active);
+    if (active) {
+      if (boutonFermer.dataset.libelleAvantAttente === undefined) boutonFermer.dataset.libelleAvantAttente = boutonFermer.textContent;
+      boutonFermer.textContent = '⏳ Fermeture…';
+    } else if (boutonFermer.dataset.libelleAvantAttente !== undefined) {
+      boutonFermer.textContent = boutonFermer.dataset.libelleAvantAttente;
+      delete boutonFermer.dataset.libelleAvantAttente;
+    }
+  }
+  const boutonInterrompre = ligne.querySelector('.btn-interrompre-ligne');
+  if (boutonInterrompre) {
+    boutonInterrompre.disabled = active;
+    boutonInterrompre.classList.toggle('action-ligne-attente', active);
+  }
+}
+
+// Message d'échec/délai dépassé — toast si disponible, sinon alert() (même
+// repli que le reste de ce fichier).
+function _signalerEchecFermeture(texte) {
+  if (window.Bridge && window.Bridge.toasts) window.Bridge.toasts.erreur(texte);
+  else alert(texte);
+}
+
+// Sonde GET /issues-en-cours/<nom> (purement local, aucun appel GitHub,
+// issue #947) jusqu'à ce qu'AUCUN des `numeros` donnés n'y figure plus, ou
+// jusqu'au délai maximal — SANS bloquer l'interface (await sur setTimeout,
+// jamais de boucle synchrone). Renvoie true si tous sont absents avant le
+// délai, false s'il est dépassé. Utilisée pour attendre l'arrêt de CETTE
+// issue (fermeture normale) comme pour attendre l'arrêt des AUTRES issues
+// avant une fermeture interactive (point 3 de l'issue #951) — un sondage
+// réseau en échec compte comme « encore en cours » pour CE tour (retenté au
+// tour suivant, dans le même délai global) plutôt que d'interrompre
+// l'attente sur une simple coupure ponctuelle.
+async function _attendreIssuesAbsentesDeEnCours(nom, numeros, delaiMaxMs) {
+  const ensemble = new Set(numeros.map(Number));
+  const limite = Date.now() + delaiMaxMs;
+  while (Date.now() < limite) {
+    await new Promise((r) => setTimeout(r, INTERVALLE_SONDAGE_FERMETURE_MS));
+    try {
+      const rep = await fetch('/issues-en-cours/' + encodeURIComponent(nom));
+      const json = await rep.json();
+      const issues = Array.isArray(json.issues) ? json.issues : [];
+      if (!issues.some((i) => ensemble.has(i.numero))) return true;
+    } catch (e) {
+      continue;
+    }
+  }
+  return false;
+}
+
+// Dépose la demande d'interruption CIBLÉE (#949) de `numero` et attend son
+// arrêt (route #947, délai #951 ci-dessus) — PUIS SEULEMENT ALORS ferme sur
+// GitHub. Trois issues possibles, toutes couvertes par l'invariant « ne
+// jamais fermer avant l'arrêt » :
+//   - demande refusée par une vraie erreur (succes:false, ex. écriture du
+//     fichier-sentinelle en échec) → message, PAS de fermeture ;
+//   - demande non déposée car l'issue n'est déjà plus en cours (deposee:
+//     false, succes:true — elle a fini entre le clic et cet appel, #951
+//     point 2 « Si l'issue a déjà fini entre-temps, fermer simplement ») →
+//     fermeture immédiate, rien à attendre ;
+//   - demande déposée → attend l'arrêt ; si confirmé à temps, ferme ; sinon
+//     (délai dépassé), message clair, PAS de fermeture — l'issue reste dans
+//     son état (en cours ou déjà passée à needs-human par le watcher).
+async function _fermerIssueApresArretCible(nom, numero, depot) {
+  let demande;
+  try {
+    const rep = await fetch('/demander-interruption-issue', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({depot: depot, numero: Number(numero)})
+    });
+    demande = await rep.json();
+  } catch (e) {
+    alert("Erreur réseau lors de la demande d'arrêt : " + e.message
+        + "\n\nL'issue #" + numero + " n'a PAS été fermée — réessayez.");
+    return;
+  }
+  if (!demande.succes) {
+    alert('Erreur : ' + (demande.erreur || "échec de la demande d'arrêt.")
+        + "\n\nL'issue #" + numero + " n'a PAS été fermée — réessayez.");
+    return;
+  }
+  if (demande.deposee) {
+    const arretee = await _attendreIssuesAbsentesDeEnCours(
+      nom, [numero], DELAI_MAX_ATTENTE_ARRET_FERMETURE_MS);
+    if (!arretee) {
+      _signalerEchecFermeture(
+        "Issue #" + numero + " : son arrêt n'est pas confirmé après "
+        + Math.round(DELAI_MAX_ATTENTE_ARRET_FERMETURE_MS / 1000) + "s — elle n'a PAS été "
+        + 'fermée (elle reste en cours, ou vient de passer à needs-human). '
+        + 'Réessayez « Fermer » dans un instant.');
+      return;
+    }
+  }
+  await _executerFermetureGh(nom, numero);
+}
+
+// Cas normal (issue #951, point 2) : issue NON interactive, encore en
+// cours. Confirmation claire (numéro, titre, effet), puis séquence
+// dépôt→attente→fermeture ci-dessus, sous la garde anti-double-clic
+// _fermeturesEnCours — l'issue n'est jamais fermée tant qu'elle tourne.
+async function fermerIssueNormaleEnCoursDepuisLigne(nom, numero, titre) {
+  const depot = depotDuProjet(nom);
+  if (!depot) {
+    alert('Dépôt GitHub introuvable pour le projet « ' + nom + ' » — impossible de fermer.');
+    return;
+  }
+  if (!confirm("Fermer l'issue #" + numero + (titre ? ' — ' + titre : '') + " ?\n\n"
+             + 'Cette issue SEULE sera arrêtée puis fermée sur GitHub — les AUTRES issues de ce '
+             + 'projet continuent normalement, et le travail déjà fait (worktree, commits éventuels) '
+             + 'est conservé tel quel. Irréversible. Continuer ?')) return;
+
+  const actionsLigne = window.Bridge && window.Bridge.actionsLigne;
+  if (actionsLigne && !actionsLigne.demarrerInterruption(_fermeturesEnCours, nom, numero)) {
+    alert('Fermeture déjà en cours pour cette issue.');
+    return;
+  }
+  _marquerFermetureEnCours(nom, numero, true);
+  try {
+    await _fermerIssueApresArretCible(nom, numero, depot);
+  } finally {
+    if (actionsLigne) actionsLigne.terminerInterruption(_fermeturesEnCours, nom, numero);
+    _marquerFermetureEnCours(nom, numero, false);
+  }
+}
+
+// Autres issues ACTUELLEMENT en cours de ce projet (route #947, exclut
+// `numero`), enrichies de leur statut interactif (issue #951, point 3) —
+// relu depuis labelsIssueCourante() ci-dessus (store local, AUCUN appel
+// GitHub supplémentaire) via le même mécanismeInterruptionLigne() que le
+// bouton « Interrompre » (static/js/actions_ligne.js), pour ne jamais
+// diverger sur ce qui compte comme « interactive ». Renvoie null (plutôt
+// que []) sur une erreur réseau de /issues-en-cours elle-même (ROUTE locale
+// — une erreur ici est inattendue) : l'appelant doit alors s'abstenir par
+// prudence, jamais supposer « aucune autre ».
+async function _autresIssuesEnCoursPourFermeture(nom, numero) {
+  let issues;
+  try {
+    const rep = await fetch('/issues-en-cours/' + encodeURIComponent(nom)
+      + '?exclure=' + encodeURIComponent(numero));
+    const json = await rep.json();
+    issues = Array.isArray(json.issues) ? json.issues : [];
+  } catch (e) {
+    return null;
+  }
+  const actionsLigne = window.Bridge && window.Bridge.actionsLigne;
+  return issues.map((i) => {
+    const labels = labelsIssueCourante(nom, i.numero);
+    const interactif = !!(actionsLigne
+      && actionsLigne.mecanismeInterruptionLigne(labels) === 'watcher_complet');
+    return {numero: i.numero, mode: i.mode, interactif: interactif};
+  });
+}
+
+// Réutilise l'overlay générique #modal-confirmation (templates/fragments/
+// modale_confirmation.html, déjà partagé par static/js/creation.js —
+// afficherModalIncoherence/afficherModalErreur, même patron de
+// sauvegarde/restauration des libellés et de la visibilité des deux
+// boutons) pour la « fenêtre » à deux actions du cas interactif (issue
+// #951, point 3) : « Interrompre les autres puis fermer » / « Annuler », ou
+// « OK » seul (masquerOui) quand aucune action n'est proposée. Résout true
+// si le bouton OUI a été cliqué, false sinon (Annuler, ou overlay à bouton
+// unique).
+function afficherModalFermetureInteractive(titre, messageHtml, libelleOui, libelleNon, masquerOui) {
+  return new Promise((resolve) => {
+    const overlay = document.getElementById('modal-confirmation');
+    const liste   = document.getElementById('modal-liste');
+    const btnOui  = document.getElementById('modal-oui');
+    const btnNon  = document.getElementById('modal-non');
+    const ouiAvant = btnOui.textContent;
+    const nonAvant = btnNon.textContent;
+    const ouiAffichageAvant = btnOui.style.display;
+    document.getElementById('modal-titre').textContent = titre;
+    liste.style.display = '';
+    liste.innerHTML = messageHtml;
+    btnOui.textContent = libelleOui;
+    btnNon.textContent = libelleNon;
+    btnOui.style.display = masquerOui ? 'none' : '';
+    function fermer(reponse) {
+      overlay.classList.remove('actif');
+      btnOui.onclick = null; btnNon.onclick = null;
+      btnOui.textContent = ouiAvant;
+      btnNon.textContent = nonAvant;
+      btnOui.style.display = ouiAffichageAvant;
+      resolve(reponse);
+    }
+    btnOui.onclick = () => fermer(true);
+    btnNon.onclick = () => fermer(false);
+    overlay.classList.add('actif');
+  });
+}
+
+// Étape technique partagée (RAW, sans garde ni confirmation — ses deux
+// appelants ci-dessous détiennent déjà la garde _fermeturesEnCours) : arrête
+// le watcher ENTIER du projet (mécanisme historique #323, même route
+// /interrompre que interrompreIssue ci-dessous) puis, SEULEMENT si cet arrêt
+// a réussi, ferme l'issue (issue #951, point 3).
+async function _interrompreWatcherCompletPuisFermer(nom, numero, depot, labels) {
+  let resultat;
+  try {
+    const rep = await fetch('/interrompre', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({depot: depot, numero: Number(numero), labels: labels || []})
+    });
+    resultat = await rep.json();
+  } catch (e) {
+    alert("Erreur réseau lors de l'arrêt du watcher : " + e.message
+        + "\n\nL'issue #" + numero + " n'a PAS été fermée.");
+    return;
+  }
+  if (!resultat.succes) {
+    alert('Erreur : ' + (resultat.erreur || "échec de l'arrêt du watcher.")
+        + "\n\nL'issue #" + numero + " n'a PAS été fermée.");
+    return;
+  }
+  await _executerFermetureGh(nom, numero);
+}
+
+// Cas interactif, SANS autre issue en cours (issue #951, point 3, premier
+// cas) : arrête directement le watcher entier puis ferme — rien d'autre à
+// attendre, rien d'autre n'est affecté.
+async function fermerIssueInteractiveSansAutres(nom, numero, depot, labels) {
+  const actionsLigne = window.Bridge && window.Bridge.actionsLigne;
+  if (actionsLigne && !actionsLigne.demarrerInterruption(_fermeturesEnCours, nom, numero)) {
+    alert('Fermeture déjà en cours pour cette issue.');
+    return;
+  }
+  _marquerFermetureEnCours(nom, numero, true);
+  try {
+    await _interrompreWatcherCompletPuisFermer(nom, numero, depot, labels);
+  } finally {
+    if (actionsLigne) actionsLigne.terminerInterruption(_fermeturesEnCours, nom, numero);
+    _marquerFermetureEnCours(nom, numero, false);
+  }
+}
+
+// Cas interactif AVEC d'autres issues (toutes NON interactives — l'appelant
+// l'a déjà garanti, issue #951, point 3, choix « Interrompre les autres
+// puis fermer ») : interrompt chacune via #949 (best-effort, la vérification
+// d'arrêt ci-dessous tranche), attend qu'AUCUNE ne figure plus en cours,
+// puis SEULEMENT ALORS arrête le watcher entier et ferme. Si elles ne
+// s'arrêtent pas toutes à temps : message clair, watcher PAS arrêté, issue
+// PAS fermée — aucune action destructrice sans la confirmation explicite
+// déjà obtenue pour une attente qui, elle, a échoué.
+async function fermerIssueInteractiveAvecAutres(nom, numero, depot, labels, autresNumeros) {
+  const actionsLigne = window.Bridge && window.Bridge.actionsLigne;
+  if (actionsLigne && !actionsLigne.demarrerInterruption(_fermeturesEnCours, nom, numero)) {
+    alert('Fermeture déjà en cours pour cette issue.');
+    return;
+  }
+  _marquerFermetureEnCours(nom, numero, true);
+  try {
+    for (const autreNumero of autresNumeros) {
+      try {
+        const rep = await fetch('/demander-interruption-issue', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({depot: depot, numero: Number(autreNumero)})
+        });
+        await rep.json();
+      } catch (e) { /* best-effort — la vérification d'arrêt ci-dessous tranche */ }
+    }
+    const toutesArretees = await _attendreIssuesAbsentesDeEnCours(
+      nom, autresNumeros, DELAI_MAX_ATTENTE_ARRET_FERMETURE_MS);
+    if (!toutesArretees) {
+      _signalerEchecFermeture(
+        "Les autres issues de ce projet ne se sont pas toutes arrêtées après "
+        + Math.round(DELAI_MAX_ATTENTE_ARRET_FERMETURE_MS / 1000) + "s — l'issue interactive #"
+        + numero + " n'a PAS été fermée, le watcher n'a PAS été arrêté. Réessayez « Fermer » "
+        + 'dans un instant.');
+      return;
+    }
+    await _interrompreWatcherCompletPuisFermer(nom, numero, depot, labels);
+  } finally {
+    if (actionsLigne) actionsLigne.terminerInterruption(_fermeturesEnCours, nom, numero);
+    _marquerFermetureEnCours(nom, numero, false);
+  }
+}
+
+// Cas interactif (issue #951, point 3) : interroge d'abord les AUTRES
+// issues en cours de ce projet (#947), puis décide — aucune issue n'est
+// JAMAIS arrêtée sans un choix explicite d'Alain à chaque étape qui compte.
+async function fermerIssueInteractiveDepuisLigne(nom, numero, titre, labels) {
+  const depot = depotDuProjet(nom);
+  if (!depot) {
+    alert('Dépôt GitHub introuvable pour le projet « ' + nom + ' » — impossible de fermer.');
+    return;
+  }
+  const autres = await _autresIssuesEnCoursPourFermeture(nom, numero);
+  if (autres === null) {
+    alert('Impossible de vérifier les autres issues en cours de ce projet — fermeture annulée '
+        + 'par prudence. Réessayez.');
+    return;
+  }
+
+  if (autres.length === 0) {
+    if (!confirm("Fermer l'issue interactive #" + numero + (titre ? ' — ' + titre : '') + " ?\n\n"
+               + 'Issue en session tmux interactive : son arrêt arrête le watcher ENTIER du projet '
+               + '« ' + nom + ' » (mécanisme historique, #949 ne la couvre pas). Aucune autre issue de '
+               + "ce projet n'est actuellement en cours — rien d'autre ne sera affecté. Le travail déjà "
+               + 'fait (worktree, commits éventuels) est conservé tel quel. Continuer ?')) return;
+    await fermerIssueInteractiveSansAutres(nom, numero, depot, labels);
+    return;
+  }
+
+  const autresInteractives = autres.filter((a) => a.interactif);
+  const listeTexte = autres.map((a) => '#' + a.numero
+    + (a.interactif ? ' (interactive)' : (a.mode === 'ecriture' ? ' (écriture)' : ' (lecture)'))
+  ).join(', ');
+
+  if (autresInteractives.length > 0) {
+    await afficherModalFermetureInteractive(
+      '⛔ Fermeture impossible pour le moment',
+      "D'autres issues de ce projet sont actuellement en cours (" + escapeHtml(listeTexte) + "), "
+      + "dont au moins une est ELLE-MÊME interactive — elle ne peut pas être interrompue proprement "
+      + "(même limite que le bouton « Interrompre » pour une telle issue). Arrêtez-la manuellement "
+      + "avant de réessayer de fermer l'issue #" + numero + '.',
+      'OK', 'Annuler', true);
+    return;
+  }
+
+  const continuer = await afficherModalFermetureInteractive(
+    "Fermer l'issue interactive #" + numero + (titre ? ' — ' + titre : ''),
+    'Son arrêt arrête le watcher ENTIER du projet « ' + escapeHtml(nom) + ' ». D\'autres issues de ce '
+    + 'projet sont actuellement en cours (' + escapeHtml(listeTexte) + ') : elles seront d\'abord '
+    + 'interrompues (interruption ciblée #949, sans toucher à leur worktree), avant d\'arrêter le '
+    + 'watcher et de fermer CETTE issue. Le travail déjà fait pour chacune est conservé tel quel.',
+    'Interrompre les autres puis fermer', 'Annuler', false);
+  if (!continuer) return;
+
+  await fermerIssueInteractiveAvecAutres(nom, numero, depot, labels, autres.map((a) => a.numero));
+}
+
+// Point d'entrée unique de la fermeture d'une issue EN COURS (issue #951) —
+// décide seulement du MÉCANISME (même détection que le bouton « Interrompre »,
+// mecanismeInterruptionLigne, pour ne jamais diverger) puis délègue.
+async function fermerIssueEnCoursDepuisLigne(nom, numero, titre, labels) {
+  const actionsLigne = window.Bridge && window.Bridge.actionsLigne;
+  const mecanisme = (actionsLigne && actionsLigne.mecanismeInterruptionLigne(labels)) || 'ciblee';
+  if (mecanisme === 'watcher_complet') {
+    await fermerIssueInteractiveDepuisLigne(nom, numero, titre, labels);
+  } else {
+    await fermerIssueNormaleEnCoursDepuisLigne(nom, numero, titre);
   }
 }
 
@@ -2756,9 +3185,28 @@ function annulerDepuisLigne(event, nom, numero) {
   annulerIssue(nom, numero);
 }
 
+// « Fermer » (issue #950, étendu #951) : deux comportements bien séparés
+// selon l'état RÉEL de l'issue au moment du clic (lu sur les labels connus,
+// labelsIssueCourante — jamais la sélection courante) —
+//   - needs-human déjà posé → déjà arrêtée, simple `gh issue close`
+//     (fermerIssue(), comportement #950 inchangé) ;
+//   - sinon (encore EN COURS, label absent) → séquence de fermeture propre
+//     de l'issue #951 (interruption CIBLÉE puis fermeture pour une issue
+//     normale, fenêtre dédiée pour une issue interactive — voir
+//     fermerIssueEnCoursDepuisLigne ci-dessus).
+// `titre` lu directement sur le bouton cliqué (data-titre, posé par
+// actions_ligne.js au rendu de la ligne), même patron que
+// interrompreDepuisLigne ci-dessous.
 function fermerDepuisLigne(event, nom, numero) {
   if (event) event.stopPropagation();
-  fermerIssue(nom, numero);
+  const titre = (event && event.currentTarget && event.currentTarget.dataset.titre) || '';
+  const labels = labelsIssueCourante(nom, numero);
+  const noms = labels.map(l => l.toLowerCase());
+  if (noms.includes('needs-human')) {
+    fermerIssue(nom, numero);
+    return;
+  }
+  fermerIssueEnCoursDepuisLigne(nom, numero, titre, labels);
 }
 
 // « Relancer » réutilise TEL QUEL relancerIssue() (même route, même

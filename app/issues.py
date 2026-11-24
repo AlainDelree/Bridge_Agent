@@ -1766,17 +1766,42 @@ def modifier_label_notif():
 
 
 def fermer_issue(nom_projet, numero):
-    """Ferme définitivement une issue needs-human/interrompue (bouton
-    « Fermer » de la ligne, issue #950) — SANS jamais arrêter le watcher ni
-    toucher aux autres issues du projet, un simple `gh issue close` comme
-    avant cette issue (le mécanisme n'a jamais touché le watcher, seul le
-    COMMENTAIRE posé était trompeur, voir ci-dessous).
+    """Ferme définitivement une issue — bouton « Fermer » de la ligne, pour
+    deux cas distincts (issue #950, étendu #951) : une issue needs-human/
+    interrompue (simple fermeture, rien d'autre à faire — l'issue est déjà
+    arrêtée) OU, désormais, le dernier geste de la séquence de fermeture
+    propre d'une issue ENCORE EN COURS (voir
+    docs/contexte/interruption_issue.md) : dans ce second cas, c'est
+    l'APPELANT (JS, static/js/app.js) qui a déjà déposé la demande
+    d'interruption ciblée (#949) et attendu que l'issue ne figure plus parmi
+    les issues en cours (#947) — ou, pour une issue interactive, arrêté le
+    watcher — AVANT d'appeler cette route. Cette fonction elle-même ne fait
+    jamais que fermer : SANS jamais arrêter le watcher ni toucher aux autres
+    issues du projet, un simple `gh issue close` comme avant cette issue (le
+    mécanisme n'a jamais touché le watcher, seul le COMMENTAIRE posé était
+    trompeur, voir ci-dessous).
 
     Commentaire corrigé (issue #950, #938 point 2.1 : un commentaire
     similaire posté par l'ancien bouton « Interrompre et fermer » du détail
     prétendait à tort qu'une « intervention humaine » avait eu lieu, alors
     qu'il ne s'agissait que d'un clic) — texte désormais exact : ferme
-    l'issue depuis l'interface, point."""
+    l'issue depuis l'interface, point.
+
+    Retrait de `needs-human` APRÈS la fermeture (issue #951, point 4) :
+    sans lui, une issue fermée manuellement en portant encore ce label
+    s'affichait comme un « échec » (badge ⚠️ needs-human, `badgeLabel()`
+    côté détail/recherche — ce label n'est normalement retiré qu'à la
+    RELANCE, `app.interruption.relancer_issue`) alors qu'elle a simplement
+    été fermée depuis l'interface, pas forcément après un vrai échec (c'est
+    même le cas normal depuis #951 : la séquence de fermeture d'une issue en
+    cours pose needs-human comme étape intermédiaire — voir ci-dessus —
+    avant de la fermer ici). Toujours tenté (idempotent : `gh issue edit
+    --remove-label` sur un label absent de l'issue n'échoue pas), jamais
+    AVANT (une issue encore ouverte sans needs-human redeviendrait éligible
+    au prochain cycle du watcher, voir watcher.lister_issues()) : l'ordre
+    close→retrait élimine ce risque. Best-effort STRICT, isolé dans son
+    propre try/except : un échec de ce second appel ne doit JAMAIS faire
+    passer pour un échec une fermeture qui a par ailleurs réussi."""
     cfg = projet_par_nom(nom_projet)
     if not cfg:
         return jsonify(succes=False, message="Projet introuvable."), 404
@@ -1792,6 +1817,15 @@ def fermer_issue(nom_projet, numero):
         )
         if res.returncode == 0:
             maj_rate_limit("app.issues.fermer_issue")
+            try:
+                subprocess.run(
+                    ["gh", "issue", "edit", str(numero),
+                     "--repo", cfg.depot,
+                     "--remove-label", LABEL_ECHEC],
+                    capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30
+                )
+            except Exception:
+                pass   # best-effort (issue #951) : la fermeture a déjà réussi
             return jsonify(succes=True, message=f"Issue #{numero} fermée définitivement.")
         return jsonify(succes=False,
                        message=res.stderr.strip() or "Erreur inconnue de gh.")

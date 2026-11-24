@@ -1621,6 +1621,21 @@ revérifie via `app.watchers.tache_en_cours` (§11.1) que l'issue n'a pas
 démarré entre-temps avant de la fermer. Détail complet :
 `docs/contexte/interruption_issue.md`.
 
+### 11.8 Fermeture propre d'une issue EN COURS depuis sa ligne (issue #951)
+
+« Fermer » apparaît désormais aussi sur une issue EN COURS (pas seulement
+`needs-human`, §11.7) : `static/js/app.js::fermerIssueEnCoursDepuisLigne`
+orchestre, CÔTÉ CLIENT et sans nouvelle route, la séquence « dépose la
+demande ciblée §11.6 → attend (30s max, sondage local `/issues-en-cours`
+§11.1) que l'issue ne figure plus en cours → ferme seulement alors
+(`/fermer-issue`, §11.7) » pour une issue normale ; pour une issue
+interactive (jamais couverte par §11.6), une fenêtre propose d'interrompre
+d'abord les autres issues en cours du projet (ou ferme directement s'il n'y
+en a aucune), sans jamais arrêter quoi que ce soit sans ce choix explicite.
+`app.issues.fermer_issue` retire en outre `needs-human` APRÈS la fermeture
+(best-effort) : une issue fermée manuellement ne s'affiche donc plus comme
+un échec. Détail complet : `docs/contexte/interruption_issue.md`.
+
 ---
 
 ## 12. Plancher TIMEOUT pour les issues en écriture (issue #752)

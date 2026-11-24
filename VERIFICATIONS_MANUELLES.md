@@ -879,11 +879,12 @@
 > la main).
 
 - [ ] **(a)** Déposer `issue_test_relance_testvibe_longue.txt` sur
-      `testvibe` : sa ligne affiche **« Interrompre »** (pas d'autre
-      bouton). Cliquer : confirmation rappelant le numéro et le titre de
-      l'issue, annonçant que SEULE cette issue sera arrêtée. En une dizaine
-      de secondes, SANS rechargement manuel (↻) : la ligne passe à
-      `needs-human`, affiche **« Relancer »** + **« Fermer »**.
+      `testvibe` : sa ligne affiche **« Interrompre »** ET **« Fermer »**
+      (issue #951 — voir la section dédiée ci-dessous pour ce second
+      bouton). Cliquer sur « Interrompre » : confirmation rappelant le
+      numéro et le titre de l'issue, annonçant que SEULE cette issue sera
+      arrêtée. En une dizaine de secondes, SANS rechargement manuel (↻) : la
+      ligne passe à `needs-human`, affiche **« Relancer »** + **« Fermer »**.
 - [ ] **(b)** Cliquer **« Relancer »** sur cette même ligne : l'issue repart
       normalement (comportement inchangé de la relance existante).
 - [ ] **(c)** Déposer DEUX issues `testvibe` d'affilée (pendant que la
@@ -902,6 +903,73 @@
       normalement) ET clics rapprochés sur les boutons de PLUSIEURS lignes
       différentes : vérifier qu'aucune action n'a jamais lieu sur une
       MAUVAISE issue (numéro confirmé dans chaque confirmation/toast).
+
+## Fermeture propre d'une issue EN COURS depuis sa ligne (issue #951)
+
+> Après fusion, redémarrer l'interface (`new_issue.py`), relancer le watcher
+> du projet `testvibe` et recharger la page en forçant (Ctrl+Maj+R). Les
+> essais (a)/(b) sont ceux demandés par Alain dans l'issue de clôture.
+
+- [ ] **(a) Fermeture normale — issue non interactive** : déposer
+      `issue_test_relance_testvibe_longue.txt` sur `testvibe`. Sur sa ligne
+      « en cours », cliquer **« Fermer »** : confirmation rappelant le
+      numéro, le titre, et précisant que SEULE cette issue sera arrêtée puis
+      fermée (les autres issues du projet continuent, le travail déjà fait
+      est conservé). Confirmer : en quelques secondes (le temps que la
+      boucle d'attente de `claude` détecte la demande, ~3s, puis que
+      l'interface confirme l'arrêt via `/issues-en-cours`), la ligne indique
+      « ⏳ Fermeture… » puis l'issue se ferme avec le commentaire « Issue
+      fermée manuellement depuis l'interface (new_issue.py). » — SANS passer
+      par un état `needs-human` visible durablement (ou, si observé
+      brièvement, il disparaît avec la fermeture). Vérifier qu'aucun process
+      `claude` de ce PID ne subsiste.
+- [ ] **(b) Les autres issues ne sont pas affectées** : déposer EN MÊME
+      TEMPS les deux issues en écriture `issue_test_ecriture_a.txt` et
+      `issue_test_ecriture_b.txt` sur un projet dont `MAX_WRITE_PARALLELE`
+      permet aux deux de tourner ensemble (ex. `testvibe`) ; attendre
+      qu'elles tournent TOUTES LES DEUX (deux lignes « en cours »). Cliquer
+      « Fermer » sur A : seule A s'arrête et se ferme (comme en (a)) ; B
+      continue normalement jusqu'à sa fin naturelle, sans interruption ni
+      ralentissement visible.
+- [ ] **(c) Affichage d'une issue fermée manuellement** : après (a) ou (b),
+      ouvrir le détail de l'issue fermée (ou la retrouver par la recherche)
+      — vérifier qu'elle n'affiche PLUS le badge « ⚠️ échec » (le label
+      `needs-human` a été retiré après la fermeture, issue #951 point 4) ;
+      comparer avec une issue restée `needs-human` et OUVERTE (jamais
+      fermée), qui doit CONTINUER à afficher ce badge.
+- [ ] **(d) Délai dépassé (claude ne s'arrête pas à temps)** : sur une issue
+      dont le process ne répond pas à la demande d'interruption dans les 30s
+      (difficile à provoquer en conditions normales — à défaut, lire le code
+      de `_attendreIssuesAbsentesDeEnCours`/`DELAI_MAX_ATTENTE_ARRET_FERMETURE_MS`
+      dans `static/js/app.js` pour confirmer la logique) : un message clair
+      apparaît, l'issue n'est PAS fermée, et reste dans son état (en cours ou
+      `needs-human`) — à rejouer « Fermer » une fois l'arrêt confirmé.
+- [ ] **(e) Issue interactive, aucune autre issue en cours** : déposer une
+      issue avec `INTERACTIF | oui` sur un projet CCL sans autre issue en
+      cours. Cliquer « Fermer » sur sa ligne : confirmation mentionnant
+      l'arrêt du watcher ENTIER du projet (mécanisme historique, #949 ne la
+      couvre pas) et l'absence d'autre issue affectée. Confirmer : le
+      watcher s'arrête, l'issue se ferme. Relancer le watcher manuellement
+      ensuite (comportement inchangé de `/interrompre`).
+- [ ] **(f) Issue interactive, avec d'autres issues non interactives en
+      cours** : même projet, une issue interactive ET une ou plusieurs
+      issues normales en cours. Cliquer « Fermer » sur la ligne interactive :
+      une fenêtre (pas un simple `confirm()`) liste les autres issues en
+      cours avec deux boutons, **« Interrompre les autres puis fermer »** et
+      **« Annuler »**. Cliquer « Annuler » : rien ne bouge. Recliquer
+      « Fermer » puis **« Interrompre les autres puis fermer »** : les autres
+      issues s'arrêtent (needs-human, comme #949), PUIS le watcher s'arrête
+      et l'issue interactive se ferme.
+- [ ] **(g) Issue interactive, avec une AUTRE issue interactive en cours** :
+      deux issues interactives sur le même projet, la seconde encore en
+      cours. Cliquer « Fermer » sur la première : la fenêtre indique qu'une
+      autre issue interactive est en cours et ne peut pas être interrompue
+      proprement, et ne propose QUE « Annuler » (pas de bouton
+      « Interrompre les autres… »).
+- [ ] **(h) Pas de double fermeture** : pendant l'attente (a)/(b)/(f),
+      cliquer plusieurs fois rapidement sur « Fermer » de la même ligne —
+      un seul message « Fermeture déjà en cours pour cette issue. » pour les
+      clics suivants, une seule fermeture effective au final.
 
 ## Fusion « Résultats inbox » dans Résultats (issue #639)
 

@@ -26,12 +26,19 @@
 //                                 watcher du projet) est remplacée par un
 //                                 groupe de boutons textuels courts dont la
 //                                 composition dépend de l'état de l'issue —
-//                                 « Annuler » (en file), « Interrompre » (en
-//                                 cours — interruption CIBLÉE #949 pour une
-//                                 issue normale, comportement historique
-//                                 watcher entier pour une issue interactive),
-//                                 « Relancer » + « Fermer » (needs-human),
-//                                 rien (terminée). Décision par
+//                                 « Annuler » (en file), « Interrompre » +
+//                                 « Fermer » (en cours — interruption CIBLÉE
+//                                 #949 pour une issue normale, comportement
+//                                 historique watcher entier pour une issue
+//                                 interactive ; « Fermer » sur une issue EN
+//                                 COURS déclenche depuis l'issue #951 la
+//                                 fermeture propre décrite dans
+//                                 docs/contexte/interruption_issue.md — pas
+//                                 le simple `gh issue close` immédiat de la
+//                                 ligne « Relancer »/« Fermer » ci-dessous),
+//                                 « Relancer » + « Fermer » (needs-human, ici
+//                                 un simple `gh issue close`, l'issue est déjà
+//                                 arrêtée), rien (terminée). Décision par
 //                                 boutonsActionLigne() ci-dessous (logique
 //                                 pure, testée) — même patron que l'ancienne
 //                                 icône : TOUJOURS posée masquée au rendu,
@@ -122,24 +129,30 @@ export function prefixeInformatifLigneOuverte(labels) {
 // remplace afficherIconeInterruption de l'issue #642 — même état de départ :
 // le MÊME `timing.debut` que le décompte TIMEOUT actif de resultats.js, pas
 // le seul label mode_write, pour qu'une issue en LECTURE en cours reste
-// elle aussi interrompable depuis sa ligne, #642) :
+// elle aussi interrompable depuis sa ligne, #642 ; étendue par l'issue #951,
+// point 1, pour ajouter « Fermer » à une issue EN COURS) :
 //   - done                              → [] (terminée, aucune action)
 //   - needs-human                       → ['relancer', 'fermer']
-//     (prime sur tout le reste — priorité identique à prefixeInformatifLigneOuverte)
+//     (prime sur tout le reste — priorité identique à prefixeInformatifLigneOuverte ;
+//     « Fermer » y est un simple `gh issue close`, voir fermerDepuisLigne/app.js)
 //   - timing inconnu (pas encore chargé)→ [] (on ne sait pas encore si
 //     l'issue est « en file » ou « en cours » — mieux vaut n'afficher ni
-//     « Annuler » ni « Interrompre » par erreur que de risquer la mauvaise
-//     action ; révisé dès que `timing` arrive, cf. majBadges())
+//     « Annuler » ni « Interrompre »/« Fermer » par erreur que de risquer la
+//     mauvaise action ; révisé dès que `timing` arrive, cf. majBadges())
 //   - timing.debut absent               → ['annuler']   (en file)
-//   - timing.debut posé                 → ['interrompre'] (en cours — même
-//     libellé qu'une issue interactive, voir mecanismeInterruptionLigne()
-//     ci-dessous pour la DÉCISION DE MÉCANISME, distincte de l'affichage)
+//   - timing.debut posé                 → ['interrompre', 'fermer'] (en cours
+//     — même libellé « Interrompre » qu'une issue interactive, voir
+//     mecanismeInterruptionLigne() ci-dessous pour la DÉCISION DE MÉCANISME,
+//     distincte de l'affichage ; « Fermer » y déclenche la séquence de
+//     fermeture propre de l'issue #951 — interruption CIBLÉE puis fermeture
+//     pour une issue normale, fenêtre dédiée pour une issue interactive —
+//     PAS le simple `gh issue close` immédiat du cas needs-human ci-dessus)
 export function boutonsActionLigne(labels, timing) {
   const noms = normaliserNomsLabels(labels);
   if (noms.includes('done')) return [];
   if (noms.includes('needs-human')) return ['relancer', 'fermer'];
   if (!timing) return [];
-  return timing.debut ? ['interrompre'] : ['annuler'];
+  return timing.debut ? ['interrompre', 'fermer'] : ['annuler'];
 }
 
 // Quel MÉCANISME le bouton « Interrompre » doit-il déclencher ? (issue #950,
@@ -284,13 +297,17 @@ const DEFS_BOUTONS_ACTION_LIGNE = [
 // apostrophes (« l'issue », « n'est »...) qui casseraient la chaîne JS d'un
 // onclick inline, même après échappement HTML (echapperHtml échappe pour du
 // HTML, pas pour une chaîne JS imbriquée dans un attribut HTML) —
-// interrompreDepuisLigne (app.js) le relit directement sur le bouton cliqué
-// (event.currentTarget.dataset.titre), jamais depuis un cache ou la
-// sélection courante (point 8 de l'issue #950 : lu dans la ligne elle-même,
-// au moment du clic).
+// interrompreDepuisLigne/fermerDepuisLigne (app.js) le relisent directement
+// sur le bouton cliqué (event.currentTarget.dataset.titre), jamais depuis un
+// cache ou la sélection courante (point 8 de l'issue #950 : lu dans la ligne
+// elle-même, au moment du clic). « fermer » porte aussi ce `data-titre`
+// depuis l'issue #951 : la confirmation de la fermeture d'une issue EN COURS
+// (point 2/3 de #951) rappelle elle aussi le titre — contrairement au cas
+// needs-human (simple `gh issue close`), qui n'en a pas besoin mais le reçoit
+// sans effet indésirable.
 export function rendreZoneActionsLigne(nom, numero, titre) {
   const boutons = DEFS_BOUTONS_ACTION_LIGNE.map((def) => {
-    const attrTitreIssue = def.action === 'interrompre'
+    const attrTitreIssue = (def.action === 'interrompre' || def.action === 'fermer')
       ? ' data-titre="' + dom.echapperHtml(titre || '') + '"' : '';
     return '<button type="button" class="btn-action-ligne ' + def.classe + '"'
       + ' data-action-ligne="' + def.action + '" style="display:none"'

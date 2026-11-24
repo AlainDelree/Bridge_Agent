@@ -130,8 +130,8 @@ décompte TIMEOUT actif :
 | État de l'issue | Bouton(s) affiché(s) | Route appelée |
 |---|---|---|
 | En file (jamais démarrée) | « Annuler l'issue » | `POST /annuler-issue/<projet>/<numero>` (`app.issues.annuler_issue`, inchangée sauf la revérification ci-dessous) |
-| En cours (`timing.debut` connu) | « Interrompre » | `POST /demander-interruption-issue` (mécanisme CIBLÉ ci-dessus) — SAUF issue interactive, voir plus bas |
-| Interrompue / `needs-human` | « Relancer » + « Fermer » | `POST /relancer-issue` (inchangée) et `POST /fermer-issue/<projet>/<numero>` (commentaire corrigé, voir ci-dessous) |
+| En cours (`timing.debut` connu) | « Interrompre » + « Fermer » (issue #951) | « Interrompre » : `POST /demander-interruption-issue` (mécanisme CIBLÉ ci-dessus) — SAUF issue interactive, voir plus bas. « Fermer » : séquence de fermeture propre, voir §« Fermeture d'une issue EN COURS » ci-dessous — PAS un simple `gh issue close` immédiat |
+| Interrompue / `needs-human` | « Relancer » + « Fermer » | `POST /relancer-issue` (inchangée) et `POST /fermer-issue/<projet>/<numero>` (commentaire corrigé, voir ci-dessous — l'issue est déjà arrêtée, fermeture immédiate) |
 | Terminée (`done`) ou fermée | aucun | — |
 
 **Issue interactive** (session tmux, label `mode_interactif`, détectée par
@@ -154,17 +154,142 @@ fenêtre entre cette vérification et l'appel `gh` lui-même, quelques
 millisecondes sans appel réseau entre les deux) assumée comme négligeable,
 même principe que la garde anti-concurrence #748.
 
-**« Fermer »** (`app.issues.fermer_issue`) : simple `gh issue close`, comme
-avant cette issue — ne touchait déjà pas le watcher. Seul le commentaire
-GitHub posté change : *« Issue fermée manuellement depuis l'interface
-(new_issue.py). »* remplace *« … intervention humaine effectuée »*, trompeur
-(#938 point 2.1 — aucune vérification humaine n'a forcément eu lieu, juste
-un clic).
+**« Fermer » sur une issue `needs-human`** (`app.issues.fermer_issue`) :
+simple `gh issue close`, comme avant cette issue — ne touchait déjà pas le
+watcher. Le commentaire GitHub posté : *« Issue fermée manuellement depuis
+l'interface (new_issue.py). »* remplace *« … intervention humaine
+effectuée »*, trompeur (#938 point 2.1 — aucune vérification humaine n'a
+forcément eu lieu, juste un clic). Depuis l'issue #951 (point 4), retire
+aussi le label `needs-human` APRÈS la fermeture (best-effort strict — voir
+§« Affichage d'une issue fermée manuellement » ci-dessous) : la MÊME route
+est réutilisée, sans confirmation ni attente supplémentaires, comme dernier
+geste de la séquence de fermeture d'une issue EN COURS décrite ci-dessous
+(elle y pose elle-même `needs-human` comme étape intermédiaire, avant de
+fermer).
 
 **Anciens boutons retirés** (étude #938, boutons A et B) : l'icône carrée
 verte/rouge de la ligne (A) est remplacée par le groupe ci-dessus ; le
 bouton « Interrompre et fermer cette issue » du détail d'une issue (B) est
 retiré sans remplacement direct dans le détail (ses deux effets vivent
-désormais séparément sur la ligne : « Interrompre » puis, une fois
-`needs-human` posé, « Fermer »). Le bouton `pl-fermer-issue` du panneau
-Infrastructure (zone « Actions — projet #numéro ») est retiré de même.
+désormais séparément sur la ligne : « Interrompre » et/ou « Fermer »,
+disponibles ensemble pour une issue EN COURS depuis l'issue #951 — voir
+ci-dessous). Le bouton `pl-fermer-issue` du panneau Infrastructure (zone
+« Actions — projet #numéro ») est retiré de même.
+
+## Fermeture d'une issue EN COURS depuis sa ligne (issue #951)
+
+Règle d'Alain, qui remplace l'ancien bouton « Interrompre et fermer »
+(retiré par #950, qui arrêtait tout le watcher du projet puis fermait avec
+le commentaire trompeur #938 point 2.1) : fermer une issue proprement SANS
+toucher aux autres issues du projet si c'est possible ; sinon, ne le faire
+que si les autres issues du projet sont interrompues ou s'il n'y en a pas,
+avec un choix explicite. Toute la séquence (confirmation, dépôt de la
+demande, attente non bloquante, fenêtre du cas interactif) est orchestrée
+CÔTÉ CLIENT par `static/js/app.js::fermerIssueEnCoursDepuisLigne` et son
+arborescence — aucune nouvelle route : les trois routes existantes
+`/demander-interruption-issue` (#949), `/issues-en-cours` (#947) et
+`/fermer-issue` (#950, ci-dessus) suffisent. Déclenchée par le bouton
+« Fermer » UNIQUEMENT quand l'issue ne porte PAS encore `needs-human`
+(sinon, chemin historique ci-dessus — déjà arrêtée) ; le mécanisme choisi
+(normal/interactif) est la MÊME détection que le bouton « Interrompre »
+(`mecanismeInterruptionLigne`), pour ne jamais diverger.
+
+**Invariant central, dans les deux cas : ne JAMAIS fermer l'issue sur GitHub
+tant que son traitement tourne encore** — la fermeture GitHub elle-même
+(`_executerFermetureGh`, qui appelle `/fermer-issue`) n'est appelée
+qu'APRÈS confirmation de l'arrêt.
+
+**Cas normal (issue NON interactive)** —
+`fermerIssueNormaleEnCoursDepuisLigne` :
+1. Confirmation (numéro, titre, effet : cette issue seule est arrêtée puis
+   fermée, les autres issues du projet continuent, le travail déjà fait —
+   worktree, commits éventuels — est conservé).
+2. Dépose la demande d'interruption CIBLÉE (#949, `POST
+   /demander-interruption-issue`).
+   - Réponse `deposee:false` (l'issue a déjà fini entre le clic et cet
+     appel — plus dans les issues en cours) : fermeture IMMÉDIATE, rien à
+     attendre (« si l'issue a déjà fini entre-temps, fermer simplement »).
+   - Réponse `succes:false` (vraie erreur de dépôt) : message, PAS de
+     fermeture.
+   - Sinon (déposée) : sonde `GET /issues-en-cours/<projet>` toutes les
+     3s (`INTERVALLE_SONDAGE_FERMETURE_MS`, purement local — aucun appel
+     GitHub) jusqu'à ce que le numéro n'y figure plus, ou jusqu'à
+     **`DELAI_MAX_ATTENTE_ARRET_FERMETURE_MS` = 30 000 ms** (30s, du même
+     ordre que le délai « raisonnable » demandé) — `await` sur un
+     `setTimeout`, jamais de boucle bloquante.
+     - Arrêt confirmé à temps → fermeture.
+     - Délai dépassé → message clair (toast ou `alert`), PAS de fermeture ;
+       l'issue reste dans son état (en cours, ou déjà passée à
+       `needs-human` par le watcher) ; invite à réessayer « Fermer ».
+
+**Cas interactif** (session tmux, `mode_interactif`, #949 ne la couvre
+jamais) — `fermerIssueInteractiveDepuisLigne` : interroge D'ABORD `GET
+/issues-en-cours/<projet>?exclure=<numero>` (#947) pour les AUTRES issues en
+cours de ce projet, enrichies de leur propre statut interactif (relu
+localement via `mecanismeInterruptionLigne` sur les labels déjà connus du
+store du socle, `window.Bridge.store.lireIssue` — AUCUN appel GitHub
+supplémentaire, voir contrainte ci-dessous) :
+- **Aucune autre issue en cours** : confirmation simple, puis arrête le
+  watcher ENTIER du projet (mécanisme historique #323, `POST /interrompre`)
+  et ferme — rien d'autre n'est affecté.
+- **D'autres issues en cours, toutes NON interactives** : fenêtre à deux
+  actions (réutilise l'overlay générique `#modal-confirmation`, déjà
+  partagé par `static/js/creation.js` — mêmes `id`, pas de nouveau
+  gabarit) — « Interrompre les autres puis fermer » (interrompt chacune via
+  #949, attend qu'AUCUNE ne figure plus en cours avec le MÊME délai/sondage
+  que le cas normal, puis SEULEMENT ALORS arrête le watcher et ferme ; délai
+  dépassé → message, rien n'est arrêté, rien n'est fermé) et « Annuler »
+  (rien n'est touché).
+- **Au moins une autre issue EN COURS ELLE-MÊME interactive** : cette
+  action n'est PAS proposée (elle ne peut pas être interrompue proprement,
+  même limite que le bouton « Interrompre » pour une telle issue) — la
+  fenêtre l'indique et ne laisse que « Annuler ».
+
+Aucune issue n'est arrêtée dans le cas interactif sans ce choix explicite.
+
+**Garde anti-double-fermeture** (même patron que la garde anti-double-
+interruption #748) : un ensemble dédié `_fermeturesEnCours` (DISTINCT de
+`_interruptionsEnCours`, qu'utilise elle-même l'étape d'interruption
+intermédiaire) empêche un second clic sur « Fermer » pendant qu'une
+fermeture est déjà en cours pour cette issue — le bouton est désactivé et
+affiche « ⏳ Fermeture… » pendant l'attente (limite déjà acceptée pour
+`_marquerInterruptionEnCours` : un rendu complet de la ligne survenant
+PENDANT l'attente, ex. `fin_issue` d'une AUTRE issue du même projet,
+reconstruit la ligne sans cet état visuel — pas une régression propre à
+cette issue, l'action elle-même reste correcte).
+
+**Aucun appel GitHub supplémentaire** : la séquence ci-dessus ne consomme
+QUE les trois routes existantes mentionnées en tête de section — la
+confirmation, l'attente et la fenêtre reposent sur `/issues-en-cours`
+(local, verrous fichier) et le store déjà en mémoire côté client ; seule la
+fermeture finale (`/fermer-issue`) et son éventuel retrait de label
+(ci-dessous) touchent réellement GitHub, en plus de la fermeture
+elle-même et de son commentaire.
+
+## Affichage d'une issue fermée manuellement (issue #951, point 4)
+
+Constat : une issue CLOSED portant encore le label `needs-human` continue
+de s'afficher comme un « échec » (badge ⚠️ *échec*, `badgeLabel()` dans
+`static/js/app.js`, utilisé par le panneau de détail et la recherche —
+ce badge ne tient compte QUE des labels, jamais de l'état ouvert/fermé).
+Avant l'issue #951, c'était déjà le cas pour toute fermeture manuelle d'une
+issue `needs-human` (`app.issues.fermer_issue`, bouton « Fermer » existant
+depuis #950) ; depuis #951, c'est aussi le cas courant de la séquence de
+fermeture normale ci-dessus, qui POSE `needs-human` comme étape
+intermédiaire (via l'interruption ciblée #949) avant de fermer.
+
+Correction retenue, la plus simple : `app.issues.fermer_issue` retire
+désormais le label `needs-human` lui-même, systématiquement, **APRÈS**
+avoir fermé l'issue (`gh issue edit --remove-label needs-human`, idempotent
+— ne pas en avoir besoin, label déjà absent, n'échoue pas) — jamais AVANT,
+pour ne jamais rendre l'issue éligible à une relance automatique entre les
+deux appels (`watcher.lister_issues()` ne liste que les issues OUVERTES, le
+risque n'existe qu'entre un retrait AVANT close et le close lui-même).
+Best-effort STRICT, isolé dans son propre `try/except` : un échec ou une
+exception de ce second appel ne fait jamais échouer la réponse de la route
+— la fermeture elle-même a déjà réussi. Résultat : une issue fermée depuis
+l'interface (manuellement, ou via la séquence #951) n'affiche plus le badge
+« échec » une fois fermée, qu'elle ait ou non réellement échoué avant sa
+fermeture — cohérent avec le fait qu'un `needs-human` conservé sur une
+issue OUVERTE reste, lui, un vrai échec en attente de décision (relance ou
+fermeture), inchangé.
