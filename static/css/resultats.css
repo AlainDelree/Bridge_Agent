@@ -174,38 +174,36 @@
   border-radius:3px;padding:1px 4px;margin-left:3px;vertical-align:middle;user-select:none}
 .ligne-issue .badge-copie-diff:hover{background:#e8f1f8}
 .ligne-issue .pastille-ligne{width:9px;height:9px;border-radius:50%;flex-shrink:0}
-/* Badge d'action sur une ligne OUVERTE (issue #641, refonte web étape 6) :
-   remplace le préfixe statique ⚠️ needs-human — même émplacement/taille, juste
-   cliquable (léger fond au survol, sans grossir le caractère). */
-.ligne-issue .badge-action-ligne{cursor:pointer;border-radius:3px;padding:0 1px}
-.ligne-issue .badge-action-ligne:hover{background:#eee}
-/* ✏️ mode_write (issue #642) : redevenu purement INFORMATIF (plus de clic
-   d'interruption depuis #641) — même taille que les autres préfixes, curseur
-   par défaut, seule l'infobulle porte l'information. */
+/* ✏️/⚠️ préfixes de ligne OUVERTE : PUREMENT INFORMATIFS depuis l'issue #950
+   (plus aucun clic — l'action de relance vit désormais dans le bouton
+   explicite « Relancer » du groupe d'actions ci-dessous) — curseur par
+   défaut, seule l'infobulle porte l'information. */
 .ligne-issue .badge-mode-ecriture{cursor:default}
-/* Icône dédiée d'interruption (issue #642) : affichée sur toute ligne OUVERTE
-   actuellement EN COURS (lecture ou écriture — voir actions_ligne.js::
-   afficherIconeInterruption), masquée par défaut (display:none inline, posé
-   par actions_ligne.js) et révélée par resultats.js::majBadges(). Petit carré
-   VERT « ✓ » au repos (issue en cours, rien à signaler) ; au survol, bascule en
-   carré ROUGE « ✕ » (avertissement avant le clic, qui déclenche directement
-   interrompreIssue() — son confirm() natif reste l'unique confirmation, aucun
-   second état JS à gérer ici). */
-.ligne-issue .badge-interrompre-ligne{display:inline-flex;align-items:center;
-  justify-content:center;width:14px;height:14px;border-radius:3px;background:#2e8b57;
-  color:#fff;font-size:9px;font-weight:700;line-height:1;cursor:pointer;
-  vertical-align:middle;margin-left:2px;user-select:none}
-.ligne-issue .badge-interrompre-ligne .badge-interrompre-stop{display:none}
-.ligne-issue .badge-interrompre-ligne:hover{background:#c0392b}
-.ligne-issue .badge-interrompre-ligne:hover .badge-interrompre-ok{display:none}
-.ligne-issue .badge-interrompre-ligne:hover .badge-interrompre-stop{display:inline}
-/* Retour visuel pendant l'appel réseau de /interrompre (issue #748) : l'icône
-   reste visible mais figée (pointer-events coupé côté JS, cf. app.js::
-   _marquerInterruptionEnCours) — curseur d'attente, teinte grisée, plus de
-   bascule au survol. */
-.ligne-issue .badge-interrompre-ligne.badge-interrompre-attente{
-  background:#999;cursor:wait;opacity:.7}
-.ligne-issue .badge-interrompre-ligne.badge-interrompre-attente:hover{background:#999}
+/* Groupe de boutons d'action PAR ISSUE (issue #950, remplace l'ancienne
+   icône carrée verte/rouge #642 qui appelait /interrompre — tuait TOUT le
+   watcher du projet, étude #938/#939) : « Annuler » / « Interrompre » /
+   « Relancer » / « Fermer », un sous-ensemble affiché selon l'état (voir
+   actions_ligne.js::boutonsActionLigne, resultats.js::majBadges) — les
+   quatre sont posés dans le DOM, masqués par défaut (display:none inline,
+   posé par actions_ligne.js). Couleur par action : rouge pour les deux
+   actions qui arrêtent quelque chose (Annuler/Interrompre), bleu pour
+   Relancer (reprise normale), gris neutre pour Fermer. */
+.ligne-issue .zone-actions-ligne{display:inline-flex;gap:2px;margin-left:2px;vertical-align:middle}
+.ligne-issue .btn-action-ligne{font-size:9px;font-weight:700;line-height:14px;padding:0 4px;
+  border-radius:3px;border:1px solid #ccc;background:#fff;cursor:pointer;user-select:none}
+.ligne-issue .btn-action-ligne:hover{background:#eee}
+.ligne-issue .btn-annuler-ligne,.ligne-issue .btn-interrompre-ligne{color:#a32d2d;border-color:#a32d2d}
+.ligne-issue .btn-annuler-ligne:hover,.ligne-issue .btn-interrompre-ligne:hover{background:#a32d2d;color:#fff}
+.ligne-issue .btn-relancer-ligne{color:#185FA5;border-color:#185FA5}
+.ligne-issue .btn-relancer-ligne:hover{background:#185FA5;color:#fff}
+.ligne-issue .btn-fermer-ligne{color:#555}
+.ligne-issue .btn-fermer-ligne:hover{background:#555;color:#fff}
+/* Retour visuel pendant l'appel réseau du bouton « Interrompre » (issue
+   #748, repris par #950) : désactivé (vrai <button>, contrairement à
+   l'ancien <span> qui nécessitait un hack pointer-events) + teinte grisée,
+   posé par app.js::_marquerInterruptionEnCours. */
+.ligne-issue .btn-action-ligne.action-ligne-attente{cursor:wait;opacity:.6}
+.ligne-issue .btn-action-ligne.action-ligne-attente:hover{background:#fff}
 /* Contrôle compact « son de cette issue » (G/P/C/S, issue #630/#637, option
    Silence #699) déplacé de la zone Actions du panneau latéral à la ligne
    elle-même (étape 6, #641) : mini-segmenté à lettres + infobulle, calibré

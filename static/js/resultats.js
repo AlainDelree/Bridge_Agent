@@ -29,7 +29,7 @@ import { toasts } from './socle/toasts.js';
 import { sse } from './socle/sse.js';
 import { appelerAncien } from './socle/pont.js';
 import * as persistance from './socle/persistance.js';
-import { afficherIconeInterruption, normaliserNomsLabels } from './actions_ligne.js';
+import { boutonsActionLigne, normaliserNomsLabels } from './actions_ligne.js';
 import { signalerEchecPossible, extraireJsonErreur } from './socle/panne_github.js';
 // Rechargement de l'état des cases « traité/lu » (issue #729) : pas de cycle
 // d'import (resultats_coches.js n'importe jamais resultats.js), donc import ES
@@ -673,15 +673,18 @@ export function majBadges() {
       const it = issues[cle];
       appliquerBadgeSansComplexite(badgeSansComplexite, calculerBadgeSansComplexite((it && it.labels) || []));
     }
-    // Icône dédiée d'interruption (issue #642) : révélée sur toute issue OUVERTE
-    // actuellement EN COURS (lecture ou écriture), à partir du même `t.debut`
-    // que le décompte TIMEOUT ci-dessous — jamais posée pour une ligne fermée
-    // (badgeInterrompre reste alors null, querySelector ne la trouvant pas).
-    const badgeInterrompre = ligne.querySelector('.badge-interrompre-ligne');
-    if (badgeInterrompre) {
+    // Groupe de boutons d'action PAR ISSUE (issue #950, remplace l'icône
+    // dédiée d'interruption #642) : un sous-ensemble des QUATRE boutons
+    // toujours posés dans le DOM (zone-actions-ligne, actions_ligne.js),
+    // révélé selon l'état courant (labels + `t.debut`) — jamais posé pour
+    // une ligne fermée (zoneActions reste alors null).
+    const zoneActions = ligne.querySelector('.zone-actions-ligne');
+    if (zoneActions) {
       const it = issues[cle];
-      badgeInterrompre.style.display =
-        afficherIconeInterruption((it && it.labels) || [], t) ? '' : 'none';
+      const actifs = new Set(boutonsActionLigne((it && it.labels) || [], t));
+      zoneActions.querySelectorAll('[data-action-ligne]').forEach((bouton) => {
+        bouton.style.display = actifs.has(bouton.dataset.actionLigne) ? '' : 'none';
+      });
     }
     const badge = ligne.querySelector('.ligne-tempsrestant');
     if (!badge) return;

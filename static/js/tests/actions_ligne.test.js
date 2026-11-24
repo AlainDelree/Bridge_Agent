@@ -8,7 +8,8 @@ import assert from 'node:assert/strict';
 
 import {
   prefixeInformatifLigneOuverte,
-  afficherIconeInterruption,
+  boutonsActionLigne,
+  mecanismeInterruptionLigne,
   sonIssueDepuisReponse,
   normaliserChoixSonIssue,
   etatsOptionsSonIssue,
@@ -46,54 +47,81 @@ test('prefixeInformatifLigneOuverte : accepte des labels objets {name} comme des
   assert.equal(prefixeInformatifLigneOuverte([{ name: 'mode_write' }]), 'mode_write');
 });
 
-// ─── afficherIconeInterruption : quand afficher l'icône dédiée (issue #642) ─
-// Correctif de la régression #641 : une issue en LECTURE en cours doit pouvoir
-// être interrompue depuis sa ligne — basé sur `timing.debut` (même état que le
-// décompte TIMEOUT actif de resultats.js), PAS sur le seul label mode_write.
+// ─── boutonsActionLigne : quel(s) bouton(s) afficher selon l'état (issue
+// #950, remplace afficherIconeInterruption de l'issue #642) — même état de
+// départ pour « en cours » : `timing.debut` (pas le seul label mode_write),
+// pour qu'une issue en LECTURE en cours reste interrompable depuis sa ligne.
 
-test('afficherIconeInterruption : en cours en LECTURE (aucun label mode_write) → true', () => {
-  assert.equal(afficherIconeInterruption(['for-linux'], { debut: '2026-09-26T10:00:00Z' }), true);
-  assert.equal(afficherIconeInterruption([], { debut: '2026-09-26T10:00:00Z' }), true);
+test('boutonsActionLigne : en file (timing connu, debut absent) → ["annuler"]', () => {
+  assert.deepEqual(boutonsActionLigne(['for-linux'], { debut: null }), ['annuler']);
+  assert.deepEqual(boutonsActionLigne([], { debut: null }), ['annuler']);
 });
 
-test('afficherIconeInterruption : en cours en ÉCRITURE (label mode_write) → true', () => {
-  assert.equal(afficherIconeInterruption(['mode_write'], { debut: '2026-09-26T10:00:00Z' }), true);
+test('boutonsActionLigne : en cours en LECTURE (aucun label mode_write) → ["interrompre"]', () => {
+  assert.deepEqual(boutonsActionLigne(['for-linux'], { debut: '2026-09-26T10:00:00Z' }), ['interrompre']);
+  assert.deepEqual(boutonsActionLigne([], { debut: '2026-09-26T10:00:00Z' }), ['interrompre']);
 });
 
-test('afficherIconeInterruption : en cours sans limite (sans_limite, debut posé) → true', () => {
-  assert.equal(
-    afficherIconeInterruption(['mode_write'], { debut: '2026-09-26T10:00:00Z', sans_limite: true }),
-    true,
+test('boutonsActionLigne : en cours en ÉCRITURE (label mode_write) → ["interrompre"]', () => {
+  assert.deepEqual(boutonsActionLigne(['mode_write'], { debut: '2026-09-26T10:00:00Z' }), ['interrompre']);
+});
+
+test('boutonsActionLigne : en cours sans limite (sans_limite, debut posé) → ["interrompre"]', () => {
+  assert.deepEqual(
+    boutonsActionLigne(['mode_write'], { debut: '2026-09-26T10:00:00Z', sans_limite: true }),
+    ['interrompre'],
   );
 });
 
-test('afficherIconeInterruption : "en file" (timing connu mais debut absent) → false', () => {
-  assert.equal(afficherIconeInterruption(['mode_write'], { debut: null }), false);
-  assert.equal(afficherIconeInterruption([], { debut: null }), false);
+test('boutonsActionLigne : needs-human → ["relancer", "fermer"], prime sur tout le reste', () => {
+  assert.deepEqual(boutonsActionLigne(['needs-human'], { debut: '2026-09-26T10:00:00Z' }), ['relancer', 'fermer']);
+  assert.deepEqual(boutonsActionLigne(['mode_write', 'needs-human'], { debut: '2026-09-26T10:00:00Z' }),
+    ['relancer', 'fermer']);
+  // needs-human prime même sans aucun timing connu, ou sur une issue en file.
+  assert.deepEqual(boutonsActionLigne(['needs-human'], undefined), ['relancer', 'fermer']);
+  assert.deepEqual(boutonsActionLigne(['needs-human'], { debut: null }), ['relancer', 'fermer']);
 });
 
-test('afficherIconeInterruption : needs-human → false même si debut posé (déjà arrêtée)', () => {
-  assert.equal(afficherIconeInterruption(['needs-human'], { debut: '2026-09-26T10:00:00Z' }), false);
-  assert.equal(
-    afficherIconeInterruption(['mode_write', 'needs-human'], { debut: '2026-09-26T10:00:00Z' }),
-    false,
+test('boutonsActionLigne : done → [] (terminée, aucune action), prime sur needs-human', () => {
+  assert.deepEqual(boutonsActionLigne(['done'], { debut: '2026-09-26T10:00:00Z' }), []);
+  assert.deepEqual(boutonsActionLigne(['done', 'needs-human'], { debut: null }), []);
+});
+
+test('boutonsActionLigne : aucun timing connu (pas encore chargé) → [] tant qu\'on ne sait pas', () => {
+  assert.deepEqual(boutonsActionLigne(['mode_write'], undefined), []);
+  assert.deepEqual(boutonsActionLigne(['mode_write'], null), []);
+  assert.deepEqual(boutonsActionLigne([], undefined), []);
+});
+
+test('boutonsActionLigne : accepte des labels objets {name} comme des chaînes', () => {
+  assert.deepEqual(
+    boutonsActionLigne([{ name: 'needs-human' }], { debut: '2026-09-26T10:00:00Z' }),
+    ['relancer', 'fermer'],
+  );
+  assert.deepEqual(
+    boutonsActionLigne([{ name: 'mode_scratch' }], { debut: '2026-09-26T10:00:00Z' }),
+    ['interrompre'],
   );
 });
 
-test('afficherIconeInterruption : aucun timing connu (issue fermée, ou pas encore chargé) → false', () => {
-  assert.equal(afficherIconeInterruption(['mode_write'], undefined), false);
-  assert.equal(afficherIconeInterruption(['mode_write'], null), false);
+// ─── mecanismeInterruptionLigne : quel mécanisme pour le bouton « Interrompre »
+// (issue #950, point 6) — une issue interactive (mode_interactif) n'est jamais
+// couverte par #949 (pas de boucle _attendre_fin_claude), le bouton garde donc
+// le comportement historique (watcher entier).
+
+test('mecanismeInterruptionLigne : issue interactive → "watcher_complet"', () => {
+  assert.equal(mecanismeInterruptionLigne(['mode_interactif']), 'watcher_complet');
+  assert.equal(mecanismeInterruptionLigne(['for-linux', 'mode_interactif']), 'watcher_complet');
 });
 
-test('afficherIconeInterruption : accepte des labels objets {name} comme des chaînes', () => {
-  assert.equal(
-    afficherIconeInterruption([{ name: 'needs-human' }], { debut: '2026-09-26T10:00:00Z' }),
-    false,
-  );
-  assert.equal(
-    afficherIconeInterruption([{ name: 'mode_scratch' }], { debut: '2026-09-26T10:00:00Z' }),
-    true,
-  );
+test('mecanismeInterruptionLigne : issue normale (sans mode_interactif) → "ciblee"', () => {
+  assert.equal(mecanismeInterruptionLigne(['for-linux', 'mode_write']), 'ciblee');
+  assert.equal(mecanismeInterruptionLigne([]), 'ciblee');
+  assert.equal(mecanismeInterruptionLigne(undefined), 'ciblee');
+});
+
+test('mecanismeInterruptionLigne : accepte des labels objets {name} comme des chaînes', () => {
+  assert.equal(mecanismeInterruptionLigne([{ name: 'mode_interactif' }]), 'watcher_complet');
 });
 
 // ─── Son PAR ISSUE (issue #630/#637, réutilisées telles quelles) ──────────

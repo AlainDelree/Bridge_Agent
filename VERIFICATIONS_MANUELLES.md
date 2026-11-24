@@ -445,44 +445,77 @@
       un ancien navigateur ne doit plus avoir aucun effet après rechargement.
 - [ ] Recherche par titre : la fenêtre de résultats s'ouvre, double-clic affiche
       le détail dans sa propre zone.
-- [ ] Actions sur une issue ouverte : annuler / interrompre / relancer / fermer
-      (modale d'interruption : étapes détaillées + rappel de relance watcher) —
-      la liste se rafraîchit après l'action. Depuis l'issue #628, Interrompre /
-      Retirer needs-human / Fermer définitivement ne sont **plus** dans le détail
-      (déplacés dans le panneau latéral, puis sur la ligne — voir ci-dessous et
-      §« Actions directes sur la ligne ») — ne doivent apparaître **qu'une seule
-      fois**.
-- [ ] **Actions directes sur la ligne (issue #641, refonte web étape 6 ;
-      correctif #642)** : sur une ligne **OUVERTE** portant `needs-human`, le
-      badge **⚠️** est cliquable (curseur, léger fond au survol, infobulle
-      **« Retirer needs-human et relancer »**) — cliquer retire directement le
-      label et relance **sans sélectionner l'issue ni ouvrir le panneau** (même
-      route `/relancer-issue`, même confirmation que l'ancien bouton « Retirer
-      needs-human » du panneau). Sur une ligne ouverte en `mode_write`, le
-      préfixe **✏️** est désormais **purement informatif** (issue #642 —
-      correctif de la régression #641) : infobulle **« Mode écriture en
-      cours »**, **plus aucun clic**, curseur normal. Une ligne ouverte sans
-      ces labels garde son préfixe **○**/**✅** statique, non cliquable. Une
-      ligne **FERMÉE** — y compris fermée+`done`+`needs-human` (cas rare) —
-      garde le préfixe statique inchangé et les badges ✅/Diff/All habituels,
-      jamais d'action cliquable.
-- [ ] **Icône dédiée d'interruption, en LECTURE comme en ÉCRITURE (issue
-      #642)** : sur toute ligne **OUVERTE** dont l'issue est actuellement **EN
-      COURS** (même état que le décompte ⏳ affiché à droite — pas « en
-      file »), un petit carré **VERT « ✓ »** apparaît après le préfixe/⚠️/✏️,
-      **que l'issue soit en LECTURE (aucun label mode_write) ou en ÉCRITURE**.
-      Survoler le carré le fait passer au **ROUGE « ✕ »** (infobulle
-      **« Interrompre l'issue »**) ; cliquer déclenche la **même confirmation
-      détaillée + même modale de résultat** que l'ancien bouton « Interrompre
-      l'issue » du panneau (même route `/interrompre`) — le clic **ne
-      sélectionne pas** la ligne (`stopPropagation`). Vérifier concrètement
-      qu'une issue en **LECTURE** en cours peut être interrompue **seule**
-      depuis sa ligne, **sans** passer par « Interrompre et relancer (watcher
-      CCL) » et **sans** arrêter le reste du watcher (les autres issues du
-      projet restent en file, pas relancées). Le carré est **absent** pour une
-      issue « en file » (pas encore prise en charge, badge ⏳ « en file ») et
-      pour une issue **needs-human** (déjà arrêtée — seule l'action ⚠️
-      s'applique). Une ligne **FERMÉE** n'affiche jamais ce carré.
+- [ ] Actions sur une issue : plus AUCUN bouton d'action par issue dans le
+      panneau de détail (issue #950 — « Annuler cette issue » et « Interrompre
+      et fermer cette issue » retirés, décision d'Alain : toutes les actions
+      par issue vivent sur la ligne de la liste, jamais dans un panneau). Le
+      rappel « ⚠️ Échec — intervention humaine requise » reste affiché pour
+      une issue needs-human, mais SANS bouton. Voir ci-dessous pour les
+      boutons eux-mêmes (ne doivent apparaître **qu'à un seul endroit**, la
+      ligne).
+- [ ] **Boutons d'action par état, sur la ligne (issue #950, remplace les
+      boutons A/B de l'étude #938)** : sur une ligne **OUVERTE**, APRÈS le
+      préfixe informatif (⚠️/✏️/○/✅, plus aucun clic dessus désormais) et
+      AVANT le contrôle de son G/P/C/S, un groupe de 0 à 2 petits boutons
+      textuels apparaît selon l'état — jamais plus d'un groupe actif à la
+      fois, le clic ne sélectionne JAMAIS la ligne (`stopPropagation`) :
+      - **en file** (pas encore prise en charge, badge ⏳ « en file ») →
+        **« Annuler »** seul ;
+      - **en cours** (même état que le décompte ⏳ actif — lecture ou
+        écriture) → **« Interrompre »** seul ;
+      - **needs-human** → **« Relancer »** + **« Fermer »** ;
+      - **terminée** (`done`) → aucun bouton.
+      Une ligne **FERMÉE** n'affiche jamais aucun de ces boutons.
+- [ ] **« Annuler »** : clic sur la ligne d'une issue en file → confirmation
+      courte, puis `POST /annuler-issue/<projet>/<numero>` (gh issue close,
+      commentaire d'annulation) — la ligne disparaît (ou passe fermée) au
+      rechargement. Essai de la petite course (issue #950, point 4) :
+      déposer deux issues `testvibe` d'affilée pendant que la première tourne
+      encore, cliquer « Annuler » sur la SECONDE (en file) juste au moment où
+      le watcher pourrait la prendre en charge — si elle a démarré entre
+      temps, le message « déjà prise en charge par le watcher — utilisez
+      Interrompre » apparaît (aucune fermeture), sinon elle est annulée
+      normalement et ne démarre jamais.
+- [ ] **« Interrompre » — issue NON interactive** : clic → confirmation
+      COURTE rappelant le numéro ET le titre de l'issue, annonçant que SEULE
+      cette issue sera arrêtée (needs-human, relançable, les autres issues du
+      projet continuent) — `POST /demander-interruption-issue` (PAS
+      `/interrompre`, vérifiable dans l'onglet Réseau, F12). En ~10s, SANS
+      rechargement manuel : la ligne passe à `needs-human`, affiche
+      « Relancer »/« Fermer ». Si la réponse indique que l'issue ne tourne
+      plus (`deposee:false`) : message clair (toast, pas une alerte
+      d'erreur), aucune ligne affectée.
+- [ ] **« Interrompre » — issue INTERACTIVE (label `mode_interactif`,
+      session tmux)** : comportement HISTORIQUE inchangé (watcher ENTIER du
+      projet, même route `/interrompre`, même modale de résultat détaillée
+      qu'avant #950) — la confirmation liste désormais, si le projet a
+      d'autres issues en cours, leur(s) numéro(s) et annonce clairement
+      qu'elles seront interrompues EN MÊME TEMPS (route `/issues-en-cours`,
+      #947).
+- [ ] **« Relancer »** (needs-human/interrompue) : clic → même confirmation/
+      route `/relancer-issue` qu'avant #950 (retrait de `needs-human`,
+      purge d'une demande d'interruption périmée) — AUCUNE interruption,
+      AUCUN redémarrage de watcher déclenché par ce bouton.
+- [ ] **« Fermer »** (needs-human/interrompue) : clic → confirmation dont le
+      texte NE PRÉTEND PAS à une intervention humaine, puis `POST
+      /fermer-issue/<projet>/<numero>` — commentaire GitHub posté : « Issue
+      fermée manuellement depuis l'interface (new_issue.py). » (remplace
+      l'ancien texte trompeur « … intervention humaine effectuée »). Le
+      watcher du projet n'est PAS arrêté ; les autres issues du projet ne
+      sont pas affectées (vérifier qu'une autre issue en cours du même
+      projet continue sans interruption pendant ce clic).
+- [ ] **Robustesse du clic (issue #950, point 8)** : double-clic rapide sur
+      une ligne ouverte EN COURS → ouvre/referme le détail normalement, mais
+      **aucune action réseau** n'est déclenchée par ce double-clic lui-même.
+      Clics rapprochés sur les boutons de PLUSIEURS lignes différentes
+      (ouvrir plusieurs issues de `testvibe`, cliquer rapidement sur
+      « Interrompre »/« Annuler » de lignes distinctes) → chaque clic agit
+      sur SA PROPRE issue (numéro affiché dans la confirmation/le toast),
+      jamais sur une autre. Provoquer un rechargement de la liste (↻,
+      événement début/fin d'une AUTRE issue) juste après un clic sur un
+      bouton (avant la réponse réseau) → l'action en cours se termine
+      normalement sur la BONNE issue (pas d'erreur, pas d'action sur une
+      autre ligne).
 - [ ] **Son de cette issue, sur la ligne (déplacé du panneau, issue #641)** :
       toute ligne **ouverte** porte, après le badge d'action, un mini contrôle
       à 3 lettres **G / P / C** (Global / Plat / Cloche), une seule active à la
@@ -699,13 +732,19 @@
       rechargement complet (Ctrl+Maj+R, pas juste F5) pour écarter tout ancien
       CSS/JS caché en cache de navigateur.
 - [ ] Zone monitoring : une ligne par watcher CCL / service CCW.
-- [ ] **Bouton « ⏹ Arrêter » par watcher CCL (issue #655)** : visible
-      **seulement** à côté de « ↺ Relancer » sur un watcher **actif** (🟢) —
-      absent quand il est éteint (⚫, bouton « ▶ Lancer » seul). Cliquer
-      dessus déclenche une confirmation (« Arrêter le watcher CCL du projet
-      « <nom> » ? ») ; **Annuler** ne fait rien ; **Arrêter** désactive le
-      bouton pendant l'appel (`POST /arreter-watcher`), puis la ligne repasse
-      à ⚫ / « ▶ Lancer » après rafraîchissement.
+- [ ] **Bouton « ⏹ Arrêter » par watcher CCL (issue #655 ; confirmation
+      enrichie par #950)** : visible **seulement** à côté de « ↺ Relancer »
+      sur un watcher **actif** (🟢) — absent quand il est éteint (⚫, bouton
+      « ▶ Lancer » seul). Cliquer dessus déclenche une confirmation
+      (« Arrêter le watcher CCL du projet « <nom> » ? ») — avec, SI ce
+      watcher a une ou plusieurs tâches en cours (`testvibe` en train de
+      traiter une issue longue, par exemple), une ligne supplémentaire
+      listant leur(s) numéro(s) et précisant qu'elles ne seront PAS
+      interrompues (process orphelin, non supervisé) ; **Annuler** ne fait
+      rien ; **Arrêter** désactive le bouton pendant l'appel (`POST
+      /arreter-watcher`), puis la ligne repasse à ⚫ / « ▶ Lancer » après
+      rafraîchissement — vérifier que la tâche en cours continue réellement
+      (son process `claude` n'est pas tué).
 - [ ] Interrupteur son (Plat / Cloche) : bascule ; « Tester le son » actif
       seulement quand une ligne est sélectionnée ; joue le timbre choisi à
       tonalité neutre (plus de tonalité par projet, issue #643).
@@ -724,14 +763,20 @@
       défaut) ; l'ouvrir affiche les dernières lignes de `logs/issues_inbox.log`
       (mêmes lignes qu'exposait l'ancien onglet « Résultats inbox », supprimé).
 - [ ] Zone actions contextuelles sur l'issue sélectionnée : toggles
-      notif_pc/gsm/tous, **Interrompre et relancer / Fermer l'issue**. Depuis
-      l'issue #641 (refonte web étape 6), **Interrompre** (seul), **Retirer
+      notif_pc/gsm/tous, **Interrompre et relancer (watcher CCL)**. Depuis
+      l'issue #950, **« ✖ Fermer l'issue » a été retiré d'ici** (plus aucune
+      action de fermeture par issue dans ce panneau — seule « Interrompre et
+      relancer », niveau PROJET assumé, y reste, avec les toggles de
+      notification) ; depuis l'issue #641, **Interrompre** (seul), **Retirer
       needs-human** et le contrôle **« 🔊 Son de cette issue »** (#637, étape
-      7b) ne sont **plus** ici — déplacés sur la ligne de la liste (voir
-      « Actions directes sur la ligne » de l'onglet Résultats ci-dessus) : un
-      seul emplacement par action. « Interrompre et relancer » et « Fermer
-      l'issue » restent les DEUX seules actions réseau propres à une issue
-      encore présentes dans ce panneau (avec les toggles de notification).
+      7b) n'étaient déjà plus ici — tout est désormais sur la ligne de la
+      liste (voir les boutons par état de l'onglet Résultats ci-dessus) : un
+      seul emplacement par action. **« Interrompre et relancer » reste la
+      SEULE action réseau propre à une issue encore présente dans ce
+      panneau** — sa confirmation (celle d'« Interrompre », déclenchée en
+      premier) liste désormais les autres issues en cours du projet, comme
+      décrit ci-dessus pour le bouton « Interrompre » d'une issue
+      interactive.
 - [ ] **Cases de notification conformes aux labels réels** (issues #633,
       #634) : pour une issue portant `notif_pc` (et/ou `notif_gsm`/
       `notif_tous`), la case correspondante est **cochée dès l'apparition de
@@ -825,6 +870,38 @@
       traitement (`touch logs/demandes_interruption/testvibe-issue1.demande`
       avec un numéro arbitraire) : rien ne se passe, aucune issue n'est
       affectée.
+
+## Boutons par état sur la ligne — essais UI (issue #950)
+
+> Après fusion, redémarrer l'interface (`new_issue.py`) et relancer le
+> watcher du projet `testvibe` (reprend les essais ci-dessus, cette fois via
+> les boutons de l'interface plutôt qu'en touchant le fichier-sentinelle à
+> la main).
+
+- [ ] **(a)** Déposer `issue_test_relance_testvibe_longue.txt` sur
+      `testvibe` : sa ligne affiche **« Interrompre »** (pas d'autre
+      bouton). Cliquer : confirmation rappelant le numéro et le titre de
+      l'issue, annonçant que SEULE cette issue sera arrêtée. En une dizaine
+      de secondes, SANS rechargement manuel (↻) : la ligne passe à
+      `needs-human`, affiche **« Relancer »** + **« Fermer »**.
+- [ ] **(b)** Cliquer **« Relancer »** sur cette même ligne : l'issue repart
+      normalement (comportement inchangé de la relance existante).
+- [ ] **(c)** Déposer DEUX issues `testvibe` d'affilée (pendant que la
+      première tourne encore) : la seconde, encore en file, affiche
+      **« Annuler l'issue »**. Cliquer : elle est fermée sur GitHub avec le
+      commentaire d'annulation et ne démarre JAMAIS (vérifier qu'elle
+      n'apparaît plus comme « en cours » même après que le watcher ait eu le
+      temps de la prendre).
+- [ ] **(d)** Cliquer **« Fermer »** sur une issue interrompue (needs-human,
+      issue du point (a) si pas encore relancée, ou une autre) : elle est
+      fermée sur GitHub avec le commentaire « Issue fermée manuellement
+      depuis l'interface (new_issue.py). » — le watcher du projet CONTINUE
+      (vérifier qu'une autre issue éventuellement en cours du même projet
+      n'est pas affectée).
+- [ ] **(e)** Double-clic sur une ligne (ouvre/referme le détail,
+      normalement) ET clics rapprochés sur les boutons de PLUSIEURS lignes
+      différentes : vérifier qu'aucune action n'a jamais lieu sur une
+      MAUVAISE issue (numéro confirmé dans chaque confirmation/toast).
 
 ## Fusion « Résultats inbox » dans Résultats (issue #639)
 

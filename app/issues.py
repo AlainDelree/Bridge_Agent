@@ -1663,12 +1663,33 @@ def issues_en_attente(nom_projet):
 
 
 def annuler_issue(nom_projet, numero):
-    """Ferme une issue créée sur GitHub mais pas encore traitée par le watcher."""
+    """Ferme une issue créée sur GitHub mais pas encore traitée par le watcher.
+
+    Appelée depuis le bouton « Annuler l'issue » de la ligne (issue #950,
+    affiché uniquement pour une issue encore « en file » côté client) — mais
+    le client est indicatif seulement : revérifie ICI, juste avant le `gh
+    issue close`, que l'issue n'a pas démarré entre-temps (même source que la
+    route #947, `app.watchers.tache_en_cours` — verrous de traitement) plutôt
+    que de se fier à la liste affichée. Si elle tourne déjà, refuse de fermer
+    et invite à utiliser « Interrompre » à la place — jamais de fermeture
+    d'un worktree en cours de traitement. Petite course résiduelle (issue
+    #950, rapport de clôture) : une issue qui démarre dans la fenêtre entre
+    CETTE vérification et l'appel `gh issue close` lui-même (quelques
+    millisecondes, aucun appel réseau entre les deux) n'est pas couverte —
+    jugée négligeable, même principe que la garde anti-concurrence #748."""
     cfg = projet_par_nom(nom_projet)
     if not cfg:
         return jsonify(succes=False, message="Projet introuvable."), 404
     if not str(numero).isdigit():
         return jsonify(succes=False, message="Numéro d'issue invalide."), 400
+    numero_int = int(numero)
+
+    from app.watchers import tache_en_cours
+    if any(t.get("numero") == numero_int for t in tache_en_cours(cfg)):
+        return jsonify(succes=False,
+                       message=f"Issue #{numero} déjà prise en charge par le watcher — "
+                               "utilisez « Interrompre » plutôt qu'« Annuler l'issue ».")
+
     commentaire = ("Issue annulée manuellement depuis new_issue.py "
                    "avant traitement par le watcher.")
     try:
@@ -1745,19 +1766,23 @@ def modifier_label_notif():
 
 
 def fermer_issue(nom_projet, numero):
-    """Ferme définitivement une issue en échec (label needs-human).
+    """Ferme définitivement une issue needs-human/interrompue (bouton
+    « Fermer » de la ligne, issue #950) — SANS jamais arrêter le watcher ni
+    toucher aux autres issues du projet, un simple `gh issue close` comme
+    avant cette issue (le mécanisme n'a jamais touché le watcher, seul le
+    COMMENTAIRE posé était trompeur, voir ci-dessous).
 
-    Après 3 tentatives infructueuses, le watcher pose le label needs-human et
-    stoppe le retraitement : une intervention humaine est requise. Une fois
-    celle-ci effectuée, ce point d'entrée permet de clore l'issue directement
-    depuis l'onglet Résultats, sans passer par l'interface GitHub."""
+    Commentaire corrigé (issue #950, #938 point 2.1 : un commentaire
+    similaire posté par l'ancien bouton « Interrompre et fermer » du détail
+    prétendait à tort qu'une « intervention humaine » avait eu lieu, alors
+    qu'il ne s'agissait que d'un clic) — texte désormais exact : ferme
+    l'issue depuis l'interface, point."""
     cfg = projet_par_nom(nom_projet)
     if not cfg:
         return jsonify(succes=False, message="Projet introuvable."), 404
     if not str(numero).isdigit():
         return jsonify(succes=False, message="Numéro d'issue invalide."), 400
-    commentaire = ("Issue fermée définitivement depuis new_issue.py "
-                   "(label needs-human — intervention humaine effectuée).")
+    commentaire = "Issue fermée manuellement depuis l'interface (new_issue.py)."
     try:
         res = subprocess.run(
             ["gh", "issue", "close", str(numero),

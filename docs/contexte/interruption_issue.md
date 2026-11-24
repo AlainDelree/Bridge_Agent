@@ -1,4 +1,4 @@
-# Interruption propre d'UNE issue (étude #939, issue #949)
+# Interruption propre d'UNE issue (étude #939, issues #949/#950)
 
 État actuel du mécanisme (pas l'historique — voir `CHANGELOG.md` pour le
 déroulé des issues #938/#939/#946/#948/#949). Distinct du bouton
@@ -90,7 +90,7 @@ l'issue peut rester sans effet (la boucle d'attente ne la voit plus) —
 sans risque, puisqu'elle est purgée au prochain traitement ou à la
 relance.
 
-## Limites connues
+## Limites connues (du mécanisme #949 lui-même)
 
 - **Processus détachés par l'outil Bash interne de `claude`** (ex. un
   `sleep` en arrière-plan, rattaché à `systemd --user`) : le nettoyage
@@ -103,7 +103,68 @@ relance.
 - **Mode interactif** (session tmux, `docs/contexte/mode_interactif.md`) :
   ne passe pas par `_attendre_fin_claude` ni par cette boucle — ce
   mécanisme ne le couvre pas. Le couvrir demanderait un point d'extension
-  équivalent dans `_surveiller_session_tmux`.
-- **Issue encore en file** (jamais démarrée) : l'annulation d'une issue en
-  attente n'est pas traitée par ce mécanisme (hors périmètre de l'étude
-  #939 reprise ici).
+  équivalent dans `_surveiller_session_tmux`. Côté interface (#950, voir
+  ci-dessous), le bouton « Interrompre » d'une telle issue bascule donc sur
+  le mécanisme HISTORIQUE (watcher entier, `/interrompre`) plutôt que sur
+  celui-ci.
+- **Issue encore en file** (jamais démarrée) : n'est pas traitée par CE
+  mécanisme (hors périmètre de l'étude #939 reprise ici) — côté interface,
+  elle est couverte par un mécanisme DISTINCT (bouton « Annuler l'issue »,
+  simple fermeture GitHub, voir ci-dessous).
+
+## Boutons par état, sur la ligne de résultat (issue #950)
+
+Décision d'Alain : TOUTES les actions par issue (annuler/interrompre/
+relancer/fermer) vivent sur la LIGNE de résultat de l'issue concernée
+(`static/js/actions_ligne.js`), jamais depuis le panneau de détail ni le
+panneau Infrastructure — un bouton de panneau peut viser une autre issue que
+celle crue affichée (sélection qui « saute » lors d'un rafraîchissement, cf.
+`docs/contexte/interface_rafraichissement.md` §9quater) ; un bouton de LIGNE
+ne peut viser que SA PROPRE issue (nom/numéro clos dans son propre markup au
+moment du rendu, jamais relus depuis une sélection courante).
+
+Décision pure (`boutonsActionLigne(labels, timing)`, testée sous Node) à
+partir des labels GitHub déjà connus et du même `timing.debut` qui pilote le
+décompte TIMEOUT actif :
+
+| État de l'issue | Bouton(s) affiché(s) | Route appelée |
+|---|---|---|
+| En file (jamais démarrée) | « Annuler l'issue » | `POST /annuler-issue/<projet>/<numero>` (`app.issues.annuler_issue`, inchangée sauf la revérification ci-dessous) |
+| En cours (`timing.debut` connu) | « Interrompre » | `POST /demander-interruption-issue` (mécanisme CIBLÉ ci-dessus) — SAUF issue interactive, voir plus bas |
+| Interrompue / `needs-human` | « Relancer » + « Fermer » | `POST /relancer-issue` (inchangée) et `POST /fermer-issue/<projet>/<numero>` (commentaire corrigé, voir ci-dessous) |
+| Terminée (`done`) ou fermée | aucun | — |
+
+**Issue interactive** (session tmux, label `mode_interactif`, détectée par
+`mecanismeInterruptionLigne(labels)`) : le bouton « Interrompre » garde le
+comportement HISTORIQUE (`POST /interrompre`, watcher entier du projet) —
+jamais couverte par la sentinelle ci-dessus. Sa confirmation liste
+désormais les autres issues en cours du projet (`GET /issues-en-cours/<projet>`,
+issue #947) et annonce clairement qu'elles seront interrompues en même
+temps — même enrichissement appliqué au bouton « Interrompre et relancer
+(watcher CCL) » du panneau Infrastructure (niveau PROJET, conservé tel
+quel) et à « Arrêter » (qui, lui, laisse le `claude` en cours orphelin
+plutôt que de le tuer — texte distinct, #938 point 2.3).
+
+**« Annuler l'issue »** (`app.issues.annuler_issue`) : revérifie, juste
+avant le `gh issue close`, que l'issue n'a pas démarré entre-temps (même
+source que `/issues-en-cours`, `app.watchers.tache_en_cours`) — la liste
+affichée côté client est indicative seulement. Si elle tourne déjà : refusé,
+message invitant à utiliser « Interrompre ». Petite course résiduelle (la
+fenêtre entre cette vérification et l'appel `gh` lui-même, quelques
+millisecondes sans appel réseau entre les deux) assumée comme négligeable,
+même principe que la garde anti-concurrence #748.
+
+**« Fermer »** (`app.issues.fermer_issue`) : simple `gh issue close`, comme
+avant cette issue — ne touchait déjà pas le watcher. Seul le commentaire
+GitHub posté change : *« Issue fermée manuellement depuis l'interface
+(new_issue.py). »* remplace *« … intervention humaine effectuée »*, trompeur
+(#938 point 2.1 — aucune vérification humaine n'a forcément eu lieu, juste
+un clic).
+
+**Anciens boutons retirés** (étude #938, boutons A et B) : l'icône carrée
+verte/rouge de la ligne (A) est remplacée par le groupe ci-dessus ; le
+bouton « Interrompre et fermer cette issue » du détail d'une issue (B) est
+retiré sans remplacement direct dans le détail (ses deux effets vivent
+désormais séparément sur la ligne : « Interrompre » puis, une fois
+`needs-human` posé, « Fermer »). Le bouton `pl-fermer-issue` du panneau
+Infrastructure (zone « Actions — projet #numéro ») est retiré de même.

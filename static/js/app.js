@@ -987,7 +987,7 @@ function construireLigneIssueDOM(it) {
   // interrompre) + contrôle de son propre à l'issue — voir actions_ligne.js.
   // Ligne FERMÉE : préfixe purement statique inchangé (prefixeIssue).
   const prefixeOuAction = (etat === 'ouvert' && window.Bridge && window.Bridge.actionsLigne)
-    ? window.Bridge.actionsLigne.rendreActionsLigneOuverte(it.projet, numero, it.labels)
+    ? window.Bridge.actionsLigne.rendreActionsLigneOuverte(it.projet, numero, it.labels, it.title)
     : prefixeIssue(it.labels);
   let badgesHtml = (prefType ? prefType + ' ' : '') + prefixeOuAction;
   if (etat === 'fermé' && nomsLabelsLigne.includes('done')
@@ -1564,43 +1564,20 @@ function construireHtmlIssue(it, nom) {
   }
   html += '</div>';
 
-  // Bouton « Annuler cette issue » : uniquement si l'issue est ouverte, porte
-  // le label for-linux (donc destinée au watcher), n'est pas déjà en échec
-  // (needs-human) et n'a encore aucun commentaire. Un commentaire signifie que
-  // le watcher a capté l'issue et posté son ACK : CCL tourne déjà, l'annulation
-  // serait sans effet — on masque le bouton pour ne pas induire en erreur.
+  // Plus AUCUN bouton d'action par issue dans ce panneau de détail (issue
+  // #950, décision d'Alain) : « Annuler cette issue » et « Interrompre et
+  // fermer cette issue » vivaient ici juste avant cette issue — retirés,
+  // l'action équivalente vit désormais sur la LIGNE de la liste des
+  // résultats (voir static/js/actions_ligne.js), jamais dans un panneau. Un
+  // double-clic sur une ligne ouvre ce détail puis le referme parfois
+  // quelques secondes plus tard (rafraîchissement) : un bouton de panneau
+  // pouvait alors viser une autre issue que celle crue affichée — un bouton
+  // de LIGNE ne peut viser que SA PROPRE issue.
   const nomsLabels = (it.labels || []).map(l => ((l.name || l) || '').toLowerCase());
-  const comments = it.comments || [];
-  const annulable = !ferme
-    && nomsLabels.includes('for-linux')
-    && !nomsLabels.includes('needs-human')
-    && comments.length === 0;
-  if (annulable) {
-    html += '<div class="bloc-annuler">'
-          + '<button class="danger" onclick="annulerIssue(\'' + nom + '\', '
-          + Number(it.number) + ')">'
-          + 'Annuler cette issue</button></div>';
-  } else if (!ferme
-    && nomsLabels.includes('for-linux')
-    && !nomsLabels.includes('needs-human')
-    && comments.length > 0) {
-    // Issue en cours de traitement (ACK posté, pas encore needs-human). Le CCL
-    // tourne : la seule façon de l'interrompre est de couper le watcher du
-    // projet (killpg via #145). On combine cette coupure et la fermeture de
-    // l'issue dans un seul bouton, car elles n'ont de sens qu'ensemble ici
-    // (issue #144). Le watcher reste éteint : Alain le relance manuellement.
-    html += '<div class="bloc-annuler">'
-          + '<button class="danger" onclick="fermerEtInterrompre(\'' + nom + '\', '
-          + Number(it.number) + ')">'
-          + 'Interrompre et fermer cette issue</button></div>';
-  }
 
   // Issue en échec définitif (label needs-human) et toujours ouverte : rappel
-  // visuel de l'intervention humaine requise. Le bouton « Fermer
-  // définitivement » (fermerIssue) et le bouton « Interrompre cette issue »
-  // (interrompreIssue) faisaient double emploi avec le panneau latéral
-  // Infrastructure (#pl-zone-actions, static/js/panneau_lateral.js) — retirés
-  // d'ici par l'issue #628, l'action ne vit plus que dans le panneau.
+  // visuel SEUL (jamais un bouton — voir ci-dessus) de l'intervention humaine
+  // requise. Les actions « Relancer »/« Fermer » vivent sur la ligne.
   if (!ferme && nomsLabels.includes('needs-human')) {
     html += '<div class="bloc-annuler">'
           + '<span class="traitement-encours">'
@@ -2419,7 +2396,14 @@ function copierDiffDepuisBadge(event, nom, numero) {
 }
 
 // Ferme une issue en attente sur GitHub (pas encore traitée par le watcher),
-// puis rafraîchit l'affichage et la combobox.
+// puis rafraîchit l'affichage et la combobox. Appelée depuis le bouton
+// « Annuler » de la ligne (issue #950, annulerDepuisLigne) — plus jamais
+// depuis le panneau de détail. Le serveur (app.issues.annuler_issue)
+// revérifie, juste avant le `gh issue close`, que l'issue n'a pas démarré
+// entre-temps (route #947) : si elle tourne déjà, il répond `succes:false`
+// avec un message invitant à utiliser « Interrompre » plutôt, affiché
+// ci-dessous comme n'importe quelle autre erreur — pas de double contrôle
+// côté client.
 async function annulerIssue(nom, numero) {
   if (!confirm("Annuler (fermer) l'issue #" + numero + " sur GitHub ?")) return;
   try {
@@ -2445,12 +2429,16 @@ async function annulerIssue(nom, numero) {
   }
 }
 
-// Ferme définitivement une issue en échec (label needs-human) après
-// intervention humaine, puis rafraîchit l'affichage et la combobox (issue #80).
-// L'action est irréversible → double confirmation via confirm().
+// Ferme définitivement une issue interrompue/needs-human, puis rafraîchit
+// l'affichage et la combobox (issue #80). Appelée depuis le bouton
+// « Fermer » de la ligne (issue #950, fermerDepuisLigne) — plus jamais
+// depuis le panneau Infrastructure. Texte VRAI (issue #950, #938 point
+// 2.1 appliqué ici aussi par cohérence) : NE touche QUE GitHub (gh issue
+// close), jamais le watcher ni les autres issues du projet.
 async function fermerIssue(nom, numero) {
-  if (!confirm("Fermer définitivement l'issue #" + numero
-               + " ? Cette action est irréversible.")) return;
+  if (!confirm("Fermer définitivement l'issue #" + numero + " ?\n\n"
+             + "Ferme l'issue sur GitHub sans toucher au watcher ni aux autres "
+             + "issues de ce projet. Irréversible.")) return;
   try {
     const rep = await fetch('/fermer-issue/' + encodeURIComponent(nom)
                             + '/' + encodeURIComponent(numero), {method: 'POST'});
@@ -2474,56 +2462,17 @@ async function fermerIssue(nom, numero) {
   }
 }
 
-// Interrompt le CCL en cours ET ferme l'issue en un seul geste (issue #144).
-// Cas visé : une issue « en cours de traitement » (for-linux, pas needs-human,
-// au moins un commentaire = ACK posté). Le CCL tourne déjà : la seule façon de
-// l'interrompre est de couper le watcher du projet — après #145, /arreter-watcher
-// fait un killpg qui tue réellement le `claude` en cours (pas seulement la boucle
-// du watcher). Ordre imposé des deux appels réseau : (1) arrêt du watcher, puis
-// (2) fermeture de l'issue — on ne ferme que si la coupure a réussi ou que le
-// watcher était déjà inactif. Le watcher reste ÉTEINT : Alain le relance lui-même
-// depuis le panneau latéral Infrastructure quand il est prêt (pas de relance
-// automatique).
-async function fermerEtInterrompre(nom, numero) {
-  if (!confirm("Ceci va arrêter le watcher du projet " + nom
-             + " (donc interrompre le CCL en cours pour CETTE issue comme pour"
-             + " toute autre en attente sur ce projet) puis fermer l'issue #"
-             + numero + ". Le watcher restera éteint : tu devras le relancer"
-             + " toi-même depuis le panneau latéral Infrastructure. Continuer ?")) return;
-
-  // (1) Arrêt du watcher (killpg via #145). On tolère « watcher déjà inactif » :
-  // dans ce cas succes=false mais l'objectif (plus de CCL en cours) est atteint,
-  // et on enchaîne quand même sur la fermeture.
-  let arretOk = false;
-  try {
-    const rep = await fetch('/arreter-watcher', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({projet: nom})
-    });
-    const json = await rep.json();
-    arretOk = json.succes || /déjà inactif/i.test(json.message || '');
-    if (!arretOk) {
-      alert('Erreur : arrêt du watcher impossible — '
-            + (json.message || json.erreur || 'cause inconnue')
-            + '. Issue NON fermée.');
-      return;
-    }
-  } catch(e) {
-    alert('Erreur réseau lors de l\'arrêt du watcher : ' + e.message
-          + '. Issue NON fermée.');
-    return;
-  }
-
-  // (2) Fermeture de l'issue, seulement après un arrêt réussi (ou déjà inactif).
-  // fermerIssue() (inchangée) recharge déjà la liste des issues en fin de course.
-  await fermerIssue(nom, numero);
-}
-
-// ─── Interruption ciblée d'une issue en cours (issue #323, suite #320) ──────
-// Contrairement à fermerEtInterrompre() (#144, ci-dessus) : ne ferme PAS
-// l'issue (needs-human + commentaire seulement, trace conservée), et gère
-// aussi bien for-linux (CCL) que for-windows (CCW via SSH/nssm).
+// ─── Interruption historique d'une issue en cours — watcher ENTIER d'un
+// projet (issue #323, suite #320) ───────────────────────────────────────────
+// Ne ferme PAS l'issue (needs-human + commentaire seulement, trace
+// conservée), et gère aussi bien for-linux (CCL) que for-windows (CCW via
+// SSH/nssm). Depuis l'issue #950, ce mécanisme n'est plus le chemin NORMAL
+// du bouton « Interrompre » de la ligne (remplacé par l'interruption CIBLÉE
+// #949 — demanderInterruptionCibleeDepuisLigne ci-dessous, qui n'affecte
+// QUE l'issue visée) : il reste utilisé pour (a) une issue INTERACTIVE
+// (session tmux, jamais couverte par #949, voir interrompreDepuisLigne) et
+// (b) le bouton « Interrompre et relancer (watcher CCL) » du panneau
+// Infrastructure, niveau PROJET, conservé tel quel (issue #950 point 7).
 // Le dépôt GitHub est lu depuis le <select id="projet"> peuplé côté serveur
 // (« nom — depot », cf. templates/index.html et ajouterProjetAuSelecteur) —
 // JAMAIS déduit du nom du projet (les deux peuvent diverger, voir la route
@@ -2580,29 +2529,61 @@ function avertissementWorkingTree(modeEcr, nom) {
   return '';
 }
 
+// Avertissement listant les AUTRES issues actuellement en cours de ce projet
+// (route #947, /issues-en-cours) — ajouté aux confirmations des actions qui
+// arrêtent TOUT le watcher du projet (donc toutes ses issues en cours, pas
+// seulement celle visée) : interrompreIssue() ci-dessous (watcher entier —
+// comportement historique pour une issue interactive, et bouton « Interrompre
+// et relancer » du panneau latéral). Jamais utilisé pour l'interruption
+// CIBLÉE d'une issue normale (#949), qui ne touche justement aucune autre
+// issue par construction. Best-effort (issue #950, points 6/7) : une erreur
+// réseau ne bloque jamais la confirmation — mieux vaut prévenir sans détail
+// précis que ne pas prévenir du tout.
+async function avertissementAutresIssuesEnCours(nom, numeroAExclure) {
+  try {
+    const url = '/issues-en-cours/' + encodeURIComponent(nom)
+      + (numeroAExclure != null ? '?exclure=' + encodeURIComponent(numeroAExclure) : '');
+    const rep = await fetch(url);
+    const json = await rep.json();
+    const issues = Array.isArray(json.issues) ? json.issues : [];
+    if (!issues.length) return '';
+    const liste = issues.map(i => '#' + (i.numero != null ? i.numero : '?')
+      + ' (' + (i.mode === 'ecriture' ? 'écriture' : 'lecture') + ')').join(', ');
+    return '\n\n⚠️ ' + issues.length + ' autre(s) issue(s) de ce projet ACTUELLEMENT en cours ('
+      + liste + ') seront interrompues EN MÊME TEMPS, sans label ni commentaire posé sur elles, '
+      + 'et reprises depuis le début au redémarrage du watcher.';
+  } catch (e) {
+    return '\n\n⚠️ Impossible de vérifier les autres issues en cours de ce projet (elles '
+         + 'seraient interrompues en même temps si le watcher en traite d\'autres).';
+  }
+}
+
 // Ensemble des couples (projet, numéro) actuellement en cours d'interruption
-// (issue #748) — garde partagée par les deux déclencheurs existants (icône de
-// ligne via interrompreDepuisLigne, bouton « Interrompre et relancer » du
-// panneau latéral via interrompreEtRelancer), puisque tous deux appellent
-// interrompreIssue() ci-dessous. État/décisions en logique pure dans
-// actions_ligne.js (demarrerInterruption/terminerInterruption, testées sous
-// Node) ; seule l'application au DOM (désactivation visuelle) vit ici.
+// (issue #748) — garde partagée par les déclencheurs existants (bouton
+// « Interrompre » de la ligne via interrompreDepuisLigne — mécanisme CIBLÉ ou
+// historique selon l'issue, #950 — et bouton « Interrompre et relancer » du
+// panneau latéral via interrompreEtRelancer), puisque tous appellent
+// demarrerInterruption/terminerInterruption autour de leur appel réseau.
+// État/décisions en logique pure dans actions_ligne.js
+// (demarrerInterruption/terminerInterruption, testées sous Node) ; seule
+// l'application au DOM (désactivation visuelle) vit ici.
 const _interruptionsEnCours = new Set();
 
 // Désactive/réactive visuellement les déclencheurs connus pour CE couple —
-// icône ✓/✕ de la ligne (pointer-events coupé, pas de disabled possible sur
-// un <span>) et bouton « Interrompre et relancer » du panneau latéral
-// (disabled + libellé « Interruption en cours… », restauré si l'appel
-// échoue — un succès recharge la liste/réaffiche le panneau, qui les
-// reconstruisent déjà dans leur état normal, rien à restaurer alors).
+// bouton « Interrompre » de la ligne (disabled, vrai <button> depuis #950) et
+// bouton « Interrompre et relancer » du panneau latéral (disabled + libellé
+// « Interruption en cours… », restauré si l'appel échoue — un succès recharge
+// la liste/réaffiche le panneau, qui les reconstruisent déjà dans leur état
+// normal, rien à restaurer alors).
 function _marquerInterruptionEnCours(nom, numero, active) {
   const numStr = String(numero);
   const ligne = [...document.querySelectorAll('#liste-issues .ligne-issue')]
     .find(l => l.dataset.projet === nom && l.dataset.numero === numStr);
-  const icone = ligne ? ligne.querySelector('.badge-interrompre-ligne') : null;
-  if (icone) {
-    icone.classList.toggle('badge-interrompre-attente', active);
-    icone.title = active ? 'Interruption en cours…' : "Interrompre l'issue";
+  const boutonLigne = ligne ? ligne.querySelector('.btn-interrompre-ligne') : null;
+  if (boutonLigne) {
+    boutonLigne.disabled = active;
+    boutonLigne.classList.toggle('action-ligne-attente', active);
+    boutonLigne.title = active ? 'Interruption en cours…' : 'Interrompre cette issue';
   }
   const bouton = document.querySelector(
     '#pl-zone-actions [data-action="pl-interrompre-relancer"][data-projet="' + CSS.escape(nom)
@@ -2633,6 +2614,11 @@ async function interrompreIssue(nom, numero) {
   const windows = labels.map(l => l.toLowerCase()).includes('for-windows');
   const modeEcr = modeEcritureDepuisLabels(labels);
   const avertTree = avertissementWorkingTree(modeEcr, nom);
+  // Liste des AUTRES issues en cours de ce projet (issue #950, points 6/7) :
+  // ce mécanisme (watcher entier) les affecte aussi, contrairement à
+  // l'interruption CIBLÉE #949 — #938 point 2.2 avait relevé que ni le
+  // libellé ni la confirmation ne le mentionnaient jusqu'ici.
+  const avertAutres = await avertissementAutresIssuesEnCours(nom, numero);
   if (!confirm("Interrompre le traitement de l'issue #" + numero
              + (windows ? ' (CCW / Windows)' : ' (CCL / Linux)') + " ?\n\n"
              + 'Le watcher ' + (windows ? 'CCW-Watcher' : 'du projet')
@@ -2640,6 +2626,7 @@ async function interrompreIssue(nom, numero) {
              + 'mais en attente tant que le watcher n\'est pas relancé MANUELLEMENT). '
              + "L'issue sera marquée needs-human — elle ne sera PAS fermée."
              + (avertTree ? '\n\n⚠️ Cette issue écrit dans le projet : ' + avertTree : '')
+             + avertAutres
              + ' Continuer ?')) return false;
 
   // Garde anti-double-déclenchement (issue #748) : un clic pendant qu'une
@@ -2756,22 +2743,124 @@ async function relancerIssue(nom, numero) {
 }
 
 // ─── Actions cliquables sur la ligne d'une issue OUVERTE (issue #641, refonte
-// web étape 6) ────────────────────────────────────────────────────────────
-// Appelées par les onclick inline générés par actions_ligne.js (badge ⚠️/✏️ et
-// contrôle de son de construireLigneIssueDOM) — stopPropagation() EN PREMIER
-// empêche la sélection de la ligne au clic (même patron que les badges ✅/Diff/
-// All, cf. copierReponseDepuisBadge ci-dessus). « Retirer needs-human » et
-// « Interrompre » réutilisent TEL QUEL relancerIssue()/interrompreIssue()
-// ci-dessus : même route, même confirm(), même modale de résultat détaillée
-// que dans le panneau latéral — aucune duplication.
+// web étape 6 ; refonte complète des boutons par état, issue #950) ─────────
+// Appelées par les onclick inline générés par actions_ligne.js (zone d'actions
+// + contrôle de son de construireLigneIssueDOM) — stopPropagation() EN
+// PREMIER empêche la sélection de la ligne au clic (même patron que les
+// badges ✅/Diff/All, cf. copierReponseDepuisBadge ci-dessus), partout. Un
+// bouton agit toujours sur l'issue (projet+numéro) de SA PROPRE ligne, close
+// dans son propre onclick au moment du RENDU — jamais sur la sélection
+// courante ni sur le panneau de détail (issue #950, point 8).
+function annulerDepuisLigne(event, nom, numero) {
+  if (event) event.stopPropagation();
+  annulerIssue(nom, numero);
+}
+
+function fermerDepuisLigne(event, nom, numero) {
+  if (event) event.stopPropagation();
+  fermerIssue(nom, numero);
+}
+
+// « Relancer » réutilise TEL QUEL relancerIssue() (même route, même
+// confirm()) — aucune duplication.
 function retirerNeedsHumanDepuisLigne(event, nom, numero) {
   if (event) event.stopPropagation();
   relancerIssue(nom, numero);
 }
 
-function interrompreDepuisLigne(event, nom, numero) {
+// « Interrompre » (issue #950, remplace l'ancienne icône verte/rouge qui
+// appelait /interrompre — watcher ENTIER du projet, étude #938/#939) :
+//   - issue INTERACTIVE (session tmux, étude #888, jamais couverte par #949,
+//     voir docs/contexte/interruption_issue.md) → comportement HISTORIQUE
+//     inchangé, délégué tel quel à interrompreIssue() (watcher entier, sa
+//     confirmation liste désormais les autres issues en cours, voir
+//     avertissementAutresIssuesEnCours) ;
+//   - sinon → interruption CIBLÉE (#949) : SEULE cette issue est arrêtée.
+// `titre` lu directement sur le bouton cliqué (data-titre, posé par
+// actions_ligne.js au rendu de la ligne) — jamais depuis un cache ou la
+// sélection courante.
+async function interrompreDepuisLigne(event, nom, numero) {
   if (event) event.stopPropagation();
-  interrompreIssue(nom, numero);
+  const titre = (event && event.currentTarget && event.currentTarget.dataset.titre) || '';
+  const labels = labelsIssueDepuisCache(nom, numero);
+  const mecanisme = (window.Bridge && window.Bridge.actionsLigne
+      && window.Bridge.actionsLigne.mecanismeInterruptionLigne(labels)) || 'ciblee';
+  if (mecanisme === 'watcher_complet') {
+    await interrompreIssue(nom, numero);
+    return;
+  }
+  await demanderInterruptionCibleeDepuisLigne(nom, numero, titre);
+}
+
+// Cœur de l'interruption CIBLÉE depuis la ligne (issue #949/#950) : dépose
+// une demande d'interruption PROPRE à cette issue (POST
+// /demander-interruption-issue, app.interruption) — le watcher qui la traite
+// la détecte à son prochain tour de sondage (~3s, voir docs/contexte/
+// interruption_issue.md) et pose lui-même needs-human ; AUCUNE autre issue
+// du projet n'est affectée, AUCUN redémarrage du watcher. Pas de
+// rechargement forcé ici : les mécanismes de rafraîchissement EXISTANTS
+// (événement SSE fin_issue, posté par le watcher à la fin du traitement de
+// cette issue, puis resultats.chargerListe du projet concerné) mettent la
+// ligne à jour d'eux-mêmes sous une dizaine de secondes, sans aucun nouvel
+// appel GitHub ni nouveau mécanisme.
+async function demanderInterruptionCibleeDepuisLigne(nom, numero, titre) {
+  const depot = depotDuProjet(nom);
+  if (!depot) {
+    alert('Dépôt GitHub introuvable pour le projet « ' + nom + ' » — impossible d\'interrompre.');
+    return;
+  }
+  if (!confirm("Interrompre l'issue #" + numero + (titre ? ' — ' + titre : '') + " ?\n\n"
+             + 'Seule CETTE issue sera arrêtée : elle recevra needs-human dans les secondes '
+             + 'qui suivent, les AUTRES issues de ce projet continuent normalement, et elle '
+             + 'pourra être relancée ensuite avec « Relancer ». Continuer ?')) return;
+
+  // Même garde anti-double-déclenchement que le mécanisme historique (issue
+  // #748) — pas strictement nécessaire ici (dépôt de sentinelle idempotent,
+  // voir app.interruption.deposer_demande_interruption), mais un seul bouton
+  // « Interrompre » pour les deux mécanismes : même retour visuel dans les
+  // deux cas, plus simple à suivre pour Alain.
+  const actionsLigne = window.Bridge && window.Bridge.actionsLigne;
+  if (actionsLigne && !actionsLigne.demarrerInterruption(_interruptionsEnCours, nom, numero)) {
+    alert('Interruption déjà en cours pour cette issue.');
+    return;
+  }
+  _marquerInterruptionEnCours(nom, numero, true);
+
+  let resultat;
+  try {
+    const rep = await fetch('/demander-interruption-issue', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({depot: depot, numero: Number(numero)})
+    });
+    resultat = await rep.json();
+  } catch(e) {
+    alert('Erreur réseau : ' + e.message);
+    if (actionsLigne) actionsLigne.terminerInterruption(_interruptionsEnCours, nom, numero);
+    _marquerInterruptionEnCours(nom, numero, false);
+    return;
+  }
+  if (actionsLigne) actionsLigne.terminerInterruption(_interruptionsEnCours, nom, numero);
+  _marquerInterruptionEnCours(nom, numero, false);
+
+  if (!resultat.succes) {
+    alert('Erreur : ' + (resultat.erreur || "échec de la demande d'interruption."));
+    return;
+  }
+  if (!resultat.deposee) {
+    // Message clair, SANS le traiter comme une erreur (issue #950, point 2) :
+    // l'issue a pu se terminer entre le clic et l'appel réseau.
+    const texte = "Issue #" + numero + " : elle ne semble plus en cours de traitement — "
+                + 'rien à interrompre (déjà terminée, ou pas encore démarrée).';
+    if (window.Bridge && window.Bridge.toasts) window.Bridge.toasts.info(texte);
+    else alert(texte);
+    return;
+  }
+  if (window.Bridge && window.Bridge.toasts) {
+    window.Bridge.toasts.succes("Demande d'interruption déposée pour l'issue #" + numero
+      + ' — elle passera à needs-human sous une dizaine de secondes, sans rechargement manuel.',
+      false);
+  }
 }
 
 function choisirSonIssueDepuisLigne(event, nom, numero, valeurBrute) {

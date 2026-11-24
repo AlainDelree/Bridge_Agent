@@ -1568,9 +1568,10 @@ L'appel réseau de `/interrompre` peut durer plusieurs secondes (arbre de
 process + attente de 5s côté serveur) ; avant #748, aucun retour visuel
 n'accompagnait cette attente (`interrompreIssue`, `static/js/app.js`), d'où
 le double clic à l'origine de l'incident Scrabble #452. Désormais, dès la
-confirmation acceptée : les deux déclencheurs existants (icône ✓/✕ de la
-ligne — `interrompreDepuisLigne`/`actions_ligne.js` — et bouton « Interrompre
-et relancer » du panneau latéral — `data-action="pl-interrompre-relancer"`,
+confirmation acceptée : les déclencheurs existants (bouton « Interrompre »
+de la ligne — `interrompreDepuisLigne`/`actions_ligne.js`, mécanisme ciblé
+#949 ou historique selon l'issue, voir §11.7 — et bouton « Interrompre et
+relancer » du panneau latéral — `data-action="pl-interrompre-relancer"`,
 `interrompreEtRelancer`, qui réutilise `interrompreIssue` tel quel) sont
 désactivés visuellement (`_marquerInterruptionEnCours`, curseur d'attente,
 libellé « Interruption en cours… » sur le bouton) jusqu'à la réponse ; en
@@ -1603,6 +1604,21 @@ propre à (projet, numéro) sous `logs/demandes_interruption/`, relu par
 `_verifier_demande_interruption` ci-dessus : seule CETTE issue est arrêtée
 (`needs-human`, pas un échec), priorité absolue sur l'arrêt dit « critique ».
 Détail complet, limites connues (processus détachés, mode interactif) :
+`docs/contexte/interruption_issue.md`.
+
+### 11.7 Actions par issue sur la LIGNE de résultat (issue #950)
+
+Les boutons « Annuler l'issue » / « Interrompre » / « Relancer » / « Fermer »
+vivent désormais sur la ligne de chaque issue (`static/js/actions_ligne.js`,
+décision pure `boutonsActionLigne`), jamais dans le panneau de détail ni le
+panneau Infrastructure — un bouton de panneau peut viser une autre issue que
+celle crue affichée (sélection qui « saute », §9quater de
+`docs/contexte/interface_rafraichissement.md`), un bouton de ligne ne peut
+viser que SA PROPRE issue. « Interrompre » bascule sur le mécanisme ciblé
+§11.6 ou sur le mécanisme historique §11.3 selon que l'issue est interactive
+(`mecanismeInterruptionLigne`). « Annuler l'issue » (`app.issues.annuler_issue`)
+revérifie via `app.watchers.tache_en_cours` (§11.1) que l'issue n'a pas
+démarré entre-temps avant de la fermer. Détail complet :
 `docs/contexte/interruption_issue.md`.
 
 ---

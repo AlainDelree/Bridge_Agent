@@ -5,18 +5,25 @@
 //   Colonne latérale (non recouvrante, voir static/css/resultats.css) affichée
 //   à côté de la liste de l'onglet Résultats : monitoring passif des watchers
 //   CCL + services CCW connus, interrupteur GLOBAL du bip, contrôle du watcher
-//   spool (issues_inbox), et — pour l'issue actuellement sélectionnée — les
-//   toggles 🔔 Notifications, « Interrompre et relancer » et « Fermer
-//   définitivement » (fermerIssue). Ouvert par défaut, état mémorisé
-//   (persistance.js) et conservé d'un onglet à l'autre — contrairement à
-//   l'ancien comportement (réinitialisé à chaque entrée dans l'onglet Résultats).
+//   spool (issues_inbox), et — pour l'issue actuellement sélectionnée — le
+//   seul toggle 🔔 Notifications (plus aucune action de fermeture/relance par
+//   issue depuis l'issue #950, voir ci-dessous). Ouvert par défaut, état
+//   mémorisé (persistance.js) et conservé d'un onglet à l'autre —
+//   contrairement à l'ancien comportement (réinitialisé à chaque entrée dans
+//   l'onglet Résultats).
 //
-// DÉPLACÉ SUR LA LIGNE (issue #641, refonte web étape 6, un seul emplacement
-// par action) : Interrompre l'issue (bouton seul, sans relance), Retirer
-// needs-human et le contrôle de son PROPRE à l'issue (#637, étape 7b) ne sont
-// PLUS ici — voir static/js/actions_ligne.js, badge ⚠️/✏️ cliquable + contrôle
-// G/P/C directement sur la ligne de la liste. Ce panneau ne montre donc plus
-// ces 3 actions pour l'issue sélectionnée, seulement ce qui reste ci-dessus.
+// DÉPLACÉ SUR LA LIGNE, PLUS AUCUNE ACTION PAR ISSUE ICI (issue #641, refonte
+// web étape 6 ; complété par l'issue #950, décision d'Alain : TOUTES les
+// actions par issue vivent sur la ligne, jamais dans un panneau — un bouton
+// de panneau peut viser une autre issue que celle crue sélectionnée après une
+// sélection qui « saute », #943) : Interrompre l'issue, Retirer needs-human,
+// Fermer définitivement (fermerIssue, bouton `pl-fermer-issue` retiré par
+// #950) et le contrôle de son PROPRE à l'issue (#637, étape 7b) ne sont PLUS
+// ici — voir static/js/actions_ligne.js, groupe de boutons directement sur la
+// ligne de la liste. « Interrompre et relancer (watcher CCL) » (C2 de l'étude
+// #938) reste ICI, niveau PROJET assumé (il arrête tout le watcher, pas
+// seulement l'issue sélectionnée) — sa confirmation (interrompreIssue,
+// static/js/app.js) liste désormais les autres issues en cours du projet.
 //
 // CE QUI N'EST PAS ICI (reste dans static/js/app.js, autres étapes de la
 // refonte) : la liste des issues et le détail d'une issue (listeIssuesResultats,
@@ -633,10 +640,10 @@ function rendrePanneauLateralActions() {
     html += '<button class="danger" data-action="pl-interrompre-relancer" data-projet="' + dom.echapperHtml(nom)
           + '" data-numero="' + Number(numero) + '">⛔ Interrompre et relancer (' + libelleWatcherCible + ')</button>';
   }
-  if (!ferme && nomsLabels.includes('needs-human')) {
-    html += '<button class="danger-plein" data-action="pl-fermer-issue" data-projet="' + dom.echapperHtml(nom)
-          + '" data-numero="' + Number(numero) + '">✖ Fermer l\'issue</button>';
-  }
+  // Bouton « ✖ Fermer l'issue » retiré d'ici par l'issue #950 (décision
+  // d'Alain : toutes les actions par issue sur la ligne) — voir le bouton
+  // « Fermer » de static/js/actions_ligne.js (même route /fermer-issue,
+  // commentaire GitHub corrigé côté serveur, aucun changement de mécanisme).
   if (service) {
     html += '<button data-action="pl-ccw-relancer" data-projet="' + dom.echapperHtml(nom) + '">'
           + '↺ Relancer watcher CCW</button>'
@@ -713,8 +720,30 @@ async function sidebarRelancerWatcherCCL(nom, btn) {
 // Arrêt immédiat d'un watcher CCL (issue #655) : jusqu'ici un watcher actif ne
 // s'éteignait que par son délai d'auto-extinction (Configuration) — même
 // mécanique de confirmation que sidebarArreterWatcherInbox (watcher spool).
+// Avertissement listant les tâches actuellement en cours de ce projet
+// (route #947, /issues-en-cours) — ajouté à la confirmation (issue #950,
+// point 7, #938 point 2.3 : ce bouton ne tue PAS le `claude` en cours,
+// contrairement à « Interrompre et relancer », il laisse juste le watcher
+// orphelin, sans que le libellé ou la confirmation ne le disent jusqu'ici).
+// Best-effort : une erreur réseau n'empêche jamais la confirmation.
+async function avertissementTachesEnCours(nom) {
+  try {
+    const rep = await api.get('/issues-en-cours/' + encodeURIComponent(nom), { silencieux: true });
+    const issues = Array.isArray(rep && rep.issues) ? rep.issues : [];
+    if (!issues.length) return '';
+    const liste = issues.map(i => '#' + (i && i.numero != null ? i.numero : '?')).join(', ');
+    return '\n\n⚠️ ' + issues.length + ' tâche(s) en cours (' + liste + ') ne seront PAS '
+         + 'interrompues (process orphelin, non supervisé) — à réserver à une opération de '
+         + 'maintenance (déploiement).';
+  } catch (e) {
+    return '';
+  }
+}
+
 async function sidebarArreterWatcherCCL(nom, btn) {
-  const ok = await toasts.confirmer('Arrêter le watcher CCL du projet « ' + nom + ' » ?', { texteConfirmer: 'Arrêter' });
+  const avert = await avertissementTachesEnCours(nom);
+  const ok = await toasts.confirmer('Arrêter le watcher CCL du projet « ' + nom + ' » ?' + avert,
+    { texteConfirmer: 'Arrêter' });
   if (!ok) return;
   const label = btn ? btn.textContent : null;
   if (btn) { btn.disabled = true; btn.textContent = 'Arrêt…'; }
@@ -824,8 +853,6 @@ function installerDelegationPanneau() {
 
   dom.surAction('[data-action="pl-interrompre-relancer"]', 'click',
     (e, el) => appelerAncien('interrompreEtRelancer', el.dataset.projet, Number(el.dataset.numero)));
-  dom.surAction('[data-action="pl-fermer-issue"]', 'click',
-    (e, el) => appelerAncien('fermerIssue', el.dataset.projet, Number(el.dataset.numero)));
   dom.surAction('[data-action="pl-ccw-relancer"]', 'click',
     (e, el) => ccwRedemarrerProjet(el.dataset.projet, el));
   dom.surAction('[data-action="pl-ccw-nettoyer"]', 'click',
