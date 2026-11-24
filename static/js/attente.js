@@ -77,25 +77,44 @@ export function decisionDeplacementAttente(index, total) {
 
 // Descriptif d'affichage d'une ligne (titre/projet/date/condition), avec les
 // replis explicites demandés par l'issue (titre/condition jamais vides à
-// l'écran). `item` = {id, titre, projet, date, condition} tel que renvoyé par
-// GET /issues-attente (voir app/issues_inbox.py::_lire_item_attente).
+// l'écran). `item` = {id, titre, projet, date, condition, relance_numero}
+// tel que renvoyé par GET /issues-attente (voir
+// app/issues_inbox.py::_lire_item_attente).
 // `projetAffiche` (issue #728) : repli « projet inconnu » pour la pastille
 // nominative quand le projet est vide — un bloc issu d'un fichier découpé en
 // lot peut en théorie arriver ici sans PROJET (cf. decouper_corps_en_blocs,
 // scripts/watcher_issues_inbox.py : le contenu avant le premier #Titre: n'
 // appartient à aucun bloc). `projet` reste la valeur brute (vide incluse).
+//
+// `relance_numero` (issue #953) : un fichier de relance (en-tête `| RELANCE
+// | #N |`, déposé directement dans en_attente/) n'a jamais de `#Titre:` —
+// sans ce champ, sa carte affichait « (sans titre) » et « Condition :
+// (aucune condition) », impossible à rattacher à une issue sans l'ouvrir.
+// Un numéro lisible (entier) distingue ce cas : titre → « Relance #N », et
+// la ligne de condition devient un libellé dédié plutôt que la case
+// générique — SAUF si ce même fichier porte aussi une vraie condition
+// ATTENTE (rare mais possible), alors affichée normalement comme pour toute
+// autre issue. Numéro absent/illisible (relance_numero non entier, y
+// compris pour un fichier qui n'est pas une relance) → replis inchangés.
 export function descriptionLigneAttente(item) {
   const it = item || {};
+  const numeroRelance = Number.isInteger(it.relance_numero) ? it.relance_numero : null;
+  const condition = it.condition || '';
+  const titre = numeroRelance !== null ? ('Relance #' + numeroRelance) : (it.titre || '(sans titre)');
+  // « aucune condition » (issue #855), pas « condition non précisée » :
+  // un bloc sans champ ATTENTE (dépôt manuel direct dans en_attente/, hors
+  // circuit du champ ATTENTE lui-même) n'a simplement RIEN à préciser, ce
+  // n'est pas une donnée manquante/corrompue.
+  const ligneCondition = (numeroRelance !== null && !condition)
+    ? ('🔄 Relance de l\'issue #' + numeroRelance + ' : sera exécutée au lancement')
+    : ('⏳ Condition : ' + (condition || '(aucune condition)'));
   return {
-    titre: it.titre || '(sans titre)',
+    titre,
     projet: it.projet || '',
     projetAffiche: it.projet || 'projet inconnu',
     date: formaterDateAttente(it.date ? new Date(it.date * 1000) : null),
-    // « aucune condition » (issue #855), pas « condition non précisée » :
-    // un bloc sans champ ATTENTE (dépôt manuel direct dans en_attente/,
-    // hors circuit du champ ATTENTE lui-même) n'a simplement RIEN à
-    // préciser, ce n'est pas une donnée manquante/corrompue.
-    condition: it.condition || '(aucune condition)',
+    condition: condition || '(aucune condition)',
+    ligneCondition,
   };
 }
 
@@ -340,7 +359,7 @@ function construireLigneDOM(item, index, total) {
   div.querySelector('.attente-titre').textContent = desc.titre;
   construirePastilleDuree(div.querySelector('.pastille-duree-attente'), item);
   div.querySelector('.attente-date').textContent = desc.date;
-  div.querySelector('.attente-condition').textContent = '⏳ Condition : ' + desc.condition;
+  div.querySelector('.attente-condition').textContent = desc.ligneCondition;
   div.querySelector('[data-action="attente-monter"]').disabled = !peutMonter;
   div.querySelector('[data-action="attente-descendre"]').disabled = !peutDescendre;
   const boutonCopier = div.querySelector('[data-action="attente-copier-titre"]');

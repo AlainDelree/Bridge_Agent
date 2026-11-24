@@ -314,6 +314,11 @@ le lit (issue #855) : chaque bloc y apparaît ainsi sur sa propre ligne,
 avec son propre titre, projet et condition (« aucune condition » pour un
 bloc sans `ATTENTE`), au lieu d'une seule ligne pour tout le lot.
 
+Un fichier `RELANCE` (§3.14) déposé directement dans `en_attente/` n'a
+jamais de `#Titre:` : sa ligne affiche « Relance #N » à la place, et, sans
+`ATTENTE` réel, « Relance de l'issue #N : sera exécutée au lancement » au
+lieu de « (aucune condition) » (issue #953).
+
 **Corriger une issue encore en attente (issue #820).** Pas de nouveau champ
 — la règle est implicite : redéposer un fichier avec **exactement le même
 `#Titre:` ET le même `PROJET`** qu'un élément déjà présent dans « En

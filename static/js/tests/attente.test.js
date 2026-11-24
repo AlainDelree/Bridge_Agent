@@ -97,6 +97,48 @@ test('descriptionLigneAttente : item absent ne lève pas d\'exception', () => {
   assert.equal(desc.projetAffiche, 'projet inconnu');
 });
 
+// ─── descriptionLigneAttente : fichier de relance (issue #953) ─────────────
+// Un fichier de relance (en-tête RELANCE, jamais de #Titre:) arrive ici avec
+// `titre` vide et `relance_numero` posé par app/issues_inbox.py::
+// _lire_item_attente — cinq cas demandés par l'issue.
+
+test('descriptionLigneAttente : relance avec numéro → titre "Relance #N" et ligne dédiée', () => {
+  const desc = descriptionLigneAttente({ id: 'r.txt', projet: 'bridge_agent', relance_numero: 953 });
+  assert.equal(desc.titre, 'Relance #953');
+  assert.equal(desc.condition, '(aucune condition)');
+  assert.equal(desc.ligneCondition, '🔄 Relance de l\'issue #953 : sera exécutée au lancement');
+});
+
+test('descriptionLigneAttente : relance sans numéro lisible → replis "(sans titre)", pas d\'erreur', () => {
+  const desc = descriptionLigneAttente({ id: 'r.txt', projet: 'bridge_agent', relance_numero: null });
+  assert.equal(desc.titre, '(sans titre)');
+  assert.equal(desc.ligneCondition, '⏳ Condition : (aucune condition)');
+  assert.doesNotThrow(() => descriptionLigneAttente({ id: 'r.txt', relance_numero: NaN }));
+  assert.doesNotThrow(() => descriptionLigneAttente({ id: 'r.txt', relance_numero: 'abc' }));
+});
+
+test('descriptionLigneAttente : relance avec une vraie condition ATTENTE → affichée normalement', () => {
+  const desc = descriptionLigneAttente({
+    id: 'r.txt', projet: 'bridge_agent', relance_numero: 953,
+    condition: 'après la fusion de l\'étape C',
+  });
+  assert.equal(desc.titre, 'Relance #953');
+  assert.equal(desc.condition, 'après la fusion de l\'étape C');
+  assert.equal(desc.ligneCondition, '⏳ Condition : après la fusion de l\'étape C');
+});
+
+test('descriptionLigneAttente : issue normale avec titre → affichage inchangé (pas de relance)', () => {
+  const desc = descriptionLigneAttente({ id: 'a.txt', titre: 'Mon titre', projet: 'bridge_agent' });
+  assert.equal(desc.titre, 'Mon titre');
+  assert.equal(desc.ligneCondition, '⏳ Condition : (aucune condition)');
+});
+
+test('descriptionLigneAttente : issue normale sans titre (ni relance) → "(sans titre)"', () => {
+  const desc = descriptionLigneAttente({ id: 'a.txt', projet: 'bridge_agent' });
+  assert.equal(desc.titre, '(sans titre)');
+  assert.equal(desc.ligneCondition, '⏳ Condition : (aucune condition)');
+});
+
 // ─── descriptionLigneAttente : projetAffiche (pastille nominative, #728) ───
 
 test('descriptionLigneAttente : projetAffiche reprend le nom du projet', () => {

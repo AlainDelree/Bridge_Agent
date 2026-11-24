@@ -84,7 +84,8 @@ from watcher_issues_inbox import (charger_config_inbox, DEFAUT_CHEMIN_CONFIG,  #
                                   DOSSIER_ORDRE_ATTENTE, FICHIER_ORDRE_ATTENTE,  # (issue #819,
                                   _chemin_ordre_attente, _lire_ordre_attente_persiste,  # relogés
                                   _ecrire_ordre_attente, fusionner_ordre_attente,  # côté #822 — voir plus bas)
-                                  decouper_fichiers_lot_attente)  # (issue #855, voir plus bas)
+                                  decouper_fichiers_lot_attente,  # (issue #855, voir plus bas)
+                                  _numero_relance)  # (issue #953, titre affiché d'un fichier RELANCE)
 from watcher import (_pid_vivant, deduire_type_issue, extraire_priorite,  # noqa: E402
                      extraire_complexite, extraire_mode_entete,
                      _etiquette_calibration, PRIORITES_CRITIQUES)
@@ -363,13 +364,23 @@ def _duree_typique_attente(projet: str, type_issue: str, mode: str, complexite: 
 
 
 def _lire_item_attente(chemin: Path) -> dict | None:
-    """{id, titre, projet, date, condition, timeout_s, max_essais, critique,
-    duree_max_s, mode, complexite, duree_typique_s} pour un fichier
-    d'en_attente/, ou None si illisible (issue #842 pour les sept derniers
-    champs). `extraire_champs` est réutilisé tel quel pour titre/projet — le
-    champ ATTENTE lui-même (encore présent dans ce fichier) est lu
-    séparément via lire_condition_attente, cohérent avec le fait qu'il n'est
-    jamais retiré avant le lancement (POST .../lancer).
+    """{id, titre, projet, date, condition, relance_numero, timeout_s,
+    max_essais, critique, duree_max_s, mode, complexite, duree_typique_s}
+    pour un fichier d'en_attente/, ou None si illisible (issue #842 pour les
+    sept champs timeout_s..duree_typique_s). `extraire_champs` est réutilisé
+    tel quel pour titre/projet — le champ ATTENTE lui-même (encore présent
+    dans ce fichier) est lu séparément via lire_condition_attente, cohérent
+    avec le fait qu'il n'est jamais retiré avant le lancement (POST
+    .../lancer).
+
+    `relance_numero` (issue #953) : un fichier de relance (en-tête `|
+    RELANCE | #N |`, déposé directement dans en_attente/ — jamais de
+    `#Titre:`, donc `titre` vide) n'a pas de titre à afficher ; ce numéro
+    permet à static/js/attente.js::descriptionLigneAttente d'afficher
+    « Relance #N » à la place. Même extraction (`_numero_relance`) que
+    valider_relance ci-dessus pour le chemin RELANCE normal — None si le
+    champ est absent ou si sa valeur est illisible (pas d'erreur, juste
+    aucun numéro à afficher).
 
     `contenu` (brut, AVANT extraire_champs) est relu pour TIMEOUT/MODE :
     extraire_champs() retire ces lignes d'en-tête de champs["corps"] (elles
@@ -424,6 +435,7 @@ def _lire_item_attente(chemin: Path) -> dict | None:
         "projet": projet,
         "date": date_depot,
         "condition": lire_condition_attente(contenu) or "",
+        "relance_numero": _numero_relance(champs["relance_brut"]),
         "timeout_s": timeout_s,
         "max_essais": max_essais,
         "critique": critique,
