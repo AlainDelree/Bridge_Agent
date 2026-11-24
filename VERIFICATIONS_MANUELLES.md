@@ -794,6 +794,38 @@
       confirmer ou écarter l'hypothèse du PID recyclé retenue au point 4 du
       rapport de l'issue #945 (voir `ARCHITECTURE.md` §16.5).
 
+## Interruption propre d'UNE issue (issue #949, étude #939)
+
+> Après fusion, redémarrer l'interface (`new_issue.py`) et relancer le
+> watcher du projet `testvibe`. Nécessite un accès terminal au ThinkPad en
+> plus du navigateur.
+
+- [ ] **Déposer une issue longue et l'interrompre en cours** : déposer
+      `issue_test_relance_testvibe_longue.txt` sur `testvibe`. Pendant
+      qu'elle tourne, créer à la main le fichier de demande :
+      `touch logs/demandes_interruption/testvibe-issue<numero>.demande`
+      (remplacer `<numero>` par le numéro réel de l'issue en cours,
+      affiché dans l'onglet Résultats). En ~3 secondes : `claude` s'arrête
+      (vérifier qu'aucun process `claude` de ce PID ne subsiste), l'issue
+      reçoit `needs-human` et un commentaire « ⛔ Interrompue sur demande »,
+      **aucun** « ❌ Échec après 3 tentatives » n'apparaît, et le verrou
+      (`logs/verrous/testvibe-*.lock`) disparaît.
+- [ ] **Processus détachés** : avec `ps aux | grep sleep` juste après le
+      point précédent, vérifier qu'aucun `sleep 120` ne subsiste — sinon,
+      c'est la limite documentée (`docs/contexte/interruption_issue.md`,
+      processus détaché hors du groupe de `claude`) qui s'observe en
+      conditions réelles ; le noter sans le considérer comme un échec de
+      cette issue.
+- [ ] **Relance normale après interruption** : relancer l'issue interrompue
+      avec le bouton existant (retrait de `needs-human`) — elle repart
+      normalement, sans être interrompue de nouveau aussitôt (la demande
+      périmée a bien été purgée à la relance).
+- [ ] **Demande pour une issue qui ne tourne pas** : créer un fichier de
+      demande pour un numéro d'issue qui n'est pas actuellement en cours de
+      traitement (`touch logs/demandes_interruption/testvibe-issue1.demande`
+      avec un numéro arbitraire) : rien ne se passe, aucune issue n'est
+      affectée.
+
 ## Fusion « Résultats inbox » dans Résultats (issue #639)
 
 L'onglet « Résultats inbox » **n'existe plus** : ses lignes vivent désormais

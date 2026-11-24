@@ -29,16 +29,21 @@ SSH vers le PC fixe CCW, pour les issues for-windows).
 
 import ctypes
 import ctypes.wintypes
+import logging
 import ntpath
 import os
 import signal
 import subprocess
 import sys
+import tempfile
 import threading
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 from flask import jsonify, request
+
+log = logging.getLogger(__name__)
 
 from app.projets import projet_par_depot
 from app import github_status
@@ -56,6 +61,7 @@ sys.path.insert(0, str(DOSSIER_SCRIPT))
 from watcher import (  # noqa: E402
     _chemin_verrou, _pid_vivant, _lister_worktrees_secondaires, DOSSIER_LOGS,
     _etat_processus_windows, _attendre_signal_windows,  # issue #886
+    _chemin_demande_interruption, _purger_demande_interruption,  # issue #949
 )
 
 # Job Object PERSISTANT du watcher (issue #695, côté producteur déjà en
@@ -698,7 +704,19 @@ def relancer_issue(depot: str, numero: int, commentaire: str = COMMENTAIRE_RELAN
     dans watcher.py) — retirer needs-human suffit donc à la rendre de nouveau
     éligible au prochain cycle. Ne relance PAS le watcher lui-même (même
     esprit que interrompre_linux/interrompre_windows ci-dessus : action
-    manuelle séparée si le watcher est éteint)."""
+    manuelle séparée si le watcher est éteint).
+
+    Purge d'une demande d'interruption PÉRIMÉE (issue #949) : une relance
+    remet l'issue en circuit pour une EXÉCUTION FUTURE distincte — une
+    demande posée pour l'exécution précédente (non traitée à temps, ex.
+    watcher éteint) ne doit jamais interrompre celle-ci. Deuxième des deux
+    points de purge (le premier vit côté watcher.py, au tout début du
+    traitement d'une issue) ; best-effort, ne doit jamais faire échouer une
+    relance par ailleurs réussie."""
+    cfg = projet_par_depot(depot)
+    if cfg:
+        _purger_demande_interruption(cfg.nom, numero)
+
     statut_label, msg_label = _retirer_label_gh(depot, numero, LABEL_NEEDS_HUMAN)
     etapes = [{"etape": "retrait_label_needs_human", "statut": statut_label, "message": msg_label}]
 
@@ -796,3 +814,84 @@ def route_relancer():
     return jsonify(succes=True, statut_global=statut_global, etapes=etapes,
                    watcher_demarre=watcher_demarre, watcher_pid=watcher_pid,
                    panne_probable=panne_probable)
+
+
+# ─── Demande d'interruption PROPRE À UNE ISSUE (issue #949, étude #939) ────
+# Distincte de route_interrompre ci-dessus (qui agit sur le WATCHER entier
+# d'un projet, tuant l'arbre complet y compris les autres issues en cours) :
+# ici, aucune action immédiate n'est prise — seul un fichier-sentinelle est
+# déposé, relu par le watcher lui-même à chaque tour de sa boucle d'attente
+# de `claude` (watcher.py, issue #948) pendant le traitement de CETTE
+# issue. Aucun bouton pour l'instant (issue suivante) : fonction et route
+# exposées seules, sans toucher à /interrompre, /relancer-issue ni
+# /fermer-issue.
+
+def deposer_demande_interruption(nom_projet: str, numero: int, origine: str = "interface") -> None:
+    """Dépose (création atomique : fichier temporaire + renommage dans le
+    MÊME dossier, voir app/issues_inbox.py pour le même idiome) la demande
+    d'interruption de l'issue `numero` du projet `nom_projet`.
+
+    Seule l'EXISTENCE du fichier compte pour le watcher (voir
+    watcher._verifier_demande_interruption) — `heure`/`origine` ci-dessous
+    ne sont que des informations de diagnostic, jamais relues par lui. Si la
+    demande existe déjà (dépôt redondant), elle est simplement réécrite :
+    aucun comportement distinct, puisque seule l'existence compte.
+
+    Best-effort strict : une erreur d'E/S est journalisée mais ne lève
+    jamais — l'appelant (route_demander_interruption) répond alors
+    `deposee=False` sans distinguer la cause, le détail restant dans le log
+    du process new_issue.py."""
+    chemin = _chemin_demande_interruption(nom_projet, numero)
+    dossier = chemin.parent
+    try:
+        dossier.mkdir(parents=True, exist_ok=True)
+        fd, tmp_nom = tempfile.mkstemp(dir=str(dossier), suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(f"heure={datetime.now(timezone.utc).isoformat()} origine={origine}\n")
+            os.replace(tmp_nom, chemin)
+        except OSError:
+            Path(tmp_nom).unlink(missing_ok=True)
+            raise
+    except OSError as e:
+        log.warning(f"Dépôt de la demande d'interruption {nom_projet}#{numero} impossible : {e}")
+        raise
+
+
+def route_demander_interruption():
+    """POST /demander-interruption-issue — dépose une demande d'interruption
+    PROPRE à une issue (issue #949), sans toucher au reste du traitement du
+    projet. Mêmes règles d'accès que /interrompre et /relancer-issue
+    (login_requis, POST, projet inconnu → 404).
+
+    Ne dépose la demande QUE si l'issue figure parmi les issues réellement
+    en cours de traitement pour ce projet (fonction de l'issue #947,
+    `app.watchers.tache_en_cours` — même source que la route
+    `/issues-en-cours/<nom_projet>`) : déposer une demande pour une issue
+    qui ne tourne pas n'aurait aucun effet utile (jamais relue par aucun
+    watcher) et ne ferait que laisser un fichier orphelin."""
+    data   = request.json or {}
+    depot  = (data.get("depot") or "").strip()
+    numero = data.get("numero")
+
+    if not depot:
+        return jsonify(succes=False, erreur="Dépôt GitHub manquant."), 400
+    if not str(numero).isdigit():
+        return jsonify(succes=False, erreur="Numéro d'issue invalide."), 400
+    numero = int(numero)
+
+    cfg = projet_par_depot(depot)
+    if not cfg:
+        return jsonify(succes=False, erreur=f"Aucun projet configuré pour le dépôt « {depot} »."), 404
+
+    from app.watchers import tache_en_cours
+    if not any(t.get("numero") == numero for t in tache_en_cours(cfg)):
+        return jsonify(succes=True, deposee=False,
+                       erreur="Cette issue n'est pas actuellement en cours de traitement.")
+
+    try:
+        deposer_demande_interruption(cfg.nom, numero)
+    except OSError as e:
+        return jsonify(succes=False, deposee=False, erreur=str(e)), 500
+
+    return jsonify(succes=True, deposee=True)

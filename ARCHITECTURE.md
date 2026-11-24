@@ -1592,10 +1592,18 @@ Dans `lancer_claude`, l'ancien `proc.communicate(timeout=timeout)` bloquant
 est remplacé par `_attendre_fin_claude` : une boucle de sondage par tours
 d'environ 3s (`INTERVALLE_SONDAGE_CLAUDE_S`), sans aucun changement de
 résultat observable (stdout/stderr/code retour, gestion du dépassement de
-délai identiques). Chaque tour appelle `_verifier_demande_interruption` —
-point d'extension qui ne fait encore rien aujourd'hui, prévu pour que #939
-(interruption d'une seule issue) puisse y brancher la détection d'une
-demande d'interruption propre à l'issue sans retoucher la boucle.
+délai identiques) hors interruption explicite (§11.6). Chaque tour appelle
+`_verifier_demande_interruption`, le point d'extension que branche #949.
+
+### 11.6 Interruption propre d'UNE issue (issue #949, étude #939)
+
+Contrairement à `/interrompre` (§11.3, watcher ENTIER d'un projet),
+`app.interruption.route_demander_interruption` dépose un fichier-sentinelle
+propre à (projet, numéro) sous `logs/demandes_interruption/`, relu par
+`_verifier_demande_interruption` ci-dessus : seule CETTE issue est arrêtée
+(`needs-human`, pas un échec), priorité absolue sur l'arrêt dit « critique ».
+Détail complet, limites connues (processus détachés, mode interactif) :
+`docs/contexte/interruption_issue.md`.
 
 ---
 

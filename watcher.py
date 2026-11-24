@@ -244,6 +244,52 @@ TIMEOUT_SUGGERE_PLAFOND     = 3600
 # effectue à chaque tâche en mode écriture, puis committé par erreur.
 DOSSIER_VERROUS = DOSSIER_LOGS / "verrous"
 
+# ─── Demandes d'interruption PAR ISSUE (issue #949, étude #939) ───────────
+# Fichier-sentinelle déposé par l'interface (ou à la main) pour demander
+# l'arrêt propre d'UNE SEULE issue — lu par CE watcher à chaque tour de sa
+# boucle d'attente de claude (issue #948, voir _verifier_demande_interruption
+# et _attendre_fin_claude), SANS jamais toucher aux autres issues en cours ou
+# en file pour le même projet. Distinct des verrous ci-dessus : ceux-ci
+# protègent un rep_travail contre un double traitement, celui-ci ne fait que
+# porter un ordre d'arrêt, relu activement. Vit sous logs/ (gitignoré), comme
+# les verrous — jamais dans rep_travail (même raison : échapperait au
+# `git add -A` de sauvegarde).
+DOSSIER_DEMANDES_INTERRUPTION = DOSSIER_LOGS / "demandes_interruption"
+
+
+def _chemin_demande_interruption(nom_projet: str, numero: int) -> Path:
+    """Chemin du fichier de demande d'interruption de l'issue `numero` du
+    projet `nom_projet` — nom `<projet>-issue<numero>.demande`, même
+    convention que le préfixe des worktrees dédiés (`<cfg.nom>-issue<N>`,
+    voir app.interruption._lister_worktrees_actifs) : lisible, non ambigu
+    entre deux projets ou deux issues, et facile à taper à la main (essai
+    manuel de l'issue #949). Seule l'EXISTENCE du fichier compte — son
+    contenu (heure, origine) n'est qu'informatif, jamais relu par le
+    watcher."""
+    return DOSSIER_DEMANDES_INTERRUPTION / f"{nom_projet}-issue{numero}.demande"
+
+
+def _purger_demande_interruption(nom_projet: str, numero: int) -> None:
+    """Supprime (best-effort) la demande d'interruption de l'issue `numero`
+    du projet `nom_projet`, si elle existe — jamais d'erreur sur absence.
+
+    Appelée à deux moments, pour qu'une demande non traitée à temps
+    n'interrompe JAMAIS un traitement ultérieur distinct (issue #949, point
+    « pas de demande périmée ») :
+    - au tout début de `_traiter_issue_synchrone`, avant toute tentative ;
+    - à la relance d'une issue bloquée (app.interruption.relancer_issue).
+
+    Également appelée une fois la demande traitée (voir
+    `_gerer_interruption_demandee`), pour qu'elle ne reste pas en place après
+    avoir produit son effet."""
+    try:
+        _chemin_demande_interruption(nom_projet, numero).unlink()
+    except FileNotFoundError:
+        pass
+    except OSError as e:
+        log.warning(f"Suppression de la demande d'interruption {nom_projet}#{numero} impossible : {e}")
+
+
 # ─── Verrou d'instance unique PAR PROJET (issue #908) ──────────────────────
 # Distinct des verrous ci-dessus (qui protègent un rep_travail pendant UN
 # traitement d'issue) : celui-ci protège le PROCESS watcher lui-même, posé
@@ -5637,13 +5683,35 @@ INTERVALLE_SONDAGE_CLAUDE_S = 3
 
 
 def _verifier_demande_interruption(numero: int) -> bool:
-    """Point d'extension (issue #948, préparation de l'étude #939) : appelé à
+    """Point d'extension (issue #948, branché par l'issue #949) : appelé à
     chaque tour de `_attendre_fin_claude`, pendant l'attente de `claude` pour
-    l'issue `numero`. Ne fait encore RIEN — une issue suivante y branchera la
-    détection d'une demande d'interruption propre à CETTE issue (sentinelle
-    posée par l'interface), sans avoir à retoucher `_attendre_fin_claude`.
-    Retourne toujours False pour l'instant (jamais d'interruption demandée)."""
-    return False
+    l'issue `numero`. Détecte une demande d'interruption PROPRE à CETTE
+    issue de CE projet (CFG.nom) — une demande visant une autre issue ou un
+    autre projet a un chemin de fichier différent (voir
+    `_chemin_demande_interruption`) et n'est donc jamais vue ici : aucun
+    filtrage supplémentaire n'est nécessaire, la portée est déjà la bonne
+    par construction du nom de fichier."""
+    return _chemin_demande_interruption(CFG.nom, numero).exists()
+
+
+class InterruptionIssueDemandee(Exception):
+    """Levée par `_attendre_fin_claude` quand une demande d'interruption
+    (issue #949) vise précisément l'issue en cours de traitement par CE
+    watcher. Rattrapée dans `lancer_claude`, au même niveau que
+    `subprocess.TimeoutExpired` : le `finally` de `lancer_claude` nettoie
+    l'arbre de process (`_nettoyer_arbre_claude`, inchangé, appelé une seule
+    fois comme pour tout autre mode de sortie) — cette exception ne fait que
+    distinguer ce cas d'un timeout ordinaire pour l'appelant (pas de
+    retentative, pas de diagnostic, pas de comptage d'échec)."""
+
+
+# Sortie distinctive de `lancer_claude` quand `_attendre_fin_claude` a levé
+# `InterruptionIssueDemandee` ci-dessus — comparée par égalité stricte dans
+# la boucle de tentatives (`_traiter_issue_synchrone`), jamais par préfixe ni
+# recherche de sous-chaîne (à la différence de "Timeout après...") : ne doit
+# jamais être confondue avec un message d'erreur réel rédigé par le process
+# ou par l'agent.
+MARQUEUR_INTERRUPTION_DEMANDEE = "⛔ Interruption demandée pour cette issue (#949)"
 
 
 def _lire_flux_jusqu_a_fermeture(flux, resultat: list) -> None:
@@ -5664,22 +5732,33 @@ def _lire_flux_jusqu_a_fermeture(flux, resultat: list) -> None:
 
 def _attendre_fin_claude(proc: subprocess.Popen, timeout: int, numero: int) -> tuple[str, str]:
     """Remplace l'ancien `proc.communicate(timeout=timeout)` bloquant par une
-    boucle de sondage courte (issue #948, préparation de l'étude #939), SANS
-    changer le résultat observable : retourne (stdout, stderr) si `claude`
-    termine avant `timeout` secondes, lève `subprocess.TimeoutExpired`
-    sinon — exactement comme `communicate()`, donc sans toucher à la gestion
-    de ce cas côté appelant (message journalisé, nettoyage de l'arbre via
-    `_nettoyer_arbre_claude`, nombre de tentatives qui s'ensuit).
+    boucle de sondage courte (issue #948, branchée par l'issue #949), SANS
+    changer le résultat observable pour le cas normal : retourne (stdout,
+    stderr) si `claude` termine avant `timeout` secondes, lève
+    `subprocess.TimeoutExpired` sinon — exactement comme `communicate()`,
+    donc sans toucher à la gestion de ce cas côté appelant (message
+    journalisé, nettoyage de l'arbre via `_nettoyer_arbre_claude`, nombre de
+    tentatives qui s'ensuit). Lève `InterruptionIssueDemandee` si une
+    demande d'interruption PROPRE à `numero` est détectée pendant l'attente
+    (issue #949) — l'appelant (`lancer_claude`) la distingue de
+    `TimeoutExpired` pour ne jamais retenter ni diagnostiquer. Ne tue PAS
+    elle-même le process : le `finally` de `lancer_claude` s'en charge via
+    `_nettoyer_arbre_claude`, inchangé et appelé une seule fois quel que soit
+    le mode de sortie — ajouter un second appel ici aurait risqué un double
+    nettoyage (notamment la fermeture en double du handle de Job sous
+    Windows).
 
     Pourquoi une boucle et pas un `communicate()` unique : l'étude #939
     (interruption d'UNE SEULE issue, sans toucher aux autres) a besoin que le
     watcher puisse regarder régulièrement une demande d'interruption pendant
     l'attente, ce qu'un appel bloquant unique interdit. Chaque tour dure au
     plus `INTERVALLE_SONDAGE_CLAUDE_S` (~3s) — voir
-    `_verifier_demande_interruption`, le point d'extension appelé à chaque
-    tour (ne fait encore rien). `proc.wait(timeout=...)` retourne dès que
-    `claude` termine, sans attendre la fin du tour en cours : la fin d'une
-    issue n'est donc pas retardée par cette boucle.
+    `_verifier_demande_interruption`, appelé à chaque tour : la détection
+    (et donc l'arrêt du process dans le `finally` de `lancer_claude`) survient
+    au plus tard ~3s après la pose de la demande. `proc.wait(timeout=...)`
+    retourne dès que `claude` termine, sans attendre la fin du tour en
+    cours : la fin normale d'une issue n'est donc pas retardée par cette
+    boucle.
 
     Deux threads démons (`_lire_flux_jusqu_a_fermeture`) lisent stdout/stderr
     en continu dès le lancement, indépendamment du rythme des tours :
@@ -5704,7 +5783,13 @@ def _attendre_fin_claude(proc: subprocess.Popen, timeout: int, numero: int) -> t
             proc.wait(timeout=min(INTERVALLE_SONDAGE_CLAUDE_S, restant))
             break  # processus terminé
         except subprocess.TimeoutExpired:
-            _verifier_demande_interruption(numero)  # point d'extension (#948/#939)
+            if _verifier_demande_interruption(numero):
+                log.warning(
+                    f"  Issue #{numero} : demande d'interruption détectée "
+                    f"pendant l'attente de claude (issue #949) — arrêt de "
+                    f"cette seule issue."
+                )
+                raise InterruptionIssueDemandee()
             continue
 
     thread_stdout.join()
@@ -6361,6 +6446,8 @@ Si la tâche échoue, remplace la toute première ligne par {MARQUEUR_VERDICT_EC
                         f"#{numero} — stderr vide."
                     )
                 return False, stderr_propre or "Erreur inconnue"
+        except InterruptionIssueDemandee:
+            return False, MARQUEUR_INTERRUPTION_DEMANDEE
         except subprocess.TimeoutExpired:
             return False, f"Timeout après {timeout}s"
     except FileNotFoundError:
@@ -9500,6 +9587,53 @@ def _gerer_verdict_illisible_avec_commits(numero: int, titre: str, body: str, la
         _issue_write_bloquee_ajouter(numero)
 
 
+def _gerer_interruption_demandee(numero: int, labels: list[str], mode: str,
+                                  avertissement_worktree_deja_pris: str,
+                                  avertissement_worktree_repris: str) -> None:
+    """Demande d'interruption détectée pendant l'attente de `claude` pour
+    CETTE issue (issue #949, point d'extension #948) — appelée en tout
+    premier, avant même le garde-fou verdict illisible (#777), dès qu'une
+    tentative échoue avec `MARQUEUR_INTERRUPTION_DEMANDEE` : PRIORITÉ
+    ABSOLUE sur toute autre décision de fin de traitement, y compris l'arrêt
+    dit « critique » (`_gerer_abandon_max_essais`, qui ne serait atteint
+    qu'après épuisement de `CFG.max_essais` et retenterait indéfiniment une
+    issue critique — cette fonction-ci court-circuite tout cela).
+
+    Ce n'est PAS un échec : aucune nouvelle tentative, aucune passe
+    diagnostique (`diagnostiquer_echec`), aucun commentaire « Échec après N
+    tentatives ». `needs-human` est posé uniquement pour sortir du circuit
+    automatique — un commentaire dédié précise que l'issue peut être
+    relancée normalement (bouton existant) sans perte du travail déjà fait
+    (worktree/commits inchangés, aucun commit supplémentaire ici). Le
+    verrou de cette issue est libéré par le `finally` déjà en place dans
+    `_traiter_issue_synchrone` (`_nettoyer_apres_traitement`), sans action
+    spéciale ici. Le fichier de demande est purgé (traité)."""
+    log.warning(
+        f"  ⛔ Issue #{numero} : interruption demandée — arrêt de cette "
+        f"seule issue, needs-human posé (pas un échec, issue #949)."
+    )
+    _purger_demande_interruption(CFG.nom, numero)
+    message = (
+        "⛔ Interrompue sur demande (interruption ciblée de cette issue, étude #939).\n\n"
+        f"{avertissement_worktree_deja_pris}"
+        f"{avertissement_worktree_repris}"
+        "Ce n'est **pas** un échec : aucune tentative supplémentaire n'a été lancée et "
+        "aucun diagnostic automatique n'a été fait. Le travail déjà effectué (worktree, "
+        "commits éventuels) est conservé tel quel.\n\n"
+        f"Label `{LABEL_ECHEC}` posé uniquement pour sortir du circuit automatique — "
+        "relancez cette issue avec le bouton existant pour la reprendre normalement."
+    )
+    commenter_issue(numero, message)
+    ajouter_label(numero, LABEL_ECHEC)
+    notifier_fin_sse(numero)
+    # PAS de retrait de issues_en_cours (issue #576, même traitement que
+    # _gerer_abandon_max_essais non critique) : `needs-human` posé, l'issue
+    # reste suivie tant que le label n'est pas retiré ou qu'elle n'est pas
+    # relancée.
+    if mode == MODE_ECRITURE:
+        _issue_write_bloquee_ajouter(numero)
+
+
 def _gerer_abandon_max_essais(numero: int, titre: str, body: str, labels: list[str],
                                mode: str, critique: bool, tentative: int, sortie: str,
                                timeout: int, avertissement_worktree_deja_pris: str,
@@ -10033,6 +10167,14 @@ def _traiter_issue_synchrone(issue: dict, dry_run: bool, chemin_worktree: Path |
     titre  = issue["title"]
     body   = issue.get("body") or ""
 
+    # Purge d'une demande d'interruption PÉRIMÉE (issue #949) : posée pour
+    # une exécution précédente (déjà terminée, ou watcher éteint avant de
+    # l'avoir vue) de CETTE MÊME issue, elle ne doit JAMAIS interrompre le
+    # traitement qui démarre ici — en tout premier, avant le moindre garde-fou
+    # ou tentative. L'autre moment de purge (relance explicite) vit côté
+    # app.interruption.relancer_issue, hors de ce process.
+    _purger_demande_interruption(CFG.nom, numero)
+
     labels = _guards_precoces_et_bootstrap(issue, numero, titre, body, dry_run)
     if labels is None:
         return
@@ -10156,6 +10298,17 @@ def _traiter_issue_synchrone(issue: dict, dry_run: bool, chemin_worktree: Path |
 
             # Échec
             log.warning(f"  ✗ Tentative {tentative} échouée : {sortie}")
+
+            # Interruption demandée pour CETTE issue (#948/#949) : priorité
+            # ABSOLUE sur tout le reste de la gestion d'échec ci-dessous — y
+            # compris sur l'arrêt dit « critique » (_gerer_abandon_max_essais,
+            # qui retenterait indéfiniment une issue critique). Vérifié en
+            # tout premier, avant même le garde-fou verdict illisible (#777).
+            if sortie == MARQUEUR_INTERRUPTION_DEMANDEE:
+                _gerer_interruption_demandee(numero, labels, mode,
+                                              avertissement_worktree_deja_pris,
+                                              avertissement_worktree_repris)
+                return
 
             # Verdict illisible (#581) alors que le worktree a déjà avancé
             # (issue #777, incident chesscoach #123) : priorité la PLUS

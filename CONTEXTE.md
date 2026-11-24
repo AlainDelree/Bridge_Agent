@@ -12,9 +12,8 @@ Référence complète : `BRIDGE_AGENT_DOC.md` (+ `ARCHITECTURE.md`).
 - Maintenance de ce fichier : si ta tâche modifie une règle, une
   convention, l'architecture ou une dépendance, mets à jour ce CONTEXTE.md
   dans le même commit, en 1 à 3 lignes (jamais un récit — il va dans
-  `CHANGELOG-<N>.md`). S'il dépasse déjà 4000 caractères, ne le grossis pas :
-  déplace plutôt le détail dans un fichier `docs/contexte/<domaine>.md`,
-  référencé dans l'index ci-dessous.
+  `CHANGELOG-<N>.md`). Au-delà de 4000 car., déplace le détail dans un
+  fichier `docs/contexte/<domaine>.md`, indexé ci-dessous.
 
 ## Architecture
 - **`watcher.py`** — watcher générique unique (`--config configs/<nom>.conf`),
@@ -41,9 +40,9 @@ Référence complète : `BRIDGE_AGENT_DOC.md` (+ `ARCHITECTURE.md`).
 - **Français** pour tout ce qui est nommé librement (identifiants,
   commentaires, clés de config) ; anglais gardé pour les contrats existants
   (labels GitHub, drapeaux CLI, mots-clés Python).
-- **Mode par défaut : lecture seule.** N'armer l'écriture que si la tâche le
-  demande explicitement. **CCL ne pousse JAMAIS** : il committe
-  `backup + fix` en local, Alain vérifie puis pousse lui-même.
+- **Mode par défaut : lecture seule.** N'armer l'écriture que si demandé
+  explicitement. **CCL ne pousse JAMAIS** : il committe `backup + fix` en
+  local, Alain vérifie puis pousse lui-même.
 - Issues : `#Titre:` en première ligne du corps.
 - **Scripts `.ps1` : BOM UTF-8 obligatoire** (octets `EF BB BF`) dès la
   création, sinon PowerShell 5.1 plante sur les accents.
@@ -67,3 +66,5 @@ documents de référence ci-dessous, voir issue #890) :
 - `BRIDGE_AGENT_DOC.md §3.16` — à lire avant de toucher au champ `ATTENTE`
   d'`issues_inbox/`.
 - `docs/contexte/interface_rafraichissement.md` — veille/réveil/copie du rapport.
+- `docs/contexte/interruption_issue.md` — à lire avant de toucher à
+  l'interruption d'une issue.

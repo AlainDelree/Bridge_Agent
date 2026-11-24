@@ -117,7 +117,7 @@ def _enregistrer_routes(app: Flask) -> None:
                          ccw_ajouter_projet, ccw_finaliser_projet,
                          ccw_redemarrer_projet, ccw_demarrer_projet,
                          ccw_arreter_projet, ccw_nettoyer_verrous)
-    from app.interruption import route_interrompre, route_relancer
+    from app.interruption import route_interrompre, route_relancer, route_demander_interruption
     from app.avancement import avancement_issue
     from app.cycle_vie import heartbeat, events, quitter
     from app.fin_issue import (notifier_fin_issue, notifier_debut_issue, stream_fin_issue,
@@ -197,6 +197,8 @@ def _enregistrer_routes(app: Flask) -> None:
     # ─── Interruption ciblée d'une issue en cours (issue #323, suite #320) ────
     app.add_url_rule("/interrompre", "route_interrompre", login_requis(route_interrompre), methods=["POST"])
     app.add_url_rule("/relancer-issue", "route_relancer", login_requis(route_relancer), methods=["POST"])
+    app.add_url_rule("/demander-interruption-issue", "route_demander_interruption",
+                     login_requis(route_demander_interruption), methods=["POST"])
     # ─── Avancement d'une issue en cours (issue #887) : commits + fichiers du
     # worktree dédié, strictement en lecture ────────────────────────────────
     app.add_url_rule("/avancement/<nom_projet>/<numero>", "avancement_issue", login_requis(avancement_issue), methods=["GET"])
