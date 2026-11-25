@@ -1038,6 +1038,57 @@
       bouton affiche « ⏳ … » pendant l'attente puis son texte normal au
       retour.
 
+## « Relancer » redémarre un watcher éteint, décompte fidèle à la vérité locale (issue #955)
+
+> Constaté sur `testvibe` le 25/11/2026 : « Relancer » seul sur une issue ne
+> redémarrait jamais un watcher éteint par « Arrêter » (labels transmis au
+> serveur lus depuis un cache localStorage alimenté seulement si le détail de
+> CETTE issue avait déjà été ouvert) ; l'issue réapparaissait ensuite « en
+> cours » avec un décompte figé sur l'ancienne tentative, alors qu'aucun
+> process ni verrou ne tournait plus. Après fusion, relancer le watcher du
+> projet `testvibe`.
+
+- [ ] **Essai de clôture demandé par Alain** : déposer une issue d'écriture
+      longue sur `testvibe` (ex. `issue_test_relance_testvibe_longue.txt`).
+      Une fois « en cours », cliquer **« ⏹ Arrêter »** sur la ligne du watcher
+      (panneau Infrastructure) : l'issue passe en `needs-human`
+      (interruption ciblée propre), le watcher s'éteint (⚫). SANS relancer le
+      watcher à la main, cliquer **« Relancer »** sur la ligne de CETTE
+      MÊME issue (sans avoir ouvert son détail au préalable, même ordre que
+      le 25/11/2026) :
+      - le watcher `testvibe` redémarre SEUL (point 🟢 en quelques secondes,
+        process `watcher.py` visible, nouvelle ligne dans
+        `logs/watcher-testvibe.log`) ;
+      - le commentaire posté sur l'issue (onglet Résultats, détail) mentionne
+        EXPLICITEMENT le watcher : « redémarré automatiquement (il était
+        éteint — pid …) » ;
+      - l'issue repart effectivement (nouvelle ACK, nouveau commit de
+        sauvegarde si écriture).
+- [ ] **Commentaire « déjà actif »** : avec le watcher `testvibe` déjà actif
+      et une issue `needs-human` dessus, cliquer « Relancer » sur sa ligne :
+      le commentaire posté mentionne désormais « déjà actif (pid …) — aucun
+      redémarrage nécessaire » (avant #955 : silencieux sur ce point, aucune
+      trace ne permettait de distinguer ce cas d'un mécanisme pas même
+      invoqué).
+- [ ] **Décompte jamais périmé** : reproduire la séquence « Arrêter » (issue
+      en cours interrompue) puis « Relancer » ci-dessus, mais regarder la
+      LIGNE de l'issue et le panneau Infrastructure PENDANT la fenêtre entre
+      le clic « Relancer » et le redémarrage effectif du watcher (quelques
+      secondes) : l'issue doit apparaître « en file » (bouton « Annuler »),
+      JAMAIS « en cours » avec un décompte TIMEOUT qui reprendrait l'heure de
+      la tentative précédente — tant qu'aucun verrou local réel n'existe pour
+      elle, le badge ne doit jamais ressusciter l'ancien ACK. Le panneau
+      Infrastructure ne doit pas non plus annoncer « 1 en cours » pour ce
+      projet à ce moment.
+- [ ] **Bouton « ⛔ Tout interrompre » non coupé à 3 boutons** : avec le
+      watcher `testvibe` actif ET au moins une issue en cours (3 boutons sur
+      la ligne du watcher : « ↺ Redémarrer le watcher », « ⏹ Arrêter », « ⛔
+      Tout interrompre »), vérifier que les 3 boutons restent entièrement
+      lisibles dans le panneau latéral (largeur par défaut, pas de
+      redimensionnement de fenêtre) — au besoin, les 2 derniers passent sur
+      une 2e ligne À L'INTÉRIEUR du groupe plutôt que d'être coupés sur le
+      bord droit du panneau.
+
 ## Résistance à une coupure réseau (issue #952)
 
 > Après fusion, relancer le watcher du projet `testvibe`. Ces trois essais

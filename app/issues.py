@@ -1638,6 +1638,32 @@ def issues_en_attente(nom_projet):
     # #108) : sert au calcul de l'estimation prédictive par catégorie.
     historique = _charger_historique()
 
+    # Vérité locale pour le CCL (issue #955) : `debut` ci-dessous ne provient
+    # QUE des commentaires GitHub (ACK), une heuristique qui peut rester figée
+    # sur un ancien ACK quand le cycle s'est terminé par un chemin qui ne
+    # pose ni « Échec après N tentatives » ni une nouvelle ACK — notamment
+    # l'interruption CIBLÉE d'une issue (#949, commentaire « Interrompue sur
+    # demande », jamais reconnu par `_debut_traitement`) : un « Arrêter » du
+    # watcher pendant qu'elle tournait, puis un « Relancer » SANS que le
+    # watcher ne reparte entre les deux (voir `redemarrer_si_eteint` côté
+    # `route_relancer`), laissait réapparaître l'ancien décompte pour une
+    # issue qui ne tournait plus du tout. On ne fait donc jamais confiance à
+    # `debut` seul pour une issue for-linux : il ne vaut comme « en cours »
+    # que si un verrou fichier LOCAL (`app.watchers.tache_en_cours`, posé par
+    # CE watcher CCL pour CETTE issue, toujours créé avant la moindre ACK,
+    # cf. watcher.py::_traiter_issue_synchrone) le confirme. Calculé UNE
+    # fois pour tout le projet (pas par issue) — un seul passage sur les
+    # verrous fichier, aucun appel gh supplémentaire. Ne s'applique PAS aux
+    # issues for-windows : le watcher CCW (délégué, autre machine physique)
+    # n'a aucun verrou fichier visible ici — une absence dans
+    # `tache_en_cours` n'y est jamais une preuve d'arrêt, seulement une
+    # absence de visibilité locale (cf. docs/contexte/interruption_issue.md,
+    # « ces boutons portent tous sur CCL »).
+    from app.watchers import tache_en_cours
+    numeros_verrouilles_localement = {
+        t["numero"] for t in tache_en_cours(cfg) if t.get("numero") is not None
+    }
+
     # Enrichissement : une passe gh view par issue ouverte (nécessaire pour lire
     # les commentaires — gh issue list ne les expose pas). Les issues ouvertes
     # for-linux/for-windows sont rares (souvent 0-3), le surcoût reste modéré.
@@ -1645,6 +1671,7 @@ def issues_en_attente(nom_projet):
         body = it.get("body") or ""
         titre = it.get("title") or ""
         labels = [(l.get("name") or "") for l in it.get("labels", [])]
+        labels_min = [lab.lower() for lab in labels]
         # Source unique du calcul timeout/max_essais/backoff/priorite/
         # sans_limite/estimation (issue #634) : donnees_temps_creation(), aussi
         # réutilisée à la CRÉATION d'une issue (app.issues.envoyer(),
@@ -1657,7 +1684,10 @@ def issues_en_attente(nom_projet):
         it["modele_defaut"] = modele_defaut_projet(cfg)
         # debut (issue #91) : contrairement à donnees_temps_creation() (toujours
         # None), ici l'issue est déjà connue de gh — on relit son éventuel ACK.
-        it["debut"] = _debut_traitement(_commentaires_issue(cfg, it["number"]))
+        debut = _debut_traitement(_commentaires_issue(cfg, it["number"]))
+        if debut and "for-linux" in labels_min and it["number"] not in numeros_verrouilles_localement:
+            debut = None
+        it["debut"] = debut
         it.pop("body", None)   # body volumineux : inutile au navigateur
     return jsonify(issues)
 

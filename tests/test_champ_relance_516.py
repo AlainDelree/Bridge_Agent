@@ -421,10 +421,13 @@ def scenario_16_traiter_relance_redemarre_watcher_eteint(tmp_path_factory):
     return {"texte": texte}
 
 
-def scenario_17_traiter_relance_watcher_deja_actif_pas_de_trace(tmp_path_factory):
-    """Le watcher du projet ciblé tourne déjà (demarre=False) : aucune trace
-    de redémarrage dans le commentaire ni le suffixe — cohérent avec le
-    chemin de création (#486), silencieux quand il n'y a rien à faire."""
+def scenario_17_traiter_relance_watcher_deja_actif_trace_sans_ambiguite(tmp_path_factory):
+    """Le watcher du projet ciblé tourne déjà (demarre=False) : TRACÉ lui
+    aussi dans le commentaire depuis l'issue #955 (pas de « redémarré », ni
+    dans le commentaire ni dans le suffixe du log, puisque rien n'a
+    effectivement redémarré) — avant #955, ce cas restait muet, impossible à
+    distinguer d'une relance où redemarrer_si_eteint n'avait même pas été
+    invoqué (ex. labels for-linux manquants)."""
     tmp_dir = tmp_path_factory()
     _preparer_config_bidon(tmp_dir)
 
@@ -450,6 +453,8 @@ def scenario_17_traiter_relance_watcher_deja_actif_pas_de_trace(tmp_path_factory
 
     assert succes, texte
     assert "redémarré" not in appels["commentaire"], appels["commentaire"]
+    assert "déjà actif" in appels["commentaire"], appels["commentaire"]
+    assert "pid 1234" in appels["commentaire"], appels["commentaire"]
     assert "watcher CCL démarré" not in texte, texte
     return {"texte": texte}
 
@@ -562,7 +567,7 @@ def main():
         ("valider_relance : REPO_CIBLE invalide rejeté même avec PERIMETRE_DYNAMIQUE (#567)", lambda: scenario_14_valider_relance_repo_cible_invalide_rejete(_tmp_path_factory)),
         ("_traiter_relance : chemin complet SOUS_DOSSIER, succès (#567)", lambda: scenario_15_traiter_relance_sous_dossier_chemin_complet_succes(_tmp_path_factory)),
         ("_traiter_relance : watcher éteint → redémarré et tracé (#572)", lambda: scenario_16_traiter_relance_redemarre_watcher_eteint(_tmp_path_factory)),
-        ("_traiter_relance : watcher déjà actif → aucune trace (#572)", lambda: scenario_17_traiter_relance_watcher_deja_actif_pas_de_trace(_tmp_path_factory)),
+        ("_traiter_relance : watcher déjà actif → tracé sans ambiguïté (#572, #955)", lambda: scenario_17_traiter_relance_watcher_deja_actif_trace_sans_ambiguite(_tmp_path_factory)),
         ("_traiter_relance : échec démarrage watcher tracé sans bloquer la relance (#572)", lambda: scenario_18_traiter_relance_echec_demarrage_watcher_trace_sans_bloquer(_tmp_path_factory)),
         ("_traiter_relance : for-windows → CCW démarré, watcher jamais appelé (#711)", lambda: scenario_19_traiter_relance_for_windows_demarre_ccw_sans_toucher_au_watcher(_tmp_path_factory)),
     ]

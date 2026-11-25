@@ -422,3 +422,48 @@ réactivé) à la fin — `marquerActionProjetEnCours`.
   boutons, couverte par le bouton « Annuler » de sa propre ligne.
 - **CCW** (délégué, SSH) : ces 4 boutons ne le concernent pas — aucune
   visibilité locale sur ses issues en cours.
+
+## « Relancer » seul après « Arrêter » : redémarrage du watcher (issue #955)
+
+`static/js/app.js::relancerIssue()` (bouton « Relancer » d'UNE ligne,
+`retirerNeedsHumanDepuisLigne`) transmet à `POST /relancer-issue` les labels
+de l'issue — `app.interruption.route_relancer()` ne redémarre le watcher CCL
+éteint (`redemarrer_si_eteint`, #574) QUE si `for-linux` figure parmi eux.
+Ces labels sont désormais lus via `labelsIssueCourante()` (store du socle,
+alimenté par `/issues-liste` pour TOUTES les issues ouvertes connues) et non
+plus `labelsIssueDepuisCache()` seule (cache localStorage alimenté
+UNIQUEMENT si le détail de CETTE issue a déjà été ouvert, double-clic) :
+avant #955, cliquer « Relancer » directement depuis la ligne d'une issue
+jamais ouverte en détail transmettait des labels VIDES, et ne redémarrait
+donc jamais le watcher — silencieusement, le commentaire posté ne le
+mentionnant pas non plus (cas « rien à faire » toujours muet).
+
+`app.watchers.redemarrer_si_eteint(tracer=True)` trace désormais aussi le cas
+« watcher déjà actif » dans le commentaire posté (`« … déjà actif (pid …) —
+aucun redémarrage nécessaire »`), pas seulement le cas redémarré — ce qui
+permet de distinguer, depuis GitHub, « le watcher tournait déjà » de « le
+mécanisme n'a même pas été invoqué » (ex. labels for-linux absents).
+
+## Vérité locale du décompte « en cours » (issue #955)
+
+`it["debut"]`, calculé par `app.issues._debut_traitement()` à partir du
+dernier commentaire ACK posté par `watcher.py` sur GitHub, pilote à la fois
+les boutons de la ligne (`boutonsActionLigne`), le décompte TIMEOUT affiché
+et le compteur « N en cours » du panneau Infrastructure — une pure heuristique
+textuelle, qui restait figée sur un ancien ACK quand le cycle se terminait
+par un chemin qui ne pose ni un nouvel ACK ni le marqueur « Échec après N
+tentatives » (notamment l'interruption CIBLÉE #949, commentaire « Interrompue
+sur demande », jamais reconnu par `_debut_traitement`) : une issue interrompue
+proprement, puis relancée APRÈS extinction du watcher entre les deux (voir
+section ci-dessus), réapparaissait « en cours » avec un décompte repartant de
+l'ancienne tentative, alors qu'aucun process ni verrou n'existait plus.
+
+`app.issues.issues_en_attente()` ne fait donc plus confiance à cet ACK seul
+pour une issue **for-linux** : un verrou fichier LOCAL
+(`app.watchers.tache_en_cours`, posé par CE watcher CCL pour CETTE issue,
+TOUJOURS créé avant la moindre ACK — voir `watcher.py::
+_traiter_issue_synchrone`) doit le confirmer, sinon `debut` est remis à
+`None` (« en file »), quel que soit l'historique des commentaires GitHub.
+Ne s'applique PAS aux issues **for-windows** (CCW, watcher délégué sur une
+autre machine) : `tache_en_cours` ne voit que les verrous LOCAUX, une absence
+n'y est jamais une preuve d'arrêt — seulement une absence de visibilité.

@@ -373,7 +373,15 @@ def redemarrer_si_eteint(cfg: Config, *, tracer: bool = False) -> tuple[bool | N
     pas confondre « rien à faire » et « échec ») ; trace est une chaîne prête
     à insérer dans un commentaire GitHub (préfixée par deux sauts de ligne,
     format repris d'app/interruption.py et scripts/watcher_issues_inbox.py)
-    quand tracer=True — vide sinon, y compris en cas d'échec."""
+    quand tracer=True — vide sinon.
+
+    Le cas demarre=False (watcher déjà actif) est désormais TRACÉ lui aussi
+    (issue #955) : avant, seul le cas démarré l'était, et ce silence ne
+    permettait pas de distinguer, depuis le commentaire GitHub posté par une
+    relance, « le watcher tournait déjà » de « le mécanisme n'a tout
+    simplement pas été invoqué » (ex. labels for-linux manquants côté
+    appelant) — les deux produisaient alors le même commentaire muet sur le
+    watcher, rendant le diagnostic impossible après coup."""
     try:
         demarre, pid = demarrer_watcher(cfg, forcer=False)
     except Exception as e:
@@ -383,9 +391,13 @@ def redemarrer_si_eteint(cfg: Config, *, tracer: bool = False) -> tuple[bool | N
         return None, None, trace
 
     trace = ""
-    if demarre and tracer:
-        trace = (f"\n\n⚙️ Watcher CCL du projet « {cfg.nom} » redémarré "
-                  f"automatiquement (il était éteint — pid {pid}).")
+    if tracer:
+        if demarre:
+            trace = (f"\n\n⚙️ Watcher CCL du projet « {cfg.nom} » redémarré "
+                      f"automatiquement (il était éteint — pid {pid}).")
+        else:
+            trace = (f"\n\n⚙️ Watcher CCL du projet « {cfg.nom} » déjà actif "
+                      f"(pid {pid}) — aucun redémarrage nécessaire.")
     return demarre, pid, trace
 
 

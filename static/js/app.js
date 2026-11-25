@@ -3128,13 +3128,21 @@ async function interrompreEtRelancer(nom, numero) {
 // éteint par inactivité (issue #574, cohérence avec la création d'issue
 // #202 et le bloc RELANCE #572) — labels transmis au serveur pour la garde
 // for-linux/for-windows, même mécanisme que interrompreIssue() ci-dessus.
+// Labels lus via labelsIssueCourante() (issue #955, PAS labelsIssueDepuisCache
+// comme avant) : le bouton « Relancer » de la ligne n'exige jamais d'avoir
+// préalablement ouvert le détail de CETTE issue (double-clic) — appelé juste
+// après « Arrêter », le cache détail peut être totalement absent, for-linux
+// alors manquant des labels transmis au serveur, qui ne redémarre alors
+// JAMAIS le watcher (#574 silencieusement inopérant). labelsIssueCourante lit
+// en priorité le store du socle (alimenté par /issues-liste pour TOUTES les
+// issues ouvertes connues), qui connaît déjà cette issue sans l'avoir ouverte.
 async function relancerIssue(nom, numero) {
   const depot = depotDuProjet(nom);
   if (!depot) {
     alert('Dépôt GitHub introuvable pour le projet « ' + nom + ' » — impossible de relancer.');
     return;
   }
-  const labels = labelsIssueDepuisCache(nom, numero);
+  const labels = labelsIssueCourante(nom, numero);
   if (!confirm("Retirer le label needs-human de l'issue #" + numero + " ?\n\n"
              + "L'issue sera reprise par le watcher "
              + "à son prochain cycle (s'il tourne — redémarré automatiquement "

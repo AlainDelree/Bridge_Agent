@@ -370,8 +370,18 @@
   font-size:13px;color:#1a1a18;padding:3px 0}
 .pl-ligne-libelle{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 /* Groupe de boutons d'une ligne watcher CCL (issue #655 : « ⏹ Arrêter » vient
-   s'ajouter à « ↺ Relancer »/« ▶ Lancer », seulement si le watcher est actif). */
-.pl-ligne-btns{display:flex;gap:6px;flex-shrink:0}
+   s'ajouter à « ↺ Relancer »/« ▶ Lancer », seulement si le watcher est actif ;
+   issue #954 : « ⛔ Tout interrompre » peut s'y ajouter comme 3e bouton,
+   seulement si des issues sont en cours pour ce projet). `flex-shrink:0`
+   (jusqu'à l'issue #955) empêchait ce groupe de rétrécir : avec 3 boutons, sa
+   largeur intrinsèque dépassait celle disponible dans le panneau latéral —
+   « Tout interrompre » débordait, coupé sur le bord droit. `min-width:0`
+   permet au groupe de rétrécir sous sa largeur intrinsèque ; `flex-wrap:wrap`
+   fait alors passer le(s) bouton(s) en trop sur une 2e ligne, À L'INTÉRIEUR
+   de ce groupe (jamais de troncature de texte : chaque `.pl-btn-mini` garde
+   son propre `flex-shrink:0`), plutôt que de déborder hors du panneau. Sans
+   effet sur le cas à 1-2 boutons (déjà tenu sur une ligne). */
+.pl-ligne-btns{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end;min-width:0}
 .pl-btn-mini{flex-shrink:0;padding:3px 9px;font-size:12px;border:1px solid #ccc;
   border-radius:6px;background:#f8f8f5;color:#1a1a18;cursor:pointer}
 .pl-btn-mini:hover{background:#eee}

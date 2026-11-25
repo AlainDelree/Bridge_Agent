@@ -14,7 +14,8 @@ Couvre, SANS vrai `gh`, vrai sous-processus watcher, ni vraie connexion SSH
 #702/#703) :
 - watcher éteint (for-linux) → redémarré, tracé dans le commentaire posté ET
   dans la réponse JSON ; `demarrer_service_ccw_arriere_plan` jamais appelé ;
-- watcher déjà actif → aucune trace, `watcher_demarre=False` ;
+- watcher déjà actif → tracé lui aussi depuis l'issue #955 (sans « redémarré »),
+  `watcher_demarre=False` ;
 - label for-windows (pas for-linux) → `demarrer_watcher` jamais appelé
   (traité par CCW), `demarrer_service_ccw_arriere_plan` appelé avec le nom du
   projet, de façon non bloquante (aucune trace dans le commentaire ni dans la
@@ -100,10 +101,11 @@ def scenario_watcher_eteint_redemarre_et_trace():
     return {"watcher_demarre": r["watcher_demarre"]}
 
 
-def scenario_watcher_deja_actif_pas_de_trace():
-    """for-linux, watcher déjà actif (demarre=False) : aucune trace de
-    redémarrage, ni dans le commentaire ni dans la réponse JSON — cohérent
-    avec #202/#572 (silencieux quand il n'y a rien à faire)."""
+def scenario_watcher_deja_actif_trace_sans_ambiguite():
+    """for-linux, watcher déjà actif (demarre=False) : désormais TRACÉ lui
+    aussi (issue #955) — avant, ce cas restait muet, impossible à distinguer
+    d'une relance où le mécanisme n'avait même pas été invoqué (ex. labels
+    for-linux manquants)."""
     appels = {}
     _neutraliser_gh(appels)
     interruption.projet_par_depot = lambda depot: CFG_BRIDGE_AGENT
@@ -116,6 +118,8 @@ def scenario_watcher_deja_actif_pas_de_trace():
     assert r["succes"], r
     assert r["watcher_demarre"] is False, r
     assert "redémarré" not in appels["commentaire"], appels["commentaire"]
+    assert "déjà actif" in appels["commentaire"], appels["commentaire"]
+    assert "pid 4242" in appels["commentaire"], appels["commentaire"]
     return {}
 
 
@@ -233,7 +237,7 @@ def main():
 
     tests = [
         ("route_relancer : watcher éteint → redémarré et tracé (#574)", scenario_watcher_eteint_redemarre_et_trace),
-        ("route_relancer : watcher déjà actif → aucune trace (#574)", scenario_watcher_deja_actif_pas_de_trace),
+        ("route_relancer : watcher déjà actif → tracé sans ambiguïté (#574, #955)", scenario_watcher_deja_actif_trace_sans_ambiguite),
         ("route_relancer : for-windows → CCW démarré, watcher jamais appelé (#574, #711)", scenario_label_for_windows_demarre_ccw_sans_toucher_au_watcher),
         ("route_relancer : dépôt sans projet configuré → aucun crash (#574)", scenario_depot_sans_projet_configure_aucun_crash),
         ("route_relancer : échec démarrage watcher tracé sans bloquer la relance (#574)", scenario_echec_demarrage_watcher_trace_sans_bloquer),
