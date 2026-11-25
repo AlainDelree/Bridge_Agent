@@ -135,15 +135,15 @@ décompte TIMEOUT actif :
 | Terminée (`done`) ou fermée | aucun | — |
 
 **Issue interactive** (session tmux, label `mode_interactif`, détectée par
-`mecanismeInterruptionLigne(labels)`) : le bouton « Interrompre » garde le
-comportement HISTORIQUE (`POST /interrompre`, watcher entier du projet) —
-jamais couverte par la sentinelle ci-dessus. Sa confirmation liste
+`mecanismeInterruptionLigne(labels)`) : le bouton « Interrompre » de la LIGNE
+garde le comportement HISTORIQUE (`POST /interrompre`, watcher entier du
+projet) — jamais couverte par la sentinelle ci-dessus. Sa confirmation liste
 désormais les autres issues en cours du projet (`GET /issues-en-cours/<projet>`,
 issue #947) et annonce clairement qu'elles seront interrompues en même
-temps — même enrichissement appliqué au bouton « Interrompre et relancer
-(watcher CCL) » du panneau Infrastructure (niveau PROJET, conservé tel
-quel) et à « Arrêter » (qui, lui, laisse le `claude` en cours orphelin
-plutôt que de le tuer — texte distinct, #938 point 2.3).
+temps. Les boutons de niveau PROJET (panneau Infrastructure) ont leur propre
+traitement de ce cas depuis l'issue #954 — voir la section dédiée ci-dessous,
+qui remplace l'ancien comportement (« Interrompre et relancer » conservé tel
+quel, « Arrêter » laissant `claude` orphelin).
 
 **« Annuler l'issue »** (`app.issues.annuler_issue`) : revérifie, juste
 avant le `gh issue close`, que l'issue n'a pas démarré entre-temps (même
@@ -293,3 +293,132 @@ l'interface (manuellement, ou via la séquence #951) n'affiche plus le badge
 fermeture — cohérent avec le fait qu'un `needs-human` conservé sur une
 issue OUVERTE reste, lui, un vrai échec en attente de décision (relance ou
 fermeture), inchangé.
+
+## Boutons de niveau PROJET, panneau Infrastructure (issue #954)
+
+Principe d'Alain : aucune action de ce panneau n'arrête une ou plusieurs
+issues sans qu'elles soient NOMMÉES et que le choix soit explicite — l'arrêt
+de plusieurs issues d'un coup est une action À PART ENTIÈRE, jamais l'effet
+de bord d'un bouton qui parle du watcher. Logique pure (quelles issues,
+interactives ou non, quels messages) dans `static/js/interruption_projet.js`
+(testée sous Node, `static/js/tests/interruption_projet.test.js`) ; rendu
+des boutons dans `static/js/panneau_lateral.js`, qui l'importe. Orchestration
+CÔTÉ CLIENT avec les routes existantes (`/issues-en-cours` #947,
+`/demander-interruption-issue` #949, `/lancer-watcher`, `/relancer-issue`,
+`/arreter-watcher`) — aucune nouvelle route pour la confirmation/l'attente,
+seule la mémorisation ci-dessous (point « Redémarrer le watcher ») ajoute
+deux petits points d'extension côté serveur (`app/watchers.py`).
+
+Ces boutons portent tous sur CCL (watcher local, Linux) — le watcher CCW
+(délégué par SSH au PC fixe Windows) n'a aucune visibilité locale sur ses
+issues en cours (`/issues-en-cours` ne lit que les verrous LOCAUX) : ils
+restent donc hors de portée de cette refonte, voir plus bas.
+
+### « Tout interrompre pour ce projet »
+
+Nouveau bouton (`pl-tout-interrompre-projet`), affiché sur la ligne de
+chaque watcher CCL UNIQUEMENT s'il a au moins une issue en cours
+(`afficherBoutonToutInterrompre`). Au clic : relit `/issues-en-cours/<projet>`
+(fraîche, pas le résumé déjà affiché), classe chaque issue normale/interactive
+(`classifierIssuesEnCoursProjet`, même détection que le bouton « Interrompre »
+de la ligne), puis :
+- aucune issue normale (seules des interactives, ou rien) → message
+  informatif, aucune action ;
+- sinon → confirmation nommant numéro + titre de chaque issue normale ciblée
+  (worktrees/commits conservés, passage en `needs-human`, relance possible
+  depuis la ligne, watcher qui reste actif) et, si présentes, les issues
+  interactives (non touchées, à arrêter uniquement depuis leur propre ligne) ;
+  confirmée, dépose une demande d'interruption CIBLÉE (#949) pour chacune,
+  attend leur arrêt (sondage local `/issues-en-cours`, 30s max, même ordre de
+  grandeur que #951), puis affiche un résumé lisible (quelles issues
+  arrêtées, lesquelles non — `resumeArretCibles`). Le watcher n'est JAMAIS
+  touché par ce bouton. Aucune issue d'un AUTRE projet n'est concernée
+  (`/issues-en-cours` est scopé par projet).
+
+### « Lancer » / « Redémarrer le watcher »
+
+Bouton unique (`pl-relancer-ccl`, texte décidé par `libelleBoutonWatcherCcl` :
+« ▶ Lancer » si éteint, « ↺ Redémarrer le watcher » si actif — l'ancien texte
+« Relancer » prêtait à confusion avec la relance d'une issue). Géré par
+`redemarrerWatcherAvecRelance`, qui dégénère automatiquement en simple appel
+`/lancer-watcher` (comportement de « Lancer » strictement inchangé) dès qu'il
+n'y a aucune issue en cours pour ce projet — un watcher éteint n'en a jamais.
+
+S'il y a des issues en cours, la confirmation les nomme (même distinction
+normales/interactives que ci-dessus) puis, si confirmée :
+1. interruption CIBLÉE (#949) de chaque issue NORMALE + attente (30s max,
+   même sondage que ci-dessus) — délai dépassé → séquence ABANDONNÉE, watcher
+   NON redémarré, rien relancé, message clair ;
+2. `POST /lancer-watcher` avec `issues_a_relancer` = la liste de ces mêmes
+   numéros — la route (`app.watchers.lancer_watcher`) mémorise AVANT de
+   redémarrer, dans un fichier sous `DOSSIER_LOGS/redemarrages_watcher/
+   <projet>.json` (gitignoré, JAMAIS dans REP_TRAVAIL — même précaution que
+   `app.interruption.deposer_demande_interruption`, #949), la liste que CETTE
+   séquence va relancer ;
+   - redémarrage DIFFÉRÉ (#609, une tâche tournait encore — course possible
+     entre la vérification ci-dessus et l'appel) → le client purge
+     immédiatement (`POST /purger-issues-a-relancer`) et prévient qu'aucune
+     relance automatique n'aura lieu (à faire depuis la ligne, une fois le
+     watcher reparti) ;
+   - échec → purge immédiate, message d'erreur, rien relancé ;
+3. redémarrage effectif → le client boucle `POST /relancer-issue` (MÊME
+   mécanisme que le bouton « Relancer » de la ligne) sur CHAQUE numéro de
+   cette liste SEULEMENT (jamais une issue déjà interrompue/`needs-human`
+   avant le clic : elle n'apparaissait alors déjà plus dans
+   `/issues-en-cours`, donc jamais dans cette liste), puis purge le fichier
+   (`POST /purger-issues-a-relancer`) — relance faite, trace inutile.
+
+Les issues INTERACTIVES en cours ne sont jamais incluses dans cette séquence
+(#949 ne les couvre pas) — mais n'ont pas besoin de l'être : leur session
+tmux survit à un redémarrage du watcher (lancée dans son propre scope
+`systemd-run --user --scope`, voir `docs/contexte/mode_interactif.md` §« Survie
+à un redémarrage ») et la surveillance reprend automatiquement au cycle
+suivant. La confirmation le signale simplement, pour qu'aucun redémarrage ne
+paraisse silencieux à leur sujet.
+
+Le bouton « ⛔ Interrompre et relancer (…) » de la zone Actions (issue
+sélectionnée, panneau Infrastructure) suit exactement la MÊME séquence pour
+une issue for-linux (CCL) — il agit sur le PROJET de l'issue sélectionnée,
+pas sur elle seule. Pour une issue for-windows (CCW, délégué), ce mécanisme
+n'a aucune visibilité locale : ce bouton garde le comportement HISTORIQUE
+inchangé (`interrompreEtRelancer`, `static/js/app.js` — `POST /interrompre`
+puis redémarrage du service CCW), hors périmètre de l'issue #954.
+
+### « Arrêter »
+
+Rôle et confirmation existante conservés (`pl-arreter-ccl` →
+`app.watchers.arreter_watcher`, simple SIGTERM du process watcher), enrichis :
+la confirmation nomme désormais les issues en cours. Confirmée :
+1. chaque issue NORMALE en cours est interrompue CIBLÉE (#949) + attente
+   (30s max) — délai dépassé → watcher NON arrêté, message clair, état
+   inchangé ;
+2. `POST /arreter-watcher` (inchangé) — SANS aucune relance automatique : le
+   watcher reste éteint, les issues restent `needs-human`, à relancer depuis
+   leur ligne après un « Lancer ».
+
+Les issues INTERACTIVES en cours ne PEUVENT PAS être arrêtées proprement par
+ce bouton (même limite que partout ailleurs) : la confirmation le dit
+explicitement et pointe vers le bouton « Interrompre » de leur propre ligne
+(chemin historique, qui arrête alors tout le watcher) comme SEUL moyen de
+les arrêter aussi — jamais un arrêt silencieux. Sans aucune issue en cours :
+comportement strictement identique à avant #954 (confirmation simple, arrêt
+immédiat).
+
+### Garde anti-double-clic et indicateur d'attente
+
+Un ensemble dédié `_actionsProjetEnCours` (noms de PROJET, DISTINCT de
+`_interruptionsEnCours` et `_fermeturesEnCours` — ces actions portent sur le
+watcher entier, pas sur une issue précise) empêche un second clic sur
+N'IMPORTE LEQUEL des 4 boutons de ce projet pendant qu'un autre tourne déjà ;
+chaque bouton affiche « ⏳ … » pendant l'attente, restauré (texte d'origine,
+réactivé) à la fin — `marquerActionProjetEnCours`.
+
+### Limites connues (reprises de #949, toujours valables ici)
+
+- **Processus détachés par l'outil Bash interne de `claude`** (`setsid`) :
+  survivent au nettoyage de l'arbre, quel que soit le chemin (CIBLÉ ou
+  historique) — non traité, même décision que #949.
+- **Issue encore en file** (jamais démarrée) : hors périmètre de ces 4
+  boutons, couverte par le bouton « Annuler » de sa propre ligne.
+- **CCW** (délégué, SSH) : ces 4 boutons ne le concernent pas — aucune
+  visibilité locale sur ses issues en cours.

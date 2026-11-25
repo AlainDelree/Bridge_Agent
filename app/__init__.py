@@ -104,7 +104,8 @@ def _enregistrer_routes(app: Flask) -> None:
     from app.projet_ccw import (etat_cle_publique, rafraichir_cle_publique,
                                 bootstrap_projet_ccw)
     from app.watchers import (watchers, lancer_watcher,
-                              arreter_watcher_route, statut, issues_en_cours)
+                              arreter_watcher_route, statut, issues_en_cours,
+                              purger_issues_a_relancer_route)
     from app.issues import (apercu, envoyer, issues_liste, issue_detail,
                             diff_commit, inventaire_commit, issues_en_attente,
                             annuler_issue, fermer_issue, joindre_image,
@@ -185,6 +186,11 @@ def _enregistrer_routes(app: Flask) -> None:
     # #947, prépare la fenêtre de fermeture propre de #939) — paramètre de
     # requête optionnel ?exclure=<numero> pour obtenir « les autres ».
     app.add_url_rule("/issues-en-cours/<nom_projet>", "issues_en_cours", login_requis(issues_en_cours))
+    # ─── Séquence « redémarrer le watcher avec relance automatique » (issue
+    # #954) : mémorisation/purge de la liste des issues à relancer, voir
+    # app/watchers.py — lancer_watcher ci-dessus accepte déjà issues_a_relancer.
+    app.add_url_rule("/purger-issues-a-relancer", "purger_issues_a_relancer_route",
+                     login_requis(purger_issues_a_relancer_route), methods=["POST"])
     # ─── Onglet CCW (issue #174, SSH depuis #447) : pilotage du PC fixe Windows et de ses projets ─
     app.add_url_rule("/ccw/projets", "ccw_projets", login_requis(ccw_projets), methods=["GET"])
     app.add_url_rule("/ccw/ajouter-projet", "ccw_ajouter_projet", login_requis(ccw_ajouter_projet), methods=["POST"])

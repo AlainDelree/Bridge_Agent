@@ -27,11 +27,13 @@ consommateurs de ce fichier (watcher.py::detecter_conflit_watcher/
 _compter_watchers_actifs, app.interruption.interrompre_linux).
 """
 
+import json
 import logging
 import os
 import signal
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 from pathlib import Path
@@ -42,7 +44,7 @@ from flask import jsonify, request
 # « from watcher import ») ; on l'importe donc avant watcher.
 from app.projets import lister_projets, projet_par_nom
 from app.auth import login_requis  # noqa: F401 (exporté pour l'enregistrement des routes)
-from watcher import (Config, DOSSIER_SCRIPT, _pid_vivant,
+from watcher import (Config, DOSSIER_SCRIPT, DOSSIER_LOGS, _pid_vivant,
                       taches_en_cours as _taches_en_cours_watcher,
                       nb_publications_en_attente as _nb_publications_en_attente_watcher)
 
@@ -67,6 +69,50 @@ INTERVALLE_SURVEILLANCE_DIFFERE = 15  # secondes
 
 _verrou_differes = threading.Lock()
 _redemarrages_differes: set[str] = set()
+
+
+# ─── Mémorisation « issues à relancer » (issue #954, séquence « redémarrer le
+# watcher avec relance automatique » du panneau Infrastructure) ────────────
+# Simple trace de la séquence EN COURS : la confirmation, l'interruption
+# ciblée de chaque issue (#949) et l'attente de leur arrêt (30s max, même
+# ordre de grandeur que #951) sont orchestrées côté client
+# (static/js/interruption_projet.js) avec les routes existantes — seul le
+# redémarrage lui-même mémorise ici, dans un fichier sous DOSSIER_LOGS
+# (gitignoré, JAMAIS dans REP_TRAVAIL — même précaution que
+# app.interruption.deposer_demande_interruption, issue #949), la liste des
+# issues que CETTE séquence va relancer une fois le watcher redémarré :
+# jamais une issue qui était déjà interrompue/needs-human avant le clic (le
+# client ne la met jamais dans cette liste, puisqu'elle n'apparaît alors
+# plus dans /issues-en-cours). Purgée par le client (POST
+# /purger-issues-a-relancer) une fois la relance individuelle de chaque
+# issue (POST /relancer-issue, même route que le bouton « Relancer » de la
+# ligne) faite, ou si la séquence est abandonnée (redémarrage différé/en
+# échec, ou attente de l'arrêt dépassée AVANT même d'appeler
+# /lancer-watcher). PAS un mécanisme de reprise automatique si new_issue.py
+# redémarre en plein milieu de la séquence — hors périmètre de l'issue #954.
+def _chemin_issues_a_relancer(nom_projet: str) -> Path:
+    return DOSSIER_LOGS / "redemarrages_watcher" / f"{nom_projet}.json"
+
+
+def memoriser_issues_a_relancer(nom_projet: str, numeros: list[int]) -> None:
+    """Écriture atomique (fichier temporaire + renommage dans le MÊME
+    dossier, même idiome que app.interruption.deposer_demande_interruption)."""
+    chemin = _chemin_issues_a_relancer(nom_projet)
+    dossier = chemin.parent
+    dossier.mkdir(parents=True, exist_ok=True)
+    fd, tmp_nom = tempfile.mkstemp(dir=str(dossier), suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(sorted({int(n) for n in numeros}), f)
+        os.replace(tmp_nom, chemin)
+    except OSError:
+        Path(tmp_nom).unlink(missing_ok=True)
+        raise
+
+
+def purger_issues_a_relancer(nom_projet: str) -> None:
+    """Best-effort strict : un fichier déjà absent n'est pas une erreur."""
+    _chemin_issues_a_relancer(nom_projet).unlink(missing_ok=True)
 
 
 # ─── Gestion du processus watcher ────────────────────────────────────────────
@@ -392,12 +438,26 @@ def lancer_watcher():
     """Lance ou relance le watcher du projet.
     relancer=true → redémarre même s'il tourne déjà (différé si une tâche est
     en cours, issue #609 — voir demarrer_watcher_ou_differer).
-    relancer=false → démarre seulement s'il est inactif."""
+    relancer=false → démarre seulement s'il est inactif.
+
+    `issues_a_relancer` (optionnel, issue #954) : liste de numéros — mémorisée
+    (voir memoriser_issues_a_relancer ci-dessus) AVANT la tentative de
+    redémarrage, pour la séquence « redémarrer le watcher avec relance
+    automatique » du panneau Infrastructure. Cette route ne relance RIEN
+    elle-même : le client boucle sur POST /relancer-issue (même mécanisme que
+    le bouton « Relancer » de la ligne) puis purge via
+    POST /purger-issues-a-relancer une fois fait."""
     data    = request.json or {}
     cfg     = projet_par_nom(data.get("projet", ""))
     if not cfg:
         return jsonify(succes=False, erreur="Projet introuvable.")
     forcer  = data.get("relancer", True)
+    issues_a_relancer = data.get("issues_a_relancer") or []
+    if issues_a_relancer:
+        try:
+            memoriser_issues_a_relancer(cfg.nom, issues_a_relancer)
+        except OSError as e:
+            log.warning(f"Mémorisation des issues à relancer ({cfg.nom}) échouée : {e}")
     try:
         statut, pid = demarrer_watcher_ou_differer(cfg, forcer)
         return jsonify(succes=True, pid=pid,
@@ -405,6 +465,20 @@ def lancer_watcher():
                         differe=(statut == "differe"))
     except Exception as e:
         return jsonify(succes=False, erreur=str(e))
+
+
+def purger_issues_a_relancer_route():
+    """POST /purger-issues-a-relancer — issue #954 : purge le fichier de
+    mémorisation ci-dessus (voir purger_issues_a_relancer), une fois la
+    relance faite (ou la séquence abandonnée) côté client. Best-effort
+    strict : toujours succes=True, un fichier déjà absent n'est pas une
+    erreur."""
+    data = request.json or {}
+    cfg  = projet_par_nom(data.get("projet", ""))
+    if not cfg:
+        return jsonify(succes=False, erreur="Projet introuvable.")
+    purger_issues_a_relancer(cfg.nom)
+    return jsonify(succes=True)
 
 
 def arreter_watcher_route():

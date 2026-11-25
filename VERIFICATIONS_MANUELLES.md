@@ -971,6 +971,73 @@
       un seul message « Fermeture déjà en cours pour cette issue. » pour les
       clics suivants, une seule fermeture effective au final.
 
+## Boutons de niveau PROJET, panneau Infrastructure (issue #954)
+
+> Après fusion, redémarrer l'interface (`new_issue.py`), relancer le watcher
+> du projet `testvibe` et recharger la page en forçant (Ctrl+Maj+R). Essais
+> demandés explicitement par Alain dans l'issue de clôture.
+
+- [ ] **(a) « Tout interrompre pour ce projet », deux issues en écriture en
+      parallèle** : déposer EN MÊME TEMPS `issue_test_ecriture_a.txt` et
+      `issue_test_ecriture_b.txt` sur `testvibe` (`MAX_WRITE_PARALLELE`
+      permettant aux deux de tourner ensemble) ; attendre les deux lignes
+      « en cours ». Sur la ligne du watcher `testvibe`, cliquer
+      **« ⛔ Tout interrompre »** : confirmation nommant numéro + titre des
+      DEUX issues, rappelant que rien n'est fermé (worktrees/commits
+      conservés, `needs-human` + relance possible) et que le watcher reste
+      actif. Confirmer : les DEUX issues passent en `needs-human` en
+      quelques secondes, un résumé indique les deux numéros arrêtés, et le
+      point du watcher `testvibe` reste 🟢 (toujours actif) — vérifier
+      qu'aucun process `claude` ne subsiste pour l'une ou l'autre.
+- [ ] **(b) Redémarrage du watcher avec deux issues en cours** : déposer à
+      nouveau les deux issues d'écriture ci-dessus (ou une écriture + une
+      lecture), ET poser `needs-human` sur une TROISIÈME issue déjà connue
+      de `testvibe` (ex. via « Interrompre » sur sa ligne au préalable).
+      Cliquer **« ↺ Redémarrer le watcher »** : confirmation nommant les deux
+      issues en cours (pas la troisième, déjà `needs-human`, donc absente de
+      `/issues-en-cours`). Confirmer : les deux s'interrompent, le watcher
+      `testvibe` redémarre (point 🟢 à nouveau après un court passage par
+      ⚫), puis les DEUX MÊMES issues repassent automatiquement « en cours »
+      (relancées, label `needs-human` retiré) — la troisième reste
+      `needs-human`, PAS relancée. Vérifier qu'aucun fichier ne subsiste
+      sous `logs/redemarrages_watcher/testvibe.json` une fois la séquence
+      terminée.
+- [ ] **(c) « Arrêter » avec une issue en cours** : déposer
+      `issue_test_relance_testvibe_longue.txt` sur `testvibe`. Cliquer
+      **« ⏹ Arrêter »** : confirmation nommant cette issue, précisant qu'elle
+      sera interrompue proprement AVANT l'arrêt (plus de `claude` orphelin)
+      et qu'il n'y aura AUCUNE relance automatique. Confirmer : l'issue passe
+      en `needs-human` (vérifier qu'aucun `claude` ne subsiste), PUIS le
+      watcher s'éteint (⚫). Cliquer « Lancer » : le watcher redémarre SEUL,
+      l'issue reste `needs-human` (pas relancée) — la relancer depuis sa
+      ligne.
+- [ ] **(d) Issue interactive parmi les issues en cours** : déposer une issue
+      avec `INTERACTIF | oui` sur `testvibe`, ET une issue normale en
+      écriture en même temps (les deux « en cours »).
+      - « ⛔ Tout interrompre » : la confirmation nomme l'issue normale (à
+        interrompre) ET signale l'issue interactive séparément (non
+        touchée, à arrêter uniquement depuis sa propre ligne). Confirmer :
+        seule la normale s'arrête ; l'interactive continue sans
+        interruption.
+      - « ↺ Redémarrer le watcher » : même confirmation (normale +
+        mention de l'interactive). Confirmer : la normale s'interrompt,
+        le watcher redémarre, la normale est relancée — la session tmux de
+        l'interactive n'a jamais été coupée (vérifier avec
+        `tmux has-session -t bridge-testvibe-issue<numero>`) et sa
+        surveillance reprend normalement après le redémarrage.
+      - « ⏹ Arrêter » : la confirmation signale que l'interactive ne peut
+        pas être arrêtée proprement par ce bouton et restera active, non
+        supervisée, après l'arrêt — et pointe vers le bouton « Interrompre »
+        de sa propre ligne comme seul moyen de l'arrêter aussi. Confirmer :
+        la normale est interrompue, le watcher s'arrête, la session tmux de
+        l'interactive reste VIVANTE (vérifier `tmux has-session`).
+- [ ] **(e) Pas de double-clic** : pendant l'attente de (a)/(b)/(c), cliquer
+      plusieurs fois rapidement sur N'IMPORTE LEQUEL des 4 boutons de ce
+      projet (y compris un autre que celui cliqué en premier) — un seul
+      message « Une action est déjà en cours pour ce projet. », chaque
+      bouton affiche « ⏳ … » pendant l'attente puis son texte normal au
+      retour.
+
 ## Résistance à une coupure réseau (issue #952)
 
 > Après fusion, relancer le watcher du projet `testvibe`. Ces trois essais

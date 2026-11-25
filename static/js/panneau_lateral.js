@@ -20,23 +20,32 @@
 // Fermer définitivement (fermerIssue, bouton `pl-fermer-issue` retiré par
 // #950) et le contrôle de son PROPRE à l'issue (#637, étape 7b) ne sont PLUS
 // ici — voir static/js/actions_ligne.js, groupe de boutons directement sur la
-// ligne de la liste. « Interrompre et relancer (watcher CCL) » (C2 de l'étude
-// #938) reste ICI, niveau PROJET assumé (il arrête tout le watcher, pas
-// seulement l'issue sélectionnée) — sa confirmation (interrompreIssue,
-// static/js/app.js) liste désormais les autres issues en cours du projet.
+// ligne de la liste.
+//
+// BOUTONS DE NIVEAU PROJET (issue #954, refonte complète — remplace l'étude
+// #938/C2 ci-dessus mentionnée dans l'historique) : « Lancer »/« Redémarrer
+// le watcher », « Arrêter » et « ⛔ Tout interrompre pour ce projet » (ligne
+// de chaque watcher CCL) + « Interrompre et relancer (watcher CCL/CCW) »
+// (zone Actions de l'issue sélectionnée, reste niveau PROJET) agissent tous
+// sur le WATCHER d'un projet, jamais plus en silence sur des issues en cours
+// — voir l'en-tête de static/js/interruption_projet.js, qui porte désormais
+// toute cette logique (importée ci-dessous), pour le principe retenu et le
+// détail de chaque séquence.
 //
 // CE QUI N'EST PAS ICI (reste dans static/js/app.js, autres étapes de la
 // refonte) : la liste des issues et le détail d'une issue (listeIssuesResultats,
 // projetCourant/numeroCourant, construireHtmlIssue), les projets
-// (nomsProjetsDisponibles), les actions réseau sur une issue (interrompreIssue,
-// relancerIssue, fermerIssue, interrompreEtRelancer). Ce module les appelle via
-// le pont (appelerAncien) — voir socle/pont.js — sans y référer en dur, et
-// expose en retour les points d'entrée qu'app.js appelle encore
-// (rafraichirPanneauLateralResultats, majBoutonTesterSonActif,
-// sidebarRelancerWatcherCCL) comme globales `window.*`. démarrerPanneauLateral/
-// arreterPanneauLateral, eux, ne sont plus exposés : depuis #632, ce module
-// s'abonne lui-même à store.ongletActif (voir initPanneauLateral) — personne
-// d'autre n'a jamais besoin de les appeler par leur nom.
+// (nomsProjetsDisponibles), les actions réseau sur UNE issue (interrompreIssue,
+// relancerIssue, fermerIssue) et interrompreEtRelancer (chemin HISTORIQUE,
+// désormais atteint uniquement pour une issue for-windows/CCW, voir
+// interruption_projet.js). Ce module les appelle via le pont (appelerAncien)
+// — voir socle/pont.js — sans y référer en dur, et expose en retour les
+// points d'entrée qu'app.js appelle encore (rafraichirPanneauLateralResultats,
+// majBoutonTesterSonActif, sidebarRelancerWatcherCCL) comme globales
+// `window.*`. démarrerPanneauLateral/arreterPanneauLateral, eux, ne sont plus
+// exposés : depuis #632, ce module s'abonne lui-même à store.ongletActif
+// (voir initPanneauLateral) — personne d'autre n'a jamais besoin de les
+// appeler par leur nom.
 //
 // ONGLET CCW (issue #649, refonte web) : sorti dans static/js/ccw.js —
 // obtenirCcwProjetsConnus/ccwChargerProjets/ccwRedemarrerProjet/
@@ -59,6 +68,15 @@ import { appelerAncien } from './socle/pont.js';
 // Import direct (issue #649, plutôt que par le pont — les deux sont des
 // modules ES) : voir l'en-tête de ccw.js pour le sens inverse (pont conservé).
 import { obtenirCcwProjetsConnus, ccwChargerProjets, ccwRedemarrerProjet, ccwNettoyerVerrous } from './ccw.js';
+// Boutons de niveau PROJET (issue #954, suite #947/#949/#950/#951) : « Tout
+// interrompre pour ce projet », « Redémarrer le watcher »/« Interrompre et
+// relancer (watcher CCL) » et « Arrêter » enrichi — voir l'en-tête de
+// interruption_projet.js pour le principe (plus aucun arrêt d'issue sans
+// qu'elle soit nommée et le choix explicite).
+import {
+  afficherBoutonToutInterrompre, libelleBoutonWatcherCcl,
+  toutInterrompreProjet, redemarrerWatcherAvecRelance, arreterWatcherProjet,
+} from './interruption_projet.js';
 
 const CLE_PANNEAU_OUVERT = 'bridge_panneau_lateral_ouvert';
 
@@ -417,9 +435,15 @@ async function rendrePanneauLateralMonitoring() {
           + '<span class="pl-ligne-libelle">' + (actif ? '🟢' : '⚫') + ' ' + dom.echapperHtml(nom) + '</span>'
           + '<span class="pl-ligne-btns">'
           + '<button class="pl-btn-mini" data-action="pl-relancer-ccl" data-projet="' + dom.echapperHtml(nom) + '">'
-          + (actif ? '↺ Relancer' : '▶ Lancer') + '</button>'
+          + libelleBoutonWatcherCcl(actif) + '</button>'
           + (afficherBoutonArreterWatcherCcl(actif)
               ? '<button class="pl-btn-mini" data-action="pl-arreter-ccl" data-projet="' + dom.echapperHtml(nom) + '">⏹ Arrêter</button>'
+              : '')
+          // « Tout interrompre pour ce projet » (issue #954, point 1) : action
+          // à part entière, distincte des boutons watcher ci-dessus — n'arrête
+          // QUE les issues en cours de CE projet, jamais le watcher lui-même.
+          + (afficherBoutonToutInterrompre(resume.enCours)
+              ? '<button class="pl-btn-mini danger" data-action="pl-tout-interrompre-projet" data-projet="' + dom.echapperHtml(nom) + '">⛔ Tout interrompre</button>'
               : '')
           + '</span>'
           + '</div>'
@@ -644,10 +668,21 @@ function rendrePanneauLateralActions() {
           + dom.echapperHtml(nomsLabels.join(',')) + '">📊 Avancement</button>';
   }
   html += '<button data-action="pl-relancer-ccl" data-projet="' + dom.echapperHtml(nom) + '">'
-        + '↺ Relancer watcher CCL</button>';
+        + '↺ Redémarrer le watcher CCL</button>';
   if (interromptible) {
+    // Issue #954, point 3 : ce bouton agit désormais au niveau du PROJET de
+    // l'issue sélectionnée (jamais seulement sur elle) — pour un projet CCL
+    // (linux), même séquence que « Redémarrer le watcher » ci-dessus (#947
+    // nomme les issues en cours, #949 les interrompt proprement, puis
+    // relance automatique) ; pour une issue for-windows (CCW, délégué par
+    // SSH), ce mécanisme n'a aucune visibilité — comportement HISTORIQUE
+    // conservé (interrompreEtRelancer, static/js/app.js).
+    const libelleBoutonRelance = windows
+      ? '⛔ Interrompre et relancer (' + libelleWatcherCible + ')'
+      : '↺ Redémarrer le watcher CCL (interrompt les issues en cours)';
     html += '<button class="danger" data-action="pl-interrompre-relancer" data-projet="' + dom.echapperHtml(nom)
-          + '" data-numero="' + Number(numero) + '">⛔ Interrompre et relancer (' + libelleWatcherCible + ')</button>';
+          + '" data-numero="' + Number(numero) + '" data-windows="' + (windows ? '1' : '0') + '">'
+          + libelleBoutonRelance + '</button>';
   }
   // Bouton « ✖ Fermer l'issue » retiré d'ici par l'issue #950 (décision
   // d'Alain : toutes les actions par issue sur la ligne) — voir le bouton
@@ -715,7 +750,16 @@ function afficherErreurNotifDiscrete(message) {
   }, 4000);
 }
 
-// ─── Relance des watchers CCL (individuelle / groupée) ─────────────────────
+// ─── Relance directe (sans confirmation) d'un watcher CCL ──────────────────
+// Depuis l'issue #954, le bouton de la ligne « Lancer »/« Redémarrer le
+// watcher » appelle redemarrerWatcherAvecRelance (interruption_projet.js),
+// qui dégénère lui-même en appel direct à /lancer-watcher quand il n'y a
+// aucune issue en cours pour ce projet — ce qui couvre déjà le cas « Lancer
+// un watcher éteint ». Cette fonction-ci ne reste donc exposée (window.*)
+// que pour interrompreEtRelancer (static/js/app.js), dont le SEUL appelant
+// restant (panneau Infrastructure, zone Actions) ne l'atteint plus que pour
+// une issue for-windows (CCW délégué, hors périmètre de #954) — jamais pour
+// CCL, où sidebarRelancerWatcherCCL n'est donc plus invoquée en pratique.
 async function sidebarRelancerWatcherCCL(nom, btn) {
   const label = btn ? btn.textContent : null;
   if (btn) { btn.disabled = true; btn.textContent = 'Relance…'; }
@@ -727,41 +771,11 @@ async function sidebarRelancerWatcherCCL(nom, btn) {
 }
 
 // Arrêt immédiat d'un watcher CCL (issue #655) : jusqu'ici un watcher actif ne
-// s'éteignait que par son délai d'auto-extinction (Configuration) — même
-// mécanique de confirmation que sidebarArreterWatcherInbox (watcher spool).
-// Avertissement listant les tâches actuellement en cours de ce projet
-// (route #947, /issues-en-cours) — ajouté à la confirmation (issue #950,
-// point 7, #938 point 2.3 : ce bouton ne tue PAS le `claude` en cours,
-// contrairement à « Interrompre et relancer », il laisse juste le watcher
-// orphelin, sans que le libellé ou la confirmation ne le disent jusqu'ici).
-// Best-effort : une erreur réseau n'empêche jamais la confirmation.
-async function avertissementTachesEnCours(nom) {
-  try {
-    const rep = await api.get('/issues-en-cours/' + encodeURIComponent(nom), { silencieux: true });
-    const issues = Array.isArray(rep && rep.issues) ? rep.issues : [];
-    if (!issues.length) return '';
-    const liste = issues.map(i => '#' + (i && i.numero != null ? i.numero : '?')).join(', ');
-    return '\n\n⚠️ ' + issues.length + ' tâche(s) en cours (' + liste + ') ne seront PAS '
-         + 'interrompues (process orphelin, non supervisé) — à réserver à une opération de '
-         + 'maintenance (déploiement).';
-  } catch (e) {
-    return '';
-  }
-}
-
-async function sidebarArreterWatcherCCL(nom, btn) {
-  const avert = await avertissementTachesEnCours(nom);
-  const ok = await toasts.confirmer('Arrêter le watcher CCL du projet « ' + nom + ' » ?' + avert,
-    { texteConfirmer: 'Arrêter' });
-  if (!ok) return;
-  const label = btn ? btn.textContent : null;
-  if (btn) { btn.disabled = true; btn.textContent = 'Arrêt…'; }
-  try {
-    await api.post('/arreter-watcher', { projet: nom });
-  } catch (e) { /* déjà signalé par api.post (toast) */ }
-  if (btn) { btn.disabled = false; if (label !== null) btn.textContent = label; }
-  await rafraichirPanneauLateralResultats();
-}
+// s'éteignait que par son délai d'auto-extinction (Configuration). Depuis
+// l'issue #954, ce bouton interrompt proprement (#949) les issues en cours de
+// CE projet AVANT d'arrêter le watcher (plus de `claude` laissé orphelin) —
+// voir arreterWatcherProjet, interruption_projet.js, appelée directement par
+// la délégation ci-dessous (installerDelegationPanneau).
 
 async function sidebarRelancerTousEteints(btn) {
   if (btn) { btn.disabled = true; btn.textContent = 'Relance…'; }
@@ -837,10 +851,16 @@ function installerDelegationPanneau() {
   dom.surAction('[data-action="pl-son-cloche"]', 'click', () => choisirSonActif('cloche'));
   dom.surAction('[data-action="pl-tester-son"]', 'click', () => testerSonActif());
 
+  // Issue #954 : « Lancer »/« Redémarrer le watcher » dégénère automatiquement
+  // en lancement direct (comportement inchangé) quand le projet n'a aucune
+  // issue en cours — redemarrerWatcherAvecRelance couvre les deux cas, voir
+  // interruption_projet.js.
   dom.surAction('[data-action="pl-relancer-ccl"]', 'click',
-    (e, el) => sidebarRelancerWatcherCCL(el.dataset.projet, el));
+    (e, el) => redemarrerWatcherAvecRelance(el.dataset.projet, el));
   dom.surAction('[data-action="pl-arreter-ccl"]', 'click',
-    (e, el) => sidebarArreterWatcherCCL(el.dataset.projet, el));
+    (e, el) => arreterWatcherProjet(el.dataset.projet, el));
+  dom.surAction('[data-action="pl-tout-interrompre-projet"]', 'click',
+    (e, el) => toutInterrompreProjet(el.dataset.projet, el));
   dom.surAction('[data-action="pl-relancer-eteints"]', 'click',
     (e, el) => sidebarRelancerTousEteints(el));
   dom.surAction('[data-action="pl-relancer-actifs"]', 'click',
@@ -860,8 +880,13 @@ function installerDelegationPanneau() {
   dom.surAction('[data-action="pl-fermer-avancement"]', 'click',
     () => fermerAvancement());
 
+  // Issue #954, point 3 : CCW (délégué, aucune visibilité locale) garde le
+  // chemin historique (interrompreEtRelancer, static/js/app.js) ; CCL bascule
+  // sur la même séquence que « Redémarrer le watcher » ci-dessus.
   dom.surAction('[data-action="pl-interrompre-relancer"]', 'click',
-    (e, el) => appelerAncien('interrompreEtRelancer', el.dataset.projet, Number(el.dataset.numero)));
+    (e, el) => (el.dataset.windows === '1'
+      ? appelerAncien('interrompreEtRelancer', el.dataset.projet, Number(el.dataset.numero))
+      : redemarrerWatcherAvecRelance(el.dataset.projet, el)));
   dom.surAction('[data-action="pl-ccw-relancer"]', 'click',
     (e, el) => ccwRedemarrerProjet(el.dataset.projet, el));
   dom.surAction('[data-action="pl-ccw-nettoyer"]', 'click',
