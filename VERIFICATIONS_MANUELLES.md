@@ -1089,6 +1089,64 @@
       une 2e ligne À L'INTÉRIEUR du groupe plutôt que d'être coupés sur le
       bord droit du panneau.
 
+## Griser les boutons de ligne et de projet jusqu'à la fin complète de l'action (issue #956)
+
+> Observation d'Alain lors des essais manuels de #951/#954 le 25/11/2026 :
+> « Fermer » sur une issue EN COURS affichait, pendant quelques secondes,
+> l'état interrompu avec « Relancer »/« Fermer » de nouveau ACTIFS, puis
+> l'issue se fermait — « Relancer » restait donc cliquable pendant que la
+> fermeture était en cours. Après fusion, redémarrer l'interface
+> (`new_issue.py`), relancer le watcher du projet `testvibe` et recharger la
+> page en forçant (Ctrl+Maj+R).
+
+- [ ] **(a) Essai de clôture demandé par Alain — « Fermer » sur une issue EN
+      COURS, « Relancer » jamais cliquable pendant la fermeture** : déposer
+      une issue d'écriture longue sur `testvibe`
+      (ex. `issue_test_relance_testvibe_longue.txt`). Une fois « en cours »
+      (boutons « Interrompre »/« Fermer » sur sa ligne), cliquer **« Fermer »**
+      et confirmer. PENDANT toute l'attente (dépôt de la demande
+      d'interruption ciblée, sondage jusqu'à 30s, fermeture GitHub) :
+      - les boutons « Interrompre » ET « Fermer » de CETTE ligne sont
+        désactivés (grisés), « Fermer » affichant « ⏳ Fermeture… » ;
+      - à AUCUN moment la ligne n'affiche « Relancer »/« Fermer » ACTIFS
+        (l'état intermédiaire `needs-human`, si le serveur le pose avant la
+        fermeture définitive, ne doit jamais apparaître avec un bouton
+        cliquable) — observer en continu, pas seulement avant/après ;
+      - provoquer EN PLUS un rendu complet de la liste pendant cette attente
+        (déposer/clôturer une AUTRE issue quelconque du même projet, ou
+        simplement cliquer ↻) : la ligne reconstruite doit réapparaître
+        TOUJOURS désactivée, jamais réactivée par cette reconstruction ;
+      - à la fin (issue fermée), la ligne disparaît (ou repasse normale si le
+        filtre affiche les fermées) sans qu'aucun bouton n'ait jamais été
+        cliquable entre-temps.
+- [ ] **(b) « Redémarrer le watcher » avec deux issues en cours** : déposer EN
+      MÊME TEMPS deux issues d'écriture sur `testvibe`
+      (`issue_test_ecriture_a.txt`/`issue_test_ecriture_b.txt`,
+      `MAX_WRITE_PARALLELE` permettant aux deux de tourner ensemble) ;
+      attendre les deux lignes « en cours ». Cliquer **« ↺ Redémarrer le
+      watcher »** sur la ligne du watcher `testvibe` et confirmer. PENDANT
+      toute l'attente (interruption ciblée des deux issues, sondage,
+      redémarrage, relance automatique) :
+      - les 4 boutons de niveau projet (« ↺ Redémarrer le watcher »,
+        « ⏹ Arrêter », « ⛔ Tout interrompre », et « ↺ Redémarrer le watcher
+        CCL »/« ⛔ Interrompre et relancer » dans la zone Actions si l'une des
+        deux issues est sélectionnée) sont désactivés, libellé « ⏳ … » ;
+      - les boutons de ligne des DEUX issues ciblées (Interrompre/Fermer) sont
+        EUX AUSSI désactivés pendant toute l'attente, SANS libellé « ⏳ »
+        particulier (ce n'est pas leur propre action) ;
+      - provoquer un rendu complet pendant l'attente (↻, ou événement d'une
+        TROISIÈME issue du même projet) : les boutons de niveau projet ET les
+        boutons des deux lignes ciblées restent désactivés après ce rendu ;
+      - à la fin (watcher redémarré, les deux issues relancées
+        automatiquement), tous les boutons concernés redeviennent normaux —
+        plus aucun « ⏳ … » résiduel.
+- [ ] **(c) Garde-fou de durée** : non reproductible en essai manuel normal
+      (suppose un chemin de fin qui n'atteint jamais son `finally`, ex.
+      fermeture de l'onglet navigateur en PLEINE attente) — vérifié par les
+      tests Node (`static/js/tests/actions_ligne.test.js`,
+      `static/js/tests/interruption_projet.test.js`) sur la fonction pure
+      elle-même plutôt qu'en essai manuel.
+
 ## Résistance à une coupure réseau (issue #952)
 
 > Après fusion, relancer le watcher du projet `testvibe`. Ces trois essais

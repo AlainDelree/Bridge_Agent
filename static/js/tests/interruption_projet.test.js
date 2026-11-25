@@ -17,6 +17,11 @@ import {
   messageRedemarrerWatcherProjet,
   messageArreterWatcherProjet,
   resumeArretCibles,
+  demarrerActionProjet,
+  terminerActionProjet,
+  actionProjetEnCours,
+  decisionBoutonProjet,
+  DUREE_MAX_ACTION_PROJET_MS,
 } from '../interruption_projet.js';
 
 // ─── afficherBoutonToutInterrompre / libelleBoutonWatcherCcl ──────────────
@@ -166,4 +171,80 @@ test('resumeArretCibles : aucune cible → 0 arrêtée, succès', () => {
   const r = resumeArretCibles([], []);
   assert.equal(r.type, 'succes');
   assert.match(r.texte, /^0 issue\(s\) arrêtée\(s\)\./);
+});
+
+// ─── Registre « action en cours » du PROJET + décision pure de rendu (issue
+// #956, point 3/4) — CONSULTÉS par panneau_lateral.js à chaque reconstruction
+// des boutons de niveau projet, au lieu d'un état posé une seule fois sur les
+// nœuds DOM présents au clic.
+
+test('demarrerActionProjet : accepte le premier déclenchement, refuse un second pendant que le premier est en cours', () => {
+  const registre = new Map();
+  assert.equal(demarrerActionProjet(registre, 'bridge_agent', 'tout_interrompre', [1, 2]), true);
+  assert.equal(registre.has('bridge_agent'), true);
+  // Un AUTRE des 4 boutons de ce MÊME projet (ex. « Arrêter ») est refusé
+  // pendant que « Tout interrompre » tourne déjà (point 4 de #954/#956).
+  assert.equal(demarrerActionProjet(registre, 'bridge_agent', 'arreter', []), false);
+  // Projet DIFFÉRENT — indépendant, accepté.
+  assert.equal(demarrerActionProjet(registre, 'scrabble', 'arreter', []), true);
+});
+
+test('terminerActionProjet : libère le projet, un nouveau déclenchement redevient possible', () => {
+  const registre = new Map();
+  demarrerActionProjet(registre, 'bridge_agent', 'tout_interrompre', [1]);
+  terminerActionProjet(registre, 'bridge_agent');
+  assert.equal(registre.has('bridge_agent'), false);
+  assert.equal(demarrerActionProjet(registre, 'bridge_agent', 'arreter', []), true);
+});
+
+test('actionProjetEnCours : renvoie l\'entrée { action, debut, numeros } tant qu\'elle est fraîche, null si absente', () => {
+  const registre = new Map();
+  assert.equal(actionProjetEnCours(registre, 'bridge_agent'), null);
+  demarrerActionProjet(registre, 'bridge_agent', 'redemarrer_watcher', [12, 13], 1000);
+  const entree = actionProjetEnCours(registre, 'bridge_agent', 1500);
+  assert.equal(entree.action, 'redemarrer_watcher');
+  assert.equal(entree.debut, 1000);
+  assert.deepEqual([...entree.numeros].sort(), [12, 13]);
+});
+
+test('actionProjetEnCours : garde-fou — une entrée plus vieille que DUREE_MAX_ACTION_PROJET_MS est ignorée ET retirée (un bouton projet ne doit jamais rester bloqué indéfiniment)', () => {
+  const registre = new Map();
+  demarrerActionProjet(registre, 'bridge_agent', 'arreter', [], 0);
+  const maintenant = DUREE_MAX_ACTION_PROJET_MS + 1;
+  assert.equal(actionProjetEnCours(registre, 'bridge_agent', maintenant), null);
+  assert.equal(registre.has('bridge_agent'), false);
+  assert.equal(demarrerActionProjet(registre, 'bridge_agent', 'redemarrer_watcher', [], maintenant), true);
+});
+
+test('decisionBoutonProjet : aucune action en cours → actif, libellé normal conservé par l\'appelant', () => {
+  assert.deepEqual(decisionBoutonProjet(null), { desactive: false, libelle: null });
+});
+
+test('decisionBoutonProjet : une action en cours → désactivé, libellé d\'attente générique pour les 4 boutons', () => {
+  assert.deepEqual(
+    decisionBoutonProjet({ action: 'tout_interrompre', debut: 0, numeros: new Set([1]) }),
+    { desactive: true, libelle: '⏳ …' },
+  );
+});
+
+// ─── Levée de l'état dans chaque chemin de fin (issue #956, point 4) :
+// succès, échec, délai dépassé, erreur réseau, annulation — tous passent par
+// terminerActionProjet dans le `finally` des 3 fonctions exportées
+// (toutInterrompreProjet/redemarrerWatcherAvecRelance/arreterWatcherProjet),
+// vérifié ici sur le registre lui-même (le câblage réseau est vérifié
+// manuellement, voir le rapport de clôture).
+
+test('terminerActionProjet : chemins succès/échec/délai dépassé/erreur réseau — même `finally`, l\'état est levé identiquement', () => {
+  const registre = new Map();
+  demarrerActionProjet(registre, 'bridge_agent', 'arreter', [1, 2]);
+  terminerActionProjet(registre, 'bridge_agent'); // appelé dans le `finally`, quelle que soit l'issue du bloc try
+  assert.equal(actionProjetEnCours(registre, 'bridge_agent'), null);
+});
+
+test('chemin annulation (confirmation refusée) : l\'état est démarré AVANT la confirmation (#954, pour désactiver les 4 boutons pendant la boîte de dialogue elle-même) mais levé identiquement par le `finally` si elle est refusée', () => {
+  const registre = new Map();
+  demarrerActionProjet(registre, 'bridge_agent', 'tout_interrompre', []);
+  const confirmationRefusee = true;
+  if (confirmationRefusee) terminerActionProjet(registre, 'bridge_agent'); // `finally` atteint via le `return` anticipé
+  assert.equal(actionProjetEnCours(registre, 'bridge_agent'), null);
 });

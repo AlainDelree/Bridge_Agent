@@ -2404,8 +2404,19 @@ function copierDiffDepuisBadge(event, nom, numero) {
 // avec un message invitant à utiliser « Interrompre » plutôt, affiché
 // ci-dessous comme n'importe quelle autre erreur — pas de double contrôle
 // côté client.
+// Garde anti-double-clic + désactivation de TOUS les boutons de la ligne
+// pendant l'attente réseau (issue #956, point 2 — jusqu'ici absente pour
+// « Annuler », contrairement à « Interrompre »/« Fermer » #748/#951) : voir
+// _demarrerActionLigne/_rafraichirBoutonsLigne, définies plus bas dans ce
+// fichier (déclarations de fonction, hissées — l'ordre d'appel n'importe
+// pas).
 async function annulerIssue(nom, numero) {
   if (!confirm("Annuler (fermer) l'issue #" + numero + " sur GitHub ?")) return;
+  if (!_demarrerActionLigne(nom, numero, 'annuler')) {
+    alert('Une action est déjà en cours pour cette issue.');
+    return;
+  }
+  _rafraichirBoutonsLigne();
   try {
     const rep = await fetch('/annuler-issue/' + encodeURIComponent(nom)
                             + '/' + encodeURIComponent(numero), {method: 'POST'});
@@ -2417,6 +2428,9 @@ async function annulerIssue(nom, numero) {
   } catch(e) {
     alert('Erreur réseau : ' + e.message);
     return;
+  } finally {
+    _terminerActionLigne(nom, numero);
+    _rafraichirBoutonsLigne();
   }
   // Recharge la liste (l'issue devient fermée) puis réaffiche la même issue si
   // sa ligne existe encore et reste visible (projet non filtré).
@@ -2474,7 +2488,20 @@ async function fermerIssue(nom, numero) {
   if (!confirm("Fermer définitivement l'issue #" + numero + " ?\n\n"
              + "Ferme l'issue sur GitHub sans toucher au watcher ni aux autres "
              + "issues de ce projet. Irréversible.")) return;
-  await _executerFermetureGh(nom, numero);
+  // Garde anti-double-clic + désactivation de TOUS les boutons de la ligne
+  // (issue #956, point 2 — jusqu'ici absente pour ce chemin de fermeture
+  // simple).
+  if (!_demarrerActionLigne(nom, numero, 'fermer')) {
+    alert('Une action est déjà en cours pour cette issue.');
+    return;
+  }
+  _rafraichirBoutonsLigne();
+  try {
+    await _executerFermetureGh(nom, numero);
+  } finally {
+    _terminerActionLigne(nom, numero);
+    _rafraichirBoutonsLigne();
+  }
 }
 
 // ─── Fermeture propre d'une issue EN COURS (issue #951, étude #939/#946/
@@ -2521,43 +2548,31 @@ function labelsIssueCourante(nom, numero) {
   return labelsIssueDepuisCache(nom, numero);
 }
 
-// Ensemble des couples (projet, numéro) dont la FERMETURE est actuellement
-// en cours (issue #951, même patron que _interruptionsEnCours/#748) —
-// DISTINCT de _interruptionsEnCours : une fermeture engage elle-même une
-// interruption (ciblée ou watcher entier) comme étape intermédiaire, mais
-// c'est tout le GESTE « Fermer » (dépôt + attente + close) qu'un second clic
-// ne doit jamais dédoubler, pas seulement son étape d'interruption.
-const _fermeturesEnCours = new Set();
-
-// Désactive/réactive visuellement le bouton « Fermer » (et « Interrompre »,
-// pour éviter une action concurrente sur la même ligne pendant l'attente) —
-// même patron que _marquerInterruptionEnCours ci-dessus. Comme pour elle,
-// posé par querySelector AU MOMENT de l'appel : un rendu complet survenant
-// PENDANT l'attente (ex. fin_issue d'une AUTRE issue du même projet)
-// reconstruit la ligne sans cet état — limite déjà acceptée pour
-// _marquerInterruptionEnCours, pas une régression propre à cette issue.
-function _marquerFermetureEnCours(nom, numero, active) {
-  const numStr = String(numero);
-  const ligne = [...document.querySelectorAll('#liste-issues .ligne-issue')]
-    .find(l => l.dataset.projet === nom && l.dataset.numero === numStr);
-  if (!ligne) return;
-  const boutonFermer = ligne.querySelector('.btn-fermer-ligne');
-  if (boutonFermer) {
-    boutonFermer.disabled = active;
-    boutonFermer.classList.toggle('action-ligne-attente', active);
-    if (active) {
-      if (boutonFermer.dataset.libelleAvantAttente === undefined) boutonFermer.dataset.libelleAvantAttente = boutonFermer.textContent;
-      boutonFermer.textContent = '⏳ Fermeture…';
-    } else if (boutonFermer.dataset.libelleAvantAttente !== undefined) {
-      boutonFermer.textContent = boutonFermer.dataset.libelleAvantAttente;
-      delete boutonFermer.dataset.libelleAvantAttente;
-    }
-  }
-  const boutonInterrompre = ligne.querySelector('.btn-interrompre-ligne');
-  if (boutonInterrompre) {
-    boutonInterrompre.disabled = active;
-    boutonInterrompre.classList.toggle('action-ligne-attente', active);
-  }
+// Registre partagé « action en cours » d'UNE ligne (issue #956, remplace les
+// ensembles séparés _interruptionsEnCours/_fermeturesEnCours + leurs
+// fonctions de désactivation imperative — voir static/js/actions_ligne.js
+// pour la décision pure CONSULTÉE par resultats.js::majBadges() à chaque
+// recalcul, qui survit désormais à toute reconstruction de la ligne, au lieu
+// d'un état posé une seule fois sur les nœuds DOM présents au clic). UNE
+// SEULE action à la fois pour une ligne donnée : démarrer une fermeture
+// alors qu'une interruption tourne déjà (ou l'inverse) est refusé par
+// demarrerActionLigne — c'est voulu, TOUS les boutons de la ligne doivent
+// être désactivés pendant N'IMPORTE QUELLE action confirmée (point 2).
+function _demarrerActionLigne(nom, numero, action) {
+  const actionsLigne = window.Bridge && window.Bridge.actionsLigne;
+  if (!actionsLigne) return true; // socle indisponible (tests) : ne bloque jamais l'action elle-même
+  return actionsLigne.demarrerActionLigne(actionsLigne.registreActionsLigne, nom, numero, action);
+}
+function _terminerActionLigne(nom, numero) {
+  const actionsLigne = window.Bridge && window.Bridge.actionsLigne;
+  if (actionsLigne) actionsLigne.terminerActionLigne(actionsLigne.registreActionsLigne, nom, numero);
+}
+// Réapplique IMMÉDIATEMENT la décision d'affichage (disabled + « ⏳ … ») sur
+// la ligne concernée, sans attendre le prochain tick (1s) — même retour
+// visuel instantané qu'avant #956, mais via la SEULE décision consultée par
+// tout rendu ultérieur (plus de double mécanisme à faire diverger).
+function _rafraichirBoutonsLigne() {
+  if (window.Bridge && window.Bridge.resultats) window.Bridge.resultats.majBadges();
 }
 
 // Message d'échec/délai dépassé — toast si disponible, sinon alert() (même
@@ -2644,7 +2659,10 @@ async function _fermerIssueApresArretCible(nom, numero, depot) {
 // Cas normal (issue #951, point 2) : issue NON interactive, encore en
 // cours. Confirmation claire (numéro, titre, effet), puis séquence
 // dépôt→attente→fermeture ci-dessus, sous la garde anti-double-clic
-// _fermeturesEnCours — l'issue n'est jamais fermée tant qu'elle tourne.
+// partagée (_demarrerActionLigne, issue #956) — l'issue n'est jamais fermée
+// tant qu'elle tourne, et TOUS les boutons de sa ligne restent désactivés
+// jusqu'à la fin complète de la séquence, quel que soit le rendu qui
+// survient pendant l'attente.
 async function fermerIssueNormaleEnCoursDepuisLigne(nom, numero, titre) {
   const depot = depotDuProjet(nom);
   if (!depot) {
@@ -2656,17 +2674,16 @@ async function fermerIssueNormaleEnCoursDepuisLigne(nom, numero, titre) {
              + 'projet continuent normalement, et le travail déjà fait (worktree, commits éventuels) '
              + 'est conservé tel quel. Irréversible. Continuer ?')) return;
 
-  const actionsLigne = window.Bridge && window.Bridge.actionsLigne;
-  if (actionsLigne && !actionsLigne.demarrerInterruption(_fermeturesEnCours, nom, numero)) {
-    alert('Fermeture déjà en cours pour cette issue.');
+  if (!_demarrerActionLigne(nom, numero, 'fermer')) {
+    alert('Une action est déjà en cours pour cette issue.');
     return;
   }
-  _marquerFermetureEnCours(nom, numero, true);
+  _rafraichirBoutonsLigne();
   try {
     await _fermerIssueApresArretCible(nom, numero, depot);
   } finally {
-    if (actionsLigne) actionsLigne.terminerInterruption(_fermeturesEnCours, nom, numero);
-    _marquerFermetureEnCours(nom, numero, false);
+    _terminerActionLigne(nom, numero);
+    _rafraichirBoutonsLigne();
   }
 }
 
@@ -2737,7 +2754,7 @@ function afficherModalFermetureInteractive(titre, messageHtml, libelleOui, libel
 }
 
 // Étape technique partagée (RAW, sans garde ni confirmation — ses deux
-// appelants ci-dessous détiennent déjà la garde _fermeturesEnCours) : arrête
+// appelants ci-dessous détiennent déjà la garde partagée, issue #956) : arrête
 // le watcher ENTIER du projet (mécanisme historique #323, même route
 // /interrompre que interrompreIssue ci-dessous) puis, SEULEMENT si cet arrêt
 // a réussi, ferme l'issue (issue #951, point 3).
@@ -2767,17 +2784,16 @@ async function _interrompreWatcherCompletPuisFermer(nom, numero, depot, labels) 
 // cas) : arrête directement le watcher entier puis ferme — rien d'autre à
 // attendre, rien d'autre n'est affecté.
 async function fermerIssueInteractiveSansAutres(nom, numero, depot, labels) {
-  const actionsLigne = window.Bridge && window.Bridge.actionsLigne;
-  if (actionsLigne && !actionsLigne.demarrerInterruption(_fermeturesEnCours, nom, numero)) {
-    alert('Fermeture déjà en cours pour cette issue.');
+  if (!_demarrerActionLigne(nom, numero, 'fermer')) {
+    alert('Une action est déjà en cours pour cette issue.');
     return;
   }
-  _marquerFermetureEnCours(nom, numero, true);
+  _rafraichirBoutonsLigne();
   try {
     await _interrompreWatcherCompletPuisFermer(nom, numero, depot, labels);
   } finally {
-    if (actionsLigne) actionsLigne.terminerInterruption(_fermeturesEnCours, nom, numero);
-    _marquerFermetureEnCours(nom, numero, false);
+    _terminerActionLigne(nom, numero);
+    _rafraichirBoutonsLigne();
   }
 }
 
@@ -2790,12 +2806,11 @@ async function fermerIssueInteractiveSansAutres(nom, numero, depot, labels) {
 // PAS fermée — aucune action destructrice sans la confirmation explicite
 // déjà obtenue pour une attente qui, elle, a échoué.
 async function fermerIssueInteractiveAvecAutres(nom, numero, depot, labels, autresNumeros) {
-  const actionsLigne = window.Bridge && window.Bridge.actionsLigne;
-  if (actionsLigne && !actionsLigne.demarrerInterruption(_fermeturesEnCours, nom, numero)) {
-    alert('Fermeture déjà en cours pour cette issue.');
+  if (!_demarrerActionLigne(nom, numero, 'fermer')) {
+    alert('Une action est déjà en cours pour cette issue.');
     return;
   }
-  _marquerFermetureEnCours(nom, numero, true);
+  _rafraichirBoutonsLigne();
   try {
     for (const autreNumero of autresNumeros) {
       try {
@@ -2819,8 +2834,8 @@ async function fermerIssueInteractiveAvecAutres(nom, numero, depot, labels, autr
     }
     await _interrompreWatcherCompletPuisFermer(nom, numero, depot, labels);
   } finally {
-    if (actionsLigne) actionsLigne.terminerInterruption(_fermeturesEnCours, nom, numero);
-    _marquerFermetureEnCours(nom, numero, false);
+    _terminerActionLigne(nom, numero);
+    _rafraichirBoutonsLigne();
   }
 }
 
@@ -2987,33 +3002,18 @@ async function avertissementAutresIssuesEnCours(nom, numeroAExclure) {
   }
 }
 
-// Ensemble des couples (projet, numéro) actuellement en cours d'interruption
-// (issue #748) — garde partagée par les déclencheurs existants (bouton
-// « Interrompre » de la ligne via interrompreDepuisLigne — mécanisme CIBLÉ ou
-// historique selon l'issue, #950 — et bouton « Interrompre et relancer » du
-// panneau latéral via interrompreEtRelancer), puisque tous appellent
-// demarrerInterruption/terminerInterruption autour de leur appel réseau.
-// État/décisions en logique pure dans actions_ligne.js
-// (demarrerInterruption/terminerInterruption, testées sous Node) ; seule
-// l'application au DOM (désactivation visuelle) vit ici.
-const _interruptionsEnCours = new Set();
-
-// Désactive/réactive visuellement les déclencheurs connus pour CE couple —
-// bouton « Interrompre » de la ligne (disabled, vrai <button> depuis #950) et
-// bouton « Interrompre et relancer » du panneau latéral (disabled + libellé
-// « Interruption en cours… », restauré si l'appel échoue — un succès recharge
-// la liste/réaffiche le panneau, qui les reconstruisent déjà dans leur état
-// normal, rien à restaurer alors).
+// Désactive/réactive visuellement le bouton « Interrompre et relancer » du
+// panneau latéral QUAND il suit le chemin HISTORIQUE (issue for-windows/CCW,
+// délégué — hors périmètre de la refonte #954/#956 des boutons de niveau
+// projet CCL, voir static/js/interruption_projet.js) — disabled + libellé
+// « Interruption en cours… », restauré si l'appel échoue (un succès recharge
+// le panneau, qui le reconstruit déjà dans son état normal, rien à
+// restaurer). Le bouton « Interrompre » de LA LIGNE, lui, est désormais
+// désactivé via le registre partagé (_demarrerActionLigne/
+// _rafraichirBoutonsLigne, issue #956) — consulté par tout rendu, pas posé
+// ici une seule fois sur les nœuds présents au clic.
 function _marquerInterruptionEnCours(nom, numero, active) {
   const numStr = String(numero);
-  const ligne = [...document.querySelectorAll('#liste-issues .ligne-issue')]
-    .find(l => l.dataset.projet === nom && l.dataset.numero === numStr);
-  const boutonLigne = ligne ? ligne.querySelector('.btn-interrompre-ligne') : null;
-  if (boutonLigne) {
-    boutonLigne.disabled = active;
-    boutonLigne.classList.toggle('action-ligne-attente', active);
-    boutonLigne.title = active ? 'Interruption en cours…' : 'Interrompre cette issue';
-  }
   const bouton = document.querySelector(
     '#pl-zone-actions [data-action="pl-interrompre-relancer"][data-projet="' + CSS.escape(nom)
     + '"][data-numero="' + numStr + '"]');
@@ -3058,15 +3058,17 @@ async function interrompreIssue(nom, numero) {
              + avertAutres
              + ' Continuer ?')) return false;
 
-  // Garde anti-double-déclenchement (issue #748) : un clic pendant qu'une
-  // interruption est déjà en cours pour CE couple est ignoré avec un message
-  // court, plutôt que de relancer un second appel réseau concurrent.
-  const actionsLigne = window.Bridge && window.Bridge.actionsLigne;
-  if (actionsLigne && !actionsLigne.demarrerInterruption(_interruptionsEnCours, nom, numero)) {
-    alert('Interruption déjà en cours pour cette issue.');
+  // Garde anti-double-déclenchement (issue #748, étendue #956) : un clic
+  // pendant qu'une action est déjà en cours pour CETTE issue est ignoré avec
+  // un message court, plutôt que de relancer un second appel réseau
+  // concurrent — TOUS les boutons de la ligne restent désactivés pendant
+  // l'attente (_rafraichirBoutonsLigne, consulté par tout rendu ultérieur).
+  if (!_demarrerActionLigne(nom, numero, 'interrompre')) {
+    alert('Une action est déjà en cours pour cette issue.');
     return false;
   }
   _marquerInterruptionEnCours(nom, numero, true);
+  _rafraichirBoutonsLigne();
 
   let resultat;
   try {
@@ -3078,17 +3080,21 @@ async function interrompreIssue(nom, numero) {
     resultat = await rep.json();
   } catch(e) {
     alert('Erreur réseau : ' + e.message);
-    if (actionsLigne) actionsLigne.terminerInterruption(_interruptionsEnCours, nom, numero);
+    _terminerActionLigne(nom, numero);
     _marquerInterruptionEnCours(nom, numero, false);
+    _rafraichirBoutonsLigne();
     return false;
   }
   if (!resultat.succes) {
     alert('Erreur : ' + (resultat.erreur || "échec de l'interruption."));
-    if (actionsLigne) actionsLigne.terminerInterruption(_interruptionsEnCours, nom, numero);
+    _terminerActionLigne(nom, numero);
     _marquerInterruptionEnCours(nom, numero, false);
+    _rafraichirBoutonsLigne();
     return false;
   }
-  if (actionsLigne) actionsLigne.terminerInterruption(_interruptionsEnCours, nom, numero);
+  _terminerActionLigne(nom, numero);
+  _marquerInterruptionEnCours(nom, numero, false);
+  _rafraichirBoutonsLigne();
   ouvrirModalInterrompre(resultat, avertTree, nom, numero, windows);
 
   // Recharge la liste (l'issue porte désormais needs-human) puis réaffiche.
@@ -3148,6 +3154,17 @@ async function relancerIssue(nom, numero) {
              + "à son prochain cycle (s'il tourne — redémarré automatiquement "
              + "s'il s'était éteint, issue #574).")) return;
 
+  // Garde anti-double-clic + désactivation de TOUS les boutons de la ligne
+  // (issue #956, point 2 — jusqu'ici absente pour « Relancer »). Si une
+  // séquence de niveau PROJET est en train de relancer CETTE MÊME issue
+  // (static/js/interruption_projet.js, action 'projet'), le clic est refusé
+  // de la même façon — évite une relance concurrente.
+  if (!_demarrerActionLigne(nom, numero, 'relancer')) {
+    alert('Une action est déjà en cours pour cette issue.');
+    return;
+  }
+  _rafraichirBoutonsLigne();
+
   let resultat;
   try {
     const rep = await fetch('/relancer-issue', {
@@ -3158,6 +3175,8 @@ async function relancerIssue(nom, numero) {
     resultat = await rep.json();
   } catch(e) {
     alert('Erreur réseau : ' + e.message);
+    _terminerActionLigne(nom, numero);
+    _rafraichirBoutonsLigne();
     return;
   }
   if (!resultat.succes || resultat.statut_global === 'echec') {
@@ -3166,8 +3185,12 @@ async function relancerIssue(nom, numero) {
     if (window.Bridge && window.Bridge.panneGithub) window.Bridge.panneGithub.signalerEchecPossible(resultat);
     const detail = (resultat.etapes || []).map(e => e.message).filter(Boolean).join(' / ');
     alert('Erreur : ' + (resultat.erreur || detail || 'échec de la relance.'));
+    _terminerActionLigne(nom, numero);
+    _rafraichirBoutonsLigne();
     return;
   }
+  _terminerActionLigne(nom, numero);
+  _rafraichirBoutonsLigne();
 
   // Recharge la liste (l'issue a perdu needs-human) puis réaffiche si visible.
   await chargerListeIssues();
@@ -3271,16 +3294,16 @@ async function demanderInterruptionCibleeDepuisLigne(nom, numero, titre) {
              + 'pourra être relancée ensuite avec « Relancer ». Continuer ?')) return;
 
   // Même garde anti-double-déclenchement que le mécanisme historique (issue
-  // #748) — pas strictement nécessaire ici (dépôt de sentinelle idempotent,
-  // voir app.interruption.deposer_demande_interruption), mais un seul bouton
+  // #748, étendue #956 à TOUS les boutons de la ligne) — pas strictement
+  // nécessaire côté serveur ici (dépôt de sentinelle idempotent, voir
+  // app.interruption.deposer_demande_interruption), mais un seul bouton
   // « Interrompre » pour les deux mécanismes : même retour visuel dans les
   // deux cas, plus simple à suivre pour Alain.
-  const actionsLigne = window.Bridge && window.Bridge.actionsLigne;
-  if (actionsLigne && !actionsLigne.demarrerInterruption(_interruptionsEnCours, nom, numero)) {
-    alert('Interruption déjà en cours pour cette issue.');
+  if (!_demarrerActionLigne(nom, numero, 'interrompre')) {
+    alert('Une action est déjà en cours pour cette issue.');
     return;
   }
-  _marquerInterruptionEnCours(nom, numero, true);
+  _rafraichirBoutonsLigne();
 
   let resultat;
   try {
@@ -3292,12 +3315,12 @@ async function demanderInterruptionCibleeDepuisLigne(nom, numero, titre) {
     resultat = await rep.json();
   } catch(e) {
     alert('Erreur réseau : ' + e.message);
-    if (actionsLigne) actionsLigne.terminerInterruption(_interruptionsEnCours, nom, numero);
-    _marquerInterruptionEnCours(nom, numero, false);
+    _terminerActionLigne(nom, numero);
+    _rafraichirBoutonsLigne();
     return;
   }
-  if (actionsLigne) actionsLigne.terminerInterruption(_interruptionsEnCours, nom, numero);
-  _marquerInterruptionEnCours(nom, numero, false);
+  _terminerActionLigne(nom, numero);
+  _rafraichirBoutonsLigne();
 
   if (!resultat.succes) {
     alert('Erreur : ' + (resultat.erreur || "échec de la demande d'interruption."));

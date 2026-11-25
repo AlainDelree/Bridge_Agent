@@ -46,7 +46,9 @@ import { store } from './socle/store.js';
 import { api } from './socle/api.js';
 import { toasts } from './socle/toasts.js';
 import { appelerAncien } from './socle/pont.js';
-import { mecanismeInterruptionLigne } from './actions_ligne.js';
+import {
+  mecanismeInterruptionLigne, registreActionsLigne, demarrerActionLigne, terminerActionLigne,
+} from './actions_ligne.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 1. LOGIQUE PURE (testée sous Node — voir static/js/tests/interruption_projet.test.js)
@@ -235,27 +237,85 @@ export async function recupererIssuesEnCoursClasseesProjet(nom) {
   return classifierIssuesEnCoursProjet(enrichies);
 }
 
-// ─── Garde anti-double-clic (issue #954, point 4) — DISTINCTE de
-// _interruptionsEnCours et _fermeturesEnCours (static/js/app.js, #748/#951) :
-// un ensemble de noms de PROJET (ces actions portent sur le watcher entier
-// d'un projet, pas sur une issue précise) partagé par les 4 boutons de
-// niveau projet, pour qu'un clic sur l'un désactive aussi les autres pendant
-// l'attente.
-const _actionsProjetEnCours = new Set();
+// ─── Garde anti-double-clic + état « action en cours » du PROJET (issue
+// #954 point 4, étendue #956) ──────────────────────────────────────────────
+// Avant l'issue #956, cet état n'était posé QU'UNE FOIS, imperativement, sur
+// les nœuds DOM présents au moment du clic (marquerActionProjetEnCours
+// ci-dessous) : un rendu complet survenant PENDANT l'attente (ex. l'abonnement
+// à `derniereNotifIssue` — static/js/panneau_lateral.js — déclenché par
+// l'événement SSE d'une AUTRE issue, même le 30s d'intervalle) reconstruit
+// les boutons SANS cet état. Comme pour le registre par LIGNE
+// (static/js/actions_ligne.js, même issue), l'état vit désormais aussi dans
+// ce registre CONSULTÉ par le rendu (panneau_lateral.js::
+// rendrePanneauLateralMonitoring/rendrePanneauLateralActions, via
+// decisionBoutonProjet ci-dessous) à chaque reconstruction — la désactivation
+// imperative ci-dessous reste en place, pour le retour visuel INSTANTANÉ au
+// clic (avant même le prochain rendu), mais n'est plus la SEULE source.
+//
+// Clé : nom de PROJET (ces 4 boutons portent sur le watcher entier d'un
+// projet, pas sur une issue précise, point 4 de #954). Valeur : { action,
+// debut, numeros (Set<number>) } — `numeros` : les issues que CETTE séquence
+// interrompt ou relance, pour que leurs propres boutons de LIGNE soient eux
+// aussi désactivés (point 3 de l'issue #956 — via le registre PARTAGÉ de
+// actions_ligne.js, action 'projet', marqué/levé par marquerLignesCiblees/
+// demarquerLignesCiblees ci-dessous).
+export const DUREE_MAX_ACTION_PROJET_MS = 120000;
 
-function demarrerActionProjet(nom) {
-  if (_actionsProjetEnCours.has(nom)) return false;
-  _actionsProjetEnCours.add(nom);
+export const registreActionsProjet = new Map();
+
+// Démarre le suivi d'une action CONFIRMÉE pour ce projet — refuse (false) si
+// une action est DÉJÀ en cours (et non périmée) pour ce projet.
+export function demarrerActionProjet(registre, nom, action, numeros, maintenant = Date.now()) {
+  const existante = registre.get(nom);
+  if (existante && maintenant - existante.debut <= DUREE_MAX_ACTION_PROJET_MS) return false;
+  registre.set(nom, { action, debut: maintenant, numeros: new Set((numeros || []).map(Number)) });
   return true;
 }
 
-function terminerActionProjet(nom) {
-  _actionsProjetEnCours.delete(nom);
+export function terminerActionProjet(registre, nom) {
+  registre.delete(nom);
+}
+
+// Lu par le RENDU (panneau_lateral.js, via decisionBoutonProjet ci-dessous) —
+// applique le garde-fou (issue #956, point 4) : une entrée plus vieille que
+// DUREE_MAX_ACTION_PROJET_MS est ignorée ET retirée, comme si aucune action
+// n'était en cours — un bouton ne doit jamais rester grisé indéfiniment.
+export function actionProjetEnCours(registre, nom, maintenant = Date.now()) {
+  const entree = registre.get(nom);
+  if (!entree) return null;
+  if (maintenant - entree.debut > DUREE_MAX_ACTION_PROJET_MS) { registre.delete(nom); return null; }
+  return entree;
+}
+
+// Décision PURE de rendu des 4 boutons de niveau projet (issue #956) —
+// consultée par panneau_lateral.js à CHAQUE reconstruction.
+const LIBELLE_ATTENTE_PROJET = '⏳ …';
+export function decisionBoutonProjet(actionEnCours) {
+  return actionEnCours
+    ? { desactive: true, libelle: LIBELLE_ATTENTE_PROJET }
+    : { desactive: false, libelle: null };
+}
+
+// Marque/lève, dans le registre PARTAGÉ des LIGNES (actions_ligne.js), les
+// issues que CETTE séquence de niveau projet cible (issue #956, point 3) —
+// action 'projet' : aucun libellé de bouton de LIGNE n'est remplacé (ce
+// n'est pas SA propre action), seule la désactivation s'applique (consultée
+// par resultats.js::majBadges() comme toute autre action de ligne). Ignore
+// silencieusement une issue déjà marquée par sa PROPRE action de ligne
+// (demarrerActionLigne refuse alors, return false) — déjà désactivée.
+function marquerLignesCiblees(nom, numeros) {
+  (numeros || []).forEach((numero) => {
+    demarrerActionLigne(registreActionsLigne, nom, numero, 'projet', { dureeMaxMs: DUREE_MAX_ACTION_PROJET_MS });
+  });
+}
+function demarquerLignesCiblees(nom, numeros) {
+  (numeros || []).forEach((numero) => terminerActionLigne(registreActionsLigne, nom, numero));
 }
 
 // Désactive/réactive visuellement les 4 boutons de niveau projet de `nom` —
-// indicateur « ⏳ … » pendant l'attente (issue #954, point 4), même patron
-// que _marquerFermetureEnCours (static/js/app.js, #951).
+// indicateur « ⏳ … » pendant l'attente (issue #954, point 4) : retour visuel
+// INSTANTANÉ au clic, en plus (pas à la place) du registre ci-dessus — voir
+// sa docstring.
 function marquerActionProjetEnCours(nom, active) {
   if (typeof document === 'undefined') return;
   const selecteurs = [
@@ -288,11 +348,12 @@ async function rafraichirApresActionProjet() {
 
 // ─── « Tout interrompre pour ce projet » (issue #954, point 1) ────────────
 export async function toutInterrompreProjet(nom, _btn) {
-  if (!demarrerActionProjet(nom)) {
+  if (!demarrerActionProjet(registreActionsProjet, nom, 'tout_interrompre', [])) {
     toasts.avertissement('Une action est déjà en cours pour ce projet.');
     return;
   }
   marquerActionProjetEnCours(nom, true);
+  let numeros = [];
   try {
     const depot = appelerAncien('depotDuProjet', nom);
     if (!depot) {
@@ -312,7 +373,10 @@ export async function toutInterrompreProjet(nom, _btn) {
       { titre: 'Tout interrompre', texteConfirmer: 'Tout interrompre' });
     if (!ok) return;
 
-    const numeros = normales.map((it) => it.numero);
+    numeros = normales.map((it) => it.numero);
+    // Issue #956, point 3 : les lignes des issues CIBLÉES par cette séquence
+    // sont elles aussi désactivées, dès ici et jusqu'à la levée en `finally`.
+    marquerLignesCiblees(nom, numeros);
     await demanderInterruptionCiblee(depot, numeros);
     const { arretees, nonArretees } = await attendreArretCibles(nom, numeros);
     const resume = resumeArretCibles(arretees, nonArretees);
@@ -320,7 +384,8 @@ export async function toutInterrompreProjet(nom, _btn) {
     else toasts.succes(resume.texte);
     await rafraichirApresActionProjet();
   } finally {
-    terminerActionProjet(nom);
+    demarquerLignesCiblees(nom, numeros);
+    terminerActionProjet(registreActionsProjet, nom);
     marquerActionProjetEnCours(nom, false);
   }
 }
@@ -328,11 +393,12 @@ export async function toutInterrompreProjet(nom, _btn) {
 // ─── « Redémarrer le watcher » / « Interrompre et relancer (watcher CCL) »
 // (issue #954, point 3) — même séquence pour les deux boutons. ────────────
 export async function redemarrerWatcherAvecRelance(nom, _btn) {
-  if (!demarrerActionProjet(nom)) {
+  if (!demarrerActionProjet(registreActionsProjet, nom, 'redemarrer_watcher', [])) {
     toasts.avertissement('Une action est déjà en cours pour ce projet.');
     return;
   }
   marquerActionProjetEnCours(nom, true);
+  let numeros = [];
   try {
     const depot = appelerAncien('depotDuProjet', nom);
     const { normales, interactives } = await recupererIssuesEnCoursClasseesProjet(nom);
@@ -343,7 +409,11 @@ export async function redemarrerWatcherAvecRelance(nom, _btn) {
       if (!ok) return;
     }
 
-    const numeros = normales.map((it) => it.numero);
+    numeros = normales.map((it) => it.numero);
+    // Issue #956, point 3 : désactive aussi les lignes des issues ciblées —
+    // reste marqué jusqu'à la fin de CETTE fonction (interruption, attente,
+    // redémarrage ET boucle de relance ci-dessous), levé en `finally`.
+    marquerLignesCiblees(nom, numeros);
     if (numeros.length) {
       if (!depot) {
         toasts.erreur('Dépôt GitHub introuvable pour le projet « ' + nom + ' » — redémarrage annulé.');
@@ -402,18 +472,20 @@ export async function redemarrerWatcherAvecRelance(nom, _btn) {
     toasts[echecs.length ? 'avertissement' : 'succes'](texte);
     await rafraichirApresActionProjet();
   } finally {
-    terminerActionProjet(nom);
+    demarquerLignesCiblees(nom, numeros);
+    terminerActionProjet(registreActionsProjet, nom);
     marquerActionProjetEnCours(nom, false);
   }
 }
 
 // ─── « Arrêter » le watcher du projet (issue #954, point 3, enrichi) ──────
 export async function arreterWatcherProjet(nom, _btn) {
-  if (!demarrerActionProjet(nom)) {
+  if (!demarrerActionProjet(registreActionsProjet, nom, 'arreter', [])) {
     toasts.avertissement('Une action est déjà en cours pour ce projet.');
     return;
   }
   marquerActionProjetEnCours(nom, true);
+  let numeros = [];
   try {
     const depot = appelerAncien('depotDuProjet', nom);
     const { normales, interactives } = await recupererIssuesEnCoursClasseesProjet(nom);
@@ -422,7 +494,9 @@ export async function arreterWatcherProjet(nom, _btn) {
       { titre: 'Arrêter le watcher', texteConfirmer: 'Arrêter' });
     if (!ok) return;
 
-    const numeros = normales.map((it) => it.numero);
+    numeros = normales.map((it) => it.numero);
+    // Issue #956, point 3 : désactive aussi les lignes des issues ciblées.
+    marquerLignesCiblees(nom, numeros);
     if (numeros.length) {
       if (!depot) {
         toasts.erreur('Dépôt GitHub introuvable pour le projet « ' + nom + ' » — arrêt annulé.');
@@ -454,7 +528,8 @@ export async function arreterWatcherProjet(nom, _btn) {
     toasts.succes(texte);
     await rafraichirApresActionProjet();
   } finally {
-    terminerActionProjet(nom);
+    demarquerLignesCiblees(nom, numeros);
+    terminerActionProjet(registreActionsProjet, nom);
     marquerActionProjetEnCours(nom, false);
   }
 }

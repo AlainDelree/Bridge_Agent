@@ -16,8 +16,11 @@ import {
   fusionnerSonsProjet,
   sonConnuDansCache,
   cleInterruption,
-  demarrerInterruption,
-  terminerInterruption,
+  demarrerActionLigne,
+  terminerActionLigne,
+  actionLigneEnCours,
+  decisionAffichageBoutonsLigne,
+  DUREE_MAX_ACTION_LIGNE_MS,
 } from '../actions_ligne.js';
 
 // ─── prefixeInformatifLigneOuverte : quel préfixe afficher selon les labels ─
@@ -191,34 +194,199 @@ test('sonConnuDansCache : lit un choix connu ou retombe sur null (suit le global
   assert.equal(sonConnuDansCache(null, 'bridge_agent', 630), null);
 });
 
-// ─── Garde anti-double-déclenchement d'une interruption (issue #748) ──────
+// ─── Garde anti-double-clic + registre « action en cours » d'une ligne
+// (issues #748/#951/#956) ───────────────────────────────────────────────────
 
 test('cleInterruption : clé stable par couple (projet, numéro)', () => {
   assert.equal(cleInterruption('bridge_agent', 452), 'bridge_agent#452');
   assert.equal(cleInterruption('bridge_agent', '452'), 'bridge_agent#452');
 });
 
-test('demarrerInterruption : accepte le premier déclenchement, refuse un second pendant que le premier est en cours', () => {
-  const enCours = new Set();
-  assert.equal(demarrerInterruption(enCours, 'bridge_agent', 452), true);
-  assert.equal(enCours.has('bridge_agent#452'), true);
-  // Second déclenchement pour LE MÊME couple, avant toute fin — refusé.
-  assert.equal(demarrerInterruption(enCours, 'bridge_agent', 452), false);
+test('demarrerActionLigne : accepte le premier déclenchement, refuse un second pendant que le premier est en cours', () => {
+  const registre = new Map();
+  assert.equal(demarrerActionLigne(registre, 'bridge_agent', 452, 'fermer'), true);
+  assert.equal(registre.has('bridge_agent#452'), true);
+  // Second déclenchement pour LE MÊME couple, avant toute fin — refusé, quelle
+  // que soit l'action demandée (point 2 de #956 : UNE SEULE action à la fois
+  // pour une ligne, « Interrompre » ne doit pas pouvoir démarrer pendant que
+  // « Fermer » tourne déjà, et réciproquement).
+  assert.equal(demarrerActionLigne(registre, 'bridge_agent', 452, 'interrompre'), false);
   // Couple DIFFÉRENT (autre numéro, ou autre projet) — indépendant, accepté.
-  assert.equal(demarrerInterruption(enCours, 'bridge_agent', 453), true);
-  assert.equal(demarrerInterruption(enCours, 'scrabble', 452), true);
+  assert.equal(demarrerActionLigne(registre, 'bridge_agent', 453, 'fermer'), true);
+  assert.equal(demarrerActionLigne(registre, 'scrabble', 452, 'fermer'), true);
 });
 
-test('terminerInterruption : libère le couple, un nouveau déclenchement redevient possible', () => {
-  const enCours = new Set();
-  demarrerInterruption(enCours, 'bridge_agent', 452);
-  terminerInterruption(enCours, 'bridge_agent', 452);
-  assert.equal(enCours.has('bridge_agent#452'), false);
-  assert.equal(demarrerInterruption(enCours, 'bridge_agent', 452), true);
+test('terminerActionLigne : libère le couple, un nouveau déclenchement redevient possible', () => {
+  const registre = new Map();
+  demarrerActionLigne(registre, 'bridge_agent', 452, 'fermer');
+  terminerActionLigne(registre, 'bridge_agent', 452);
+  assert.equal(registre.has('bridge_agent#452'), false);
+  assert.equal(demarrerActionLigne(registre, 'bridge_agent', 452, 'interrompre'), true);
 });
 
-test('terminerInterruption : un couple absent ne lève pas d\'erreur (no-op)', () => {
-  const enCours = new Set();
-  assert.doesNotThrow(() => terminerInterruption(enCours, 'bridge_agent', 452));
-  assert.equal(enCours.size, 0);
+test('terminerActionLigne : un couple absent ne lève pas d\'erreur (no-op)', () => {
+  const registre = new Map();
+  assert.doesNotThrow(() => terminerActionLigne(registre, 'bridge_agent', 452));
+  assert.equal(registre.size, 0);
+});
+
+test('actionLigneEnCours : renvoie l\'entrée { action, debut } tant qu\'elle est fraîche, null si absente', () => {
+  const registre = new Map();
+  assert.equal(actionLigneEnCours(registre, 'bridge_agent', 452), null);
+  demarrerActionLigne(registre, 'bridge_agent', 452, 'fermer', { maintenant: 1000 });
+  assert.deepEqual(
+    actionLigneEnCours(registre, 'bridge_agent', 452, 1500),
+    { action: 'fermer', debut: 1000, dureeMaxMs: DUREE_MAX_ACTION_LIGNE_MS },
+  );
+  // Couple différent — toujours absent.
+  assert.equal(actionLigneEnCours(registre, 'bridge_agent', 999, 1500), null);
+});
+
+// ─── Garde-fou de durée (issue #956, point 4) : une entrée périmée n'est
+// jamais traitée comme « toujours en cours » — un bouton ne doit jamais
+// rester bloqué indéfiniment, même si un chemin imprévu a oublié de lever
+// l'état.
+
+test('actionLigneEnCours : garde-fou — une entrée plus vieille que DUREE_MAX_ACTION_LIGNE_MS est ignorée ET retirée', () => {
+  const registre = new Map();
+  demarrerActionLigne(registre, 'bridge_agent', 452, 'fermer', { maintenant: 0 });
+  const maintenant = DUREE_MAX_ACTION_LIGNE_MS + 1;
+  assert.equal(actionLigneEnCours(registre, 'bridge_agent', 452, maintenant), null);
+  // Retirée du registre au passage — un démarrage ultérieur n'est donc plus
+  // refusé par une entrée fantôme.
+  assert.equal(registre.has('bridge_agent#452'), false);
+  assert.equal(demarrerActionLigne(registre, 'bridge_agent', 452, 'interrompre', { maintenant }), true);
+});
+
+test('demarrerActionLigne : une entrée périmée n\'empêche pas un nouveau démarrage (pas besoin d\'attendre terminerActionLigne)', () => {
+  const registre = new Map();
+  demarrerActionLigne(registre, 'bridge_agent', 452, 'fermer', { maintenant: 0 });
+  const maintenant = DUREE_MAX_ACTION_LIGNE_MS + 1;
+  assert.equal(demarrerActionLigne(registre, 'bridge_agent', 452, 'relancer', { maintenant }), true);
+  assert.deepEqual(registre.get('bridge_agent#452').action, 'relancer');
+});
+
+test('demarrerActionLigne/actionLigneEnCours : dureeMaxMs explicite (issue #956, point 3 — lignes CIBLÉES par une séquence de niveau projet, garde-fou plus long)', () => {
+  const registre = new Map();
+  demarrerActionLigne(registre, 'bridge_agent', 452, 'projet', { maintenant: 0, dureeMaxMs: 200000 });
+  // Toujours fraîche au-delà du garde-fou PAR DÉFAUT, mais sous le garde-fou
+  // explicite de cette entrée.
+  assert.notEqual(actionLigneEnCours(registre, 'bridge_agent', 452, DUREE_MAX_ACTION_LIGNE_MS + 1), null);
+  assert.equal(actionLigneEnCours(registre, 'bridge_agent', 452, 200001), null);
+});
+
+// ─── decisionAffichageBoutonsLigne : décision pure CONSULTÉE par le rendu
+// (resultats.js::majBadges) à chaque recalcul — issue #956, point 2/4. ────
+
+test('decisionAffichageBoutonsLigne : aucune action en cours → même visibilité que boutonsActionLigne, rien désactivé', () => {
+  const decision = decisionAffichageBoutonsLigne(['needs-human'], { debut: '2026-09-26T10:00:00Z' }, null);
+  assert.deepEqual(decision, { visibles: ['relancer', 'fermer'], desactives: false, libelleSurcharge: {} });
+});
+
+test('decisionAffichageBoutonsLigne : une action propre à cette ligne → TOUS les boutons visibles désactivés, « ⏳ … » SEULEMENT sur celui qui agit', () => {
+  const decision = decisionAffichageBoutonsLigne(
+    ['for-linux'], { debut: '2026-09-26T10:00:00Z' }, { action: 'fermer', debut: 1000 },
+  );
+  assert.deepEqual(decision.visibles, ['interrompre', 'fermer']);
+  assert.equal(decision.desactives, true);
+  assert.deepEqual(decision.libelleSurcharge, { fermer: '⏳ Fermeture…' });
+});
+
+test('decisionAffichageBoutonsLigne : chacune des 4 actions a son propre libellé d\'attente', () => {
+  const timing = { debut: '2026-09-26T10:00:00Z' };
+  assert.deepEqual(
+    decisionAffichageBoutonsLigne([], { debut: null }, { action: 'annuler', debut: 0 }).libelleSurcharge,
+    { annuler: '⏳ Annulation…' },
+  );
+  assert.deepEqual(
+    decisionAffichageBoutonsLigne([], timing, { action: 'interrompre', debut: 0 }).libelleSurcharge,
+    { interrompre: '⏳ Interruption…' },
+  );
+  assert.deepEqual(
+    decisionAffichageBoutonsLigne(['needs-human'], timing, { action: 'relancer', debut: 0 }).libelleSurcharge,
+    { relancer: '⏳ Relance…' },
+  );
+  assert.deepEqual(
+    decisionAffichageBoutonsLigne(['needs-human'], timing, { action: 'fermer', debut: 0 }).libelleSurcharge,
+    { fermer: '⏳ Fermeture…' },
+  );
+});
+
+test('decisionAffichageBoutonsLigne : action \'projet\' (ligne CIBLÉE par une séquence de niveau projet, pas sa propre action) → désactivée, AUCUN libellé de bouton remplacé', () => {
+  const decision = decisionAffichageBoutonsLigne(
+    ['for-linux'], { debut: '2026-09-26T10:00:00Z' }, { action: 'projet', debut: 0 },
+  );
+  assert.deepEqual(decision.visibles, ['interrompre', 'fermer']);
+  assert.equal(decision.desactives, true);
+  assert.deepEqual(decision.libelleSurcharge, {});
+});
+
+test('decisionAffichageBoutonsLigne : un rendu COMPLET pendant une action en cours reconstruit quand même les boutons désactivés (issue #956 — limite #949/#951 levée)', () => {
+  // Scénario du rapport : « Fermer » cliqué sur une issue EN COURS, puis
+  // PENDANT l'attente, l'issue passe en needs-human (reconstruction complète
+  // de la ligne avec de NOUVEAUX labels) — avant #956, la ligne reconstruite
+  // réaffichait « Relancer »/« Fermer » ACTIFS (l'état posé au clic ne
+  // portait que sur les anciens nœuds DOM, remplacés par la reconstruction).
+  // La ligne reste désactivée tant que l'ACTION (pas les labels) est en cours.
+  const actionEnCours = { action: 'fermer', debut: 1000 };
+  const avant = decisionAffichageBoutonsLigne(['for-linux'], { debut: '2026-09-26T10:00:00Z' }, actionEnCours);
+  const apresReconstruction = decisionAffichageBoutonsLigne(['needs-human'], { debut: '2026-09-26T10:00:00Z' }, actionEnCours);
+  assert.deepEqual(avant.visibles, ['interrompre', 'fermer']);
+  assert.deepEqual(apresReconstruction.visibles, ['relancer', 'fermer']);
+  // Les DEUX rendus désactivent tout, avec le même libellé d'attente — jamais
+  // de fenêtre où un bouton réapparaît actif.
+  assert.equal(avant.desactives, true);
+  assert.equal(apresReconstruction.desactives, true);
+  assert.deepEqual(apresReconstruction.libelleSurcharge, { fermer: '⏳ Fermeture…' });
+});
+
+// ─── Levée de l'état dans chaque chemin de fin (issue #956, point 4) : succès,
+// échec, délai dépassé, erreur réseau, annulation — tous passent par
+// terminerActionLigne (app.js, dans un `finally`), vérifié ici sur le
+// registre lui-même (la logique métier est testée manuellement, voir le
+// rapport de clôture).
+
+test('terminerActionLigne : chemin succès — l\'état est levé, le bouton redevient disponible', () => {
+  const registre = new Map();
+  demarrerActionLigne(registre, 'bridge_agent', 452, 'fermer');
+  terminerActionLigne(registre, 'bridge_agent', 452); // appelé dans le `finally` du chemin succès
+  assert.equal(actionLigneEnCours(registre, 'bridge_agent', 452), null);
+});
+
+test('terminerActionLigne : chemin échec (succes:false côté serveur) — l\'état est levé identiquement', () => {
+  const registre = new Map();
+  demarrerActionLigne(registre, 'bridge_agent', 452, 'interrompre');
+  // Même geste qu'un succès : un `finally` ne distingue pas la cause.
+  terminerActionLigne(registre, 'bridge_agent', 452);
+  assert.equal(actionLigneEnCours(registre, 'bridge_agent', 452), null);
+});
+
+test('terminerActionLigne : chemin erreur réseau (fetch rejeté) — l\'état est levé identiquement', () => {
+  const registre = new Map();
+  demarrerActionLigne(registre, 'bridge_agent', 452, 'annuler');
+  terminerActionLigne(registre, 'bridge_agent', 452);
+  assert.equal(actionLigneEnCours(registre, 'bridge_agent', 452), null);
+});
+
+test('chemin annulation (confirmation refusée) : l\'état n\'est JAMAIS démarré — la confirm() a lieu AVANT demarrerActionLigne', () => {
+  // Les quatre fonctions d'app.js (annulerIssue/interrompreIssue/
+  // relancerIssue/fermerIssue*) appellent confirm()/toasts.confirmer() AVANT
+  // demarrerActionLigne — un refus retourne sans jamais marquer la ligne.
+  const registre = new Map();
+  const confirmationRefusee = false;
+  if (confirmationRefusee) demarrerActionLigne(registre, 'bridge_agent', 452, 'fermer');
+  assert.equal(actionLigneEnCours(registre, 'bridge_agent', 452), null);
+});
+
+test('délai dépassé (30s de sondage sans confirmation d\'arrêt) : couvert par le même `finally` que l\'échec — garde-fou de durée en secours si ce `finally` n\'était jamais atteint', () => {
+  // Le délai dépassé d'une fermeture (DELAI_MAX_ATTENTE_ARRET_FERMETURE_MS,
+  // static/js/app.js) lève l'état via le MÊME `finally` que tout autre
+  // chemin — testé ci-dessus. Le garde-fou de durée (DUREE_MAX_ACTION_LIGNE_MS,
+  // 90s, largement au-delà des 30s de sondage) est le filet de sécurité
+  // SUPPLÉMENTAIRE si ce `finally`, pourtant systématique, n'était jamais
+  // atteint (ex. exception non prévue côté navigateur) — déjà couvert par
+  // le test de garde-fou ci-dessus.
+  const registre = new Map();
+  demarrerActionLigne(registre, 'bridge_agent', 452, 'fermer', { maintenant: 0 });
+  assert.equal(actionLigneEnCours(registre, 'bridge_agent', 452, DUREE_MAX_ACTION_LIGNE_MS + 1), null);
 });

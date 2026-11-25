@@ -247,16 +247,33 @@ supplémentaire, voir contrainte ci-dessous) :
 
 Aucune issue n'est arrêtée dans le cas interactif sans ce choix explicite.
 
-**Garde anti-double-fermeture** (même patron que la garde anti-double-
-interruption #748) : un ensemble dédié `_fermeturesEnCours` (DISTINCT de
-`_interruptionsEnCours`, qu'utilise elle-même l'étape d'interruption
-intermédiaire) empêche un second clic sur « Fermer » pendant qu'une
-fermeture est déjà en cours pour cette issue — le bouton est désactivé et
-affiche « ⏳ Fermeture… » pendant l'attente (limite déjà acceptée pour
-`_marquerInterruptionEnCours` : un rendu complet de la ligne survenant
-PENDANT l'attente, ex. `fin_issue` d'une AUTRE issue du même projet,
-reconstruit la ligne sans cet état visuel — pas une régression propre à
-cette issue, l'action elle-même reste correcte).
+**Garde anti-double-clic + désactivation de TOUS les boutons de la ligne**
+(issue #956, remplace la garde #748/#951 par couple de `Set` séparés) : un
+registre PARTAGÉ unique, `registreActionsLigne` (`static/js/
+actions_ligne.js`), associe à chaque ligne (clé `cleInterruption(nom,
+numero)`) l'action CONFIRMÉE actuellement en cours — `'annuler'`/
+`'interrompre'`/`'relancer'`/`'fermer'` (propre à cette ligne) ou `'projet'`
+(ligne CIBLÉE par une séquence de niveau PROJET, voir plus bas). Ce registre
+est CONSULTÉ par le rendu (`resultats.js::majBadges()`, via
+`decisionAffichageBoutonsLigne()`) à CHAQUE recalcul — tick d'1s ET juste
+après toute reconstruction complète de la ligne (`executerRenduListeIssues`
+appelle `majBadges()` immédiatement après avoir reconstruit le DOM, dans le
+même tour synchrone, donc sans fenêtre intermédiaire) — au lieu d'être posé
+UNE SEULE FOIS sur les nœuds DOM présents au moment du clic. La limite
+acceptée jusqu'à l'issue #956 (un rendu complet survenant PENDANT l'attente,
+ex. l'issue passe en needs-human ou `fin_issue` d'une AUTRE issue du même
+projet, reconstruisait la ligne avec ses boutons réactivés) est donc levée :
+TOUS les boutons visibles de la ligne restent désactivés pendant N'IMPORTE
+LAQUELLE des quatre actions, avec l'indicateur « ⏳ Fermeture… »/« ⏳
+Interruption… »/« ⏳ Relance… »/« ⏳ Annulation… » SEULEMENT sur celui qui
+agit. Levée de l'état dans TOUS les chemins de fin (succès, échec, délai
+dépassé, erreur réseau) via un `finally` autour de chaque séquence réseau,
+PLUS un garde-fou de durée (`DUREE_MAX_ACTION_LIGNE_MS`, 90s — ou la durée
+explicite portée par une marque `'projet'`, voir plus bas) : une entrée plus
+vieille est ignorée et retirée par `actionLigneEnCours()`, pour qu'un bouton
+ne reste jamais bloqué indéfiniment même si un chemin imprévu oubliait de
+lever l'état. Logique pure testée sous Node :
+`static/js/tests/actions_ligne.test.js`.
 
 **Aucun appel GitHub supplémentaire** : la séquence ci-dessus ne consomme
 QUE les trois routes existantes mentionnées en tête de section — la
@@ -404,14 +421,41 @@ les arrêter aussi — jamais un arrêt silencieux. Sans aucune issue en cours :
 comportement strictement identique à avant #954 (confirmation simple, arrêt
 immédiat).
 
-### Garde anti-double-clic et indicateur d'attente
+### Garde anti-double-clic et indicateur d'attente (issue #956)
 
-Un ensemble dédié `_actionsProjetEnCours` (noms de PROJET, DISTINCT de
-`_interruptionsEnCours` et `_fermeturesEnCours` — ces actions portent sur le
-watcher entier, pas sur une issue précise) empêche un second clic sur
-N'IMPORTE LEQUEL des 4 boutons de ce projet pendant qu'un autre tourne déjà ;
-chaque bouton affiche « ⏳ … » pendant l'attente, restauré (texte d'origine,
-réactivé) à la fin — `marquerActionProjetEnCours`.
+Un registre dédié `registreActionsProjet` (`static/js/interruption_projet.js`
+— clé = nom de PROJET, DISTINCT du registre par LIGNE `registreActionsLigne`
+ci-dessus : ces 4 actions portent sur le watcher entier, pas sur une issue
+précise) empêche un second clic sur N'IMPORTE LEQUEL des 4 boutons de ce
+projet pendant qu'un autre tourne déjà. Comme pour le registre par ligne, ce
+registre est CONSULTÉ par le rendu (`panneau_lateral.js::
+rendrePanneauLateralMonitoring`/`rendrePanneauLateralActions`, via
+`decisionBoutonProjet()`) à CHAQUE reconstruction des boutons — pas posé une
+seule fois : la limite acceptée jusqu'à l'issue #956 (un rendu complet
+survenant PENDANT l'attente, ex. l'abonnement à `derniereNotifIssue`
+déclenché par l'événement SSE d'une AUTRE issue, ou simplement le
+rafraîchissement périodique de 30s, reconstruisait les boutons réactivés) est
+donc levée — `marquerActionProjetEnCours` (désactivation imperative des
+nœuds présents au clic, avec le texte « ⏳ … ») reste en place EN PLUS, pour
+le retour visuel instantané, mais n'est plus la seule source de vérité.
+
+Point 3 de l'issue #956 : pendant l'une de ces 3 séquences CCL (« Tout
+interrompre », « Redémarrer le watcher »/« Interrompre et relancer »,
+« Arrêter »), les issues qu'elle interrompt ou relance (`numeros`, connu dès
+la confirmation acceptée) sont elles-mêmes marquées dans le registre PAR
+LIGNE avec l'action `'projet'` (`marquerLignesCiblees`/
+`demarquerLignesCiblees`) — leurs propres boutons de ligne sont donc
+désactivés eux aussi, sans qu'aucun libellé de bouton de ligne ne soit
+remplacé (ce n'est pas SA propre action). Garde-fou de durée
+(`DUREE_MAX_ACTION_PROJET_MS`, 120s — plus long que celui par ligne, cette
+séquence pouvant enchaîner plusieurs appels réseau séquentiels après le
+sondage de 30s) : une entrée plus vieille est ignorée et retirée par
+`actionProjetEnCours()`. Levée de l'état dans TOUS les chemins de fin
+(succès, échec, délai dépassé, erreur réseau, annulation — la confirmation a
+lieu APRÈS le démarrage du registre, pour désactiver les 4 boutons pendant
+la boîte de dialogue elle-même ; un refus déclenche le même `finally`) via un
+`finally` unique autour de chaque fonction exportée. Logique pure testée sous
+Node : `static/js/tests/interruption_projet.test.js`.
 
 ### Limites connues (reprises de #949, toujours valables ici)
 
@@ -421,7 +465,14 @@ réactivé) à la fin — `marquerActionProjetEnCours`.
 - **Issue encore en file** (jamais démarrée) : hors périmètre de ces 4
   boutons, couverte par le bouton « Annuler » de sa propre ligne.
 - **CCW** (délégué, SSH) : ces 4 boutons ne le concernent pas — aucune
-  visibilité locale sur ses issues en cours.
+  visibilité locale sur ses issues en cours. Le bouton « Interrompre et
+  relancer » d'une issue for-windows (zone Actions, chemin HISTORIQUE
+  `interrompreEtRelancer`, `static/js/app.js`) reste donc hors du registre
+  `registreActionsProjet` ci-dessus (issue #956) : sa désactivation pendant
+  l'attente reste imperative-only (`_marquerInterruptionEnCours`), sans
+  garantie de survivre à une reconstruction de la zone Actions pendant
+  l'attente — même limite qu'avant #956, non traitée ici, cohérent avec
+  l'exclusion CCW déjà actée par #954.
 
 ## « Relancer » seul après « Arrêter » : redémarrage du watcher (issue #955)
 

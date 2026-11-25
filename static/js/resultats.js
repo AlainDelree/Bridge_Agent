@@ -29,7 +29,9 @@ import { toasts } from './socle/toasts.js';
 import { sse } from './socle/sse.js';
 import { appelerAncien } from './socle/pont.js';
 import * as persistance from './socle/persistance.js';
-import { boutonsActionLigne, normaliserNomsLabels } from './actions_ligne.js';
+import {
+  normaliserNomsLabels, decisionAffichageBoutonsLigne, actionLigneEnCours, registreActionsLigne,
+} from './actions_ligne.js';
 import { signalerEchecPossible, extraireJsonErreur } from './socle/panne_github.js';
 // Rechargement de l'état des cases « traité/lu » (issue #729) : pas de cycle
 // d'import (resultats_coches.js n'importe jamais resultats.js), donc import ES
@@ -677,13 +679,35 @@ export function majBadges() {
     // dédiée d'interruption #642) : un sous-ensemble des QUATRE boutons
     // toujours posés dans le DOM (zone-actions-ligne, actions_ligne.js),
     // révélé selon l'état courant (labels + `t.debut`) — jamais posé pour
-    // une ligne fermée (zoneActions reste alors null).
+    // une ligne fermée (zoneActions reste alors null). Depuis l'issue #956,
+    // CONSULTE aussi le registre partagé « action en cours » à CHAQUE
+    // recalcul (tick 1s ET juste après toute reconstruction complète de la
+    // ligne, cf. executerRenduListeIssues qui appelle majBadges() tout de
+    // suite après — aucune fenêtre où une ligne reconstruite s'afficherait
+    // sans cet état) : TOUS les boutons visibles sont désactivés pendant une
+    // action confirmée, avec l'indicateur « ⏳ … » sur celui qui agit — voir
+    // decisionAffichageBoutonsLigne (actions_ligne.js) pour la décision pure.
     const zoneActions = ligne.querySelector('.zone-actions-ligne');
     if (zoneActions) {
       const it = issues[cle];
-      const actifs = new Set(boutonsActionLigne((it && it.labels) || [], t));
+      const actionEnCours = actionLigneEnCours(registreActionsLigne, ligne.dataset.projet, ligne.dataset.numero);
+      const decision = decisionAffichageBoutonsLigne((it && it.labels) || [], t, actionEnCours);
+      const actifs = new Set(decision.visibles);
       zoneActions.querySelectorAll('[data-action-ligne]').forEach((bouton) => {
-        bouton.style.display = actifs.has(bouton.dataset.actionLigne) ? '' : 'none';
+        const action = bouton.dataset.actionLigne;
+        const visible = actifs.has(action);
+        bouton.style.display = visible ? '' : 'none';
+        if (!visible) return;
+        bouton.disabled = decision.desactives;
+        bouton.classList.toggle('action-ligne-attente', decision.desactives);
+        const libelleSurcharge = decision.libelleSurcharge[action];
+        if (libelleSurcharge) {
+          if (bouton.dataset.libelleOriginal === undefined) bouton.dataset.libelleOriginal = bouton.textContent;
+          bouton.textContent = libelleSurcharge;
+        } else if (bouton.dataset.libelleOriginal !== undefined) {
+          bouton.textContent = bouton.dataset.libelleOriginal;
+          delete bouton.dataset.libelleOriginal;
+        }
       });
     }
     const badge = ligne.querySelector('.ligne-tempsrestant');

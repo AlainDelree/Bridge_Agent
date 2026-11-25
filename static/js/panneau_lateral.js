@@ -76,6 +76,11 @@ import { obtenirCcwProjetsConnus, ccwChargerProjets, ccwRedemarrerProjet, ccwNet
 import {
   afficherBoutonToutInterrompre, libelleBoutonWatcherCcl,
   toutInterrompreProjet, redemarrerWatcherAvecRelance, arreterWatcherProjet,
+  // Décision + registre « action en cours » (issue #956) — CONSULTÉS ici à
+  // chaque reconstruction des boutons de niveau projet, pour que l'état
+  // survive à tout rendu complet déclenché pendant l'attente (ex. événement
+  // SSE d'une autre issue) — voir l'en-tête de interruption_projet.js.
+  registreActionsProjet, actionProjetEnCours, decisionBoutonProjet,
 } from './interruption_projet.js';
 
 const CLE_PANNEAU_OUVERT = 'bridge_panneau_lateral_ouvert';
@@ -405,6 +410,17 @@ function evaluerAlertesWatchers(watchersMap) {
   store.set('alertesWatchers', dict);
 }
 
+// Rendu d'UN bouton de niveau projet (issue #956) — consulte decisionBoutonProjet
+// pour que le `disabled`/libellé « ⏳ … » soit déjà CORRECT dès la construction
+// du markup, à CHAQUE reconstruction (pas seulement posé après coup par
+// marquerActionProjetEnCours, static/js/interruption_projet.js, qui ne vise
+// que les nœuds DÉJÀ présents au moment du clic).
+function rendreBoutonProjet(dataAction, nom, classe, libelleNormal, decisionProjet) {
+  return '<button class="' + classe + '" data-action="' + dataAction + '" data-projet="'
+    + dom.echapperHtml(nom) + '"' + (decisionProjet.desactive ? ' disabled' : '') + '>'
+    + (decisionProjet.desactive ? decisionProjet.libelle : libelleNormal) + '</button>';
+}
+
 // ─── Zone haute : monitoring infrastructure (watchers CCL + services CCW) ──
 async function rendrePanneauLateralMonitoring() {
   const zone = dom.$('#pl-zone-monitoring');
@@ -431,19 +447,21 @@ async function rendrePanneauLateralMonitoring() {
     // l'UNIQUE lecture périodique de /watchers (aucun appel GitHub de plus).
     const enPanneReseau = !!(watchersMap[nom] && watchersMap[nom].en_panne_reseau);
     const nbEnAttente = (watchersMap[nom] && watchersMap[nom].publications_en_attente) || 0;
+    // Issue #956 : CONSULTÉ à chaque reconstruction (pas seulement posé une
+    // fois au clic) — voir l'en-tête de interruption_projet.js.
+    const decisionProjet = decisionBoutonProjet(actionProjetEnCours(registreActionsProjet, nom));
     html += '<div class="pl-ligne">'
           + '<span class="pl-ligne-libelle">' + (actif ? '🟢' : '⚫') + ' ' + dom.echapperHtml(nom) + '</span>'
           + '<span class="pl-ligne-btns">'
-          + '<button class="pl-btn-mini" data-action="pl-relancer-ccl" data-projet="' + dom.echapperHtml(nom) + '">'
-          + libelleBoutonWatcherCcl(actif) + '</button>'
+          + rendreBoutonProjet('pl-relancer-ccl', nom, 'pl-btn-mini', libelleBoutonWatcherCcl(actif), decisionProjet)
           + (afficherBoutonArreterWatcherCcl(actif)
-              ? '<button class="pl-btn-mini" data-action="pl-arreter-ccl" data-projet="' + dom.echapperHtml(nom) + '">⏹ Arrêter</button>'
+              ? rendreBoutonProjet('pl-arreter-ccl', nom, 'pl-btn-mini', '⏹ Arrêter', decisionProjet)
               : '')
           // « Tout interrompre pour ce projet » (issue #954, point 1) : action
           // à part entière, distincte des boutons watcher ci-dessus — n'arrête
           // QUE les issues en cours de CE projet, jamais le watcher lui-même.
           + (afficherBoutonToutInterrompre(resume.enCours)
-              ? '<button class="pl-btn-mini danger" data-action="pl-tout-interrompre-projet" data-projet="' + dom.echapperHtml(nom) + '">⛔ Tout interrompre</button>'
+              ? rendreBoutonProjet('pl-tout-interrompre-projet', nom, 'pl-btn-mini danger', '⛔ Tout interrompre', decisionProjet)
               : '')
           + '</span>'
           + '</div>'
@@ -667,8 +685,15 @@ function rendrePanneauLateralActions() {
           + '" data-numero="' + Number(numero) + '" data-labels="'
           + dom.echapperHtml(nomsLabels.join(',')) + '">📊 Avancement</button>';
   }
-  html += '<button data-action="pl-relancer-ccl" data-projet="' + dom.echapperHtml(nom) + '">'
-        + '↺ Redémarrer le watcher CCL</button>';
+  // Issue #956 : CONSULTÉ à chaque reconstruction de cette zone (changement
+  // de sélection, ou l'un des rafraîchissements groupés de
+  // rafraichirPanneauLateralResultats) — même décision que la zone
+  // monitoring ci-dessus, voir rendreBoutonProjet(). Ne s'applique PAS au
+  // bouton « Interrompre et relancer » windows (CCW délégué) ci-dessous : ce
+  // chemin reste HISTORIQUE, hors périmètre #954/#956 (aucune visibilité
+  // locale sur le watcher CCW).
+  const decisionProjetSelection = decisionBoutonProjet(actionProjetEnCours(registreActionsProjet, nom));
+  html += rendreBoutonProjet('pl-relancer-ccl', nom, '', '↺ Redémarrer le watcher CCL', decisionProjetSelection);
   if (interromptible) {
     // Issue #954, point 3 : ce bouton agit désormais au niveau du PROJET de
     // l'issue sélectionnée (jamais seulement sur elle) — pour un projet CCL
@@ -680,9 +705,11 @@ function rendrePanneauLateralActions() {
     const libelleBoutonRelance = windows
       ? '⛔ Interrompre et relancer (' + libelleWatcherCible + ')'
       : '↺ Redémarrer le watcher CCL (interrompt les issues en cours)';
+    const desactiveCcl = !windows && decisionProjetSelection.desactive;
     html += '<button class="danger" data-action="pl-interrompre-relancer" data-projet="' + dom.echapperHtml(nom)
-          + '" data-numero="' + Number(numero) + '" data-windows="' + (windows ? '1' : '0') + '">'
-          + libelleBoutonRelance + '</button>';
+          + '" data-numero="' + Number(numero) + '" data-windows="' + (windows ? '1' : '0') + '"'
+          + (desactiveCcl ? ' disabled' : '') + '>'
+          + (desactiveCcl ? decisionProjetSelection.libelle : libelleBoutonRelance) + '</button>';
   }
   // Bouton « ✖ Fermer l'issue » retiré d'ici par l'issue #950 (décision
   // d'Alain : toutes les actions par issue sur la ligne) — voir le bouton

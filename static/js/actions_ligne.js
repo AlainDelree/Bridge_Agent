@@ -168,36 +168,124 @@ export function mecanismeInterruptionLigne(labels) {
   return normaliserNomsLabels(labels).includes('mode_interactif') ? 'watcher_complet' : 'ciblee';
 }
 
-// ─── Garde anti-double-déclenchement d'une interruption (issue #748) ──────
-// L'appel réseau de /interrompre peut durer plusieurs secondes (arbre de
-// process + attente de 5s côté serveur) ; sans retour visuel, un second clic
-// pendant ce temps relançait un second appel concurrent — vécu sur Scrabble
-// #452. Logique pure (app.js applique les décisions ci-dessous au DOM — le
-// bouton « Interrompre » de la ligne, qu'il mène au mécanisme CIBLÉ #949 ou
-// au mécanisme historique watcher entier #323, + le bouton « Interrompre et
-// relancer » du panneau latéral, issue #950) : un ensemble partagé de
-// couples (projet, numéro) actuellement en cours d'interruption, commun à
-// ces déclencheurs puisqu'ils appellent tous `demarrerInterruption`/
-// `terminerInterruption` autour de leur appel réseau respectif.
+// ─── Garde anti-double-clic + état « action en cours » d'UNE ligne (issues
+// #748/#951/#956) ───────────────────────────────────────────────────────────
+// L'appel réseau d'une action confirmée (Annuler/Interrompre/Relancer/Fermer)
+// peut durer plusieurs secondes, parfois jusqu'à 30s de sondage (fermeture
+// d'une issue en cours, #951) ; sans retour visuel, un second clic pendant ce
+// temps relançait un second appel concurrent — vécu sur Scrabble #452.
+//
+// Avant l'issue #956, cet état n'était posé QU'UNE FOIS, imperativement, sur
+// les nœuds DOM présents au moment du clic (`_marquerInterruptionEnCours`/
+// `_marquerFermetureEnCours`, static/js/app.js) : un rendu complet survenant
+// PENDANT l'attente (ex. l'issue passe en needs-human, ou un événement d'une
+// AUTRE issue du même projet déclenche une reconstruction) régénérait la
+// ligne SANS cet état — limite documentée et acceptée par les issues #949/
+// #951. Ce n'est plus le cas : l'état vit désormais dans ce registre partagé
+// (clé = cleInterruption(nom, numero), valeur { action, debut, dureeMaxMs }),
+// CONSULTÉ par le rendu à chaque recalcul (resultats.js::majBadges, à chaque
+// tick ET immédiatement après toute reconstruction complète — voir
+// decisionAffichageBoutonsLigne ci-dessous) plutôt que posé une seule fois.
+//
+// `action` : 'annuler'|'interrompre'|'relancer'|'fermer' (action propre à
+// CETTE ligne) — ou 'projet', quand cette ligne est seulement CIBLÉE par une
+// séquence de niveau PROJET (#954, static/js/interruption_projet.js) qui
+// l'interrompt ou la relance sans que ce soit SA propre action cliquée.
 export function cleInterruption(nom, numero) {
   return nom + '#' + numero;
 }
 
-// true si CE couple vient d'être accepté (et enregistré aussitôt comme « en
-// cours ») ; false s'il l'était déjà — l'appelant doit alors ignorer le clic.
-export function demarrerInterruption(enCours, nom, numero) {
+// Garde-fou (issue #956, point 4) : au-delà de cette durée, une entrée est
+// considérée PÉRIMÉE (un chemin imprévu a dû oublier de la lever) et ignorée
+// par actionLigneEnCours() ci-dessous, qui la retire au passage — un bouton
+// ne doit jamais rester grisé indéfiniment. Marge large au-delà du délai de
+// sondage réseau le plus long de ce module (30s, voir
+// DELAI_MAX_ATTENTE_ARRET_FERMETURE_MS dans app.js).
+export const DUREE_MAX_ACTION_LIGNE_MS = 90000;
+
+// Démarre le suivi d'une action CONFIRMÉE pour cette ligne — refuse (false)
+// si une action est DÉJÀ en cours (et non périmée) pour ce couple ;
+// l'appelant doit alors ignorer le clic. `registre` : Map partagée, passée
+// explicitement (comme l'ancien `enCours`) pour rester testable sous Node
+// sans état global — voir registreActionsLigne (singleton réel) plus bas.
+export function demarrerActionLigne(registre, nom, numero, action, opts = {}) {
+  const maintenant = opts.maintenant != null ? opts.maintenant : Date.now();
+  const dureeMaxMs = opts.dureeMaxMs != null ? opts.dureeMaxMs : DUREE_MAX_ACTION_LIGNE_MS;
   const cle = cleInterruption(nom, numero);
-  if (enCours.has(cle)) return false;
-  enCours.add(cle);
+  const existante = registre.get(cle);
+  if (existante) {
+    const dureeExistante = existante.dureeMaxMs != null ? existante.dureeMaxMs : DUREE_MAX_ACTION_LIGNE_MS;
+    if (maintenant - existante.debut <= dureeExistante) return false;
+  }
+  registre.set(cle, { action, debut: maintenant, dureeMaxMs });
   return true;
 }
 
-// Retire ce couple de l'ensemble « en cours » — appelé après un échec (réseau
-// ou réponse succes=false) pour réactiver les déclencheurs ; un succès
-// recharge la liste/le panneau, qui les reconstruisent déjà non bloqués, mais
-// l'appel reste nécessaire pour vider l'ensemble partagé.
-export function terminerInterruption(enCours, nom, numero) {
-  enCours.delete(cleInterruption(nom, numero));
+// Lève l'état — appelée dans TOUS les chemins de fin (succès, échec, délai
+// dépassé, erreur réseau, annulation) par un `finally`, jamais seulement sur
+// le chemin heureux.
+export function terminerActionLigne(registre, nom, numero) {
+  registre.delete(cleInterruption(nom, numero));
+}
+
+// Lu par le RENDU (resultats.js::majBadges, via decisionAffichageBoutonsLigne
+// ci-dessous) — jamais par la logique d'action elle-même, qui utilise
+// demarrerActionLigne/terminerActionLigne. Applique le garde-fou : une entrée
+// périmée est retirée et traitée comme absente.
+export function actionLigneEnCours(registre, nom, numero, maintenant = Date.now()) {
+  const cle = cleInterruption(nom, numero);
+  const entree = registre.get(cle);
+  if (!entree) return null;
+  const dureeMaxMs = entree.dureeMaxMs != null ? entree.dureeMaxMs : DUREE_MAX_ACTION_LIGNE_MS;
+  if (maintenant - entree.debut > dureeMaxMs) {
+    registre.delete(cle);
+    return null;
+  }
+  return entree;
+}
+
+// Registre RÉEL partagé (issue #956) — UNIQUE instance pour toute la page,
+// exportée (plutôt qu'un wrapper) pour que app.js (via window.Bridge.
+// actionsLigne) ET interruption_projet.js (import ES direct, pour marquer les
+// lignes CIBLÉES par une séquence de niveau projet, point 3) écrivent/lisent
+// exactement le même registre que resultats.js::majBadges() consulte.
+export const registreActionsLigne = new Map();
+
+// Libellé « ⏳ … » affiché UNIQUEMENT sur le bouton qui correspond à l'action
+// réellement en cours (pas 'projet', qui n'en désigne aucun en particulier —
+// cette ligne est seulement CIBLÉE par une séquence de niveau projet, pas
+// l'autrice de sa propre action).
+const LIBELLES_ATTENTE_LIGNE = {
+  annuler: '⏳ Annulation…',
+  interrompre: '⏳ Interruption…',
+  relancer: '⏳ Relance…',
+  fermer: '⏳ Fermeture…',
+};
+
+// Décision PURE d'affichage des boutons d'UNE ligne (issue #956) — étend
+// boutonsActionLigne() ci-dessus avec l'état « action en cours » : CONSULTÉE
+// par le rendu à chaque recalcul, jamais posée une seule fois (voir
+// docstring du registre ci-dessus pour la limite ainsi levée). `actionEnCours`
+// : l'entrée renvoyée par actionLigneEnCours() ci-dessus, ou null.
+//
+// Renvoie { visibles, desactives, libelleSurcharge } :
+//   - visibles        : même résultat que boutonsActionLigne() (quels
+//                        boutons existent pour cet état labels/timing) ;
+//   - desactives       : true si une action (la sienne OU une séquence de
+//                        niveau projet qui la cible) est en cours — TOUS les
+//                        boutons visibles doivent alors être désactivés, pas
+//                        seulement celui qui a été cliqué (point 2) ;
+//   - libelleSurcharge : { [action]: '⏳ Libellé…' } pour le SEUL bouton qui
+//                        correspond à actionEnCours.action, vide pour
+//                        'projet' (aucun bouton de CETTE ligne n'est,
+//                        lui-même, « son » action).
+export function decisionAffichageBoutonsLigne(labels, timing, actionEnCours) {
+  const visibles = boutonsActionLigne(labels, timing);
+  if (!actionEnCours) return { visibles, desactives: false, libelleSurcharge: {} };
+  const libelleSurcharge = {};
+  const libelle = LIBELLES_ATTENTE_LIGNE[actionEnCours.action];
+  if (libelle) libelleSurcharge[actionEnCours.action] = libelle;
+  return { visibles, desactives: true, libelleSurcharge };
 }
 
 // Normalise la réponse de GET /son-issue/<projet>/<numero> : 'plat'/'cloche' si
@@ -409,11 +497,17 @@ export async function choisirSonIssueLigne(element, nom, numero, valeurBrute) {
 // Objet publié sous window.Bridge.actionsLigne (via installerPont dans
 // index.js) : consommé par app.js (construireLigneIssueDOM et les fonctions
 // retirerNeedsHumanDepuisLigne/interrompreDepuisLigne/choisirSonIssueDepuisLigne
-// appelées par les onclick inline générés ci-dessus).
+// appelées par les onclick inline générés ci-dessus). `registreActionsLigne`
+// exposée ici pour que l'ancien app.js (script classique, pas de bénéfice à
+// importer le module ES) marque/lève l'état d'une ligne avec les mêmes
+// demarrerActionLigne/terminerActionLigne que resultats.js consulte (issue
+// #956) — un seul registre, deux consommateurs.
 export const actionsLigne = {
   rendreActionsLigneOuverte,
   choisirSonIssueLigne,
-  demarrerInterruption,
-  terminerInterruption,
   mecanismeInterruptionLigne,
+  registreActionsLigne,
+  demarrerActionLigne,
+  terminerActionLigne,
+  actionLigneEnCours,
 };
