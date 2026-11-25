@@ -43,7 +43,8 @@ from flask import jsonify, request
 from app.projets import lister_projets, projet_par_nom
 from app.auth import login_requis  # noqa: F401 (exporté pour l'enregistrement des routes)
 from watcher import (Config, DOSSIER_SCRIPT, _pid_vivant,
-                      taches_en_cours as _taches_en_cours_watcher)
+                      taches_en_cours as _taches_en_cours_watcher,
+                      nb_publications_en_attente as _nb_publications_en_attente_watcher)
 
 log = logging.getLogger(__name__)
 
@@ -72,6 +73,21 @@ _redemarrages_differes: set[str] = set()
 
 def chemin_pid(cfg: Config) -> Path:
     return cfg.fichier_log.parent / f"watcher-{cfg.nom}.pid"
+
+
+def en_panne_reseau(cfg: Config) -> bool:
+    """True si CE projet traverse actuellement une panne réseau détectée par
+    son watcher (issue #952) — simple EXISTENCE d'un fichier-marqueur posé/
+    retiré par watcher.py (`_signaler_entree_panne_reseau`/`_signaler_sortie_
+    panne_reseau`), jamais d'appel GitHub depuis l'interface pour l'obtenir."""
+    return (cfg.fichier_log.parent / f"watcher-{cfg.nom}.reseau_panne").exists()
+
+
+def nb_publications_en_attente(cfg: Config) -> int:
+    """Nombre de publications GitHub (commentaire, label, fermeture) encore
+    en attente de republication pour ce projet (issue #952) — lecture locale
+    pure (comptage de fichiers), jamais d'appel GitHub depuis l'interface."""
+    return _nb_publications_en_attente_watcher(cfg.nom)
 
 
 def watcher_actif(cfg: Config) -> tuple[bool, int | None]:
@@ -364,6 +380,10 @@ def watchers():
             "tache_en_cours":    bool(taches),
             "repli_rep_travail": repli_rep_travail(cfg, taches),
             "redemarrage_differe": cfg.nom in differes,
+            # Issue #952 : visibilité panne réseau — lecture locale pure
+            # (fichier marqueur + comptage de fichiers), aucun appel GitHub.
+            "en_panne_reseau":        en_panne_reseau(cfg),
+            "publications_en_attente": nb_publications_en_attente(cfg),
         })
     return jsonify(resultat)
 

@@ -971,6 +971,52 @@
       un seul message « Fermeture déjà en cours pour cette issue. » pour les
       clics suivants, une seule fermeture effective au final.
 
+## Résistance à une coupure réseau (issue #952)
+
+> Après fusion, relancer le watcher du projet `testvibe`. Ces trois essais
+> nécessitent de couper/rétablir le réseau réel de la machine (Wi-Fi) —
+> impossible à automatiser, donc non couverts par les tests. Couper
+> uniquement le Wi-Fi, PAS tout le réseau de la box, pour ne pas perdre
+> l'accès à l'interface web elle-même si elle est consultée à distance.
+
+- [ ] **(a) Coupure pendant l'exécution de `claude`, texte perdu sans la
+      correction** : déposer `issue_test_relance_testvibe_longue.txt` sur
+      `testvibe`. Une fois que la ligne « en cours » confirme que `claude`
+      tourne, couper le Wi-Fi quelques minutes, PUIS le rétablir alors que
+      `claude` est toujours en train de tourner (ou juste après sa fin).
+      Vérifier dans `logs/watcher-testvibe.log` : le watcher ne s'éteint PAS
+      pendant la coupure, aucune ligne « disparue des issues ouvertes » n'est
+      journalisée, une seule ligne « Panne réseau/GitHub détectée » apparaît
+      au début de la coupure (pas une par cycle) et une seule « Réseau/GitHub
+      de retour » à son rétablissement. Si la coupure a touché la publication
+      du commentaire de résultat : un fichier apparaît sous
+      `logs/publications_en_attente/testvibe/` pendant la coupure, et
+      disparaît dès le cycle suivant le retour du réseau — le commentaire de
+      résultat est alors visible sur GitHub, posté UNE SEULE FOIS (pas de
+      doublon), et l'issue se ferme à ce moment-là (pas avant).
+- [ ] **(b) Coupure pendant que `claude` termine (tentative non comptée)** :
+      déposer une issue dont le traitement prend quelques dizaines de
+      secondes ; couper le Wi-Fi juste avant la fin de `claude` (viser le
+      moment où il écrit son rapport). Si la tentative échoue à cause de la
+      coupure : le journal doit afficher « tentative échouée pendant une
+      coupure réseau apparente » puis, au retour du réseau, « réseau de
+      retour […] reprise de la tentative » — SANS que le compteur de
+      tentatives n'ait avancé (relire le numéro de tentative affiché avant/
+      après dans le journal). Si la tentative a simplement réussi malgré la
+      coupure (réseau revenu avant l'échec), ce scénario ne s'est pas
+      déclenché — réessayer en coupant plus tôt/plus longtemps.
+- [ ] **(c) Pas de régression sans coupure** : laisser le watcher `testvibe`
+      inactif (aucune issue déposée) pendant plus de `DELAI_INACTIVITE_MIN`
+      (20 min par défaut) SANS toucher au réseau : l'auto-extinction se
+      déclenche exactement comme avant l'issue #952 (ligne « Auto-extinction
+      […] arrêt propre du watcher », code de sortie 42).
+- [ ] **(d) Panneau latéral** : pendant une coupure (a), ouvrir le panneau
+      latéral Infrastructure (onglet Résultats) — la ligne du projet affiche
+      « ⚠️ en attente du réseau — N publication(s) en attente » tant que la
+      panne ou la file d'attente persiste, et cette ligne disparaît une fois
+      les deux revenus à zéro, sans recharger la page (rafraîchi par le
+      polling existant, ~30s).
+
 ## Fusion « Résultats inbox » dans Résultats (issue #639)
 
 L'onglet « Résultats inbox » **n'existe plus** : ses lignes vivent désormais

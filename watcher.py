@@ -35,6 +35,7 @@ import base64
 import binascii
 import unicodedata
 import shlex
+import socket
 # Verrouillage système cross-plateforme (issue #908, verrou d'instance unique
 # par projet — voir acquerir_verrou_processus/DOSSIER_VERROUS plus bas) : même
 # précaution que scripts/watcher_issues_inbox.py (issue #881) — fcntl n'existe
@@ -288,6 +289,275 @@ def _purger_demande_interruption(nom_projet: str, numero: int) -> None:
         pass
     except OSError as e:
         log.warning(f"Suppression de la demande d'interruption {nom_projet}#{numero} impossible : {e}")
+
+
+# ─── Résistance à une coupure réseau (issue #952) ──────────────────────────
+# Constat du 24/11/2026 (coupure internet ~14:10-14:35) : trois issues
+# laissées dans un état bancal sur trois projets différents, le travail
+# pourtant fait ou presque — voir ARCHITECTURE.md (nouvelle sous-section
+# « panne réseau ») pour le détail des trois mécanismes introduits ici :
+# 1. distinguer l'échec de `gh issue list` d'une liste réellement vide
+#    (voir lister_issues, et la boucle principale dans main()) ;
+# 2. ne jamais perdre une publication GitHub (commentaire, label, fermeture)
+#    qui échoue après ses tentatives immédiates déjà existantes — mise en
+#    attente durable ci-dessous, rejouée dans l'ordre dès que `gh` répond à
+#    nouveau ;
+# 3. ne pas consommer une tentative `claude` quand son échec coïncide avec
+#    une coupure réseau détectée (voir le point d'insertion dans la boucle
+#    de tentatives, `_traiter_issue_synchrone`).
+#
+# Fichiers vivant sous logs/ (gitignoré), comme les verrous et demandes
+# d'interruption ci-dessus — jamais dans rep_travail.
+
+# ─── 2. Publications GitHub en attente ─────────────────────────────────────
+# Un dossier PAR PROJET (plusieurs watchers partagent ce fichier watcher.py
+# mais jamais le même CFG.nom en même temps) : chaque publication qui a
+# épuisé ses tentatives immédiates existantes (voir commenter_issue,
+# ajouter_label, fermer_issue, commenter_resultat_avec_retry ci-dessous) y
+# dépose un fichier JSON plutôt que de perdre son texte. Nom de fichier =
+# préfixe en nanosecondes (ordre FIFO garanti par simple tri lexicographique
+# du dossier, y compris entre deux issues différentes) + numéro d'issue +
+# action, purement informatif pour un humain qui listerait le dossier.
+DOSSIER_PUBLICATIONS_EN_ATTENTE = DOSSIER_LOGS / "publications_en_attente"
+
+
+def _dossier_publications_en_attente(nom_projet: str | None = None) -> Path:
+    return DOSSIER_PUBLICATIONS_EN_ATTENTE / (nom_projet or CFG.nom)
+
+
+def _mettre_en_attente(numero: int, action: str, payload: dict) -> None:
+    """Persiste durablement une publication GitHub qui a épuisé ses
+    tentatives immédiates déjà existantes — jamais appelée directement par
+    le code métier, seulement par les primitives de publication elles-mêmes
+    (commenter_issue, ajouter_label, fermer_issue,
+    commenter_resultat_avec_retry) au moment où elles renoncent.
+
+    `action` ∈ {"commentaire", "commentaire_resultat", "label", "fermeture"}
+    — voir `_rejouer_une_publication` pour ce que chacune refait. `payload`
+    porte le texte complet ou le nom du label, selon l'action — jamais
+    tronqué, pour ne jamais perdre un rapport (incident rummikub #265).
+
+    Best-effort complet (toute exception journalisée, jamais levée — y
+    compris une erreur de TYPE, pas seulement `OSError` disque : un appelant
+    qui n'a renseigné qu'un `CFG` partiel, ex. dans un test, ne doit jamais
+    faire planter le traitement de l'issue à cause de CE filet best-effort) :
+    une panne disque concomitante à la panne réseau reste un cas non
+    couvert, assumé (hors périmètre de l'issue #952)."""
+    try:
+        dossier = _dossier_publications_en_attente()
+        dossier.mkdir(parents=True, exist_ok=True)
+        nom = f"{time.time_ns():020d}-issue{numero}-{action}.json"
+        contenu = {
+            "projet": CFG.nom,
+            "numero": numero,
+            "action": action,
+            "horodatage": datetime.now().isoformat(timespec="seconds"),
+            **payload,
+        }
+        (dossier / nom).write_text(json.dumps(contenu, ensure_ascii=False, indent=2), encoding="utf-8")
+        log.warning(
+            f"  ⏳ Issue #{numero} : publication « {action} » mise en attente "
+            f"durable après échec réseau ({dossier / nom}) — rejouée dès le "
+            f"retour du réseau, jamais perdue (issue #952)."
+        )
+    except Exception as e:
+        log.error(
+            f"  ✗ Issue #{numero} : impossible d'écrire la publication « {action} » "
+            f"en attente ({e}) — texte perdu malgré tout (panne disque "
+            f"concomitante, hors périmètre de l'issue #952)."
+        )
+
+
+def _lister_publications_en_attente(nom_projet: str | None = None) -> list[Path]:
+    """Fichiers en attente du projet, triés dans l'ORDRE D'ORIGINE (tri
+    lexicographique = tri chronologique, préfixe en nanosecondes)."""
+    dossier = _dossier_publications_en_attente(nom_projet)
+    if not dossier.is_dir():
+        return []
+    return sorted(dossier.glob("*.json"))
+
+
+def nb_publications_en_attente(nom_projet: str | None = None) -> int:
+    """Nombre de publications en attente de ce projet — lecture locale pure,
+    AUCUN appel GitHub (issue #952, point visibilité). Sert à l'auto-
+    extinction ci-dessous et, côté interface, à app.watchers.watchers()."""
+    return len(_lister_publications_en_attente(nom_projet))
+
+
+def _publication_en_attente_pour(numero: int, action: str) -> bool:
+    """True si au moins une publication de cette ACTION est en attente pour
+    CETTE issue — sert de garde en tête de `_guards_precoces_et_bootstrap`
+    (ne jamais relancer `claude` tant que son rapport de résultat n'a pas
+    fini d'être publié)."""
+    prefixe = f"-issue{numero}-{action}.json"
+    return any(f.name.endswith(prefixe) for f in _lister_publications_en_attente())
+
+
+def _rejouer_une_publication(fichier: Path) -> bool:
+    """Refait l'action portée par ce fichier. Retourne True si elle a
+    réussi (l'appelant supprime alors le fichier) — False sinon (laissé en
+    place, retenté au prochain passage).
+
+    `commentaire_resultat` (issue #195/#952) : au succès de la republication
+    du commentaire, l'issue peut ENFIN être fermée (elle était restée
+    ouverte depuis l'échec initial, voir `commenter_resultat_avec_retry`) —
+    `fermer_issue` se remet elle-même en attente si elle échoue à son tour,
+    exactement comme un premier passage réussi."""
+    try:
+        item = json.loads(fichier.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as e:
+        log.error(f"Publication en attente illisible ({fichier}) : {e} — ignorée, pas de retraitement en boucle.")
+        return True  # on ne bloque pas indéfiniment la file sur un fichier corrompu
+    numero = item.get("numero")
+    action = item.get("action")
+    if action == "commentaire" or action == "commentaire_resultat":
+        ok = _commenter_issue_brut(numero, item.get("texte", ""))
+        if ok and action == "commentaire_resultat":
+            if not _commentaire_marque_present(numero):
+                return False
+            log.info(f"  ✓ Issue #{numero} : commentaire de résultat enfin publié après coupure réseau — fermeture.")
+            fermer_issue(numero)
+            _issues_en_cours_retirer(numero)
+            _issue_write_bloquee_retirer(numero)
+        return ok
+    if action == "label":
+        return _ajouter_label_brut(numero, item.get("label", ""))
+    if action == "fermeture":
+        return _fermer_issue_brut(numero)
+    log.error(f"Publication en attente d'action inconnue « {action} » ({fichier}) — ignorée.")
+    return True
+
+
+def rejouer_publications_en_attente(nom_projet: str | None = None) -> None:
+    """Rejoue, DANS L'ORDRE D'ORIGINE, les publications en attente de ce
+    projet — s'arrête au premier échec (le réseau n'est probablement pas
+    réellement revenu, ou la panne touche spécifiquement ce dépôt) plutôt
+    que de sauter des éléments et d'inverser l'ordre. Appelée après chaque
+    `lister_issues()` réussi (preuve fraîche que GitHub répond, sans appel
+    réseau supplémentaire) ET une fois au démarrage (issue #952, point
+    « s'il a été arrêté malgré tout, il les rejoue à son prochain
+    démarrage »)."""
+    for fichier in _lister_publications_en_attente(nom_projet):
+        if not _rejouer_une_publication(fichier):
+            break
+        fichier.unlink(missing_ok=True)
+
+
+# ─── 1./3. Détection de panne réseau ────────────────────────────────────────
+# Sonde de JOIGNABILITÉ, pas d'appel d'API : une simple connexion TCP, qui ne
+# consomme aucun quota (ni GitHub ni le service d'IA). LIMITE assumée et
+# documentée (demandée par l'issue #952) : un hôte joignable au niveau TCP ne
+# prouve pas que l'API qu'il sert répond réellement (authentification,
+# quota, panne applicative isolée) — seule une vraie tentative `claude`/`gh`
+# le dirait avec certitude, ce qui coûterait justement ce qu'on veut éviter
+# de consommer pendant une panne.
+HOTE_GITHUB = "github.com"
+# Meilleur effort par agent (issue #759) : "claude" interroge l'API
+# Anthropic, "vibe" l'API Mistral — non confirmé officiellement pour "vibe"
+# (absence de constante équivalente ailleurs dans ce fichier), à corriger si
+# un jour démenti par l'observation. Un agent absent de cette table retombe
+# sur l'hôte Anthropic plutôt que de ne vérifier que GitHub.
+HOTES_SERVICE_IA = {
+    "claude": "api.anthropic.com",
+    "vibe":   "api.mistral.ai",
+}
+
+
+def _hote_joignable(hote: str, port: int = 443, timeout: float = 5.0) -> bool:
+    """Connexion TCP nue, sans TLS ni requête HTTP — la négociation TLS
+    n'ajoute rien d'utile ici (on ne veut savoir que si le réseau porte
+    jusqu'à cet hôte, pas valider son certificat) et coûterait plus de
+    temps."""
+    try:
+        with socket.create_connection((hote, port), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+
+def _reseau_disponible() -> bool:
+    """GitHub ET le service d'IA de l'agent courant, tous les deux joignables.
+    Voir la limite documentée ci-dessus : ne garantit pas que les API
+    elles-mêmes fonctionnent, seulement que le réseau porte jusqu'à elles."""
+    hote_ia = HOTES_SERVICE_IA.get(CFG.agent, "api.anthropic.com")
+    return _hote_joignable(HOTE_GITHUB) and _hote_joignable(hote_ia)
+
+
+# Durée maximale d'attente du retour du réseau avant d'abandonner normalement
+# une tentative (issue #952, point 3 : "de l'ordre de 30 minutes").
+DUREE_MAX_ATTENTE_RESEAU_S = 30 * 60
+# Intervalle entre deux sondages pendant l'attente — espacé pour ne pas
+# marteler les deux hôtes pendant une panne qui peut durer longtemps.
+INTERVALLE_SONDAGE_RESEAU_S = 30
+
+# Compteur des causes de panne réseau ACTIVES, partagé entre le thread
+# principal (liste des issues) et les threads mode_write (une tentative par
+# issue, issue #337) : plusieurs peuvent être en panne en même temps, le
+# marqueur de fichier ci-dessous (visibilité interface, issue #952 point 4)
+# ne doit disparaître qu'quand TOUTES ont cessé.
+_verrou_panne_reseau: threading.Lock = threading.Lock()
+_raisons_panne_reseau: set[str] = set()
+
+
+def _chemin_marqueur_panne_reseau() -> Path:
+    return DOSSIER_LOGS / f"watcher-{CFG.nom}.reseau_panne"
+
+
+def _signaler_entree_panne_reseau(raison: str) -> None:
+    with _verrou_panne_reseau:
+        etait_vide = not _raisons_panne_reseau
+        _raisons_panne_reseau.add(raison)
+        if etait_vide:
+            try:
+                _chemin_marqueur_panne_reseau().write_text(
+                    datetime.now().isoformat(timespec="seconds"), encoding="utf-8")
+            except OSError:
+                pass
+
+
+def _signaler_sortie_panne_reseau(raison: str) -> None:
+    with _verrou_panne_reseau:
+        _raisons_panne_reseau.discard(raison)
+        if not _raisons_panne_reseau:
+            _chemin_marqueur_panne_reseau().unlink(missing_ok=True)
+
+
+def _attendre_retour_reseau(numero: int) -> bool:
+    """Sonde `_reseau_disponible()` à intervalles espacés (une seule ligne de
+    journal au début et à la fin de l'attente, jamais une par sondage —
+    issue #952 point 1) jusqu'à son retour ou `DUREE_MAX_ATTENTE_RESEAU_S`.
+
+    Retourne True si le réseau est revenu (l'appelant refait alors la MÊME
+    tentative, sans la compter), False si le délai maximal est atteint
+    (l'appelant abandonne alors normalement, voir _gerer_abandon_max_essais,
+    et la publication en attente qui en découle n'est jamais perdue)."""
+    raison = f"tentative_issue_{numero}"
+    debut = time.monotonic()
+    _signaler_entree_panne_reseau(raison)
+    log.warning(
+        f"  ⚠ Issue #{numero} : tentative échouée pendant une coupure réseau "
+        f"apparente (GitHub et/ou service d'IA injoignables) — attente du "
+        f"retour (max {DUREE_MAX_ATTENTE_RESEAU_S // 60} min) avant de refaire "
+        f"la MÊME tentative, sans la compter (issue #952)."
+    )
+    try:
+        while time.monotonic() - debut < DUREE_MAX_ATTENTE_RESEAU_S:
+            time.sleep(INTERVALLE_SONDAGE_RESEAU_S)
+            if _reseau_disponible():
+                log.info(
+                    f"  ✓ Issue #{numero} : réseau de retour après "
+                    f"{time.monotonic() - debut:.0f}s — reprise de la tentative."
+                )
+                return True
+        log.error(
+            f"  ✗ Issue #{numero} : réseau toujours indisponible après "
+            f"{DUREE_MAX_ATTENTE_RESEAU_S // 60} min — abandon normal de "
+            f"cette tentative (publication en attente si le commentaire "
+            f"d'échec échoue aussi)."
+        )
+        return False
+    finally:
+        _signaler_sortie_panne_reseau(raison)
 
 
 # ─── Verrou d'instance unique PAR PROJET (issue #908) ──────────────────────
@@ -2459,7 +2729,16 @@ def verifier_plafond_max_write_parallele() -> None:
 
 
 def lister_issues():
-    """Retourne la liste des issues (label du projet) ouvertes."""
+    """Retourne la liste des issues (label du projet) ouvertes, ou None si
+    l'appel `gh` lui-même a échoué (issue #952) — DISTINCT d'une liste VIDE
+    (`[]`, appel réussi, aucune issue trouvée). Avant cette distinction, un
+    simple échec réseau/GitHub (code de retour non nul, exception) rendait
+    `[]`, indiscernable d'une vraie liste vide pour l'appelant (`main()`) :
+    une issue en needs-human se voyait alors déclarée disparue (fermeture
+    manuelle supposée, à tort) et l'auto-extinction comptait la panne comme
+    de l'inactivité — vécu le 24/11/2026 (coupure internet ~14:10-14:35) sur
+    alchess et rummikub. Voir ARCHITECTURE.md pour le détail complet du
+    traitement de ce None par `main()`."""
     try:
         res = subprocess.run(
             ["gh", "issue", "list",
@@ -2472,7 +2751,7 @@ def lister_issues():
         )
         if res.returncode != 0:
             log.error(f"Erreur gh issue list : {res.stderr.strip()}")
-            return []
+            return None
         issues = json.loads(res.stdout)
         # Garde-fou supplémentaire, en amont (issue #477) : ignore
         # silencieusement (pas de log, pas de tentative de traitement) toute
@@ -2515,7 +2794,7 @@ def lister_issues():
         return issues
     except Exception as e:
         log.error(f"Exception lister_issues : {e}")
-        return []
+        return None
 
 def issue_traitable(issue: dict) -> bool:
     """Vrai si l'issue déclenchera un vrai travail ce cycle : ni déjà 'done'
@@ -4270,16 +4549,11 @@ def detecter_conflit_watcher(repo_cible_resolu: Path, projet_courant: str) -> st
                 return cfg.nom
     return None
 
-def ajouter_label(numero: int, label: str):
-    """Ajoute un label à une issue sans la fermer.
-
-    Best-effort strict : un code de retour non nul de `gh` (notamment un
-    label absent du dépôt — ce qui fait échouer `--add-label` sans lever
-    d'exception côté subprocess) est journalisé pour diagnostic mais
-    n'est jamais remonté à l'appelant (issue #768) — ajouter_label() ne
-    retourne rien et ne lève jamais, par conception : un label manquant ou
-    un échec gh ne doit jamais faire échouer le traitement ou la clôture
-    de l'issue en cours."""
+def _ajouter_label_brut(numero: int, label: str) -> bool:
+    """Un seul essai `gh issue edit --add-label`, sans mise en attente — voir
+    `ajouter_label` ci-dessous (wrapper public) et `_rejouer_une_publication`
+    (issue #952, qui rejoue cette primitive directement, sans jamais
+    ré-enqueuer une publication déjà en attente)."""
     try:
         res = subprocess.run(
             ["gh", "issue", "edit", str(numero),
@@ -4290,11 +4564,40 @@ def ajouter_label(numero: int, label: str):
         )
         if res.returncode != 0:
             log.error(f"Erreur ajout label '{label}' sur issue #{numero} (code {res.returncode}) : {res.stderr.strip()}")
+            return False
+        return True
     except Exception as e:
         log.error(f"Erreur ajout label '{label}' sur issue #{numero} : {e}")
+        return False
 
-def commenter_issue(numero: int, message: str) -> bool:
-    """Poste un commentaire sur une issue.
+
+def ajouter_label(numero: int, label: str):
+    """Ajoute un label à une issue sans la fermer.
+
+    Best-effort strict côté APPELANT : un échec (notamment un label absent
+    du dépôt — ce qui fait échouer `--add-label` sans lever d'exception côté
+    subprocess) est journalisé pour diagnostic mais n'est jamais remonté à
+    l'appelant (issue #768) — ajouter_label() ne retourne rien et ne lève
+    jamais, par conception : un label manquant ou un échec gh ne doit jamais
+    faire échouer le traitement ou la clôture de l'issue en cours.
+
+    Depuis l'issue #952 : un échec N'EST PLUS seulement journalisé — le
+    changement de label est mis en attente durable (`_mettre_en_attente`,
+    action "label") et sera rejoué dès que `gh` répondra de nouveau (en
+    particulier le label `needs-human` de l'abandon définitif : sans cette
+    mise en attente, une panne réseau concomitante à l'abandon laissait
+    l'issue ouverte SANS AUCUN label, cf. incident alchess/diagnostique_
+    programme du 24/11/2026)."""
+    if not _ajouter_label_brut(numero, label):
+        _mettre_en_attente(numero, "label", {"label": label})
+
+def _commenter_issue_brut(numero: int, message: str) -> bool:
+    """Un seul essai `gh issue comment`, sans mise en attente — voir
+    `commenter_issue` ci-dessous (wrapper public, utilisé par tout le reste
+    du fichier) et `commenter_resultat_avec_retry`/`_rejouer_une_publication`
+    (issue #952), qui appellent CETTE primitive directement pour ne jamais
+    enqueuer la même publication plusieurs fois (une fois par tentative
+    interne de retry, plutôt qu'une fois pour l'échec final).
 
     Retourne True si `gh` a réussi (returncode 0), False sinon. Avant issue #195
     le code de retour n'était jamais inspecté : `subprocess.run` retourne
@@ -4334,6 +4637,21 @@ def commenter_issue(numero: int, message: str) -> bool:
                 Path(fichier_tmp).unlink(missing_ok=True)
             except OSError:
                 pass
+
+def commenter_issue(numero: int, message: str) -> bool:
+    """Poste un commentaire sur une issue (ACK, échec, diagnostic,
+    interruption — tout commentaire NON critique au sens de l'issue #195,
+    voir `commenter_resultat_avec_retry` pour le commentaire de résultat).
+
+    Retourne True si `gh` a réussi, False sinon (comportement inchangé pour
+    l'appelant). Depuis l'issue #952 : un échec met désormais le texte
+    COMPLET en attente durable (`_mettre_en_attente`, action "commentaire")
+    plutôt que de simplement le journaliser et le perdre — rejoué dans
+    l'ordre dès que `gh` répond de nouveau."""
+    ok = _commenter_issue_brut(numero, message)
+    if not ok:
+        _mettre_en_attente(numero, "commentaire", {"texte": message})
+    return ok
 
 def editer_dernier_commentaire(numero: int, message: str) -> bool:
     """Édite le dernier commentaire posté par le watcher sur l'issue
@@ -4450,9 +4768,18 @@ def commenter_resultat_avec_retry(numero: int, message: str) -> bool:
     rendant 0, on relit l'issue et on exige la présence effective du
     commentaire (marqueur `MARQUEUR_RESULTAT`, ajouté par l'appelant en tête
     de `message`) avant de retourner True. Si la relecture ne le trouve pas,
-    la tentative est traitée comme un échec et on enchaîne sur la suivante."""
+    la tentative est traitée comme un échec et on enchaîne sur la suivante.
+
+    Mise en attente durable (issue #952) : utilise `_commenter_issue_brut`
+    (jamais le wrapper public `commenter_issue`) pour ses tentatives
+    INTERNES — sans ça, chacun des 4 essais mettrait le MÊME message en
+    attente séparément. Seul l'échec FINAL (les 4 tentatives épuisées)
+    enqueue, une seule fois, action "commentaire_resultat" (rejouée par
+    `_rejouer_une_publication`, qui ferme l'issue dès que cette
+    republication réussit — incident rummikub #265 du 24/11/2026 : texte du
+    rapport perdu, issue restée ouverte sans label)."""
     def _tentative() -> bool:
-        if not commenter_issue(numero, message):
+        if not _commenter_issue_brut(numero, message):
             return False
         if not _commentaire_marque_present(numero):
             log.error(
@@ -4471,6 +4798,7 @@ def commenter_resultat_avec_retry(numero: int, message: str) -> bool:
         if _tentative():
             return True
     log.error(f"  Commentaire de résultat #{numero} échoué après {1 + len(DELAIS_RETRY_RESULTAT)} tentatives.")
+    _mettre_en_attente(numero, "commentaire_resultat", {"texte": message})
     return False
 
 def resultat_deja_poste(numero: int) -> bool:
@@ -4491,6 +4819,26 @@ def resultat_deja_poste(numero: int) -> bool:
     de sauter à tort une issue réellement non traitée."""
     return _commentaire_marque_present(numero)
 
+def _fermer_issue_brut(numero: int) -> bool:
+    """Un seul essai `gh issue close`, sans mise en attente ni label — voir
+    `fermer_issue` ci-dessous (wrapper public) et `_rejouer_une_publication`
+    (issue #952, qui rejoue cette primitive directement pour l'action
+    "fermeture")."""
+    try:
+        res_close = subprocess.run(
+            ["gh", "issue", "close", str(numero), "--repo", CFG.depot],
+            capture_output=True, text=True,
+            encoding="utf-8", errors="replace", timeout=30
+        )
+        if res_close.returncode != 0:
+            log.error(f"Erreur fermeture issue #{numero} (code {res_close.returncode}) : {res_close.stderr.strip()}")
+            return False
+        return True
+    except Exception as e:
+        log.error(f"Erreur fermeture issue #{numero} : {e}")
+        return False
+
+
 def fermer_issue(numero: int) -> bool:
     """Ferme une issue, ajoute le label 'done' puis le label d'agent
     d'exécution (CFG.label_agent, issue #768, best-effort — voir plus bas).
@@ -4506,33 +4854,25 @@ def fermer_issue(numero: int) -> bool:
 
     Les deux sous-commandes sont tentées inconditionnellement (comme avant
     #238), pour ne pas transformer un échec de `close` en un label manquant
-    évitable. Aucune compensation automatique en cas d'échec partiel : on se
-    contente de journaliser l'état incohérent obtenu, pour diagnostic."""
+    évitable. Aucune compensation automatique IMMÉDIATE en cas d'échec
+    partiel : on se contente de journaliser l'état incohérent obtenu, pour
+    diagnostic — la compensation DIFFÉRÉE passe désormais par la mise en
+    attente durable ci-dessous (issue #952, action "fermeture" pour `close`,
+    "label" pour le label 'done' via `ajouter_label`, déjà auto-enqueueuse)."""
     try:
-        res_close = subprocess.run(
-            ["gh", "issue", "close", str(numero), "--repo", CFG.depot],
-            capture_output=True, text=True,
-            encoding="utf-8", errors="replace", timeout=30
-        )
-        close_ok = res_close.returncode == 0
+        close_ok = _fermer_issue_brut(numero)
         if not close_ok:
-            log.error(f"Erreur fermeture issue #{numero} (code {res_close.returncode}) : {res_close.stderr.strip()}")
+            _mettre_en_attente(numero, "fermeture", {})
 
-        res_label = subprocess.run(
-            ["gh", "issue", "edit", str(numero),
-             "--repo", CFG.depot,
-             "--add-label", LABEL_FAIT],
-            capture_output=True, text=True,
-            encoding="utf-8", errors="replace", timeout=30
-        )
-        label_ok = res_label.returncode == 0
+        label_ok = _ajouter_label_brut(numero, LABEL_FAIT)
         if not label_ok:
-            log.error(f"Erreur ajout label '{LABEL_FAIT}' sur issue #{numero} (code {res_label.returncode}) : {res_label.stderr.strip()}")
+            log.error(f"Erreur ajout label '{LABEL_FAIT}' sur issue #{numero}.")
+            _mettre_en_attente(numero, "label", {"label": LABEL_FAIT})
 
         if close_ok and not label_ok:
-            log.error(f"  État incohérent issue #{numero} : FERMÉE mais SANS le label '{LABEL_FAIT}' (pas de compensation automatique).")
+            log.error(f"  État incohérent issue #{numero} : FERMÉE mais SANS le label '{LABEL_FAIT}' (compensation différée via publication en attente).")
         elif label_ok and not close_ok:
-            log.error(f"  État incohérent issue #{numero} : label '{LABEL_FAIT}' posé mais issue NON fermée (pas de compensation automatique).")
+            log.error(f"  État incohérent issue #{numero} : label '{LABEL_FAIT}' posé mais issue NON fermée (compensation différée via publication en attente).")
 
         # Label identifiant l'AGENT D'EXÉCUTION qui a traité l'issue
         # (CFG.label_agent, issue #768) — posé en même temps que LABEL_FAIT,
@@ -4569,22 +4909,15 @@ def _fermer_issue_sans_done(numero: int) -> bool:
     réussi — l'appelant (`_finaliser_session_interactive_sans_rapport`) s'en
     sert pour décider s'il peut considérer cette fin de session comme
     entièrement traitée (jamais sur la base du seul label CFG.label_agent,
-    purement informatif)."""
-    try:
-        res_close = subprocess.run(
-            ["gh", "issue", "close", str(numero), "--repo", CFG.depot],
-            capture_output=True, text=True,
-            encoding="utf-8", errors="replace", timeout=30
-        )
-        close_ok = res_close.returncode == 0
-        if not close_ok:
-            log.error(f"Erreur fermeture issue #{numero} (code {res_close.returncode}) : {res_close.stderr.strip()}")
-        ajouter_label(numero, CFG.label_agent)
-        etat_rate_limit.maj_rate_limit("watcher.fermer_issue_sans_done")
-        return close_ok
-    except Exception as e:
-        log.error(f"Erreur fermeture issue #{numero} (sans label '{LABEL_FAIT}') : {e}")
-        return False
+    purement informatif). Depuis l'issue #952 : un échec de la fermeture
+    elle-même est mis en attente durable (action "fermeture", même mécanisme
+    que `fermer_issue`)."""
+    close_ok = _fermer_issue_brut(numero)
+    if not close_ok:
+        _mettre_en_attente(numero, "fermeture", {})
+    ajouter_label(numero, CFG.label_agent)
+    etat_rate_limit.maj_rate_limit("watcher.fermer_issue_sans_done")
+    return close_ok
 
 
 def _lister_processus_pgid(pgid: int, exclure_pid: int | None = None) -> list[tuple[int, str]]:
@@ -8018,6 +8351,27 @@ def _guards_precoces_et_bootstrap(issue: dict, numero: int, titre: str, body: st
             _issue_write_bloquee_ajouter(numero)
         return None
 
+    # Commentaire de résultat en attente de republication (issue #952,
+    # incident rummikub #265 du 24/11/2026) : le travail est déjà fait, seule
+    # sa publication a échoué (coupure réseau) — ne JAMAIS relancer `claude`
+    # dessus, se contenter d'attendre le rejeu (`rejouer_publications_en_
+    # attente`, appelé après chaque `gh issue list` réussi et une fois au
+    # démarrage). Sans ce garde, un redémarrage du watcher PENDANT la panne
+    # (issues_en_cours reparti à vide, aucun label puisque la fermeture n'a
+    # jamais eu lieu, `resultat_deja_poste` faux puisque le commentaire n'est
+    # lui non plus pas encore passé) relancerait `claude` depuis zéro sur un
+    # travail déjà terminé.
+    if _publication_en_attente_pour(numero, "commentaire_resultat"):
+        log.debug(
+            f"Issue #{numero} : commentaire de résultat déjà en attente de "
+            f"republication — ignorée ce cycle, pas de nouveau traitement "
+            f"(issue #952)."
+        )
+        _issues_en_cours_ajouter(numero)
+        if _deduire_mode(labels) == MODE_ECRITURE:
+            _issue_write_bloquee_ajouter(numero)
+        return None
+
     # Garde d'idempotence (issue #195). Une issue peut revenir ici OUVERTE alors
     # que son travail est déjà fait : un cycle précédent avait réussi le
     # commentaire de résultat mais échoué la fermeture (coupure réseau entre
@@ -9231,24 +9585,38 @@ def _finaliser_succes(numero: int, titre: str, body: str, labels: list[str], mod
     if not commenter_resultat_avec_retry(numero, message_resultat):
         # Échec réseau persistant : fermer l'issue effacerait
         # silencieusement le travail. On la laisse OUVERTE (ni `close`
-        # ni label `done`) pour reprise au prochain cycle. La garde
-        # d'idempotence en tête de traiter_issue évitera de relancer
-        # claude à tort si un cycle ultérieur finit par poster le
-        # commentaire mais échoue encore la fermeture.
+        # ni label `done`) pour reprise au prochain cycle.
+        #
+        # Issue #952 (incident rummikub #265, 24/11/2026) : `commenter_
+        # resultat_avec_retry` a déjà mis le texte COMPLET en attente durable
+        # ci-dessus (plus de rapport perdu) — rejoué dès que `gh` répond de
+        # nouveau, fermeture comprise (voir `_rejouer_une_publication`). On
+        # NE retire PLUS `numero` de `issues_en_cours` ici (contrairement au
+        # comportement d'avant #952) : sans ce maintien, l'issue restait
+        # ouverte SANS AUCUN label et SANS commentaire de résultat détectable
+        # (`resultat_deja_poste` faux) — le prochain cycle la croyait neuve et
+        # relançait `claude` depuis zéro sur un travail déjà fait. Le garde
+        # d'entrée de `_guards_precoces_et_bootstrap`
+        # (`_publication_en_attente_pour`, action "commentaire_resultat")
+        # couvre en plus le cas d'un redémarrage du watcher (issues_en_cours
+        # reparti à vide) tant que le fichier en attente existe encore.
         log.error(
             f"  ✗ Commentaire de résultat #{numero} impossible après retries — "
-            f"issue laissée OUVERTE pour reprise (non fermée)."
+            f"mis en attente durable, issue laissée OUVERTE pour republication "
+            f"(pas de retraitement, pas de nouvelle exécution de claude)."
         )
         notifier(
             labels,
             titre=f"⚠️ {CFG.nom} #{numero} — résultat non posté",
             message=(f"'{titre}' traitée, mais le commentaire de résultat a échoué "
-                     f"(réseau). Issue laissée ouverte pour reprise au prochain cycle."),
+                     f"(réseau) — mis en attente, sera republié dès le retour du "
+                     f"réseau."),
             urgence_bureau="critical",
             priorite_ntfy="high",
             numero=numero,
         )
-        _issues_en_cours_retirer(numero)
+        if mode == MODE_ECRITURE:
+            _issue_write_bloquee_ajouter(numero)
         return
     if not fermer_issue(numero):
         log.warning(f"  Fermeture de l'issue #{numero} incomplète (close/label) — sera retentée au prochain cycle via la garde d'idempotence.")
@@ -10310,6 +10678,38 @@ def _traiter_issue_synchrone(issue: dict, dry_run: bool, chemin_worktree: Path |
                                               avertissement_worktree_repris)
                 return
 
+            # Panne réseau (issue #952, incident alchess #383 / diagnostique_
+            # programme #115 du 24/11/2026) : un échec constaté au niveau du
+            # PROCESS (`stderr_brut` non None — jamais un rapport d'agent
+            # reclassé après coup par #581/#757, où `stderr_brut` vaut None,
+            # cf. `_executer_une_tentative`) coïncidant avec une coupure
+            # réseau NE DOIT PAS être classé comme une vraie erreur : sans ce
+            # garde, un `claude` incapable d'atteindre son service échouait
+            # en quelques secondes avec un code non nul, pris à tort pour une
+            # authentification absente (#763) ou une erreur bloquante (#760)
+            # — abandon définitif immédiat, needs-human, après seulement 1 ou
+            # 2 tentatives sur 3. Si le réseau est bien revenu (ou n'a jamais
+            # été coupé — cas très largement majoritaire), `_reseau_disponible`
+            # répond immédiatement vrai et tout le reste de ce bloc d'échec
+            # continue EXACTEMENT comme avant cette issue — aucun changement
+            # de comportement hors panne.
+            if stderr_brut is not None and not _reseau_disponible():
+                if _attendre_retour_reseau(numero):
+                    tentative -= 1  # cette tentative ne compte pas (issue #952)
+                    continue
+                # Panne plus longue que le maximum : abandon NORMAL, comme si
+                # `CFG.max_essais` était atteint (la publication qui en
+                # découle — commentaire d'échec + label needs-human — est de
+                # toute façon mise en attente durable si `gh` échoue encore,
+                # voir ajouter_label/commenter_issue).
+                _gerer_abandon_max_essais(numero, titre, body, labels, mode, critique, tentative,
+                                           sortie + " (après une coupure réseau prolongée)",
+                                           timeout, avertissement_worktree_deja_pris,
+                                           avertissement_worktree_repris,
+                                           perimetre_effectif, cwd_effectif, debut_traitement,
+                                           duree_tentative, chemin_outil_lecture_exec)
+                return
+
             # Verdict illisible (#581) alors que le worktree a déjà avancé
             # (issue #777, incident chesscoach #123) : priorité la PLUS
             # HAUTE, avant même l'erreur bloquante ci-dessous — la preuve
@@ -10814,6 +11214,26 @@ def main():
     # puis réarmée à chaque cycle comportant au moins une issue traitable.
     derniere_activite = time.monotonic()
 
+    # État de panne réseau sur la LISTE des issues (issue #952, point 1) —
+    # True entre le cycle où `lister_issues()` a échoué et celui où elle
+    # réussit de nouveau. Gouverne : la suspension (pas la remise à zéro) du
+    # compteur d'inactivité ci-dessous, et le fait qu'aucune issue needs-human
+    # n'est déclarée disparue pendant la panne (voir `_reconcilier_issues_en_
+    # cours_fermees`, jamais appelée tant que `issues is None`).
+    en_panne_liste = False
+    instant_debut_panne_liste: float | None = None
+
+    # Rejeu au démarrage (issue #952, point 2) : si le watcher a été arrêté
+    # (volontairement ou non) alors que des publications restaient en
+    # attente d'un cycle précédent, on les rejoue ICI, avant le premier
+    # cycle — sans attendre un premier `lister_issues()` réussi.
+    if nb_publications_en_attente() > 0:
+        log.info(
+            f"↻ {nb_publications_en_attente()} publication(s) en attente "
+            f"trouvée(s) au démarrage — rejeu dans l'ordre d'origine (issue #952)."
+        )
+        rejouer_publications_en_attente()
+
     while True:
         # Test d'inactivité en tête de cycle, AVANT lister_issues() et AVANT tout
         # traitement (issue #200). Rester dans la boucle synchrone garantit qu'un
@@ -10830,11 +11250,28 @@ def main():
             # chaque appel : réévalué à CHAQUE cycle, donc dès qu'un thread se
             # termine, l'extinction redevient possible au cycle suivant.
             threads_ecriture_actifs = _threads_ecriture_actifs()
+            nb_en_attente = nb_publications_en_attente()
             if threads_ecriture_actifs:
                 log.debug(
                     f"Auto-extinction différée : {len(threads_ecriture_actifs)} "
                     f"tâche(s) mode_write encore active(s) en thread (issue #337)."
                 )
+            elif nb_en_attente:
+                # Issue #952, point 2 : tant qu'il reste des publications en
+                # attente (texte déjà produit, juste pas encore republié), le
+                # watcher ne s'éteint pas — sans ça, un rapport resterait en
+                # attente indéfiniment si personne ne relance le watcher.
+                log.debug(
+                    f"Auto-extinction différée : {nb_en_attente} publication(s) "
+                    f"GitHub encore en attente de republication (issue #952)."
+                )
+            elif en_panne_liste:
+                # Issue #952, point 1 : compteur SUSPENDU (pas remis à zéro,
+                # pas testé) tant que la liste des issues ne peut pas être
+                # lue — une panne ne doit jamais se faire passer pour de
+                # l'inactivité réelle. Une seule ligne au début/à la fin de
+                # la panne (voir plus bas), pas ici à chaque cycle.
+                pass
             else:
                 inactif_s = time.monotonic() - derniere_activite
                 if inactif_s > CFG.delai_inactivite_min * 60:
@@ -10864,39 +11301,80 @@ def main():
             # silencieux sous le plafond — voir verifier_plafond_max_write_parallele().
             verifier_plafond_max_write_parallele()
             issues = lister_issues()
-            # Libère les places needs-human dont l'issue a été fermée
-            # manuellement sur GitHub entre deux cycles (issue #576, cas 3) —
-            # AVANT le calcul de travail_a_faire/traiter_issue ci-dessous,
-            # sans quoi une place ainsi libérée resterait comptée jusqu'au
-            # cycle suivant.
-            _reconcilier_issues_en_cours_fermees(issues)
-            # Activité = présence d'au moins une issue réellement traitable (ni
-            # done, ni needs-human). On réarme AVANT le traitement : le cycle qui
-            # suit ne testera l'inactivité qu'une fois ce traitement terminé, donc
-            # un retry long n'est jamais interrompu (issue #200).
-            travail_a_faire = any(issue_traitable(i) for i in issues)
-            if travail_a_faire:
-                derniere_activite = time.monotonic()
-            if issues:
-                log.info(f"{len(issues)} issue(s) en attente.")
-                for issue in issues:
-                    traiter_issue(issue, dry_run=args.dry_run)
+
+            if issues is None:
+                # Issue #952, point 1 : panne réseau/GitHub sur la LISTE —
+                # DISTINCTE d'une liste vide. Pendant ce cycle : aucune issue
+                # n'est déclarée disparue (_reconcilier_issues_en_cours_
+                # fermees n'est PAS appelée), aucune règle de fermeture
+                # manuelle n'est appliquée, et rien n'est traité. Une seule
+                # ligne au début de la panne (jamais une par cycle).
+                if not en_panne_liste:
+                    log.error(
+                        "⚠ Panne réseau/GitHub détectée : impossible de lister "
+                        "les issues (gh issue list a échoué) — en attente du "
+                        "retour. Aucune issue ne sera déclarée disparue, "
+                        "auto-extinction suspendue tant que la liste reste "
+                        "illisible (issue #952)."
+                    )
+                    instant_debut_panne_liste = time.monotonic()
+                    _signaler_entree_panne_reseau("liste_issues")
+                en_panne_liste = True
             else:
-                log.debug("Aucune issue en attente.")
-            # Réarmement APRÈS traitement (issue #217). Le réarme d'avant-cycle
-            # (ci-dessus) date le DÉBUT du travail, pas sa fin : le traitement
-            # d'une (ou plusieurs) issue(s) peut s'étirer bien au-delà du délai
-            # d'inactivité — plusieurs timeouts de 300s + retries en cascade, cf.
-            # log watcher-scrabble 24/07/2026 : ~23 min pour une seule issue. Sans
-            # ce second réarme, l'horloge resterait « périmée » (figée au début du
-            # cycle) et le test d'extinction en tête du cycle SUIVANT se
-            # déclencherait immédiatement après un travail réel qui vient tout
-            # juste de se terminer (extinction ~14 s après un succès). On réarme
-            # donc de nouveau ICI, avec l'instant réel de fin de traitement, dès
-            # qu'au moins une issue traitable a été traitée ce cycle. L'extinction
-            # reste possible quand plus rien n'est traitable (le flag est faux).
-            if travail_a_faire:
-                derniere_activite = time.monotonic()
+                if en_panne_liste:
+                    duree_panne = time.monotonic() - (instant_debut_panne_liste or time.monotonic())
+                    # Suspendu, PAS remis à zéro (issue #952, point 1) : on
+                    # décale `derniere_activite` de la durée de la panne, pour
+                    # que le temps passé sans pouvoir lister les issues ne
+                    # compte jamais comme de l'inactivité réelle.
+                    derniere_activite += duree_panne
+                    log.info(
+                        f"✓ Réseau/GitHub de retour — reprise normale après "
+                        f"{duree_panne:.0f}s d'impossibilité de lister les "
+                        f"issues (compteur d'inactivité suspendu, pas remis à "
+                        f"zéro, pendant cette durée)."
+                    )
+                    en_panne_liste = False
+                    instant_debut_panne_liste = None
+                    _signaler_sortie_panne_reseau("liste_issues")
+                # Rejeu des publications en attente (issue #952, point 2) :
+                # juste après un `gh issue list` réussi, preuve fraîche que
+                # GitHub répond, SANS appel réseau supplémentaire pour le
+                # constater. S'arrête au premier échec (ordre préservé).
+                rejouer_publications_en_attente()
+                # Libère les places needs-human dont l'issue a été fermée
+                # manuellement sur GitHub entre deux cycles (issue #576, cas 3) —
+                # AVANT le calcul de travail_a_faire/traiter_issue ci-dessous,
+                # sans quoi une place ainsi libérée resterait comptée jusqu'au
+                # cycle suivant.
+                _reconcilier_issues_en_cours_fermees(issues)
+                # Activité = présence d'au moins une issue réellement traitable (ni
+                # done, ni needs-human). On réarme AVANT le traitement : le cycle qui
+                # suit ne testera l'inactivité qu'une fois ce traitement terminé, donc
+                # un retry long n'est jamais interrompu (issue #200).
+                travail_a_faire = any(issue_traitable(i) for i in issues)
+                if travail_a_faire:
+                    derniere_activite = time.monotonic()
+                if issues:
+                    log.info(f"{len(issues)} issue(s) en attente.")
+                    for issue in issues:
+                        traiter_issue(issue, dry_run=args.dry_run)
+                else:
+                    log.debug("Aucune issue en attente.")
+                # Réarmement APRÈS traitement (issue #217). Le réarme d'avant-cycle
+                # (ci-dessus) date le DÉBUT du travail, pas sa fin : le traitement
+                # d'une (ou plusieurs) issue(s) peut s'étirer bien au-delà du délai
+                # d'inactivité — plusieurs timeouts de 300s + retries en cascade, cf.
+                # log watcher-scrabble 24/07/2026 : ~23 min pour une seule issue. Sans
+                # ce second réarme, l'horloge resterait « périmée » (figée au début du
+                # cycle) et le test d'extinction en tête du cycle SUIVANT se
+                # déclencherait immédiatement après un travail réel qui vient tout
+                # juste de se terminer (extinction ~14 s après un succès). On réarme
+                # donc de nouveau ICI, avec l'instant réel de fin de traitement, dès
+                # qu'au moins une issue traitable a été traitée ce cycle. L'extinction
+                # reste possible quand plus rien n'est traitable (le flag est faux).
+                if travail_a_faire:
+                    derniere_activite = time.monotonic()
         except KeyboardInterrupt:
             # SIGINT (Ctrl+C en terminal) lève directement cette exception,
             # sans passer par _gestionnaire_signal_arret — nom explicite

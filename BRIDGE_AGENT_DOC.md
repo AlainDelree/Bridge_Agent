@@ -1345,7 +1345,27 @@ estimation que celle déjà affichée, sans dupliquer ce calcul.
 
 ---
 
-*Dernière mise à jour : 22 novembre 2026 — issue #909, mode interactif,
+*Dernière mise à jour : 24 novembre 2026 — issue #952, résistance du
+watcher à une coupure réseau (coupure réelle du 24/11/2026, ~14:10-14:35,
+ayant laissé trois issues bancales sur trois projets). Trois effets
+visibles : (1) une coupure réseau ne fait plus déclarer une issue
+`needs-human` « disparue » (fermeture manuelle présumée à tort), ni
+s'éteindre le watcher pour « inactivité » pendant la panne ; (2) un
+commentaire (résultat, échec...) qui échoue après ses tentatives déjà
+prévues n'est plus perdu — mis en attente durable sous
+`logs/publications_en_attente/<projet>/` et republié automatiquement dans
+l'ordre dès que GitHub répond de nouveau, l'issue restant ouverte sans
+nouveau traitement entre-temps (jamais relancée deux fois) ; (3) une
+tentative `claude` qui échoue PENDANT une coupure réseau détectée
+(GitHub et le service d'IA sondés par simple connexion TCP) n'est plus
+comptée dans les 3 essais — le watcher attend le retour du réseau (jusqu'à
+~30 min) puis refait la même tentative, au lieu d'abandonner tout de suite.
+Rien ne change hors panne (délais, nombre de tentatives, calibration
+TIMEOUT identiques). Visible dans le panneau latéral Infrastructure :
+« ⚠️ en attente du réseau — N publication(s) en attente » sur la ligne du
+projet concerné. Détail complet : `ARCHITECTURE.md` §17.*
+
+*Mise à jour précédente : 22 novembre 2026 — issue #909, mode interactif,
 étape 4 (étude #888) : le TIMEOUT était jusqu'ici un délai brut de bout en
 bout — une pause de réflexion ou une absence d'Alain pouvait le faire
 dépasser et tuer la session alors que CCL ne travaillait plus. Il est

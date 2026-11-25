@@ -408,6 +408,11 @@ async function rendrePanneauLateralMonitoring() {
     if (!actif) cclEteints.push(nom); else cclActifs.push(nom);
     const resume = appelerAncien('resumeProjetMonitoring', nom) || { enCours: 0, enFile: 0 };
     const enAlerte = !!(alertesWatchers[nom] && alertesWatchers[nom].alerte);
+    // Issue #952 : visibilité panne réseau — champs purement locaux côté
+    // watcher (fichier marqueur + comptage de fichiers), déjà portés par
+    // l'UNIQUE lecture périodique de /watchers (aucun appel GitHub de plus).
+    const enPanneReseau = !!(watchersMap[nom] && watchersMap[nom].en_panne_reseau);
+    const nbEnAttente = (watchersMap[nom] && watchersMap[nom].publications_en_attente) || 0;
     html += '<div class="pl-ligne">'
           + '<span class="pl-ligne-libelle">' + (actif ? '🟢' : '⚫') + ' ' + dom.echapperHtml(nom) + '</span>'
           + '<span class="pl-ligne-btns">'
@@ -421,6 +426,10 @@ async function rendrePanneauLateralMonitoring() {
           + '<div class="pl-sous-projet">' + resume.enCours + ' en cours, ' + resume.enFile + ' en file</div>'
           + (enAlerte
               ? '<div class="pl-alerte-watcher">⚠️ ' + dom.echapperHtml(texteAlerteWatcher(resume.enFile)) + '</div>'
+              : '')
+          + (enPanneReseau || nbEnAttente
+              ? '<div class="pl-alerte-watcher">⚠️ en attente du réseau — '
+                + nbEnAttente + ' publication(s) en attente</div>'
               : '');
   });
   if (noms.length) {

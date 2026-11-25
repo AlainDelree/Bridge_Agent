@@ -2036,6 +2036,155 @@ empreinte supplémentaire (heure de démarrage du process lue sur
 non implémenté ici (pas « quelques lignes » évidentes, et nécessite une
 vérification sur le déploiement réel avant tout correctif).
 
+## 17. Résistance à une coupure réseau (issue #952)
+
+### 17.1 Pourquoi
+
+Coupure internet du 24/11/2026 (~14:10-14:35) : trois issues laissées dans
+un état bancal sur trois projets différents (rummikub #265, alchess #383,
+diagnostique_programme #115), alors que le travail avait été fait ou
+presque. Cause commune : `watcher.py` ne distinguait pas « GitHub ou le
+service d'IA est injoignable » de « il n'y a rien à faire » ou « cette
+tentative a vraiment échoué » — trois symptômes concrets :
+- `lister_issues()` renvoyait `[]` aussi bien pour « aucune issue » que pour
+  « `gh issue list` a échoué » : une issue `needs-human` absente de cette
+  liste à tort était déclarée « disparue des issues ouvertes (fermeture
+  manuelle probable) » et sa place libérée, et l'auto-extinction (§16,
+  issue #200) comptait la panne comme de l'inactivité réelle (watchers
+  alchess/rummikub éteints en pleine coupure) ;
+- un commentaire (résultat, échec...) qui échouait après ses tentatives
+  immédiates (`commenter_resultat_avec_retry`, 1+3 essais) était seulement
+  journalisé puis PERDU — rummikub #265 : texte du rapport perdu (fichier
+  temporaire déjà supprimé), issue restée ouverte sans label ;
+- une tentative `claude` échouant vite (code 1, ~79 caractères de sortie)
+  parce que l'outil n'atteignait plus son service était prise pour une vraie
+  erreur (authentification absente #763, ou bloquante #760) et déclenchait
+  un abandon définitif immédiat — consommant les tentatives restantes pour
+  rien (alchess #383, diagnostique_programme #115).
+
+### 17.2 Distinguer l'échec d'une liste d'une liste vide (`lister_issues`)
+
+`lister_issues()` retourne désormais `None` (et non plus `[]`) quand l'appel
+`gh issue list` échoue lui-même (code de retour non nul ou exception) — `[]`
+ne signifie plus que « appel réussi, aucune issue trouvée ». `main()` teste
+`issues is None` avant tout traitement :
+- si `None` : **aucun** des traitements habituels n'a lieu ce cycle
+  (`_reconcilier_issues_en_cours_fermees`, calcul de `travail_a_faire`,
+  `traiter_issue`) — aucune issue n'est déclarée disparue, aucune règle de
+  fermeture manuelle (issue #576) n'est appliquée ;
+- le compteur d'inactivité (`derniere_activite`) n'est ni remis à zéro ni
+  testé pendant la panne (variable `en_panne_liste`, vraie entre le cycle où
+  la liste échoue et celui où elle réussit de nouveau) : à la sortie de
+  panne, `derniere_activite` est DÉCALÉE de la durée exacte de la panne
+  (`derniere_activite += duree_panne`) — le temps passé sans pouvoir lire la
+  liste ne compte ainsi jamais comme de l'inactivité, sans pour autant
+  prolonger artificiellement la fenêtre d'auto-extinction au-delà de ce qui
+  aurait été observé sans la panne ;
+- une seule ligne de journal au début de la panne (`log.error`) et une seule
+  à son retour (`log.info`), jamais une par cycle.
+
+### 17.3 Publications GitHub en attente (`logs/publications_en_attente/<projet>/`)
+
+`commenter_issue`, `ajouter_label`, `fermer_issue`/`_fermer_issue_sans_done`
+et `commenter_resultat_avec_retry` restent des wrappers PUBLICS (même
+signature, même comportement de retry existant) autour de primitives
+« brutes » sans mise en attente (`_commenter_issue_brut`,
+`_ajouter_label_brut`, `_fermer_issue_brut`). Quand le wrapper public épuise
+ses tentatives immédiates déjà existantes (1 essai pour `commenter_issue`/
+`ajouter_label`/`fermer_issue`, 1+3 pour `commenter_resultat_avec_retry`),
+`_mettre_en_attente(numero, action, payload)` écrit un fichier JSON sous
+`logs/publications_en_attente/<projet>/` (gitignoré comme tout `logs/`) :
+nom `<ns>-issue<N>-<action>.json` (préfixe en nanosecondes, tri
+lexicographique = ordre FIFO), contenu `{projet, numero, action,
+horodatage, ...payload}` avec le TEXTE COMPLET (jamais tronqué) ou le nom
+du label. Quatre actions : `"commentaire"`, `"commentaire_resultat"`,
+`"label"`, `"fermeture"`.
+
+Rejeu (`rejouer_publications_en_attente`) : appelé juste après chaque
+`lister_issues()` réussi (preuve fraîche que GitHub répond, sans appel
+réseau supplémentaire pour le constater) ET une fois au démarrage de
+`main()` (watcher arrêté pendant la panne). Parcourt les fichiers dans
+l'ORDRE D'ORIGINE et s'arrête au premier échec (jamais de saut qui
+inverserait l'ordre) ; un fichier rejoué avec succès est supprimé
+immédiatement, jamais rejoué une seconde fois. Cas particulier
+`"commentaire_resultat"` : au succès de la republication, l'issue est
+ENFIN fermée (`fermer_issue`, qui se remet elle-même en attente si elle
+échoue à son tour) — jusque-là elle reste ouverte, SANS label, occupant
+toujours sa place dans `issues_en_cours`/`_issues_write_bloquees_needs_
+human` (`_guards_precoces_et_bootstrap` refuse de la retraiter tant qu'une
+publication `"commentaire_resultat"` reste en attente pour elle —
+`_publication_en_attente_pour`, couvre aussi un redémarrage du watcher
+PENDANT la panne, `issues_en_cours` reparti à vide).
+
+Limite connue, assumée : la republication différée d'un commentaire de
+résultat ferme l'issue mais ne met PAS à jour l'historique des durées ni la
+calibration TIMEOUT (§12/BRIDGE_AGENT_DOC.md §19), et n'émet pas la
+notification de succès (bip/notify-send/ntfy) — seule la notification
+d'échec initiale a été émise à l'utilisateur. Un succès republié après une
+panne reste donc visible sur GitHub (commentaire + fermeture) mais invisible
+des statistiques de calibration.
+
+### 17.4 Ne pas consommer une tentative pendant une panne réseau
+
+Dans la boucle de tentatives (`_traiter_issue_synchrone`), immédiatement
+après le test d'interruption demandée (#949, priorité absolue inchangée) et
+AVANT tous les autres garde-fous d'échec (verdict illisible #777, erreur
+bloquante #760, tentative anormalement rapide #763, trace de timeout,
+abandon `max_essais`) : si la tentative qui vient d'échouer est un échec de
+PROCESS réel (`stderr_brut is not None` — jamais un rapport d'agent reclassé
+après coup par #581/#757, où `stderr_brut` vaut toujours `None`) ET que
+`_reseau_disponible()` répond faux, le watcher appelle
+`_attendre_retour_reseau(numero)` : sondage espacé de
+`INTERVALLE_SONDAGE_RESEAU_S` (30s) jusqu'au retour du réseau ou
+`DUREE_MAX_ATTENTE_RESEAU_S` (30 min). Si le réseau revient : la tentative
+est refaite À L'IDENTIQUE, SANS être comptée (`tentative -= 1` puis
+`continue`). Au-delà du délai maximal : abandon NORMAL, exactement comme si
+`CFG.max_essais` était atteint (`_gerer_abandon_max_essais`, qui respecte la
+distinction critique/non-critique inchangée) — le commentaire d'échec qui
+en résulte passe par la mise en attente du §17.3 s'il échoue lui aussi.
+
+`_reseau_disponible()` : une connexion TCP nue (pas de TLS, pas de requête
+HTTP — `_hote_joignable`, 5s de timeout par hôte) vers `github.com` ET vers
+l'hôte du service d'IA de l'agent courant (`HOTES_SERVICE_IA`, défini pour
+`"claude"` → `api.anthropic.com`, best-effort non confirmé pour `"vibe"` →
+`api.mistral.ai`). **Limite explicitement assumée** (demandée par l'issue
+#952) : un hôte joignable au niveau TCP ne prouve PAS que l'API qu'il sert
+répond réellement (authentification, quota, panne applicative isolée) —
+seule une vraie tentative `claude`/`gh` le dirait avec certitude, ce qui
+consommerait justement ce qu'on cherche à préserver pendant une panne.
+
+Hors panne (réseau disponible — cas très largement majoritaire), ce bloc ne
+change RIEN : `_reseau_disponible()` répond vrai immédiatement et tout le
+reste de la gestion d'échec continue exactement comme avant l'issue #952.
+
+### 17.5 Visibilité
+
+Journal : une ligne au début et à la fin de chacune des deux pannes
+possibles (liste, §17.2 ; tentative, §17.4), jamais une par cycle/sondage.
+Interface (`app/watchers.py::watchers()`, route déjà existante, déjà
+sondée toutes les 30s par le panneau latéral) : deux champs supplémentaires
+par projet, lecture locale PURE (fichier marqueur + comptage de fichiers,
+AUCUN appel GitHub) —
+- `en_panne_reseau` : existence de `logs/watcher-<nom>.reseau_panne`, posé
+  par `watcher._signaler_entree_panne_reseau`/`_signaler_sortie_panne_
+  reseau` (compteur de raisons actives, partagé entre le cycle principal et
+  les threads mode_write — le marqueur ne disparaît que quand aucune raison
+  n'est plus active) ;
+- `publications_en_attente` : `watcher.nb_publications_en_attente(nom)`,
+  nombre de fichiers sous `logs/publications_en_attente/<nom>/`.
+
+`static/js/panneau_lateral.js` affiche ces deux champs sous forme d'une
+ligne « ⚠️ en attente du réseau — N publication(s) en attente » par projet
+concerné (réutilise la classe `pl-alerte-watcher` déjà stylée).
+
+### 17.6 Ce qui n'a pas changé
+
+Aucun délai, aucune règle de tentative ni aucun message ne change hors
+panne : `PAUSE_ENTRE_TENTATIVES`, `CFG.max_essais` (3 tentatives réelles
+pour une vraie erreur réseau disponible), la calibration du TIMEOUT (§12),
+les verrous (§11.1), l'interruption par issue (#949, §11.6) restent
+strictement inchangés. `configs/*.conf` n'a reçu aucune modification.
+
 ---
 
 *Document technique interne — voir `BRIDGE_AGENT_DOC.md` pour l'usage du bridge.*
