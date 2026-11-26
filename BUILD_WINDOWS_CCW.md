@@ -106,8 +106,9 @@ il contient le modèle à utiliser en bas de page.
   Scrabble), et, pour un build de publication (`--publier`), le fichier de
   notes de version `notes_de_version/v<N>.md` ajouté par l'agent (détail :
   section « Notes de version » plus bas). Ce fichier reste dans le dépôt :
-  il n'entre jamais dans l'archive `<projet>-v<N>.zip`, ce que confirme la
-  vérification déjà faite des dossiers de premier niveau de l'archive.
+  il ne doit pas entrer dans l'archive `<projet>-v<N>.zip` — la
+  vérification déjà faite des dossiers de premier niveau de l'archive
+  permet de le détecter.
 
 ---
 
@@ -195,9 +196,15 @@ il contient le modèle à utiliser en bas de page.
    `C:\CCW\scrabble`. Crée la Release GitHub (étiquette `v<N>`), avec
    **DEUX fichiers** — l'installeur `<Projet>-Setup-v<N>.exe` et l'archive
    `<projet>-v<N>.zip` — et ce fichier de notes passé à `gh release create`
-   via l'option `--notes-file` (ex. `gh release create v<N>
-   <Projet>-Setup-v<N>.exe <projet>-v<N>.zip --notes-file
-   notes_de_version/v<N>.md`). Une Release déjà créée sans notes (cas
+   via l'option `--notes-file`. Commande lancée depuis le clone Windows du
+   projet (où se trouve le fichier de notes, donc en chemin relatif) ;
+   installeur et archive viennent de
+   `C:\CCW_Share\_derniers_builds\<projet>\` (ou, à défaut, de
+   `installeur\output` du worktree), donc en chemin complet (ex., depuis
+   `C:\CCW\rummikub` : `gh release create v<N>
+   C:\CCW_Share\_derniers_builds\rummikub\Rummikub-Setup-v<N>.exe
+   C:\CCW_Share\_derniers_builds\rummikub\rummikub-v<N>.zip --notes-file
+   notes_de_version\v<N>.md`). Une Release déjà créée sans notes (cas
    antérieur à cette convention, ou oubli) se complète ensuite avec
    `gh release edit v<N> --notes-file notes_de_version/v<N>.md`.
    **Ordre de publication recommandé** (point à prendre comme une
@@ -246,14 +253,15 @@ comme avant.
 
 Pour un build de publication (`--publier`, celui qui écrit `version.json`),
 l'agent écrit en plus un fichier `notes_de_version/v<N>.md` à la racine du
-dépôt de l'application (`<N>` = numéro de ce build). Il est commité dans
-la branche du worktree comme `version.json` : fusionné par Alain via
-`relecture_web` (étape 2 de « Ce que fait Alain ensuite »), il est donc
-déjà présent dans le clone Windows à l'étape 3 (Release). Ce fichier
-**reste dans le dépôt** — il n'entre jamais dans l'archive
+dépôt de l'application (`<N>` = numéro de ce build), après le build et ses
+vérifications, pour qu'il ne puisse pas être embarqué par le script. Il est
+commité dans la branche du worktree comme `version.json` : fusionné par
+Alain via `relecture_web` (étape 2 de « Ce que fait Alain ensuite »), il est
+donc déjà présent dans le clone Windows à l'étape 3 (Release). Ce fichier
+**reste dans le dépôt** — il ne doit pas entrer dans l'archive
 `<projet>-v<N>.zip` (la vérification des dossiers de premier niveau de
-l'archive, déjà faite par l'agent, le confirme). L'agent ne crée toujours
-aucune Release ; c'est Alain qui récupère ce fichier et le passe à
+l'archive, déjà faite par l'agent, permet de le détecter). L'agent ne crée
+toujours aucune Release ; c'est Alain qui récupère ce fichier et le passe à
 `gh release create --notes-file`.
 
 **Quelles issues résumer.** Celles dont l'entrée de changelog a été
@@ -642,10 +650,15 @@ la racine du worktree (jamais Git Bash).
 
 ## Notes de version
 Pour ce build de publication, écrire `notes_de_version/v<numéro-de-build>.md`
-à la racine du dépôt, à partir des entrées de changelog ajoutées depuis le
-`version.json` du build précédent jusqu'à la tête de la branche (cette issue
-de build exclue) — chercher aussi bien dans les fichiers `CHANGELOG-<N>.md`
-à la racine (pas encore fusionnés) que dans `CHANGELOG.md` (déjà fusionné) ;
+à la racine du dépôt — après le build et les vérifications de la section
+« Vérifier le résultat » qui suit, pour que le script ne puisse pas
+l'embarquer — puis le commiter dans la branche du worktree : sans ce
+commit, Alain ne le fusionnerait pas et il serait absent du clone Windows à
+l'étape Release. Contenu à partir des entrées de changelog ajoutées depuis
+le `version.json` du build précédent jusqu'à la tête de la branche (cette
+issue de build exclue) — chercher aussi bien dans les fichiers
+`CHANGELOG-<N>.md` à la racine (pas encore fusionnés) que dans
+`CHANGELOG.md` (déjà fusionné) ;
 en cas de doute sur la limite, le dire dans le rapport plutôt que deviner.
 Français simple, sans jargon ni numéro de ligne, une dizaine de lignes au
 plus, première ligne = numéro de build. Rubriques, chacune omise si vide :
