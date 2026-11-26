@@ -97,13 +97,17 @@ il contient le modèle à utiliser en bas de page.
   fiche indiquerait l'absence de cette copie, Alain devrait récupérer les
   fichiers dans `installeur\output` du worktree avant de le supprimer.
 - Commits attendus dans le worktree à l'issue d'un build réussi : une
-  sauvegarde vide, le commit de `version.json` fait par le script, et
+  sauvegarde vide, le commit de `version.json` fait par le script,
   l'entrée de changelog `CHANGELOG-<numéro-de-l'issue>.md` ajoutée par
   l'agent (le numéro est celui de l'issue du **projet buildé**, dans son
   propre dépôt GitHub — pas une issue de Bridge_Agent, ni le numéro du
   build — même règle que pour le nom du worktree ci-dessus ; exemple réel :
   build 13 de Scrabble, fichier `CHANGELOG-470.md`, issue 470 du dépôt
-  Scrabble).
+  Scrabble), et, pour un build de publication (`--publier`), le fichier de
+  notes de version `notes_de_version/v<N>.md` ajouté par l'agent (détail :
+  section « Notes de version » plus bas). Ce fichier reste dans le dépôt :
+  il n'entre jamais dans l'archive `<projet>-v<N>.zip`, ce que confirme la
+  vérification déjà faite des dossiers de premier niveau de l'archive.
 
 ---
 
@@ -120,6 +124,11 @@ il contient le modèle à utiliser en bas de page.
   de la fiche du projet.
 - Dossiers de premier niveau de l'archive, avec leur nombre de fichiers.
 - Les avertissements éventuels du build (PyInstaller, Inno Setup).
+- Pour un build de publication (`--publier`) : que le fichier
+  `notes_de_version/v<N>.md` existe, qu'il porte le bon numéro de build, et
+  en recopie le contenu dans le rapport, pour que la relecture d'Alain
+  puisse se faire avant la Release (détail : section « Notes de version »
+  plus bas).
 
 ---
 
@@ -178,8 +187,19 @@ il contient le modèle à utiliser en bas de page.
    récemment (ex. création d'un nouveau projet CCW), compter environ cinq
    minutes après le push avant que l'entrée `_ccw` apparaisse dans l'outil
    (cache de `raw.githubusercontent.com`). **Sans pousser** à ce stade.
-3. Crée la Release GitHub (étiquette `v<N>`), avec **DEUX fichiers** :
-   l'installeur `<Projet>-Setup-v<N>.exe` et l'archive `<projet>-v<N>.zip`.
+3. Récupère le fichier de notes de version `notes_de_version/v<N>.md` dans
+   le clone Windows du projet — l'étape 2 vient de fusionner la branche du
+   worktree, qui le contient, donc il y est déjà. Chemins des clones
+   (table des projets actifs, `BRIDGE_AGENT_DOC.md` §2) : Actualise
+   `C:\CCW\actualise`, Rummikub `C:\CCW\rummikub`, Scrabble
+   `C:\CCW\scrabble`. Crée la Release GitHub (étiquette `v<N>`), avec
+   **DEUX fichiers** — l'installeur `<Projet>-Setup-v<N>.exe` et l'archive
+   `<projet>-v<N>.zip` — et ce fichier de notes passé à `gh release create`
+   via l'option `--notes-file` (ex. `gh release create v<N>
+   <Projet>-Setup-v<N>.exe <projet>-v<N>.zip --notes-file
+   notes_de_version/v<N>.md`). Une Release déjà créée sans notes (cas
+   antérieur à cette convention, ou oubli) se complète ensuite avec
+   `gh release edit v<N> --notes-file notes_de_version/v<N>.md`.
    **Ordre de publication recommandé** (point à prendre comme une
    recommandation, pas comme un fait établi) : créer la Release **avant**
    de pousser — le script lui-même rappelle plutôt « git push, puis
@@ -215,6 +235,54 @@ L'application Actualise met à jour les jeux sur le PC : elle lit
 est la somme de cette archive. L'URL de téléchargement est
 `releases/download/v<N>/<projet>-v<N>.zip`. Chaque projet a sa propre
 liste de numéros, indépendante des autres.
+
+---
+
+## Notes de version
+
+Convention commune aux trois applications (issue #958) : chaque Release
+GitHub doit avoir ses notes, écrites par l'agent du build, pas créée vide
+comme avant.
+
+Pour un build de publication (`--publier`, celui qui écrit `version.json`),
+l'agent écrit en plus un fichier `notes_de_version/v<N>.md` à la racine du
+dépôt de l'application (`<N>` = numéro de ce build). Il est commité dans
+la branche du worktree comme `version.json` : fusionné par Alain via
+`relecture_web` (étape 2 de « Ce que fait Alain ensuite »), il est donc
+déjà présent dans le clone Windows à l'étape 3 (Release). Ce fichier
+**reste dans le dépôt** — il n'entre jamais dans l'archive
+`<projet>-v<N>.zip` (la vérification des dossiers de premier niveau de
+l'archive, déjà faite par l'agent, le confirme). L'agent ne crée toujours
+aucune Release ; c'est Alain qui récupère ce fichier et le passe à
+`gh release create --notes-file`.
+
+**Quelles issues résumer.** Celles dont l'entrée de changelog a été
+ajoutée depuis le commit qui a écrit le `version.json` du build précédent,
+jusqu'à la tête de la branche — l'issue de build elle-même exclue. Les
+entrées se trouvent soit dans des fichiers `CHANGELOG-<N>.md` à la racine
+du dépôt (pas encore fusionnés), soit dans `CHANGELOG.md` (déjà fusionnés
+par `fusionner_changelog.py`) : chercher aux deux endroits. En cas de doute
+sur la limite entre deux builds, l'agent le dit dans son rapport plutôt
+que de deviner.
+
+**Langue et ton.** Français simple, sans jargon ni numéro de ligne, pour
+quelqu'un qui n'a pas lu le code. Court : une dizaine de lignes au plus.
+La première ligne donne le numéro de build.
+
+**Rubriques** (chacune omise si elle est vide) : « Nouveautés »,
+« Corrections », « Sécurité et robustesse », « À savoir » (ce qui demande
+une action de l'utilisateur ou change un comportement).
+
+**Fidélité.** N'écrire que ce que disent les entrées de changelog ou ce
+que l'agent a vérifié lui-même. Si rien n'est visible pour l'utilisateur,
+le dire (« Aucun changement visible : améliorations internes »).
+
+**Interdit dans les notes** (elles sont publiques, lues sur la page de
+Release GitHub) : jeton, sujet ntfy, chemin propre aux PC d'Alain, adresse
+IP.
+
+**Releases déjà publiées.** Cette issue ne les rattrape pas (Alain
+complète v14 d'Actualise à la main).
 
 ---
 
@@ -348,6 +416,11 @@ liste de numéros, indépendante des autres.
   `manifest.json` — et un dossier `_internal` de 87 entrées). Durée
   réelle de l'agent : 219 secondes (`TIMEOUT` de 1800s). Durée observée :
   333 secondes (build antérieur).
+- **Notes de version** : voir la section « Notes de version » plus haut
+  (convention commune aux trois projets). À vérifier à la première
+  utilisation : que `notes_de_version/` n'existe pas déjà avec un autre
+  usage dans le dépôt, et que le script de build n'embarque pas la racine
+  du dépôt.
 
 ### Scrabble
 
@@ -428,6 +501,11 @@ liste de numéros, indépendante des autres.
   dossier fixe (`C:\CCW_Share\_derniers_builds\scrabble\`) a lieu dans tous
   les modes, y compris un essai sans `--publier` : Alain supprime à la main
   les fichiers de l'essai après coup.
+- **Notes de version** : voir la section « Notes de version » plus haut
+  (convention commune aux trois projets). À vérifier à la première
+  utilisation : que `notes_de_version/` n'existe pas déjà avec un autre
+  usage dans le dépôt, et que le script de build n'embarque pas la racine
+  du dépôt.
 
 ### Actualise
 
@@ -498,6 +576,11 @@ liste de numéros, indépendante des autres.
 - **Remarque PowerShell** : avec `2>&1`, une ligne d'information de
   PyInstaller apparaît comme `NativeCommandError` — ce n'est pas une
   erreur (code de sortie 0 malgré cette apparence).
+- **Notes de version** : voir la section « Notes de version » plus haut
+  (convention commune aux trois projets). À vérifier à la première
+  utilisation : que `notes_de_version/` n'existe pas déjà avec un autre
+  usage dans le dépôt, et que le script de build n'embarque pas la racine
+  du dépôt.
 
 ---
 
@@ -557,6 +640,22 @@ selon le projet — 1800s de TIMEOUT laisse une marge confortable.
 Lancer <ligne-de-commande-exacte-du-script> avec l'outil PowerShell, depuis
 la racine du worktree (jamais Git Bash).
 
+## Notes de version
+Pour ce build de publication, écrire `notes_de_version/v<numéro-de-build>.md`
+à la racine du dépôt, à partir des entrées de changelog ajoutées depuis le
+`version.json` du build précédent jusqu'à la tête de la branche (cette issue
+de build exclue) — chercher aussi bien dans les fichiers `CHANGELOG-<N>.md`
+à la racine (pas encore fusionnés) que dans `CHANGELOG.md` (déjà fusionné) ;
+en cas de doute sur la limite, le dire dans le rapport plutôt que deviner.
+Français simple, sans jargon ni numéro de ligne, une dizaine de lignes au
+plus, première ligne = numéro de build. Rubriques, chacune omise si vide :
+« Nouveautés », « Corrections », « Sécurité et robustesse », « À savoir ».
+N'écrire que ce que disent les entrées de changelog ou ce qui a été
+vérifié ; si rien n'est visible pour l'utilisateur, le dire (« Aucun
+changement visible : améliorations internes »). Jamais de jeton, de sujet
+ntfy, de chemin propre aux PC d'Alain, ni d'adresse IP : ces notes sont
+publiques.
+
 ## Vérifier le résultat
 - `version.json` : numéro de build et SHA-256 de l'archive, recalculé et
   identique.
@@ -565,6 +664,8 @@ la racine du worktree (jamais Git Bash).
 - Tailles des fichiers produits comparées aux valeurs de référence du
   projet.
 - Dossiers de premier niveau de l'archive avec leur nombre de fichiers.
+- `notes_de_version/v<numéro-de-build>.md` : existe, porte le bon numéro
+  de build.
 - Avertissements éventuels du build.
 
 ## Ne pas publier
@@ -583,8 +684,9 @@ Rapporter l'erreur rencontrée (sortie du script, étape atteinte) sans
 tenter de contournement ; ne rien pousser.
 
 ## Contraintes
-Fichiers modifiés limités à `version.json` et à l'entrée de changelog
-`CHANGELOG-<numéro-de-l'issue>.md` (numéro de l'issue, pas du build).
+Fichiers modifiés limités à `version.json`, à l'entrée de changelog
+`CHANGELOG-<numéro-de-l'issue>.md` (numéro de l'issue, pas du build), et au
+fichier de notes de version `notes_de_version/v<numéro-de-build>.md`.
 
 ## Rapport attendu
 Résultat des vérifications ci-dessus, chemin des fichiers produits dans
@@ -592,5 +694,6 @@ Résultat des vérifications ci-dessus, chemin des fichiers produits dans
 aussi dans le dossier fixe `C:\CCW_Share\_derniers_builds\<Projet>\`,
 reprendre les noms et tailles affichés par le script ; sinon, rappeler
 qu'Alain doit récupérer les fichiers dans `installeur\output` avant la
-suppression du worktree.
+suppression du worktree. Contenu intégral du fichier
+`notes_de_version/v<numéro-de-build>.md`, pour relecture avant la Release.
 ```
