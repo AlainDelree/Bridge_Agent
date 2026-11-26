@@ -9012,13 +9012,79 @@ def _verdict_final(sortie: str) -> str | None:
        #764/#763, pas la dernière) : le gabarit impose que le verdict ouvre la
        réponse, une occurrence plus loin ne peut provenir que d'une citation
        ou d'un tour tardif (cas #580/#581) qui ne doit jamais l'emporter."""
-    sortie_sans_blancs = sortie.strip()
-    premiere_ligne = sortie_sans_blancs.split("\n", 1)[0] if sortie_sans_blancs else ""
+    correspondance = _position_verdict(sortie)
+    return correspondance[1] if correspondance else None
+
+
+def _position_verdict(sortie: str) -> tuple[int, str] | None:
+    """Position de début (dans `sortie`, texte BRUT non strippé) et valeur
+    (MARQUEUR_VERDICT_SUCCES/ECHEC) de la ligne de verdict retenue par
+    `_verdict_final` ci-dessus — même ordre de priorité, factorisé ici pour
+    être réutilisé par `_isoler_rapport` (issue #957), qui a besoin de la
+    POSITION (pas seulement de la valeur) pour couper `sortie` au bon
+    endroit. None si aucun verdict n'est reconnu."""
+    decalage = len(sortie) - len(sortie.lstrip())
+    premiere_ligne = sortie[decalage:].split("\n", 1)[0]
     correspondance = _RE_PREMIERE_LIGNE_VERDICT.match(premiere_ligne)
     if correspondance:
-        return correspondance.group(1)
-    occurrences = _RE_LIGNE_VERDICT.findall(sortie)
-    return occurrences[0] if occurrences else None
+        return decalage, correspondance.group(1)
+    correspondance = _RE_LIGNE_VERDICT.search(sortie)
+    return (correspondance.start(), correspondance.group(1)) if correspondance else None
+
+
+# Ligne de résumé imposée par le gabarit juste après le verdict ("✅ Tâche
+# terminée — ..." / "❌ ..." — voir le gabarit de prompt de `lancer_claude`) :
+# l'émoji est garanti par le gabarit quelle que soit la LANGUE dans laquelle
+# l'agent rédige le reste du rapport — ancre indépendante de la langue, donc
+# utilisable pour repérer où le vrai rapport commence (issue #957).
+_RE_LIGNE_RESUME = re.compile(r'^[ \t]*[✅❌]', re.MULTILINE)
+
+
+def _isoler_rapport(sortie: str) -> str:
+    """Isole le rapport de clôture réel au sein de `sortie` brute, en
+    écartant les messages parasites d'arrière-plan qui peuvent l'entourer
+    (issue #957, suite de #580/#581 : `claude --print` reste vivant le temps
+    qu'une tâche lancée en arrière-plan — suite de tests complète, sous-agent
+    — se termine et notifie CCL, qui peut alors émettre un tour
+    supplémentaire). Contrairement au garde-fou #581 (`_verdict_final` seul),
+    qui ne détecte que l'ABSENCE totale de ligne de verdict (parasite ayant
+    ÉCRASÉ tout le rapport), cette fonction traite le cas où le vrai rapport
+    est toujours présent mais ENTOURÉ de parasite :
+    - AVANT la ligne de verdict (CCL a conclu un tour précédent sur une
+      phrase d'attente avant que le vrai rapport ne soit prêt) ;
+    - ENTRE cette ligne et le résumé ✅/❌ qui doit la suivre immédiatement
+      (même cause — la phrase d'attente s'intercale) ;
+    - APRÈS la fin structurelle du gabarit (dernier bloc
+      `<details>...</details>`) — notification tardive reçue après le
+      rapport final.
+    Repli INCHANGÉ (retourne `sortie` telle quelle) si aucun verdict n'est
+    reconnu — ex. rapport de diagnostic sans gabarit imposé (`prompt_perso`),
+    ou cas #581 déjà traité en amont (verdict absent ⇒ jamais appelée ici,
+    voir `_executer_une_tentative`)."""
+    position = _position_verdict(sortie)
+    if position is None:
+        return sortie
+    debut, _ = position
+    rapport = sortie[debut:]
+
+    fin_ligne_verdict = rapport.find("\n")
+    if fin_ligne_verdict == -1:
+        return rapport
+    ligne_verdict = rapport[:fin_ligne_verdict + 1]
+    apres_verdict = rapport[fin_ligne_verdict + 1:]
+
+    correspondance_resume = _RE_LIGNE_RESUME.search(apres_verdict)
+    if correspondance_resume:
+        apres_verdict = apres_verdict[correspondance_resume.start():]
+
+    rapport = ligne_verdict + apres_verdict
+    fin_details = rapport.rfind("</details>")
+    if fin_details != -1:
+        fin = fin_details + len("</details>")
+        if fin < len(rapport) and rapport[fin] == "\n":
+            fin += 1  # garde le saut de ligne naturel qui clôt le gabarit
+        rapport = rapport[:fin]
+    return rapport
 
 
 def _detecter_erreur_bloquante(stderr_brut: str | None) -> str | None:
@@ -9568,6 +9634,10 @@ def _finaliser_succes(numero: int, titre: str, body: str, labels: list[str], mod
     TOUJOURS ce hash quand il est connu, sans dépendre uniquement de la
     fidélité de transcription de l'agent."""
     log.info(f"  ✓ Issue #{numero} traitée avec succès.")
+    # Issue #957 : écarte tout message parasite d'arrière-plan (phrase
+    # d'attente avant le rapport, notification tardive après) AVANT de
+    # construire le commentaire publié — voir `_isoler_rapport`.
+    sortie = _isoler_rapport(sortie)
     avertissement_sans_commit = _avertissement_succes_sans_commit(
         numero, mode, dry_run, cwd_effectif, tete_avant_traitement,
         commit_sauvegarde_watcher)

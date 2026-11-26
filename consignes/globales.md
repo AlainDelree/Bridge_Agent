@@ -56,6 +56,10 @@
   programmé, et toute formulation du type « je répondrai/poursuivrai quand… »
   / « j'attends la fin de… » en guise de conclusion. Le watcher ferme
   l'issue dès ta réponse postée : il n'existe AUCUNE reprise possible.
+  **Symétriquement**, une fois ce rapport final émis, une notification
+  tardive d'une tâche d'arrière-plan (suite de tests, sous-agent) ne doit
+  produire AUCUNE nouvelle prise de parole de ta part — ignore-la en
+  silence, elle n'a plus aucun destinataire (issue #957).
 - **Garde-fou backup/reset :** le commit de sauvegarde (`git add -A`)
   peut faire passer sous suivi git des dossiers auparavant non trackés
   (ex. `.tools/`, `installeur/output/`). Si le script à exécuter ensuite
