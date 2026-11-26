@@ -253,9 +253,9 @@ comme avant.
 
 Pour un build de publication (`--publier`, celui qui écrit `version.json`),
 l'agent écrit en plus un fichier `notes_de_version/v<N>.md` à la racine du
-dépôt de l'application (`<N>` = numéro de ce build), après le build et ses
-vérifications, pour qu'il ne puisse pas être embarqué par le script. Il est
-commité dans la branche du worktree comme `version.json` : fusionné par
+dépôt de l'application (`<N>` = numéro de ce build), après le build et la
+vérification de l'archive, pour qu'il ne puisse pas être embarqué par le
+script. Il est commité dans la branche du worktree comme `version.json` : fusionné par
 Alain via `relecture_web` (étape 2 de « Ce que fait Alain ensuite »), il est
 donc déjà présent dans le clone Windows à l'étape 3 (Release). Ce fichier
 **reste dans le dépôt** — il ne doit pas entrer dans l'archive
@@ -650,11 +650,15 @@ la racine du worktree (jamais Git Bash).
 
 ## Notes de version
 Pour ce build de publication, écrire `notes_de_version/v<numéro-de-build>.md`
-à la racine du dépôt — après le build et les vérifications de la section
-« Vérifier le résultat » qui suit, pour que le script ne puisse pas
-l'embarquer — puis le commiter dans la branche du worktree : sans ce
+à la racine du dépôt — après le build et la vérification de l'archive
+(section « Vérifier le résultat » qui suit), pour que le script ne puisse
+pas l'embarquer — puis le commiter dans la branche du worktree : sans ce
 commit, Alain ne le fusionnerait pas et il serait absent du clone Windows à
-l'étape Release. Contenu à partir des entrées de changelog ajoutées depuis
+l'étape Release. Une fois ce fichier écrit et commité, contrôler qu'il
+existe et porte le bon numéro de build — ce contrôle ne peut se faire
+qu'après l'écriture, il ne fait donc pas partie de la section « Vérifier le
+résultat » ci-dessous, qui porte uniquement sur l'archive. Contenu à partir
+des entrées de changelog ajoutées depuis
 le `version.json` du build précédent jusqu'à la tête de la branche (cette
 issue de build exclue) — chercher aussi bien dans les fichiers
 `CHANGELOG-<N>.md` à la racine (pas encore fusionnés) que dans
@@ -677,8 +681,6 @@ publiques.
 - Tailles des fichiers produits comparées aux valeurs de référence du
   projet.
 - Dossiers de premier niveau de l'archive avec leur nombre de fichiers.
-- `notes_de_version/v<numéro-de-build>.md` : existe, porte le bon numéro
-  de build.
 - Avertissements éventuels du build.
 
 ## Ne pas publier
